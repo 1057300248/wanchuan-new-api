@@ -21,6 +21,10 @@ import { useTranslation } from 'react-i18next'
 
 import { useStatus } from '@/hooks/use-status'
 import { parseHeaderNavModulesFromStatus } from '@/lib/nav-modules'
+import {
+  MARKETING_HOME_URL,
+  resolvePublicDocsUrl,
+} from '@/lib/public-site'
 import { useAuthStore } from '@/stores/auth-store'
 
 export type TopNavLink = {
@@ -56,7 +60,7 @@ export function useTopNavLinks(): TopNavLink[] {
   }, [status])
 
   // Documentation link (may be external)
-  const docsLink: string | undefined = status?.docs_link as string | undefined
+  const docsLink = resolvePublicDocsUrl(status?.docs_link)
 
   const isAuthed = !!auth?.user
 
@@ -64,7 +68,11 @@ export function useTopNavLinks(): TopNavLink[] {
 
   // Home
   if (modules?.home !== false) {
-    links.push({ title: t('Home'), href: '/' })
+    links.push({
+      title: t('Home'),
+      href: MARKETING_HOME_URL,
+      external: true,
+    })
   }
 
   // Console -> /dashboard (new console path)
@@ -88,11 +96,7 @@ export function useTopNavLinks(): TopNavLink[] {
 
   // Docs (supports external links)
   if (modules?.docs !== false) {
-    if (docsLink) {
-      links.push({ title: t('Docs'), href: docsLink, external: true })
-    } else {
-      links.push({ title: t('Docs'), href: '/docs' })
-    }
+    links.push({ title: t('Docs'), href: docsLink, external: true })
   }
 
   // About

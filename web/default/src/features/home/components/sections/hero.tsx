@@ -22,13 +22,14 @@ import { ArrowRight, BookOpen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { useStatus } from '@/hooks/use-status'
 
 import { HeroTerminalDemo } from '../hero-terminal-demo'
 
 interface HeroProps {
   className?: string
   isAuthenticated?: boolean
+  registrationEnabled?: boolean
+  docsUrl: string
 }
 
 // Stylized three-dots indicator representing "More"
@@ -47,9 +48,7 @@ const MoreIcon = () => (
 
 export function Hero(props: HeroProps) {
   const { t } = useTranslation()
-  const { status } = useStatus()
-  const docsUrl =
-    (status?.docs_link as string | undefined) || 'https://docs.newapi.pro'
+  const docsUrl = props.docsUrl
 
   const renderDocsButton = () => {
     const isExternal = docsUrl.startsWith('http')
@@ -129,8 +128,9 @@ export function Hero(props: HeroProps) {
             style={{ animationDelay: '120ms' }}
           >
             {t(
-              'Access a vast selection of models via a standard, unified API protocol. Power AI applications, manage digital assets, and connect the Future.'
+              'Connect through OpenAI, Claude, Gemini, and other compatible API routes'
             )}
+            . {t('Track usage, costs and performance with real-time analytics')}.
           </p>
 
           <div
@@ -152,9 +152,15 @@ export function Hero(props: HeroProps) {
               <>
                 <Button
                   className='group h-11 rounded-lg px-5 text-sm font-medium'
-                  render={<Link to='/sign-up' />}
+                  render={
+                    <Link
+                      to={props.registrationEnabled ? '/sign-up' : '/sign-in'}
+                    />
+                  }
                 >
-                  {t('Get Started')}
+                  {props.registrationEnabled
+                    ? t('Get Started')
+                    : t('Sign In')}
                   <ArrowRight className='ml-1.5 size-4 transition-transform duration-200 group-hover:translate-x-0.5' />
                 </Button>
                 <Button
@@ -180,7 +186,7 @@ export function Hero(props: HeroProps) {
               </span>
               <p className='text-muted-foreground/60 text-xs leading-relaxed'>
                 {t(
-                  'Supports one-click configuration and perfectly adapts to NewAPI multi-protocol configuration.'
+                  'Compatible API routes for common AI application workflows'
                 )}
               </p>
             </div>

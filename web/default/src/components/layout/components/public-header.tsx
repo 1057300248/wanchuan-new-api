@@ -97,6 +97,27 @@ export function PublicHeader(props: PublicHeaderProps) {
   const isAuthenticated = !!user
   const displaySiteName = customSiteName || systemName
   const links = dynamicLinks.length > 0 ? dynamicLinks : navLinks
+  const brandContent = (
+    <>
+      <div className='flex size-7 shrink-0 items-center justify-center transition-all duration-300 group-hover:scale-105'>
+        {loading ? (
+          <Skeleton className='size-full rounded-lg' />
+        ) : customLogo ? (
+          customLogo
+        ) : (
+          <HeaderLogo
+            src={systemLogo}
+            loading={loading}
+            logoLoaded={logoLoaded}
+            className='size-full rounded-lg object-contain'
+          />
+        )}
+      </div>
+      <span className='text-sm font-semibold tracking-tight'>
+        {loading ? <Skeleton className='h-4 w-16' /> : displaySiteName}
+      </span>
+    </>
+  )
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20)
@@ -191,28 +212,21 @@ export function PublicHeader(props: PublicHeaderProps) {
             )}
           >
             {/* Logo */}
-            <Link
-              to={homeUrl}
-              className='group flex shrink-0 items-center gap-2.5'
-            >
-              <div className='flex size-7 shrink-0 items-center justify-center transition-all duration-300 group-hover:scale-105'>
-                {loading ? (
-                  <Skeleton className='size-full rounded-lg' />
-                ) : customLogo ? (
-                  customLogo
-                ) : (
-                  <HeaderLogo
-                    src={systemLogo}
-                    loading={loading}
-                    logoLoaded={logoLoaded}
-                    className='size-full rounded-lg object-contain'
-                  />
-                )}
-              </div>
-              <span className='text-sm font-semibold tracking-tight'>
-                {loading ? <Skeleton className='h-4 w-16' /> : displaySiteName}
-              </span>
-            </Link>
+            {homeUrl.startsWith('http') ? (
+              <a
+                href={homeUrl}
+                className='group flex shrink-0 items-center gap-2.5'
+              >
+                {brandContent}
+              </a>
+            ) : (
+              <Link
+                to={homeUrl}
+                className='group flex shrink-0 items-center gap-2.5'
+              >
+                {brandContent}
+              </Link>
+            )}
 
             {/* Desktop nav */}
             <div className='hidden items-center gap-0.5 sm:flex'>
