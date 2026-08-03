@@ -121,38 +121,9 @@ func authHelper(c *gin.Context, minRole int) {
 		c.Abort()
 		return
 	}
-	if status.(int) == common.UserStatusDisabled {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": common.TranslateMessage(c, i18n.MsgAuthUserBanned),
-		})
-		c.Abort()
+	if !setupSessionAuthContext(c, username, role, id, status, minRole, useAccessToken) {
 		return
 	}
-	if role.(int) < minRole {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": common.TranslateMessage(c, i18n.MsgAuthInsufficientPrivilege),
-		})
-		c.Abort()
-		return
-	}
-	if !validUserInfo(username.(string), role.(int)) {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": common.TranslateMessage(c, i18n.MsgAuthUserInfoInvalid),
-		})
-		c.Abort()
-		return
-	}
-	// 防止不同newapi版本冲突，导致数据不通用
-	c.Header("Auth-Version", "864b7076dbcd0a3c01b5520316720ebf")
-	c.Set("username", username)
-	c.Set("role", role)
-	c.Set("id", id)
-	c.Set("group", session.Get("group"))
-	c.Set("user_group", session.Get("group"))
-	c.Set("use_access_token", useAccessToken)
 
 	// 管理/root 写操作审计兜底：内聚在鉴权链路里，保证任何经过 AdminAuth/RootAuth
 	// 的写接口都会自动留痕（无需在路由上单独挂审计中间件，避免漏挂）。
@@ -173,6 +144,77 @@ func TryUserAuth() func(c *gin.Context) {
 		id := session.Get("id")
 		if id != nil {
 			c.Set("id", id)
+		}
+		c.Next()
+	}
+}
+
+// setupSessionAuthContext 校验从会话（或 authHelper 的 access token 兜底）中读取的
+// 用户状态，并写入 UserAuth 使用的用户上下文字段。校验失败时写入响应并中断请求，
+// 返回 false。authHelper 与 SessionAuth 共用，保证两条路径的用户状态、角色与
+// 上下文字段语义完全一致。
+func setupSessionAuthContext(c *gin.Context, username any, role any, id any, status any, minRole int, useAccessToken bool) bool {
+	if status.(int) == common.UserStatusDisabled {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": common.TranslateMessage(c, i18n.MsgAuthUserBanned),
+		})
+		c.Abort()
+		return false
+	}
+	if role.(int) < minRole {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": common.TranslateMessage(c, i18n.MsgAuthInsufficientPrivilege),
+		})
+		c.Abort()
+		return false
+	}
+	if !validUserInfo(username.(string), role.(int)) {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": common.TranslateMessage(c, i18n.MsgAuthUserInfoInvalid),
+		})
+		c.Abort()
+		return false
+	}
+	// 防止不同newapi版本冲突，导致数据不通用
+	c.Header("Auth-Version", "864b7076dbcd0a3c01b5520316720ebf")
+	c.Set("username", username)
+	c.Set("role", role)
+	c.Set("id", id)
+	session := sessions.Default(c)
+	c.Set("group", session.Get("group"))
+	c.Set("user_group", session.Get("group"))
+	c.Set("use_access_token", useAccessToken)
+	return true
+}
+
+// SessionAuth 仅接受现有浏览器 session cookie 的鉴权中间件，用于独立官网
+// （如 https://chuanapi.com/playground）的页面内试验场。与 UserAuth 不同：
+// 它不要求 New-Api-User 请求头，也不接受 access token 兜底；但复用与 UserAuth
+// 完全一致的用户状态、角色与上下文字段语义。
+func SessionAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		session := sessions.Default(c)
+		username := session.Get("username")
+		role := session.Get("role")
+		id := session.Get("id")
+		status := session.Get("status")
+		_, usernameOK := username.(string)
+		_, roleOK := role.(int)
+		_, idOK := id.(int)
+		_, statusOK := status.(int)
+		if !usernameOK || !roleOK || !idOK || !statusOK {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"message": common.TranslateMessage(c, i18n.MsgAuthNotLoggedIn),
+			})
+			c.Abort()
+			return
+		}
+		if !setupSessionAuthContext(c, username, role, id, status, common.RoleCommonUser, false) {
+			return
 		}
 		c.Next()
 	}

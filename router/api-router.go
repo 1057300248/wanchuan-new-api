@@ -14,6 +14,10 @@ import (
 func SetApiRouter(router *gin.Engine) {
 	apiRouter := router.Group("/api")
 	apiRouter.Use(middleware.RouteTag("api"))
+	// 独立官网控制台（如 https://chuanapi.com/playground）的跨子域 CORS：
+	// 仅放行 CONSOLE_CORS_ALLOW_ORIGINS 白名单来源并携带凭据；
+	// 同源请求不受影响，/v1 等 token relay 的 CORS 行为保持不变。
+	apiRouter.Use(middleware.ConsoleCORS())
 	apiRouter.Use(gzip.Gzip(gzip.DefaultCompression))
 	apiRouter.Use(middleware.BodyStorageCleanup()) // 清理请求体存储
 	apiRouter.Use(middleware.GlobalAPIRateLimit())
@@ -146,6 +150,11 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
 			}
 		}
+
+		// 独立官网（https://chuanapi.com/playground）页面内试验场路由：
+		// 仅接受浏览器 session cookie（SessionAuth），不需要 New-Api-User 头，
+		// 不接受 access token；复用 controller.Playground 与 Distribute/性能检查链路。
+		registerPlaygroundRoutes(apiRouter)
 
 		// Subscription billing (plans, purchase, admin management)
 		subscriptionRoute := apiRouter.Group("/subscription")
@@ -378,5 +387,17 @@ func SetApiRouter(router *gin.Engine) {
 			deploymentsRoute.POST("/:id/extend", controller.ExtendDeployment)
 			deploymentsRoute.DELETE("/:id", controller.DeleteDeployment)
 		}
+	}
+}
+
+// registerPlaygroundRoutes 注册独立官网页面内试验场路由（/api/user/playground/*）。
+// 仅 session 登录用户可访问：GET /bootstrap 返回启动所需最小字段，
+// POST /chat 复用 controller.Playground 与 /pg 相同的性能检查/Distribute 链路。
+func registerPlaygroundRoutes(apiRouter *gin.RouterGroup) {
+	playgroundRoute := apiRouter.Group("/user/playground")
+	playgroundRoute.Use(middleware.SessionAuth())
+	{
+		playgroundRoute.GET("/bootstrap", controller.PlaygroundBootstrap)
+		playgroundRoute.POST("/chat", middleware.SystemPerformanceCheck(), middleware.Distribute(), controller.Playground)
 	}
 }

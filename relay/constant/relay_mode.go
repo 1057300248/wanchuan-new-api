@@ -54,9 +54,16 @@ const (
 	RelayModeResponsesCompact
 )
 
+// IsPlaygroundChatPath 判断路径是否为试验场 Chat Completions 端点：
+// 旧版 /pg/chat/completions 与独立官网控制台 /api/user/playground/chat。
+func IsPlaygroundChatPath(path string) bool {
+	return strings.HasPrefix(path, "/pg/chat/completions") ||
+		strings.HasPrefix(path, "/api/user/playground/chat")
+}
+
 func Path2RelayMode(path string) int {
 	relayMode := RelayModeUnknown
-	if strings.HasPrefix(path, "/v1/chat/completions") || strings.HasPrefix(path, "/pg/chat/completions") {
+	if strings.HasPrefix(path, "/v1/chat/completions") || IsPlaygroundChatPath(path) {
 		relayMode = RelayModeChatCompletions
 	} else if strings.HasPrefix(path, "/v1/completions") {
 		relayMode = RelayModeCompletions
