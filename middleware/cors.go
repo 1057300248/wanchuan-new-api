@@ -10,26 +10,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func CORS() gin.HandlerFunc {
-	config := cors.DefaultConfig()
-	config.AllowAllOrigins = true
-	config.AllowCredentials = true
-	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
-	config.AllowHeaders = []string{"*"}
-	return cors.New(config)
-}
-
-// defaultConsoleCORSAllowOrigins 是 ConsoleCORS 的默认允许来源，
+// defaultConsoleCORSAllowOrigins 是可信来源的默认白名单，
 // 仅覆盖本地开发；生产环境必须通过 CONSOLE_CORS_ALLOW_ORIGINS 显式配置。
 var defaultConsoleCORSAllowOrigins = []string{"http://localhost:3000", "http://127.0.0.1:3000"}
 
-// ConsoleCORS 为跨子域独立官网（如 https://chuanapi.com/playground）提供的
-// Console/Browser CORS 中间件，仅用于 /api 路由。允许来源从环境变量
-// CONSOLE_CORS_ALLOW_ORIGINS（逗号分隔）读取，默认只放行本地开发地址；
-// 开启凭据（credentials=true）时绝不放行任意 Origin。
-func ConsoleCORS() gin.HandlerFunc {
-	config := cors.Config{
-		AllowOrigins: consoleCORSAllowOrigins(),
+// CORS 是全局统一的 CORS 策略，必须在 SetRouter 中通过 router.Use 挂载一次，
+// 覆盖全部路由以及无 OPTIONS 路由的预检路径：
+//   - CONSOLE_CORS_ALLOW_ORIGINS（逗号分隔，默认本地开发地址）中的可信来源：
+//     回显精确的 Access-Control-Allow-Origin 并开启 Access-Control-Allow-Credentials，
+//     供独立官网（如 https://chuanapi.com/playground）以 credentials=include 访问；
+//   - 其他来源保持 New API 公共 relay 的无凭据跨域能力
+//     （Access-Control-Allow-Origin: *），绝不与 credentials 同时放行；
+//   - 同源请求（无 Origin 头或 Origin 与 Host 一致）直接放行，不写任何 CORS 头。
+func CORS() gin.HandlerFunc {
+	trustedOrigins := consoleCORSAllowOrigins()
+	trustedCors := cors.New(cors.Config{
+		AllowOrigins: trustedOrigins,
 		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders: []string{
 			"Origin",
@@ -41,8 +37,25 @@ func ConsoleCORS() gin.HandlerFunc {
 		},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
+	})
+	publicCors := cors.New(cors.Config{
+		AllowAllOrigins: true,
+		AllowMethods:    []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:    []string{"*"},
+		MaxAge:          12 * time.Hour,
+	})
+	return func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+		if origin != "" {
+			for _, trusted := range trustedOrigins {
+				if origin == trusted {
+					trustedCors(c)
+					return
+				}
+			}
+		}
+		publicCors(c)
 	}
-	return cors.New(config)
 }
 
 func consoleCORSAllowOrigins() []string {

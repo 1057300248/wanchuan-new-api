@@ -14,10 +14,8 @@ import (
 func SetApiRouter(router *gin.Engine) {
 	apiRouter := router.Group("/api")
 	apiRouter.Use(middleware.RouteTag("api"))
-	// 独立官网控制台（如 https://chuanapi.com/playground）的跨子域 CORS：
-	// 仅放行 CONSOLE_CORS_ALLOW_ORIGINS 白名单来源并携带凭据；
-	// 同源请求不受影响，/v1 等 token relay 的 CORS 行为保持不变。
-	apiRouter.Use(middleware.ConsoleCORS())
+	// CORS 由 SetRouter 顶部全局统一挂载（可信来源携带凭据、其余通配无凭据），
+	// /api 不再重复挂载，避免与全局策略冲突或覆盖。
 	apiRouter.Use(gzip.Gzip(gzip.DefaultCompression))
 	apiRouter.Use(middleware.BodyStorageCleanup()) // 清理请求体存储
 	apiRouter.Use(middleware.GlobalAPIRateLimit())
@@ -253,7 +251,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		usageRoute := apiRouter.Group("/usage")
-		usageRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
+		usageRoute.Use(middleware.CriticalRateLimit())
 		{
 			tokenUsageRoute := usageRoute.Group("/token")
 			tokenUsageRoute.Use(middleware.TokenAuthReadOnly())
@@ -308,7 +306,7 @@ func SetApiRouter(router *gin.Engine) {
 		dataRoute.GET("/flow", middleware.AdminAuth(), controller.GetAllFlowQuotaDates)
 		dataRoute.GET("/flow/self", middleware.UserAuth(), controller.GetUserFlowQuotaDates)
 
-		logRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
+		logRoute.Use(middleware.CriticalRateLimit())
 		{
 			logRoute.GET("/token", middleware.TokenAuthReadOnly(), controller.GetLogByKey)
 		}
