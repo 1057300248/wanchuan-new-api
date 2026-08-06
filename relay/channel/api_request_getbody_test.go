@@ -24,14 +24,19 @@ import (
 )
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 func TestApplyUpstreamBodyMetadataSetsReplayableMetadata(t *testing.T) {
 =======
 func TestApplyUpstreamGetBody_SetsReplayableGetBody(t *testing.T) {
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+func TestApplyUpstreamBodyMetadataSetsReplayableMetadata(t *testing.T) {
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	t.Parallel()
 
 	payload := []byte(`{"model":"test-model","messages":[{"role":"user","content":"hi"}]}`)
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 	body, closer, err := relaycommon.NewOutboundJSONBody(payload)
 	require.NoError(t, err)
@@ -47,10 +52,19 @@ func TestApplyUpstreamGetBody_SetsReplayableGetBody(t *testing.T) {
 	// Mirror DoApiRequest: a type-erased io.Reader gives net/http neither
 	// ContentLength nor GetBody.
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	body, closer, err := relaycommon.NewOutboundJSONBody(payload)
+	require.NoError(t, err)
+	defer closer.Close()
+
+	// NewRequest hides the body's dynamic type behind req.Body, so metadata
+	// extraction must use the original body passed to NewRequest.
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	req, err := http.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", body)
 	require.NoError(t, err)
 	assert.Nil(t, req.GetBody)
 	assert.Zero(t, req.ContentLength)
+<<<<<<< HEAD
 <<<<<<< HEAD
 	_, requestBodyIsReplayable := req.Body.(common.ReplayableBody)
 	assert.False(t, requestBodyIsReplayable)
@@ -68,6 +82,16 @@ func TestApplyUpstreamGetBody_SetsReplayableGetBody(t *testing.T) {
 	}
 	ApplyUpstreamBodyMetadata(req, info)
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	_, requestBodyIsReplayable := req.Body.(common.ReplayableBody)
+	assert.False(t, requestBodyIsReplayable)
+
+	ApplyUpstreamBodyMetadata(req, req.Body)
+	assert.Nil(t, req.GetBody)
+	assert.Zero(t, req.ContentLength)
+
+	ApplyUpstreamBodyMetadata(req, body)
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 
 	assert.EqualValues(t, len(payload), req.ContentLength)
 	require.NotNil(t, req.GetBody)
@@ -89,6 +113,9 @@ func TestApplyUpstreamGetBody_SetsReplayableGetBody(t *testing.T) {
 }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 func TestApplyUpstreamBodyMetadataHidesRawBodyStorageCloser(t *testing.T) {
 	t.Parallel()
 
@@ -123,9 +150,12 @@ func TestApplyUpstreamBodyMetadataHidesRawBodyStorageCloser(t *testing.T) {
 }
 
 func TestApplyUpstreamBodyMetadataKeepsNativeMetadataForNonReplayableBody(t *testing.T) {
+<<<<<<< HEAD
 =======
 func TestApplyUpstreamGetBody_KeepsExistingGetBody(t *testing.T) {
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	tests := []struct {
 		name string
 		body func() io.Reader
@@ -140,6 +170,7 @@ func TestApplyUpstreamGetBody_KeepsExistingGetBody(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 			body := test.body()
 			req, err := http.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", body)
@@ -160,6 +191,14 @@ func TestApplyUpstreamGetBody_KeepsExistingGetBody(t *testing.T) {
 			}
 			ApplyUpstreamBodyMetadata(req, info)
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+			body := test.body()
+			req, err := http.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", body)
+			require.NoError(t, err)
+			require.NotNil(t, req.GetBody, "net/http must derive GetBody for the concrete reader")
+
+			ApplyUpstreamBodyMetadata(req, body)
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 
 			rc, err := req.GetBody()
 			require.NoError(t, err)
@@ -172,6 +211,7 @@ func TestApplyUpstreamGetBody_KeepsExistingGetBody(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 func TestApplyUpstreamBodyMetadataKeepsExistingGetBody(t *testing.T) {
 	t.Parallel()
@@ -202,29 +242,46 @@ func TestApplyUpstreamBodyMetadataKeepsExistingGetBody(t *testing.T) {
 func TestApplyUpstreamBodyMetadataEmptyStorageRemainsReplayable(t *testing.T) {
 =======
 func TestApplyUpstreamGetBody_NoopWithoutReplaySource(t *testing.T) {
+=======
+func TestApplyUpstreamBodyMetadataKeepsExistingGetBody(t *testing.T) {
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	t.Parallel()
 
-	storageBody, _, _, closer, err := relaycommon.NewOutboundJSONBody([]byte(`{}`))
+	payload := []byte(`{"model":"test-model"}`)
+	body, closer, err := relaycommon.NewOutboundJSONBody(payload)
 	require.NoError(t, err)
 	defer closer.Close()
 
-	req, err := http.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", storageBody)
+	req, err := http.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", body)
 	require.NoError(t, err)
+	req.ContentLength = 99
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader([]byte("existing"))), nil
+	}
 
-	applyUpstreamGetBody(req, nil)
-	assert.Nil(t, req.GetBody)
+	ApplyUpstreamBodyMetadata(req, body)
 
-	applyUpstreamGetBody(req, &relaycommon.RelayInfo{})
-	assert.Nil(t, req.GetBody)
+	assert.EqualValues(t, len(payload), req.ContentLength)
+	rc, err := req.GetBody()
+	require.NoError(t, err)
+	got, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	require.NoError(t, rc.Close())
+	assert.Equal(t, "existing", string(got))
 }
 
+<<<<<<< HEAD
 func TestApplyUpstreamBodyMetadata_EmptyStorageRemainsReplayable(t *testing.T) {
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+func TestApplyUpstreamBodyMetadataEmptyStorageRemainsReplayable(t *testing.T) {
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	t.Parallel()
 
 	storage, err := common.CreateBodyStorage(nil)
 	require.NoError(t, err)
 	defer storage.Close()
+<<<<<<< HEAD
 <<<<<<< HEAD
 	body := common.NewReplayableBodyReader(storage)
 
@@ -232,14 +289,21 @@ func TestApplyUpstreamBodyMetadata_EmptyStorageRemainsReplayable(t *testing.T) {
 	require.NoError(t, err)
 	ApplyUpstreamBodyMetadata(req, body)
 =======
+=======
+	body := common.NewReplayableBodyReader(storage)
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 
-	req, err := http.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", common.ReaderOnly(storage))
+	req, err := http.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", body)
 	require.NoError(t, err)
+<<<<<<< HEAD
 	ApplyUpstreamBodyMetadata(req, &relaycommon.RelayInfo{
 		UpstreamRequestBodySize: storage.Size(),
 		UpstreamRequestGetBody:  storage.NewReader,
 	})
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	ApplyUpstreamBodyMetadata(req, body)
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 
 	assert.Zero(t, req.ContentLength)
 	require.NotNil(t, req.GetBody)
@@ -251,6 +315,7 @@ func TestApplyUpstreamBodyMetadata_EmptyStorageRemainsReplayable(t *testing.T) {
 	assert.Empty(t, replay)
 }
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 =======
 func TestUpstreamBodyMetadataIsReboundAcrossChannelAttempts(t *testing.T) {
@@ -293,6 +358,8 @@ func TestUpstreamBodyMetadataIsReboundAcrossChannelAttempts(t *testing.T) {
 }
 
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 // stubTaskAdaptor implements just enough of TaskAdaptor for DoTaskApiRequest.
 type stubTaskAdaptor struct {
 	TaskAdaptor
@@ -561,6 +628,7 @@ func newH2PriorKnowledgeClient(ln net.Listener) (*http.Client, *http2.Transport)
 }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 func newPassThroughBody(t *testing.T, payload []byte) (common.ReplayableBody, common.BodyStorage) {
 	t.Helper()
 	storage, err := common.CreateBodyStorage(payload)
@@ -576,6 +644,13 @@ func newPassThroughBody(t *testing.T, payload []byte) (io.Reader, *relaycommon.R
 		UpstreamRequestGetBody:  storage.NewReader,
 	}, storage
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+func newPassThroughBody(t *testing.T, payload []byte) (common.ReplayableBody, common.BodyStorage) {
+	t.Helper()
+	storage, err := common.CreateBodyStorage(payload)
+	require.NoError(t, err)
+	return common.NewReplayableBodyReader(storage), storage
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 }
 
 // TestUpstreamGetBody_HTTP2RetryAfterUpstreamStreamReset exercises the actual
@@ -595,6 +670,7 @@ func TestUpstreamGetBody_HTTP2RetryAfterUpstreamStreamReset(t *testing.T) {
 	defer transport.CloseIdleConnections()
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 	// Build the upstream request exactly the way DoApiRequest does: pass the
 	// original replayable body to the metadata helper after NewRequest.
 	body, closer, err := relaycommon.NewOutboundJSONBody(payload)
@@ -603,11 +679,17 @@ func TestUpstreamGetBody_HTTP2RetryAfterUpstreamStreamReset(t *testing.T) {
 	// type-erased BodyStorage reader plus the applyUpstream* helpers.
 	body, size, getBody, closer, err := relaycommon.NewOutboundJSONBody(payload)
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	// Build the upstream request exactly the way DoApiRequest does: pass the
+	// original replayable body to the metadata helper after NewRequest.
+	body, closer, err := relaycommon.NewOutboundJSONBody(payload)
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	require.NoError(t, err)
 	defer closer.Close()
 
 	req, err := http.NewRequest(http.MethodPost, "http://upstream.test/v1/chat/completions", body)
 	require.NoError(t, err)
+<<<<<<< HEAD
 <<<<<<< HEAD
 	ApplyUpstreamBodyMetadata(req, body)
 =======
@@ -617,6 +699,9 @@ func TestUpstreamGetBody_HTTP2RetryAfterUpstreamStreamReset(t *testing.T) {
 	}
 	ApplyUpstreamBodyMetadata(req, info)
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	ApplyUpstreamBodyMetadata(req, body)
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	require.NotNil(t, req.GetBody)
 
 	resp, err := client.Do(req)
@@ -644,6 +729,7 @@ func TestUpstreamGetBody_HTTP2RetryAfterUpstreamStreamReset_PassThrough(t *testi
 	defer transport.CloseIdleConnections()
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 	body, storage := newPassThroughBody(t, payload)
 	defer storage.Close()
 	req, err := http.NewRequest(http.MethodPost, "http://upstream.test/v1/chat/completions", body)
@@ -656,6 +742,13 @@ func TestUpstreamGetBody_HTTP2RetryAfterUpstreamStreamReset_PassThrough(t *testi
 	require.NoError(t, err)
 	ApplyUpstreamBodyMetadata(req, info)
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	body, storage := newPassThroughBody(t, payload)
+	defer storage.Close()
+	req, err := http.NewRequest(http.MethodPost, "http://upstream.test/v1/chat/completions", body)
+	require.NoError(t, err)
+	ApplyUpstreamBodyMetadata(req, body)
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	require.NotNil(t, req.GetBody)
 	assert.EqualValues(t, len(payload), req.ContentLength)
 
@@ -684,6 +777,7 @@ func TestUpstreamGetBody_HTTP2RetryAfterGracefulGoAway_PassThrough(t *testing.T)
 	defer transport.CloseIdleConnections()
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 	body, storage := newPassThroughBody(t, payload)
 	defer storage.Close()
 	req, err := http.NewRequest(http.MethodPost, "http://upstream.test/v1/chat/completions", body)
@@ -696,6 +790,13 @@ func TestUpstreamGetBody_HTTP2RetryAfterGracefulGoAway_PassThrough(t *testing.T)
 	require.NoError(t, err)
 	ApplyUpstreamBodyMetadata(req, info)
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	body, storage := newPassThroughBody(t, payload)
+	defer storage.Close()
+	req, err := http.NewRequest(http.MethodPost, "http://upstream.test/v1/chat/completions", body)
+	require.NoError(t, err)
+	ApplyUpstreamBodyMetadata(req, body)
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	require.NotNil(t, req.GetBody)
 
 	resp, err := client.Do(req)
@@ -726,20 +827,28 @@ func TestUpstreamGetBody_HTTP2CannotRetryWithoutGetBody(t *testing.T) {
 	defer transport.CloseIdleConnections()
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 	body, closer, err := relaycommon.NewOutboundJSONBody(payload)
 =======
 	body, size, _, closer, err := relaycommon.NewOutboundJSONBody(payload)
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	body, closer, err := relaycommon.NewOutboundJSONBody(payload)
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	require.NoError(t, err)
 	defer closer.Close()
 
 	req, err := http.NewRequest(http.MethodPost, "http://upstream.test/v1/chat/completions", body)
 	require.NoError(t, err)
 <<<<<<< HEAD
+<<<<<<< HEAD
 	req.ContentLength = body.Size()
 =======
 	applyUpstreamContentLength(req, &relaycommon.RelayInfo{UpstreamRequestBodySize: size})
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	req.ContentLength = body.Size()
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	assert.Nil(t, req.GetBody)
 
 	resp, err := client.Do(req) //nolint:bodyclose // Do fails, no body to close

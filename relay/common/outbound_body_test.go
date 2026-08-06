@@ -15,6 +15,7 @@ func TestNewOutboundJSONBody_GetBodyReplaysFullBody(t *testing.T) {
 	payload := []byte(`{"model":"test-model","messages":[{"role":"user","content":"hello"}]}`)
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 	body, closer, err := NewOutboundJSONBody(payload)
 	require.NoError(t, err)
 	defer closer.Close()
@@ -28,6 +29,13 @@ func TestNewOutboundJSONBody_GetBodyReplaysFullBody(t *testing.T) {
 	assert.EqualValues(t, len(payload), size)
 	require.NotNil(t, getBody)
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	body, closer, err := NewOutboundJSONBody(payload)
+	require.NoError(t, err)
+	defer closer.Close()
+
+	assert.EqualValues(t, len(payload), body.Size())
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 
 	// Consume the primary body, as the HTTP transport does on the first attempt.
 	first, err := io.ReadAll(body)
@@ -38,10 +46,14 @@ func TestNewOutboundJSONBody_GetBodyReplaysFullBody(t *testing.T) {
 	// transport may need more than one retry.
 	for i := 0; i < 2; i++ {
 <<<<<<< HEAD
+<<<<<<< HEAD
 		rc, err := body.NewReader()
 =======
 		rc, err := getBody()
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+		rc, err := body.NewReader()
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 		require.NoError(t, err)
 		replay, err := io.ReadAll(rc)
 		require.NoError(t, err)
@@ -56,10 +68,14 @@ func TestNewOutboundJSONBody_GetBodyAfterPartialRead(t *testing.T) {
 	payload := []byte(`{"model":"test-model","input":"0123456789"}`)
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 	body, closer, err := NewOutboundJSONBody(payload)
 =======
 	body, _, getBody, closer, err := NewOutboundJSONBody(payload)
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	body, closer, err := NewOutboundJSONBody(payload)
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	require.NoError(t, err)
 	defer closer.Close()
 
@@ -69,10 +85,14 @@ func TestNewOutboundJSONBody_GetBodyAfterPartialRead(t *testing.T) {
 	require.NoError(t, err)
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 	rc, err := body.NewReader()
 =======
 	rc, err := getBody()
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	rc, err := body.NewReader()
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	require.NoError(t, err)
 	replay, err := io.ReadAll(rc)
 	require.NoError(t, err)
@@ -82,10 +102,14 @@ func TestNewOutboundJSONBody_GetBodyAfterPartialRead(t *testing.T) {
 	// handler owns the storage lifetime via the returned closer.
 	require.NoError(t, rc.Close())
 <<<<<<< HEAD
+<<<<<<< HEAD
 	rc2, err := body.NewReader()
 =======
 	rc2, err := getBody()
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	rc2, err := body.NewReader()
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	require.NoError(t, err)
 	replay2, err := io.ReadAll(rc2)
 	require.NoError(t, err)
@@ -98,10 +122,14 @@ func TestNewOutboundJSONBody_GetBodyAfterPartialRead(t *testing.T) {
 // new copy of the body: interleaved reads across two replay readers and the
 // primary body each observe exactly their own byte stream.
 <<<<<<< HEAD
+<<<<<<< HEAD
 func assertIndependentReplayReaders(t *testing.T, payload []byte, body common.ReplayableBody) {
 =======
 func assertIndependentReplayReaders(t *testing.T, payload []byte, body io.Reader, getBody func() (io.ReadCloser, error)) {
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+func assertIndependentReplayReaders(t *testing.T, payload []byte, body common.ReplayableBody) {
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	t.Helper()
 
 	half := len(payload) / 2
@@ -116,6 +144,7 @@ func assertIndependentReplayReaders(t *testing.T, payload []byte, body io.Reader
 	// Interleave two replay readers: A reads half, B reads everything, then A
 	// reads the rest.
 <<<<<<< HEAD
+<<<<<<< HEAD
 	a, err := body.NewReader()
 	require.NoError(t, err)
 	b, err := body.NewReader()
@@ -124,6 +153,11 @@ func assertIndependentReplayReaders(t *testing.T, payload []byte, body io.Reader
 	require.NoError(t, err)
 	b, err := getBody()
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	a, err := body.NewReader()
+	require.NoError(t, err)
+	b, err := body.NewReader()
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	require.NoError(t, err)
 
 	aHead := make([]byte, half)
@@ -153,6 +187,7 @@ func TestNewOutboundJSONBody_GetBodyReadersAreIndependent(t *testing.T) {
 	payload := []byte(`{"model":"test-model","input":"abcdefghijklmnopqrstuvwxyz"}`)
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 	body, closer, err := NewOutboundJSONBody(payload)
 	require.NoError(t, err)
 	defer closer.Close()
@@ -165,15 +200,26 @@ func TestNewOutboundJSONBody_GetBodyReadersAreIndependent(t *testing.T) {
 
 	assertIndependentReplayReaders(t, payload, body, getBody)
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	body, closer, err := NewOutboundJSONBody(payload)
+	require.NoError(t, err)
+	defer closer.Close()
+
+	assertIndependentReplayReaders(t, payload, body)
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 
 	// Once the handler releases the storage, GetBody must fail loudly instead
 	// of replaying stale data.
 	require.NoError(t, closer.Close())
 <<<<<<< HEAD
+<<<<<<< HEAD
 	_, err = body.NewReader()
 =======
 	_, err = getBody()
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	_, err = body.NewReader()
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	require.ErrorIs(t, err, common.ErrStorageClosed)
 }
 
@@ -194,10 +240,14 @@ func TestNewOutboundJSONBody_GetBodyReadersAreIndependent_DiskStorage(t *testing
 	payload := []byte(`{"model":"test-model","input":"abcdefghijklmnopqrstuvwxyz"}`)
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 	body, closer, err := NewOutboundJSONBody(payload)
 =======
 	body, _, getBody, closer, err := NewOutboundJSONBody(payload)
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	body, closer, err := NewOutboundJSONBody(payload)
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	require.NoError(t, err)
 	defer closer.Close()
 
@@ -205,6 +255,7 @@ func TestNewOutboundJSONBody_GetBodyReadersAreIndependent_DiskStorage(t *testing
 	require.True(t, ok)
 	assert.True(t, storage.IsDisk(), "the payload must have taken the diskStorage path")
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 	assertIndependentReplayReaders(t, payload, body)
 
@@ -216,5 +267,11 @@ func TestNewOutboundJSONBody_GetBodyReadersAreIndependent_DiskStorage(t *testing
 	require.NoError(t, closer.Close())
 	_, err = getBody()
 >>>>>>> fix(relay): set Request.GetBody so the HTTP/2 transport can transparently retry after an upstream stream reset (#6249)
+=======
+	assertIndependentReplayReaders(t, payload, body)
+
+	require.NoError(t, closer.Close())
+	_, err = body.NewReader()
+>>>>>>> refactor(relay): move replay metadata onto request bodies
 	require.ErrorIs(t, err, common.ErrStorageClosed)
 }
