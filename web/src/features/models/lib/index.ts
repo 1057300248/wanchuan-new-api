@@ -22,6 +22,9 @@ export * from './query-keys'
 // Utilities
 export * from './model-utils'
 
+// Catalog metadata helpers
+export * from './model-metadata'
+
 // Form schemas and transformers
 export * from './model-form'
 

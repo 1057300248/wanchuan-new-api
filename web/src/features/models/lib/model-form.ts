@@ -19,6 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 import { z } from 'zod'
 
 import type { Model } from '../types'
+import {
+  isValidPositiveInt,
+  parseBonusEligible,
+  parseMetadataArray,
+  parsePositiveInt,
+  serializeBonusEligible,
+  serializeMetadataArray,
+} from './model-metadata'
 import { parseModelTags as parseTagsFromUtils } from './model-utils'
 
 // ============================================================================
@@ -41,6 +49,25 @@ export const modelFormSchema = z.object({
   sync_official: z.boolean().default(true),
   enable_groups: z.array(z.string()).default([]),
   quota_types: z.array(z.number()).default([]),
+  context_length: z
+    .string()
+    .default('')
+    .refine(isValidPositiveInt, {
+      message: 'Must be a positive integer or empty',
+    }),
+  max_output_tokens: z
+    .string()
+    .default('')
+    .refine(isValidPositiveInt, {
+      message: 'Must be a positive integer or empty',
+    }),
+  knowledge_cutoff: z.string().default(''),
+  release_date: z.string().default(''),
+  parameter_count: z.string().default(''),
+  input_modalities: z.array(z.string()).default([]),
+  output_modalities: z.array(z.string()).default([]),
+  capabilities: z.array(z.string()).default([]),
+  bonus_eligible: z.enum(['unset', 'eligible', 'ineligible']).default('unset'),
 })
 
 export type ModelFormValues = z.infer<typeof modelFormSchema>
@@ -83,6 +110,21 @@ export function transformModelToFormDefaults(model: Model): ModelFormValues {
     sync_official: model.sync_official === 1,
     enable_groups: model.enable_groups || [],
     quota_types: model.quota_types || [],
+    context_length:
+      model.context_length != null && model.context_length > 0
+        ? String(model.context_length)
+        : '',
+    max_output_tokens:
+      model.max_output_tokens != null && model.max_output_tokens > 0
+        ? String(model.max_output_tokens)
+        : '',
+    knowledge_cutoff: model.knowledge_cutoff || '',
+    release_date: model.release_date || '',
+    parameter_count: model.parameter_count || '',
+    input_modalities: parseMetadataArray(model.input_modalities),
+    output_modalities: parseMetadataArray(model.output_modalities),
+    capabilities: parseMetadataArray(model.capabilities),
+    bonus_eligible: parseBonusEligible(model.bonus_eligible),
   }
 }
 
@@ -105,6 +147,15 @@ export function transformFormDataToModelPayload(
     sync_official: formData.sync_official ? 1 : 0,
     enable_groups: formData.enable_groups,
     quota_types: formData.quota_types,
+    context_length: parsePositiveInt(formData.context_length),
+    max_output_tokens: parsePositiveInt(formData.max_output_tokens),
+    knowledge_cutoff: formData.knowledge_cutoff || '',
+    release_date: formData.release_date || '',
+    parameter_count: formData.parameter_count || '',
+    input_modalities: serializeMetadataArray(formData.input_modalities),
+    output_modalities: serializeMetadataArray(formData.output_modalities),
+    capabilities: serializeMetadataArray(formData.capabilities),
+    bonus_eligible: serializeBonusEligible(formData.bonus_eligible),
   }
 }
 

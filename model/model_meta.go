@@ -35,6 +35,19 @@ type Model struct {
 	UpdatedTime  int64          `json:"updated_time" gorm:"bigint"`
 	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index;uniqueIndex:uk_model_name_delete_at,priority:2"`
 
+	// 模型元数据（目录字段，未知值保持 NULL/空，不由模型名推断）。
+	// 数组字段以 JSON 数组字符串形式存储（与 endpoints 一致），读取侧负责解析与降级。
+	ContextLength    *int   `json:"context_length,omitempty" gorm:"bigint"`
+	MaxOutputTokens  *int   `json:"max_output_tokens,omitempty" gorm:"bigint"`
+	KnowledgeCutoff  string `json:"knowledge_cutoff,omitempty" gorm:"type:varchar(64)"`
+	ReleaseDate      string `json:"release_date,omitempty" gorm:"type:varchar(64)"`
+	ParameterCount   string `json:"parameter_count,omitempty" gorm:"type:varchar(64)"`
+	InputModalities  string `json:"input_modalities,omitempty" gorm:"type:text"`
+	OutputModalities string `json:"output_modalities,omitempty" gorm:"type:text"`
+	Capabilities     string `json:"capabilities,omitempty" gorm:"type:text"`
+	// BonusEligible 三态：nil=尚未配置，false=不可用，true=可用。不使用 GORM default 标签。
+	BonusEligible *bool `json:"bonus_eligible,omitempty"`
+
 	BoundChannels []BoundChannel `json:"bound_channels,omitempty" gorm:"-"`
 	EnableGroups  []string       `json:"enable_groups,omitempty" gorm:"-"`
 	QuotaTypes    []int          `json:"quota_types,omitempty" gorm:"-"`
@@ -78,8 +91,27 @@ func (mi *Model) Update() error {
 	mi.UpdatedTime = common.GetTimestamp()
 	// 使用 Select 强制更新所有字段，包括零值
 	return DB.Model(&Model{}).Where("id = ?", mi.Id).
-		Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "status", "sync_official", "name_rule", "updated_time").
+		Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "status", "sync_official", "name_rule", "updated_time",
+			"context_length", "max_output_tokens", "knowledge_cutoff", "release_date", "parameter_count",
+			"input_modalities", "output_modalities", "capabilities", "bonus_eligible").
 		Updates(mi).Error
+}
+
+// ParseModelMetadataArray 将 models 表中的 JSON 数组字符串解析为字符串切片。
+// 空值、null 或无效存量值安全降级为空数组，保证 /api/pricing 始终输出 JSON 数组。
+func ParseModelMetadataArray(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return []string{}
+	}
+	var items []string
+	if err := common.Unmarshal([]byte(raw), &items); err != nil {
+		return []string{}
+	}
+	if items == nil {
+		return []string{}
+	}
+	return items
 }
 
 func (mi *Model) Delete() error {

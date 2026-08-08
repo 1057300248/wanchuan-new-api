@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
-import { type ColumnDef, type RowSelectionState } from '@tanstack/react-table'
+import type { ColumnDef, RowSelectionState } from '@tanstack/react-table'
 import {
   Search,
   Info,
@@ -65,6 +65,15 @@ const FIELD_LABELS: Record<string, string> = {
   endpoints: 'Endpoints',
   quota_types: 'Quota Types',
   enable_groups: 'Enable Groups',
+  context_length: 'Context Length',
+  max_output_tokens: 'Max Output Tokens',
+  knowledge_cutoff: 'Knowledge Cutoff',
+  release_date: 'Release Date',
+  parameter_count: 'Parameter Count',
+  input_modalities: 'Input Modalities',
+  output_modalities: 'Output Modalities',
+  capabilities: 'Capabilities',
+  bonus_eligible: 'Bonus Eligible',
 }
 
 const PAGE_SIZE_OPTIONS = [5, 10, 20, 50] as const
@@ -140,12 +149,12 @@ export function UpstreamConflictDialog({
         id: `${conflict.model_name}-${field.field}`,
         modelName: conflict.model_name,
         fieldKey: field.field,
-        fieldLabel: FIELD_LABELS[field.field] || field.field,
+        fieldLabel: t(FIELD_LABELS[field.field] || field.field),
         localValue: field.local,
         upstreamValue: field.upstream,
       }))
     })
-  }, [upstreamConflicts])
+  }, [upstreamConflicts, t])
 
   const totalModels = upstreamConflicts.length
   const totalFields = conflictRows.length
@@ -396,7 +405,7 @@ export function UpstreamConflictDialog({
     const payload: SyncOverwritePayload[] = Object.entries(groupedSelections)
       .map(([modelName, fields]) => ({
         model_name: modelName,
-        fields: Array.from(fields),
+        fields: [...fields],
       }))
       .filter((item) => item.fields.length > 0)
 

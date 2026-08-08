@@ -90,13 +90,20 @@ func PlaygroundBootstrap(c *gin.Context) {
 	}
 
 	groups := service.GetUserUsableGroups(userCache.Group)
+	// 复用定价目录投影：仅返回已通过状态、计费可用性与能力投影的模型，
+	// 再与各分组的可路由模型求交集，避免引入定价目录外的模型。
+	pricing := model.GetPricing()
+	pricingSet := make(map[string]struct{}, len(pricing))
+	for _, p := range pricing {
+		pricingSet[p.ModelName] = struct{}{}
+	}
+
 	groupInfos := make([]playgroundGroupInfo, 0, len(groups))
 	modelsByGroup := make(map[string][]string, len(groups))
 	modelSet := make(map[string]struct{})
 	for name, desc := range groups {
 		groupInfos = append(groupInfos, playgroundGroupInfo{Name: name, Desc: desc, Ratio: service.GetUserGroupRatio(userCache.Group, name)})
-		groupModels := model.GetGroupEnabledModels(name)
-		sort.Strings(groupModels)
+		groupModels := playgroundModelsForGroup(name, pricingSet)
 		modelsByGroup[name] = groupModels
 		for _, modelName := range groupModels {
 			modelSet[modelName] = struct{}{}
@@ -117,4 +124,24 @@ func PlaygroundBootstrap(c *gin.Context) {
 		"currency_exchange_rate": operation_setting.GetUsdToCurrencyRate(operation_setting.USDExchangeRate),
 		"groups":                 groupInfos, "models": models, "models_by_group": modelsByGroup,
 	})
+}
+
+// playgroundModelsForGroup 返回分组内「已启用、可路由且存在于定价目录」的模型。
+// 结果排序并去重，且只包含当前可用分组的能力，不泄露其他分组的模型。
+func playgroundModelsForGroup(group string, pricingSet map[string]struct{}) []string {
+	raw := model.GetGroupEnabledModels(group)
+	seen := make(map[string]struct{}, len(raw))
+	result := make([]string, 0, len(raw))
+	for _, name := range raw {
+		if _, ok := pricingSet[name]; !ok {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		result = append(result, name)
+	}
+	sort.Strings(result)
+	return result
 }
