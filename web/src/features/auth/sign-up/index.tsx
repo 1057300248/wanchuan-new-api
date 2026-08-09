@@ -25,9 +25,20 @@ import { AuthLayout } from '../auth-layout'
 import { TermsFooter } from '../components/terms-footer'
 import { SignUpForm } from './components/sign-up-form'
 
+function formatSignupBonus(status: ReturnType<typeof useStatus>['status']) {
+  const enabled =
+    status?.signup_bonus_enabled ?? status?.data?.signup_bonus_enabled ?? false
+  const quota = status?.signup_bonus_quota ?? status?.data?.signup_bonus_quota ?? 0
+  const quotaPerUnit = status?.quota_per_unit ?? status?.data?.quota_per_unit ?? 0
+  if (!enabled || quota <= 0 || quotaPerUnit <= 0) return null
+  const dollars = quota / quotaPerUnit
+  return dollars.toLocaleString(undefined, { maximumFractionDigits: 2 })
+}
+
 export function SignUp() {
   const { t } = useTranslation()
   const { status } = useStatus()
+  const signupBonus = formatSignupBonus(status)
 
   return (
     <AuthLayout>
@@ -46,6 +57,18 @@ export function SignUp() {
             </Link>
             .
           </p>
+          {signupBonus ? (
+            <div className='border-primary/25 bg-primary/5 text-foreground rounded-lg border px-3 py-2 text-sm'>
+              {t('Sign up now and receive {{amount}} in bonus credit', {
+                amount: `$${signupBonus}`,
+              })}
+              <span className='text-muted-foreground ml-1'>
+                {t(
+                  'Bonus credit is available only for eligible models; validity and restrictions are subject to platform rules.'
+                )}
+              </span>
+            </div>
+          ) : null}
         </div>
 
         <SignUpForm />

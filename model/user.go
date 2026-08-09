@@ -621,7 +621,7 @@ func (user *User) Insert(inviterId int) error {
 			if err := user.prepareForInsert(tx); err != nil {
 				return err
 			}
-			initialQuota := common.QuotaForNewUser
+			initialQuota := signupBonusQuota()
 			// 先以零余额创建用户，再由同一事务内账本入账，避免初始字段与
 			// CreditQuotaTx 各加一次造成注册赠额翻倍。
 			user.QuotaPaid = 0
@@ -640,13 +640,13 @@ func (user *User) Insert(inviterId int) error {
 			if err := tx.Create(user).Error; err != nil {
 				return err
 			}
-			// 新用户赠额写入账本（同一事务；幂等键 = user id）
+			// 注册赠金写入账本（同一事务、幂等键 = user id；P1-1 进入 bonus 账户）
 			if initialQuota > 0 {
-				result, err := recordNewUserGiftTx(tx, user, initialQuota)
+				result, err := recordSignupBonusTx(tx, user, initialQuota)
 				if err != nil {
 					return err
 				}
-				user.QuotaPaid = result.TotalAfter
+				user.QuotaBonus = result.TotalAfter
 				user.Quota = result.TotalAfter
 			}
 			return nil
@@ -675,14 +675,15 @@ func (user *User) finishInsert(inviterId int) {
 		}
 	}
 
-	if common.QuotaForNewUser > 0 {
-		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
+	if bonusQuota := signupBonusQuota(); bonusQuota > 0 {
+		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠金 %s", logger.LogQuota(bonusQuota)))
 	}
-	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
+	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() && common.SignupBonusEnabled {
 		if common.QuotaForInvitee > 0 {
+			// P1-1：邀请码被邀请人赠额进入 bonus 账户，不进 paid。
 			_, _ = CreditQuota(LedgerEntry{
 				UserId:        user.Id,
-				Account:       AccountPaid,
+				Account:       AccountBonus,
 				Delta:         common.QuotaForInvitee,
 				Reason:        LedgerReasonInviteeBonus,
 				ReferenceType: "user_invitee",
@@ -710,7 +711,7 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 		if err := user.prepareForInsert(tx); err != nil {
 			return err
 		}
-		initialQuota := common.QuotaForNewUser
+		initialQuota := signupBonusQuota()
 		user.QuotaPaid = 0
 		user.QuotaBonus = 0
 		user.QuotaAffiliate = 0
@@ -726,26 +727,35 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 		if err := tx.Create(user).Error; err != nil {
 			return err
 		}
-		// 新用户赠额写入账本（同一事务；幂等键 = user id）
+		// 注册赠金写入账本（同一事务、幂等键 = user id；P1-1 进入 bonus 账户）
 		if initialQuota > 0 {
-			result, err := recordNewUserGiftTx(tx, user, initialQuota)
+			result, err := recordSignupBonusTx(tx, user, initialQuota)
 			if err != nil {
 				return err
 			}
-			user.QuotaPaid = result.TotalAfter
+			user.QuotaBonus = result.TotalAfter
 			user.Quota = result.TotalAfter
 		}
 		return nil
 	})
 }
 
-// recordNewUserGiftTx 在同一事务内为新用户赠额写入账本。
-func recordNewUserGiftTx(tx *gorm.DB, user *User, amount int) (*LedgerResult, error) {
+// signupBonusQuota 返回注册赠金额度（quota units）。功能开关关闭时返回 0，
+// 不发放任何注册奖励。安全默认：SignupBonusEnabled=false、额度 0。
+func signupBonusQuota() int {
+	if !common.SignupBonusEnabled {
+		return 0
+	}
+	return common.QuotaForSignupBonus
+}
+
+// recordSignupBonusTx 在同一事务内为新用户注册赠金写入账本（bonus 账户）。
+func recordSignupBonusTx(tx *gorm.DB, user *User, amount int) (*LedgerResult, error) {
 	return CreditQuotaTx(tx, LedgerEntry{
 		UserId:        user.Id,
-		Account:       AccountPaid,
+		Account:       AccountBonus,
 		Delta:         amount,
-		Reason:        LedgerReasonNewUserGift,
+		Reason:        LedgerReasonSignupBonus,
 		ReferenceType: "user",
 		ReferenceId:   strconv.Itoa(user.Id),
 	})
@@ -767,14 +777,15 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 		}
 	}
 
-	if common.QuotaForNewUser > 0 {
-		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
+	if bonusQuota := signupBonusQuota(); bonusQuota > 0 {
+		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠金 %s", logger.LogQuota(bonusQuota)))
 	}
-	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
+	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() && common.SignupBonusEnabled {
 		if common.QuotaForInvitee > 0 {
+			// P1-1：邀请码被邀请人赠额进入 bonus 账户，不进 paid。
 			_, _ = CreditQuota(LedgerEntry{
 				UserId:        user.Id,
-				Account:       AccountPaid,
+				Account:       AccountBonus,
 				Delta:         common.QuotaForInvitee,
 				Reason:        LedgerReasonInviteeBonus,
 				ReferenceType: "user_invitee",

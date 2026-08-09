@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -414,20 +415,89 @@ func TestIdempotencySignatureCoversOverrideTransferAndDebitOrder(t *testing.T) {
 
 func TestInsertWithTxNewUserGiftCreditsExactlyOnce(t *testing.T) {
 	setupLedgerTestState(t)
-	previousQuota := common.QuotaForNewUser
-	common.QuotaForNewUser = 1234
-	t.Cleanup(func() { common.QuotaForNewUser = previousQuota })
+	previousEnabled := common.SignupBonusEnabled
+	previousQuota := common.QuotaForSignupBonus
+	common.SignupBonusEnabled = true
+	common.QuotaForSignupBonus = 1234
+	t.Cleanup(func() {
+		common.SignupBonusEnabled = previousEnabled
+		common.QuotaForSignupBonus = previousQuota
+	})
 
 	user := &User{Username: "ledger-new-user", Password: "password", Status: common.UserStatusEnabled}
 	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
 		return user.InsertWithTx(tx, 0)
 	}))
 
+	// P1-1：注册赠金进入 bonus 账户，reason 为 signup_bonus，不进入 paid。
 	created := getUserBalances(t, user.Id)
-	assert.Equal(t, 1234, created.QuotaPaid)
+	assert.Zero(t, created.QuotaPaid)
+	assert.Equal(t, 1234, created.QuotaBonus)
 	assert.Equal(t, 1234, created.Quota)
 	assertQuotaInvariant(t, created)
 	assert.Equal(t, int64(1), countLedgerRows(t, fmt.Sprintf("credit:user:%d", user.Id)))
+	var rows []BalanceLedger
+	require.NoError(t, DB.Where("user_id = ?", user.Id).Find(&rows).Error)
+	require.Len(t, rows, 1)
+	assert.Equal(t, LedgerReasonSignupBonus, rows[0].Reason)
+	assert.Equal(t, string(AccountBonus), rows[0].Account)
+}
+
+func TestInsertSignupBonusDisabledGrantsNothing(t *testing.T) {
+	setupLedgerTestState(t)
+	previousEnabled := common.SignupBonusEnabled
+	previousQuota := common.QuotaForSignupBonus
+	common.SignupBonusEnabled = false
+	common.QuotaForSignupBonus = 1234
+	t.Cleanup(func() {
+		common.SignupBonusEnabled = previousEnabled
+		common.QuotaForSignupBonus = previousQuota
+	})
+
+	user := &User{Username: "ledger-new-user-disabled", Password: "password", Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+
+	// 功能开关关闭：不发放任何注册赠金。
+	created := getUserBalances(t, user.Id)
+	assert.Zero(t, created.QuotaPaid)
+	assert.Zero(t, created.QuotaBonus)
+	assert.Zero(t, created.Quota)
+	assertQuotaInvariant(t, created)
+	var count int64
+	require.NoError(t, DB.Model(&BalanceLedger{}).Where("user_id = ?", user.Id).Count(&count).Error)
+	assert.Zero(t, count)
+}
+
+// TestInsertWithTxOAuthRollbackLeavesNoUserAndNoLedger 覆盖 OAuth 注册路径：
+// 用户创建与赠金在同一事务内，外层事务回滚时用户与账本流水一并消失，
+// 不会出现“用户不存在但赠金已发放”的半状态。
+func TestInsertWithTxOAuthRollbackLeavesNoUserAndNoLedger(t *testing.T) {
+	setupLedgerTestState(t)
+	previousEnabled := common.SignupBonusEnabled
+	previousQuota := common.QuotaForSignupBonus
+	common.SignupBonusEnabled = true
+	common.QuotaForSignupBonus = 888
+	t.Cleanup(func() {
+		common.SignupBonusEnabled = previousEnabled
+		common.QuotaForSignupBonus = previousQuota
+	})
+
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		user := &User{Username: "oauth-rollback-user", Password: "password", Status: common.UserStatusEnabled}
+		if err := user.InsertWithTx(tx, 0); err != nil {
+			return err
+		}
+		// 模拟 OAuth 绑定等后续步骤失败 → 整体回滚
+		return errors.New("oauth binding failed")
+	})
+	require.Error(t, err)
+
+	var userCount int64
+	require.NoError(t, DB.Model(&User{}).Where("username = ?", "oauth-rollback-user").Count(&userCount).Error)
+	assert.Zero(t, userCount, "回滚后用户不应存在")
+	var ledgerCount int64
+	require.NoError(t, DB.Model(&BalanceLedger{}).Count(&ledgerCount).Error)
+	assert.Zero(t, ledgerCount, "回滚后不应残留账本流水")
 }
 
 func TestPurchaseSubscriptionWithBalanceDebitsRequiredQuota(t *testing.T) {

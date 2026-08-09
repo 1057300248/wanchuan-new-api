@@ -113,6 +113,17 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/aff_transfer", controller.TransferAffQuota)
 				selfRoute.PUT("/setting", controller.UpdateUserSetting)
 
+				// TokenMix P1-2：钱包分账与账本
+				selfRoute.GET("/wallet", controller.GetWalletSummary)
+				selfRoute.GET("/wallet/ledger", controller.GetWalletLedger)
+
+				// TokenMix P1-3：推荐返利与提现
+				selfRoute.GET("/referral/overview", controller.GetReferralOverview)
+				selfRoute.GET("/referral/rewards", controller.GetReferralRewards)
+				selfRoute.POST("/referral/mature", controller.PostMatureReferralRewards)
+				selfRoute.GET("/referral/withdrawals", controller.GetReferralWithdrawals)
+				selfRoute.POST("/referral/withdrawals", middleware.CriticalRateLimit(), controller.PostReferralWithdrawal)
+
 				// 2FA routes
 				selfRoute.GET("/2fa/status", controller.Get2FAStatus)
 				selfRoute.POST("/2fa/setup", middleware.DisableCache(), controller.Setup2FA)
@@ -149,6 +160,12 @@ func SetApiRouter(router *gin.Engine) {
 				// Admin 2FA routes
 				adminRoute.GET("/2fa/stats", controller.Admin2FAStats)
 				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
+
+				// TokenMix P1-3：提现审核（人工审核账本流程）
+				adminRoute.GET("/referral/admin/withdrawals", controller.AdminListWithdrawals)
+				adminRoute.POST("/referral/admin/withdrawals/:id/approve", controller.AdminApproveWithdrawal)
+				adminRoute.POST("/referral/admin/withdrawals/:id/reject", controller.AdminRejectWithdrawal)
+				adminRoute.POST("/referral/admin/withdrawals/:id/pay", controller.AdminPayWithdrawal)
 			}
 		}
 

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -34,25 +35,29 @@ const (
 
 // 账本 reason 常量。写入 balance_ledger.reason，用于审计与对账。
 const (
-	LedgerReasonTopup                = "topup"                 // 在线充值（Stripe/Creem/Waffo/Waffo Pancake/易支付）
-	LedgerReasonAdminTopup           = "admin_topup"           // 管理员补单
-	LedgerReasonRedemption           = "redemption"            // 兑换码
-	LedgerReasonCheckin              = "checkin"               // 签到
-	LedgerReasonInviteeBonus         = "invitee_bonus"         // 邀请码被使用，被邀请人赠额
-	LedgerReasonAffQuotaTransfer     = "aff_quota_transfer"    // 邀请额度转入钱包
-	LedgerReasonAdminAdd             = "admin_add"             // 管理员加额
-	LedgerReasonAdminSubtract        = "admin_subtract"        // 管理员减额
-	LedgerReasonAdminOverride        = "admin_override"        // 管理员覆盖余额
-	LedgerReasonSubscriptionPurchase = "subscription_purchase" // 余额购买订阅
-	LedgerReasonBillingPreConsume    = "billing_pre_consume"   // 计费预扣
-	LedgerReasonBillingReserve       = "billing_reserve"       // 计费补充预扣
-	LedgerReasonBillingSettle        = "billing_settle"        // 计费结算差额
-	LedgerReasonBillingRefund        = "billing_refund"        // 计费退款
-	LedgerReasonTaskSettle           = "task_settle"           // 异步任务差额结算
-	LedgerReasonTaskRefund           = "task_refund"           // 异步任务失败退款
-	LedgerReasonNewUserGift          = "new_user_gift"         // 新用户注册赠额
-	LedgerReasonLegacyBackfill       = "legacy_backfill"       // 旧 quota 向 paid 账户迁移（不改变总余额）
-	LedgerReasonSystem               = "system"                // 系统内部调整
+	LedgerReasonTopup                  = "topup"                    // 在线充值（Stripe/Creem/Waffo/Waffo Pancake/易支付）
+	LedgerReasonAdminTopup             = "admin_topup"              // 管理员补单
+	LedgerReasonRedemption             = "redemption"               // 兑换码
+	LedgerReasonCheckin                = "checkin"                  // 签到
+	LedgerReasonInviteeBonus           = "invitee_bonus"            // 邀请码被使用，被邀请人赠额
+	LedgerReasonAffQuotaTransfer       = "aff_quota_transfer"       // 邀请额度转入钱包
+	LedgerReasonAdminAdd               = "admin_add"                // 管理员加额
+	LedgerReasonAdminSubtract          = "admin_subtract"           // 管理员减额
+	LedgerReasonAdminOverride          = "admin_override"           // 管理员覆盖余额
+	LedgerReasonSubscriptionPurchase   = "subscription_purchase"    // 余额购买订阅
+	LedgerReasonBillingPreConsume      = "billing_pre_consume"      // 计费预扣
+	LedgerReasonBillingReserve         = "billing_reserve"          // 计费补充预扣
+	LedgerReasonBillingSettle          = "billing_settle"           // 计费结算差额
+	LedgerReasonBillingRefund          = "billing_refund"           // 计费退款
+	LedgerReasonTaskSettle             = "task_settle"              // 异步任务差额结算
+	LedgerReasonTaskRefund             = "task_refund"              // 异步任务失败退款
+	LedgerReasonNewUserGift            = "new_user_gift"            // 新用户注册赠额（旧 reason，兼容历史数据）
+	LedgerReasonSignupBonus            = "signup_bonus"             // 新用户注册赠金（P1-1，进入 bonus 账户）
+	LedgerReasonAffiliateReward        = "affiliate_reward"         // 推荐返利成熟入账（进入 affiliate 账户）
+	LedgerReasonWithdrawalHold         = "withdrawal_hold"          // 提现申请冻结 affiliate 余额
+	LedgerReasonWithdrawalRejectRefund = "withdrawal_reject_refund" // 提现拒绝退回 affiliate 余额
+	LedgerReasonLegacyBackfill         = "legacy_backfill"          // 旧 quota 向 paid 账户迁移（不改变总余额）
+	LedgerReasonSystem                 = "system"                   // 系统内部调整
 )
 
 var (
@@ -933,4 +938,129 @@ func ReconcileQuotaAccounts() (int64, error) {
 		fixed += res.RowsAffected
 	}
 	return fixed, nil
+}
+
+// ---------------------------------------------------------------------------
+// 账本查询（P1-2 钱包分账 API 与返利对账）
+// ---------------------------------------------------------------------------
+
+// LedgerQueryFilter 用户账本分页查询过滤条件。Account 仅接受已注册账户标识，
+// Reason 与时间范围可选；查询强制限定 UserId，防止越权读取他人账本。
+type LedgerQueryFilter struct {
+	UserId    int
+	Account   string
+	Reason    string
+	StartTime int64
+	EndTime   int64
+	Page      int
+	PageSize  int
+}
+
+// LedgerPage 账本分页结果。
+type LedgerPage struct {
+	Rows  []BalanceLedger
+	Total int64
+}
+
+// QueryUserLedger 分页查询指定用户的 balance_ledger 明细，按创建时间倒序。
+// 返回的 Rows 中 BalanceBefore/BalanceAfter 为该账户的变动前后余额，
+// TotalBefore/TotalAfter 为三账户合计镜像，Delta 为本次变动量。
+func QueryUserLedger(filter LedgerQueryFilter) (*LedgerPage, error) {
+	if filter.UserId <= 0 {
+		return nil, fmt.Errorf("%w: missing user id", ErrLedgerInvalidEntry)
+	}
+	base := DB.Model(&BalanceLedger{}).Where("user_id = ?", filter.UserId)
+	if filter.Account != "" {
+		if !validAccount(LedgerAccount(filter.Account)) {
+			return nil, fmt.Errorf("%w: unknown account %q", ErrLedgerInvalidEntry, filter.Account)
+		}
+		base = base.Where("account = ?", filter.Account)
+	}
+	if filter.Reason != "" {
+		base = base.Where("reason = ?", filter.Reason)
+	}
+	if filter.StartTime > 0 {
+		base = base.Where("created_at >= ?", filter.StartTime)
+	}
+	if filter.EndTime > 0 {
+		base = base.Where("created_at <= ?", filter.EndTime)
+	}
+	var total int64
+	if err := base.Count(&total).Error; err != nil {
+		return nil, err
+	}
+	page, pageSize := normalizeLedgerPagination(filter.Page, filter.PageSize)
+	var rows []BalanceLedger
+	if err := base.Order("created_at desc, id desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return &LedgerPage{Rows: rows, Total: total}, nil
+}
+
+func normalizeLedgerPagination(page, pageSize int) (int, int) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+	return page, pageSize
+}
+
+// AccountNetCost 单次请求/任务在各钱包账户的原始账本净变动（带符号：
+// 负数=净扣减，正数=净入账）。从 balance_ledger 汇总同一引用
+// （reference_type + reference_id）的全部流水，天然包含预扣、追扣、结算与
+// 退款，退款后即反映最终净份额。调用方按需要取反得到净消费。
+func AccountNetCost(userId int, referenceType, referenceId string) (map[LedgerAccount]int, error) {
+	result := make(map[LedgerAccount]int)
+	if userId <= 0 || referenceType == "" || referenceId == "" {
+		return result, nil
+	}
+	type accountSum struct {
+		Account string
+		Delta   int64
+	}
+	var sums []accountSum
+	err := DB.Model(&BalanceLedger{}).
+		Select("account, SUM(delta) AS delta").
+		Where("user_id = ? AND reference_type = ? AND reference_id = ?", userId, referenceType, referenceId).
+		Group("account").
+		Scan(&sums).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, sum := range sums {
+		account := LedgerAccount(sum.Account)
+		if !validAccount(account) {
+			continue
+		}
+		delta := sum.Delta
+		if delta > int64(math.MaxInt32) {
+			delta = int64(math.MaxInt32)
+		}
+		if delta < int64(math.MinInt32) {
+			delta = int64(math.MinInt32)
+		}
+		result[account] = int(delta)
+	}
+	return result, nil
+}
+
+// NetCostByReferences 汇总多个引用的账户净消费（同一请求可能跨引用记账，
+// 例如异步任务预扣在 relay 引用、结算在 task 引用）。
+func NetCostByReferences(userId int, refs [][2]string) (map[LedgerAccount]int, error) {
+	result := make(map[LedgerAccount]int)
+	for _, ref := range refs {
+		cost, err := AccountNetCost(userId, ref[0], ref[1])
+		if err != nil {
+			return nil, err
+		}
+		for account, delta := range cost {
+			result[account] += delta
+		}
+	}
+	return result, nil
 }

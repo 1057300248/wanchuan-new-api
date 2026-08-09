@@ -52,6 +52,11 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 		other["upstream_model_name"] = info.UpstreamModelName
 	}
 	attachQuotaSaturation(c, info, other)
+	// P1-2：钱包计费任务在提交日志中记录账户净份额（此时反映预扣+提交结算；
+	// 异步差额结算另行记录 task 引用账本与差额日志）。
+	if info.BillingSource == BillingSourceWallet {
+		FillWalletCostLogInfo(other, info.UserId, RelayWalletCostRefs(info))
+	}
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
 		ModelName: info.OriginModelName,

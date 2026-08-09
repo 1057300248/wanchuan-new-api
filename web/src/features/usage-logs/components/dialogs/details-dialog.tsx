@@ -1196,6 +1196,34 @@ export function DetailsDialog(props: DetailsDialogProps) {
           </DetailSection>
         )}
 
+        {/* Wallet billing details (TokenMix P1-2: actual account split) */}
+        {!isSubscription && other?.wallet_cost && (
+          <DetailSection label={t('Wallet Billing')}>
+            {(other.wallet_cost.paid ?? 0) > 0 && (
+              <DetailRow
+                label={t('Paid Cost')}
+                value={formatLogQuota(other.wallet_cost.paid ?? 0)}
+                mono
+              />
+            )}
+            {(other.wallet_cost.bonus ?? 0) > 0 && (
+              <DetailRow
+                label={t('Bonus Cost')}
+                value={formatLogQuota(other.wallet_cost.bonus ?? 0)}
+                mono
+              />
+            )}
+            {other.wallet_quota_deducted != null &&
+              other.wallet_quota_deducted > 0 && (
+                <DetailRow
+                  label={t('Wallet Quota Deducted')}
+                  value={formatLogQuota(other.wallet_quota_deducted)}
+                  mono
+                />
+              )}
+          </DetailSection>
+        )}
+
         {/* Param override */}
         {other?.po && Array.isArray(other.po) && other.po.length > 0 && (
           <DetailSection
