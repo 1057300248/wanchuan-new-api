@@ -16,11 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type QueryClient } from '@tanstack/react-query'
+import type { QueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 
-import { updateModelStatus, deleteModel as deleteModelAPI } from '../api'
+import {
+  batchUpdateModelBonusEligible,
+  updateModelStatus,
+  deleteModel as deleteModelAPI,
+} from '../api'
 import { modelsQueryKeys } from './query-keys'
 
 // ============================================================================
@@ -268,5 +272,54 @@ export async function handleBatchDisableModels(
     }
   } catch (error: unknown) {
     toast.error((error as Error)?.message || i18next.t('Batch disable failed'))
+  }
+}
+
+// ============================================================================
+// Batch Bonus Eligibility Actions
+// ============================================================================
+
+export async function handleBatchBonusEligibility(
+  ids: number[],
+  bonusEligible: boolean | null,
+  queryClient?: QueryClient,
+  onSuccess?: () => void
+): Promise<void> {
+  if (ids.length === 0) {
+    toast.error(i18next.t('Please select at least one model'))
+    return
+  }
+
+  const requestId =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `bonus-${Date.now()}-${Math.random().toString(36).slice(2)}`
+
+  try {
+    const response = await batchUpdateModelBonusEligible({
+      model_ids: ids,
+      bonus_eligible: bonusEligible,
+      idempotency_key: requestId,
+    })
+    if (!response.success) {
+      toast.error(
+        response.message || i18next.t('Failed to update bonus eligibility')
+      )
+      return
+    }
+
+    const changed = response.data?.changed ?? 0
+    toast.success(
+      i18next.t('Updated bonus eligibility for {{count}} model(s)', {
+        count: changed,
+      })
+    )
+    queryClient?.invalidateQueries({ queryKey: modelsQueryKeys.lists() })
+    onSuccess?.()
+  } catch (error: unknown) {
+    toast.error(
+      (error as Error)?.message ||
+        i18next.t('Failed to update bonus eligibility')
+    )
   }
 }

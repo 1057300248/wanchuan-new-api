@@ -113,6 +113,12 @@ func (BalanceLedger) TableName() string {
 	return "balance_ledger"
 }
 
+// LedgerShare 描述一次多账户入账（退款分账）中单个账户的份额。
+type LedgerShare struct {
+	Account LedgerAccount `json:"account"`
+	Amount  int           `json:"amount"`
+}
+
 // LedgerEntry 描述一次账户资金变动。IdempotencyKey 为空时：
 //   - ReferenceType + ReferenceId 均非空：派生稳定幂等键 `{op}:{refType}:{refId}`；
 //   - 否则生成带调用方语义的随机唯一操作键（无法跨进程重放幂等，见 P0-4 汇总）。
@@ -131,6 +137,7 @@ type LedgerEntry struct {
 	IdempotencyKey string
 	DebitOrder     []LedgerAccount // 仅内部使用：参与 debit 幂等签名
 	TargetAccount  LedgerAccount   // 仅内部使用：参与 transfer 幂等签名
+	CreditShares   []LedgerShare   // 仅内部使用：参与多账户 credit 幂等签名
 }
 
 // SetMetadata 便捷方法：将 map 序列化为 metadata JSON 字符串。
@@ -254,6 +261,90 @@ func CreditQuotaTx(tx *gorm.DB, entry LedgerEntry) (*LedgerResult, error) {
 	return applyLedgerTx(tx, entry, key, ledgerOpCredit, func(tx *gorm.DB, user *User) ([]accountDelta, error) {
 		return []accountDelta{{account: entry.Account, delta: entry.Delta}}, nil
 	})
+}
+
+// CreditQuotaShares 按份额一次性向多个账户入账（自建事务），总入账额 = 各份额之和。
+// 用于结算/退款必须按原始扣款账户精确退回的场景；份额参与幂等签名，
+// 同键不同份额的重复请求会被判定为参数冲突。
+func CreditQuotaShares(entry LedgerEntry, shares []LedgerShare) (*LedgerResult, error) {
+	if err := validateCreditSharesEntry(entry, shares); err != nil {
+		return nil, err
+	}
+	entry.Delta = sharesTotal(shares)
+	entry.CreditShares = append([]LedgerShare(nil), shares...)
+	if entry.Delta == 0 {
+		return &LedgerResult{}, nil
+	}
+	key, err := entry.resolveKey(ledgerOpCredit)
+	if err != nil {
+		return nil, err
+	}
+	result, err := runLedgerTx(entry, key, ledgerOpCredit, func(tx *gorm.DB, user *User) ([]accountDelta, error) {
+		return sharesToDeltas(shares)
+	})
+	if err != nil {
+		return nil, err
+	}
+	RefreshUserQuotaCache(entry.UserId, result.TotalAfter)
+	return result, nil
+}
+
+// CreditQuotaSharesTx 在调用方事务内按份额多账户入账。调用方负责在自身事务提交后刷新缓存。
+func CreditQuotaSharesTx(tx *gorm.DB, entry LedgerEntry, shares []LedgerShare) (*LedgerResult, error) {
+	if err := validateCreditSharesEntry(entry, shares); err != nil {
+		return nil, err
+	}
+	entry.Delta = sharesTotal(shares)
+	entry.CreditShares = append([]LedgerShare(nil), shares...)
+	if entry.Delta == 0 {
+		return &LedgerResult{}, nil
+	}
+	key, err := entry.resolveKey(ledgerOpCredit)
+	if err != nil {
+		return nil, err
+	}
+	return applyLedgerTx(tx, entry, key, ledgerOpCredit, func(tx *gorm.DB, user *User) ([]accountDelta, error) {
+		return sharesToDeltas(shares)
+	})
+}
+
+func validateCreditSharesEntry(entry LedgerEntry, shares []LedgerShare) error {
+	if entry.UserId <= 0 || entry.Reason == "" {
+		return ErrLedgerInvalidEntry
+	}
+	if len(shares) == 0 {
+		return fmt.Errorf("%w: empty credit shares", ErrLedgerInvalidEntry)
+	}
+	seen := make(map[LedgerAccount]struct{}, len(shares))
+	for _, share := range shares {
+		if !validAccount(share.Account) {
+			return fmt.Errorf("%w: unknown share account %q", ErrLedgerInvalidEntry, share.Account)
+		}
+		if _, ok := seen[share.Account]; ok {
+			return fmt.Errorf("%w: duplicate credit share account %q", ErrLedgerInvalidEntry, share.Account)
+		}
+		seen[share.Account] = struct{}{}
+		if share.Amount <= 0 {
+			return fmt.Errorf("%w: non-positive credit share for %q", ErrLedgerInvalidEntry, share.Account)
+		}
+	}
+	return nil
+}
+
+func sharesTotal(shares []LedgerShare) int {
+	total := 0
+	for _, share := range shares {
+		total += share.Amount
+	}
+	return total
+}
+
+func sharesToDeltas(shares []LedgerShare) ([]accountDelta, error) {
+	deltas := make([]accountDelta, 0, len(shares))
+	for _, share := range shares {
+		deltas = append(deltas, accountDelta{account: share.Account, delta: share.Amount})
+	}
+	return deltas, nil
 }
 
 // DebitQuota 钱包扣款（正数），自建事务；成功后刷新 Redis 额度缓存。
@@ -518,14 +609,19 @@ func ledgerOperationSignature(entry LedgerEntry, op ledgerOpKind) string {
 	for _, account := range entry.DebitOrder {
 		order = append(order, string(account))
 	}
+	shares := make([]string, 0, len(entry.CreditShares))
+	for _, share := range entry.CreditShares {
+		shares = append(shares, fmt.Sprintf("%s:%d", share.Account, share.Amount))
+	}
 	payload := fmt.Sprintf(
-		"op=%s|user=%d|account=%s|target=%s|delta=%d|order=%s|reason=%s|ref_type=%s|ref_id=%s|operator=%d",
+		"op=%s|user=%d|account=%s|target=%s|delta=%d|order=%s|shares=%s|reason=%s|ref_type=%s|ref_id=%s|operator=%d",
 		op,
 		entry.UserId,
 		entry.Account,
 		entry.TargetAccount,
 		entry.Delta,
 		strings.Join(order, ","),
+		strings.Join(shares, ","),
 		entry.Reason,
 		entry.ReferenceType,
 		entry.ReferenceId,

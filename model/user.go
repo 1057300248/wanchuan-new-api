@@ -1212,6 +1212,16 @@ func ValidateAccessToken(token string) (*User, error) {
 	return user, nil
 }
 
+// GetUserAccountBalances 返回用户三账户余额（数据库权威值）。
+// 供钱包计费按账户做预扣前校验（赠金资格只影响 bonus/paid 顺序）。
+func GetUserAccountBalances(id int) (paid int, bonus int, affiliate int, err error) {
+	var user User
+	if err := DB.Select("quota_paid", "quota_bonus", "quota_affiliate").Where("id = ?", id).First(&user).Error; err != nil {
+		return 0, 0, 0, err
+	}
+	return user.QuotaPaid, user.QuotaBonus, user.QuotaAffiliate, nil
+}
+
 // GetUserQuota gets quota from Redis first, falls back to DB if needed
 func GetUserQuota(id int, fromDB bool) (quota int, err error) {
 	if !fromDB && common.RedisEnabled {

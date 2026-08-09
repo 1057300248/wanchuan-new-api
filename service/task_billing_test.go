@@ -51,6 +51,9 @@ func TestMain(m *testing.M) {
 		&model.SystemTaskLock{},
 		&model.BalanceLedgerOperation{},
 		&model.BalanceLedger{},
+		&model.Model{},
+		&model.Vendor{},
+		&model.ModelBonusEligibleAudit{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -76,6 +79,10 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM user_subscriptions")
 		model.DB.Exec("DELETE FROM system_task_locks")
 		model.DB.Exec("DELETE FROM system_tasks")
+		model.DB.Exec("DELETE FROM models")
+		model.DB.Exec("DELETE FROM vendors")
+		model.DB.Exec("DELETE FROM model_bonus_eligible_audits")
+		model.InvalidateModelBonusEligibleCache()
 	})
 }
 

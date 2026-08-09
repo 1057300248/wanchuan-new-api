@@ -89,9 +89,11 @@ func taskIsSubscription(task *model.Task) bool {
 // taskAdjustFunding 调整任务的资金来源（钱包或订阅），delta > 0 表示扣费，delta < 0 表示退还。
 // 钱包路径写账本，幂等键 = task id（结算与退款各用独立键）；任务状态 CAS 与
 // task.Quota 回写保证每个任务结算/退款各执行一次。
-func taskAdjustFunding(task *model.Task, delta int) error {
+// 返回（钱包累计扣减份额, error）：delta > 0 时份额会累计入返回值（供任务持久化），
+// 保证后续退款按原账户精确退回；退款方向按已记录的份额分账退回。
+func taskAdjustFunding(task *model.Task, delta int) ([]model.LedgerShare, error) {
 	if taskIsSubscription(task) {
-		return model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
+		return nil, model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
 	}
 	entry := model.LedgerEntry{
 		UserId:        task.UserId,
@@ -104,14 +106,62 @@ func taskAdjustFunding(task *model.Task, delta int) error {
 		entry.Delta = delta
 		entry.Reason = model.LedgerReasonTaskSettle
 		entry.IdempotencyKey = "task:settle:" + task.TaskID
-		_, err := model.DebitQuota(entry, model.AccountPaid)
-		return err
+		result, err := model.DebitQuota(entry, taskDebitOrder(task)...)
+		if err != nil {
+			return nil, err
+		}
+		return appendTaskShares(task.PrivateData.WalletDebit, result), nil
 	}
-	entry.Delta = -delta
+	refund := -delta
+	if shares := SplitRefund(task.PrivateData.WalletDebit, refund); len(shares) > 0 {
+		entry.Reason = model.LedgerReasonTaskRefund
+		entry.IdempotencyKey = "task:refund:" + task.TaskID
+		_, err := model.CreditQuotaShares(entry, shares)
+		return nil, err
+	}
+	entry.Delta = refund
 	entry.Reason = model.LedgerReasonTaskRefund
 	entry.IdempotencyKey = "task:refund:" + task.TaskID
 	_, err := model.CreditQuota(entry)
-	return err
+	return nil, err
+}
+
+// taskDebitOrder 返回任务钱包扣减顺序：依据任务记录的扣减份额（首个账户优先），
+// 无份额记录（旧数据/纯 paid）时按模型赠金资格重新判定。
+func taskDebitOrder(task *model.Task) []model.LedgerAccount {
+	if len(task.PrivateData.WalletDebit) > 0 {
+		order := make([]model.LedgerAccount, 0, len(task.PrivateData.WalletDebit))
+		for _, share := range task.PrivateData.WalletDebit {
+			order = append(order, share.Account)
+		}
+		return order
+	}
+	return WalletDebitOrder(&relaycommon.RelayInfo{OriginModelName: taskModelName(task)})
+}
+
+// appendTaskShares 把一次扣减结果的各账户份额累计进任务份额列表。
+func appendTaskShares(current []model.LedgerShare, result *model.LedgerResult) []model.LedgerShare {
+	if result == nil {
+		return current
+	}
+	index := make(map[model.LedgerAccount]int, len(current))
+	next := append([]model.LedgerShare(nil), current...)
+	for i, share := range next {
+		index[share.Account] = i
+	}
+	for _, row := range result.Rows {
+		if row.Delta >= 0 {
+			continue
+		}
+		account := model.LedgerAccount(row.Account)
+		if i, ok := index[account]; ok {
+			next[i].Amount += -row.Delta
+		} else {
+			index[account] = len(next)
+			next = append(next, model.LedgerShare{Account: account, Amount: -row.Delta})
+		}
+	}
+	return next
 }
 
 // taskAdjustTokenQuota 调整任务的令牌额度，delta > 0 表示扣费，delta < 0 表示退还。
@@ -187,7 +237,7 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 	}
 
 	// 1. 退还资金来源（钱包或订阅）
-	if err := taskAdjustFunding(task, -quota); err != nil {
+	if _, err := taskAdjustFunding(task, -quota); err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("退还资金来源失败 task %s: %s", task.TaskID, err.Error()))
 		return false
 	}
@@ -245,8 +295,9 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		reason,
 	))
 
-	// 调整资金来源
-	if err := taskAdjustFunding(task, quotaDelta); err != nil {
+	// 调整资金来源（返回的累计份额仅供账本一致性核对；任务在 SUCCESS 后
+	// 不再发生退款，无需把结算补扣份额回写任务持久化）
+	if _, err := taskAdjustFunding(task, quotaDelta); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("差额结算资金调整失败 task %s: %s", task.TaskID, err.Error()))
 		return
 	}

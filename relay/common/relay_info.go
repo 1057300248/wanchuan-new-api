@@ -55,6 +55,13 @@ type ResponsesUsageInfo struct {
 	BuiltInTools map[string]*BuildInToolInfo
 }
 
+// WalletDebitShare 描述钱包计费预扣在单个账户的实际扣减（与 model.LedgerShare
+// 同构；relay/common 不依赖 model 包，故独立定义，由 service 层转换）。
+type WalletDebitShare struct {
+	Account string `json:"account"`
+	Amount  int    `json:"amount"`
+}
+
 type ChannelMeta struct {
 	ChannelType          int
 	ChannelId            int
@@ -138,6 +145,10 @@ type RelayInfo struct {
 	SubscriptionPlanTitle string
 	// RequestId is used for idempotent pre-consume/refund
 	RequestId string
+	// WalletDebitShares 记录钱包计费预扣在各账户的实际扣减（旧 PostConsumeQuota
+	// 回退路径专用），供结算退款按原账户精确退回。Account 为账本账户标识
+	// （paid/bonus/affiliate）。
+	WalletDebitShares []WalletDebitShare
 	// SubscriptionAmountTotal / SubscriptionAmountUsedAfterPreConsume are used to compute remaining in logs.
 	SubscriptionAmountTotal               int64
 	SubscriptionAmountUsedAfterPreConsume int64

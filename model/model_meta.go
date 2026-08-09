@@ -72,10 +72,12 @@ func (mi *Model) Insert() error {
 	}
 
 	// 使用保存的原始值进行更新，确保零值能正确保存
-	return DB.Model(&Model{}).Where("id = ?", mi.Id).Updates(map[string]interface{}{
+	err := DB.Model(&Model{}).Where("id = ?", mi.Id).Updates(map[string]interface{}{
 		"status":        originalStatus,
 		"sync_official": originalSyncOfficial,
 	}).Error
+	InvalidateModelBonusEligibleCache()
+	return err
 }
 
 func IsModelNameDuplicated(id int, name string) (bool, error) {
@@ -90,11 +92,13 @@ func IsModelNameDuplicated(id int, name string) (bool, error) {
 func (mi *Model) Update() error {
 	mi.UpdatedTime = common.GetTimestamp()
 	// 使用 Select 强制更新所有字段，包括零值
-	return DB.Model(&Model{}).Where("id = ?", mi.Id).
+	err := DB.Model(&Model{}).Where("id = ?", mi.Id).
 		Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "status", "sync_official", "name_rule", "updated_time",
 			"context_length", "max_output_tokens", "knowledge_cutoff", "release_date", "parameter_count",
 			"input_modalities", "output_modalities", "capabilities", "bonus_eligible").
 		Updates(mi).Error
+	InvalidateModelBonusEligibleCache()
+	return err
 }
 
 // ParseModelMetadataArray 将 models 表中的 JSON 数组字符串解析为字符串切片。
@@ -115,7 +119,9 @@ func ParseModelMetadataArray(raw string) []string {
 }
 
 func (mi *Model) Delete() error {
-	return DB.Delete(mi).Error
+	err := DB.Delete(mi).Error
+	InvalidateModelBonusEligibleCache()
+	return err
 }
 
 func GetVendorModelCounts() (map[int64]int64, error) {

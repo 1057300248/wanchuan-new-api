@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -149,6 +150,27 @@ func (s *BillingSession) GetPreConsumedQuota() int {
 	return s.preConsumedQuota
 }
 
+// WalletDebitShares 返回钱包计费累计扣减的各账户份额（预扣 + 追扣 + 结算补扣），
+// 供异步任务持久化，退款按原账户精确退回。非钱包计费返回 nil。
+func (s *BillingSession) WalletDebitShares() []model.LedgerShare {
+	if wallet, ok := s.funding.(*WalletFunding); ok {
+		return wallet.DebitShares()
+	}
+	return nil
+}
+
+// WalletSessionDebitShares 从 RelayInfo 的计费会话提取钱包累计扣减份额
+// （异步任务持久化用）；无计费会话或非钱包计费返回 nil。
+func WalletSessionDebitShares(relayInfo *relaycommon.RelayInfo) []model.LedgerShare {
+	if relayInfo == nil || relayInfo.Billing == nil {
+		return nil
+	}
+	if session, ok := relayInfo.Billing.(*BillingSession); ok {
+		return session.WalletDebitShares()
+	}
+	return nil
+}
+
 func (s *BillingSession) Reserve(targetQuota int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -221,6 +243,10 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 			}
 			s.tokenConsumed = 0
 		}
+		// 模型不支持赠金支付且付费余额不足：返回清晰错误，不得静默扣赠金
+		if errors.Is(err, ErrModelBonusNotSupported) {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+		}
 		// TODO: model 层应定义哨兵错误（如 ErrNoActiveSubscription），用 errors.Is 替代字符串匹配
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "no active subscription") || strings.Contains(errMsg, "subscription quota insufficient") {
@@ -245,19 +271,12 @@ func (s *BillingSession) reserveFunding(delta int) error {
 		targetQuota := s.preConsumedQuota + delta
 		// 与旧行为不同：余额不足时扣减失败并返回错误，不再产生负余额欠费；
 		// 预扣前的新建会话已做余额校验，仅极端并发/上游重估场景会命中。
-		entry := model.LedgerEntry{
-			UserId:         funding.userId,
-			Delta:          delta,
-			Reason:         model.LedgerReasonBillingReserve,
-			ReferenceType:  "relay",
-			ReferenceId:    funding.requestId,
-			RequestId:      funding.requestId,
-			IdempotencyKey: fmt.Sprintf("billing:reserve:%s:%d", funding.requestId, targetQuota),
-		}
-		if _, err := model.DebitQuota(entry, model.AccountPaid); err != nil {
+		if err := funding.Reserve(targetQuota); err != nil {
+			if errors.Is(err, ErrModelBonusNotSupported) {
+				return types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			}
 			return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
 		}
-		funding.consumed += delta
 		return nil
 	case *SubscriptionFunding:
 		if err := model.PostConsumeUserSubscriptionDelta(funding.subscriptionId, int64(delta)); err != nil {
@@ -365,17 +384,37 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
 				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
-		if userQuota-preConsumedQuota < 0 {
+		relayInfo.UserQuota = userQuota
+
+		// P0-5：按模型赠金资格决定钱包账户顺序与预扣前校验。
+		// eligible 模型检查 bonus+paid；非 eligible 模型只允许 paid，
+		// paid 不足时返回明确错误，不得静默扣减赠金。
+		debitOrder := WalletDebitOrder(relayInfo)
+		paid, bonus, _, balanceErr := model.GetUserAccountBalances(relayInfo.UserId)
+		if balanceErr != nil {
+			return nil, types.NewError(balanceErr, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
+		}
+		if WalletBonusEligible(relayInfo) {
+			if paid+bonus < preConsumedQuota {
+				return nil, types.NewErrorWithStatusCode(
+					fmt.Errorf("预扣费额度失败, 用户剩余额度: %s, 需要预扣费额度: %s", logger.FormatQuota(paid+bonus), logger.FormatQuota(preConsumedQuota)),
+					types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
+					types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			}
+		} else if paid < preConsumedQuota {
 			return nil, types.NewErrorWithStatusCode(
-				fmt.Errorf("预扣费额度失败, 用户剩余额度: %s, 需要预扣费额度: %s", logger.FormatQuota(userQuota), logger.FormatQuota(preConsumedQuota)),
+				ErrModelBonusNotSupported,
 				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
 				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
-		relayInfo.UserQuota = userQuota
 
 		session := &BillingSession{
 			relayInfo: relayInfo,
-			funding:   &WalletFunding{userId: relayInfo.UserId, requestId: relayInfo.RequestId},
+			funding: &WalletFunding{
+				userId:     relayInfo.UserId,
+				requestId:  relayInfo.RequestId,
+				debitOrder: debitOrder,
+			},
 		}
 		if apiErr := session.preConsume(c, preConsumedQuota); apiErr != nil {
 			return nil, apiErr
