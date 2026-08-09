@@ -45,8 +45,9 @@ export function AuthLayout({
   showSignUp = true,
 }: AuthLayoutProps) {
   const { t } = useTranslation()
-  const { systemName, logo, loading } = useSystemConfig()
+  const { systemName, loading } = useSystemConfig()
   const { status } = useStatus()
+  const brandLogo = '/brand/wanchuan-mark-v2.png'
 
   if (!mode) {
     return (
@@ -60,9 +61,9 @@ export function AuthLayout({
               <Skeleton className='absolute inset-0 rounded-full' />
             ) : (
               <img
-                src={logo}
+                src={brandLogo}
                 alt={t('Logo')}
-                className='h-8 w-8 rounded-full object-cover'
+                className='h-8 w-8 object-contain p-0.5 invert dark:invert-0'
               />
             )}
           </div>
@@ -122,9 +123,9 @@ export function AuthLayout({
                   <Skeleton className='absolute inset-0 rounded-xl' />
                 ) : (
                   <img
-                    src={logo}
+                    src={brandLogo}
                     alt={t('Logo')}
-                    className='border-border/70 bg-background h-10 w-10 rounded-[8px] border object-cover shadow-sm'
+                    className='h-10 w-10 object-contain p-1 invert dark:invert-0'
                   />
                 )}
               </div>
@@ -196,9 +197,9 @@ export function AuthLayout({
                     <Skeleton className='absolute inset-0 rounded-xl' />
                   ) : (
                     <img
-                      src={logo}
+                      src={brandLogo}
                       alt={t('Logo')}
-                      className='border-border/70 bg-background h-9 w-9 rounded-[8px] border object-cover shadow-sm'
+                      className='h-9 w-9 object-contain p-1 invert dark:invert-0'
                     />
                   )}
                 </div>
