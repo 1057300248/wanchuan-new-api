@@ -114,7 +114,7 @@ function MobileUserProfile({ user, onNavigate }: MobileUserProfileProps) {
 
         {/* Navigation links - same style as top nav */}
         <Link
-          to='/profile'
+          to='/dashboard/settings'
           onClick={onNavigate}
           className='text-primary/60 hover:text-primary/80 border-border flex items-center gap-2.5 border-b p-2.5 transition-colors'
         >
@@ -123,7 +123,7 @@ function MobileUserProfile({ user, onNavigate }: MobileUserProfileProps) {
         </Link>
 
         <Link
-          to='/wallet'
+          to='/dashboard/wallet'
           onClick={onNavigate}
           className='text-primary/60 hover:text-primary/80 border-border flex items-center gap-2.5 border-b p-2.5 transition-colors'
         >
@@ -261,9 +261,9 @@ export function MobileDrawer({
                   </div>
                 ) : (
                   <AnimatePresence>
-                    {mobileLinksList.map((link, index) => (
+                    {mobileLinksList.map((link) => (
                       <motion.div
-                        key={`${link.href}-${index}`}
+                        key={link.href}
                         className='border-border border-b p-2.5 last:border-b-0'
                         variants={MOBILE_DRAWER_ANIMATION.menuItem as Variants}
                       >

@@ -34,6 +34,8 @@ const RULES = {
 
 const SUMMARY: WalletSummary = {
   total: 1500000,
+  spendable: 1300000,
+  withdrawable: 200000,
   paid: 1000000,
   bonus: 300000,
   affiliate: 200000,
@@ -85,7 +87,7 @@ describe('buildFinancialSummaryView', () => {
 
     assert.deepEqual(
       view.accounts.map((account) => account.key),
-      ['total', 'paid', 'bonus', 'affiliate']
+      ['spendable', 'paid', 'bonus', 'affiliate']
     )
     assert.deepEqual(
       view.accounts.map((account) => account.value),

@@ -36,7 +36,7 @@ export function WalletAccountsCard(props: WalletAccountsCardProps) {
   if (props.loading) {
     return (
       <div className='grid grid-cols-2 gap-3 lg:grid-cols-4'>
-        {['total', 'paid', 'bonus', 'affiliate'].map((key) => (
+        {['spendable', 'paid', 'bonus', 'affiliate'].map((key) => (
           <div key={key} className='rounded-lg border p-3 sm:p-4'>
             <Skeleton className='h-3.5 w-20' />
             <Skeleton className='mt-2 h-6 w-full' />
@@ -55,9 +55,11 @@ export function WalletAccountsCard(props: WalletAccountsCardProps) {
     tone: IconBadgeTone
   }[] = [
     {
-      label: t('Total Balance'),
-      value: props.summary?.total ?? 0,
-      description: t('Sum of all wallet accounts'),
+      label: t('Spendable Balance'),
+      value: props.summary?.spendable ?? 0,
+      description: t(
+        'Paid plus bonus balance; affiliate rewards are withdrawable only'
+      ),
       icon: WalletCards,
       tone: 'success',
     },

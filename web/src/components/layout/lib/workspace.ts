@@ -22,8 +22,9 @@ import { ROLE } from '@/lib/roles'
  * Dual-workspace shell model (TokenMix customer center / admin console).
  *
  * The pathname decides which authenticated shell renders: customer routes
- * (`/dashboard/overview`, `/keys`, `/usage-logs`, `/wallet`, `/profile`,
- * `/playground`, chat links, error pages) get the customer center; every
+ * (`/dashboard/overview`, `/dashboard/keys`, `/dashboard/logs`,
+ * `/dashboard/wallet`, `/dashboard/settings`, `/dashboard/playground`, chat
+ * links, error pages) get the customer center; every
  * admin management route keeps the full admin shell. Unknown paths fall
  * back to the admin shell so future management pages cannot silently
  * surface inside the customer center.
@@ -34,12 +35,13 @@ export type Workspace = 'customer' | 'admin'
 export const CUSTOMER_WORKSPACE_HOME = '/dashboard/overview'
 
 /** Landing page of the admin workspace. */
-export const ADMIN_WORKSPACE_HOME = '/dashboard/models'
+export const ADMIN_WORKSPACE_HOME = '/dashboard/admin/models'
 
 /** Route prefixes that always render the admin management shell. */
 const ADMIN_WORKSPACE_PREFIXES: readonly string[] = [
   '/channels',
   '/models',
+  '/dashboard/admin',
   '/users',
   '/redemption-codes',
   '/subscriptions',
@@ -54,11 +56,6 @@ const ADMIN_WORKSPACE_PREFIXES: readonly string[] = [
 const CUSTOMER_WORKSPACE_PREFIXES: readonly string[] = [
   '/dashboard/overview',
   '/dashboard',
-  '/keys',
-  '/usage-logs',
-  '/wallet',
-  '/profile',
-  '/playground',
   '/chat',
   '/chat2link',
   '/errors',
@@ -90,11 +87,15 @@ function isPathUnder(normalized: string, prefix: string): boolean {
  */
 export function resolveWorkspace(pathname: string): Workspace {
   const normalized = normalizeWorkspacePath(pathname)
-  if (ADMIN_WORKSPACE_PREFIXES.some((prefix) => isPathUnder(normalized, prefix))) {
+  if (
+    ADMIN_WORKSPACE_PREFIXES.some((prefix) => isPathUnder(normalized, prefix))
+  ) {
     return 'admin'
   }
   if (
-    CUSTOMER_WORKSPACE_PREFIXES.some((prefix) => isPathUnder(normalized, prefix))
+    CUSTOMER_WORKSPACE_PREFIXES.some((prefix) =>
+      isPathUnder(normalized, prefix)
+    )
   ) {
     return 'customer'
   }

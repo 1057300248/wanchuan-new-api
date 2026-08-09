@@ -53,6 +53,13 @@ import { Route as AuthenticatedUsageLogsSectionRouteImport } from './routes/_aut
 import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authenticated/users/index'
 import { Route as AuthenticatedWalletIndexRouteImport } from './routes/_authenticated/wallet/index'
 import { Route as PricingModelIdIndexRouteImport } from './routes/pricing/$modelId/index'
+import { Route as AuthenticatedDashboardKeysIndexRouteImport } from './routes/_authenticated/dashboard/keys/index'
+import { Route as AuthenticatedDashboardLogsIndexRouteImport } from './routes/_authenticated/dashboard/logs/index'
+import { Route as AuthenticatedDashboardLogsSectionRouteImport } from './routes/_authenticated/dashboard/logs/$section'
+import { Route as AuthenticatedDashboardPlaygroundIndexRouteImport } from './routes/_authenticated/dashboard/playground/index'
+import { Route as AuthenticatedDashboardReferralsIndexRouteImport } from './routes/_authenticated/dashboard/referrals/index'
+import { Route as AuthenticatedDashboardSettingsIndexRouteImport } from './routes/_authenticated/dashboard/settings/index'
+import { Route as AuthenticatedDashboardWalletIndexRouteImport } from './routes/_authenticated/dashboard/wallet/index'
 import { Route as AuthenticatedSystemSettingsAuthIndexRouteImport } from './routes/_authenticated/system-settings/auth/index'
 import { Route as AuthenticatedSystemSettingsAuthSectionRouteImport } from './routes/_authenticated/system-settings/auth/$section'
 import { Route as AuthenticatedSystemSettingsBillingIndexRouteImport } from './routes/_authenticated/system-settings/billing/index'
@@ -67,6 +74,8 @@ import { Route as AuthenticatedSystemSettingsSecurityIndexRouteImport } from './
 import { Route as AuthenticatedSystemSettingsSecuritySectionRouteImport } from './routes/_authenticated/system-settings/security/$section'
 import { Route as AuthenticatedSystemSettingsSiteIndexRouteImport } from './routes/_authenticated/system-settings/site/index'
 import { Route as AuthenticatedSystemSettingsSiteSectionRouteImport } from './routes/_authenticated/system-settings/site/$section'
+import { Route as AuthenticatedDashboardAdminModelsIndexRouteImport } from './routes/_authenticated/dashboard/admin/models/index'
+import { Route as AuthenticatedDashboardAdminModelsSectionRouteImport } from './routes/_authenticated/dashboard/admin/models/$section'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -302,6 +311,48 @@ const PricingModelIdIndexRoute = PricingModelIdIndexRouteImport.update({
   path: '/pricing/$modelId/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedDashboardKeysIndexRoute =
+  AuthenticatedDashboardKeysIndexRouteImport.update({
+    id: '/dashboard/keys/',
+    path: '/dashboard/keys/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedDashboardLogsIndexRoute =
+  AuthenticatedDashboardLogsIndexRouteImport.update({
+    id: '/dashboard/logs/',
+    path: '/dashboard/logs/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedDashboardLogsSectionRoute =
+  AuthenticatedDashboardLogsSectionRouteImport.update({
+    id: '/dashboard/logs/$section',
+    path: '/dashboard/logs/$section',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedDashboardPlaygroundIndexRoute =
+  AuthenticatedDashboardPlaygroundIndexRouteImport.update({
+    id: '/dashboard/playground/',
+    path: '/dashboard/playground/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedDashboardReferralsIndexRoute =
+  AuthenticatedDashboardReferralsIndexRouteImport.update({
+    id: '/dashboard/referrals/',
+    path: '/dashboard/referrals/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedDashboardSettingsIndexRoute =
+  AuthenticatedDashboardSettingsIndexRouteImport.update({
+    id: '/dashboard/settings/',
+    path: '/dashboard/settings/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedDashboardWalletIndexRoute =
+  AuthenticatedDashboardWalletIndexRouteImport.update({
+    id: '/dashboard/wallet/',
+    path: '/dashboard/wallet/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedSystemSettingsAuthIndexRoute =
   AuthenticatedSystemSettingsAuthIndexRouteImport.update({
     id: '/auth/',
@@ -386,6 +437,18 @@ const AuthenticatedSystemSettingsSiteSectionRoute =
     path: '/site/$section',
     getParentRoute: () => AuthenticatedSystemSettingsRouteRoute,
   } as any)
+const AuthenticatedDashboardAdminModelsIndexRoute =
+  AuthenticatedDashboardAdminModelsIndexRouteImport.update({
+    id: '/dashboard/admin/models/',
+    path: '/dashboard/admin/models/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedDashboardAdminModelsSectionRoute =
+  AuthenticatedDashboardAdminModelsSectionRouteImport.update({
+    id: '/dashboard/admin/models/$section',
+    path: '/dashboard/admin/models/$section',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -430,6 +493,7 @@ export interface FileRoutesByFullPath {
   '/users/': typeof AuthenticatedUsersIndexRoute
   '/wallet/': typeof AuthenticatedWalletIndexRoute
   '/pricing/$modelId/': typeof PricingModelIdIndexRoute
+  '/dashboard/logs/$section': typeof AuthenticatedDashboardLogsSectionRoute
   '/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
   '/system-settings/billing/$section': typeof AuthenticatedSystemSettingsBillingSectionRoute
   '/system-settings/content/$section': typeof AuthenticatedSystemSettingsContentSectionRoute
@@ -437,6 +501,12 @@ export interface FileRoutesByFullPath {
   '/system-settings/operations/$section': typeof AuthenticatedSystemSettingsOperationsSectionRoute
   '/system-settings/security/$section': typeof AuthenticatedSystemSettingsSecuritySectionRoute
   '/system-settings/site/$section': typeof AuthenticatedSystemSettingsSiteSectionRoute
+  '/dashboard/keys/': typeof AuthenticatedDashboardKeysIndexRoute
+  '/dashboard/logs/': typeof AuthenticatedDashboardLogsIndexRoute
+  '/dashboard/playground/': typeof AuthenticatedDashboardPlaygroundIndexRoute
+  '/dashboard/referrals/': typeof AuthenticatedDashboardReferralsIndexRoute
+  '/dashboard/settings/': typeof AuthenticatedDashboardSettingsIndexRoute
+  '/dashboard/wallet/': typeof AuthenticatedDashboardWalletIndexRoute
   '/system-settings/auth/': typeof AuthenticatedSystemSettingsAuthIndexRoute
   '/system-settings/billing/': typeof AuthenticatedSystemSettingsBillingIndexRoute
   '/system-settings/content/': typeof AuthenticatedSystemSettingsContentIndexRoute
@@ -444,6 +514,8 @@ export interface FileRoutesByFullPath {
   '/system-settings/operations/': typeof AuthenticatedSystemSettingsOperationsIndexRoute
   '/system-settings/security/': typeof AuthenticatedSystemSettingsSecurityIndexRoute
   '/system-settings/site/': typeof AuthenticatedSystemSettingsSiteIndexRoute
+  '/dashboard/admin/models/$section': typeof AuthenticatedDashboardAdminModelsSectionRoute
+  '/dashboard/admin/models/': typeof AuthenticatedDashboardAdminModelsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -487,6 +559,7 @@ export interface FileRoutesByTo {
   '/users': typeof AuthenticatedUsersIndexRoute
   '/wallet': typeof AuthenticatedWalletIndexRoute
   '/pricing/$modelId': typeof PricingModelIdIndexRoute
+  '/dashboard/logs/$section': typeof AuthenticatedDashboardLogsSectionRoute
   '/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
   '/system-settings/billing/$section': typeof AuthenticatedSystemSettingsBillingSectionRoute
   '/system-settings/content/$section': typeof AuthenticatedSystemSettingsContentSectionRoute
@@ -494,6 +567,12 @@ export interface FileRoutesByTo {
   '/system-settings/operations/$section': typeof AuthenticatedSystemSettingsOperationsSectionRoute
   '/system-settings/security/$section': typeof AuthenticatedSystemSettingsSecuritySectionRoute
   '/system-settings/site/$section': typeof AuthenticatedSystemSettingsSiteSectionRoute
+  '/dashboard/keys': typeof AuthenticatedDashboardKeysIndexRoute
+  '/dashboard/logs': typeof AuthenticatedDashboardLogsIndexRoute
+  '/dashboard/playground': typeof AuthenticatedDashboardPlaygroundIndexRoute
+  '/dashboard/referrals': typeof AuthenticatedDashboardReferralsIndexRoute
+  '/dashboard/settings': typeof AuthenticatedDashboardSettingsIndexRoute
+  '/dashboard/wallet': typeof AuthenticatedDashboardWalletIndexRoute
   '/system-settings/auth': typeof AuthenticatedSystemSettingsAuthIndexRoute
   '/system-settings/billing': typeof AuthenticatedSystemSettingsBillingIndexRoute
   '/system-settings/content': typeof AuthenticatedSystemSettingsContentIndexRoute
@@ -501,6 +580,8 @@ export interface FileRoutesByTo {
   '/system-settings/operations': typeof AuthenticatedSystemSettingsOperationsIndexRoute
   '/system-settings/security': typeof AuthenticatedSystemSettingsSecurityIndexRoute
   '/system-settings/site': typeof AuthenticatedSystemSettingsSiteIndexRoute
+  '/dashboard/admin/models/$section': typeof AuthenticatedDashboardAdminModelsSectionRoute
+  '/dashboard/admin/models': typeof AuthenticatedDashboardAdminModelsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -548,6 +629,7 @@ export interface FileRoutesById {
   '/_authenticated/users/': typeof AuthenticatedUsersIndexRoute
   '/_authenticated/wallet/': typeof AuthenticatedWalletIndexRoute
   '/pricing/$modelId/': typeof PricingModelIdIndexRoute
+  '/_authenticated/dashboard/logs/$section': typeof AuthenticatedDashboardLogsSectionRoute
   '/_authenticated/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
   '/_authenticated/system-settings/billing/$section': typeof AuthenticatedSystemSettingsBillingSectionRoute
   '/_authenticated/system-settings/content/$section': typeof AuthenticatedSystemSettingsContentSectionRoute
@@ -555,6 +637,12 @@ export interface FileRoutesById {
   '/_authenticated/system-settings/operations/$section': typeof AuthenticatedSystemSettingsOperationsSectionRoute
   '/_authenticated/system-settings/security/$section': typeof AuthenticatedSystemSettingsSecuritySectionRoute
   '/_authenticated/system-settings/site/$section': typeof AuthenticatedSystemSettingsSiteSectionRoute
+  '/_authenticated/dashboard/keys/': typeof AuthenticatedDashboardKeysIndexRoute
+  '/_authenticated/dashboard/logs/': typeof AuthenticatedDashboardLogsIndexRoute
+  '/_authenticated/dashboard/playground/': typeof AuthenticatedDashboardPlaygroundIndexRoute
+  '/_authenticated/dashboard/referrals/': typeof AuthenticatedDashboardReferralsIndexRoute
+  '/_authenticated/dashboard/settings/': typeof AuthenticatedDashboardSettingsIndexRoute
+  '/_authenticated/dashboard/wallet/': typeof AuthenticatedDashboardWalletIndexRoute
   '/_authenticated/system-settings/auth/': typeof AuthenticatedSystemSettingsAuthIndexRoute
   '/_authenticated/system-settings/billing/': typeof AuthenticatedSystemSettingsBillingIndexRoute
   '/_authenticated/system-settings/content/': typeof AuthenticatedSystemSettingsContentIndexRoute
@@ -562,6 +650,8 @@ export interface FileRoutesById {
   '/_authenticated/system-settings/operations/': typeof AuthenticatedSystemSettingsOperationsIndexRoute
   '/_authenticated/system-settings/security/': typeof AuthenticatedSystemSettingsSecurityIndexRoute
   '/_authenticated/system-settings/site/': typeof AuthenticatedSystemSettingsSiteIndexRoute
+  '/_authenticated/dashboard/admin/models/$section': typeof AuthenticatedDashboardAdminModelsSectionRoute
+  '/_authenticated/dashboard/admin/models/': typeof AuthenticatedDashboardAdminModelsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -608,6 +698,7 @@ export interface FileRouteTypes {
     | '/users/'
     | '/wallet/'
     | '/pricing/$modelId/'
+    | '/dashboard/logs/$section'
     | '/system-settings/auth/$section'
     | '/system-settings/billing/$section'
     | '/system-settings/content/$section'
@@ -615,6 +706,12 @@ export interface FileRouteTypes {
     | '/system-settings/operations/$section'
     | '/system-settings/security/$section'
     | '/system-settings/site/$section'
+    | '/dashboard/keys/'
+    | '/dashboard/logs/'
+    | '/dashboard/playground/'
+    | '/dashboard/referrals/'
+    | '/dashboard/settings/'
+    | '/dashboard/wallet/'
     | '/system-settings/auth/'
     | '/system-settings/billing/'
     | '/system-settings/content/'
@@ -622,6 +719,8 @@ export interface FileRouteTypes {
     | '/system-settings/operations/'
     | '/system-settings/security/'
     | '/system-settings/site/'
+    | '/dashboard/admin/models/$section'
+    | '/dashboard/admin/models/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -665,6 +764,7 @@ export interface FileRouteTypes {
     | '/users'
     | '/wallet'
     | '/pricing/$modelId'
+    | '/dashboard/logs/$section'
     | '/system-settings/auth/$section'
     | '/system-settings/billing/$section'
     | '/system-settings/content/$section'
@@ -672,6 +772,12 @@ export interface FileRouteTypes {
     | '/system-settings/operations/$section'
     | '/system-settings/security/$section'
     | '/system-settings/site/$section'
+    | '/dashboard/keys'
+    | '/dashboard/logs'
+    | '/dashboard/playground'
+    | '/dashboard/referrals'
+    | '/dashboard/settings'
+    | '/dashboard/wallet'
     | '/system-settings/auth'
     | '/system-settings/billing'
     | '/system-settings/content'
@@ -679,6 +785,8 @@ export interface FileRouteTypes {
     | '/system-settings/operations'
     | '/system-settings/security'
     | '/system-settings/site'
+    | '/dashboard/admin/models/$section'
+    | '/dashboard/admin/models'
   id:
     | '__root__'
     | '/'
@@ -725,6 +833,7 @@ export interface FileRouteTypes {
     | '/_authenticated/users/'
     | '/_authenticated/wallet/'
     | '/pricing/$modelId/'
+    | '/_authenticated/dashboard/logs/$section'
     | '/_authenticated/system-settings/auth/$section'
     | '/_authenticated/system-settings/billing/$section'
     | '/_authenticated/system-settings/content/$section'
@@ -732,6 +841,12 @@ export interface FileRouteTypes {
     | '/_authenticated/system-settings/operations/$section'
     | '/_authenticated/system-settings/security/$section'
     | '/_authenticated/system-settings/site/$section'
+    | '/_authenticated/dashboard/keys/'
+    | '/_authenticated/dashboard/logs/'
+    | '/_authenticated/dashboard/playground/'
+    | '/_authenticated/dashboard/referrals/'
+    | '/_authenticated/dashboard/settings/'
+    | '/_authenticated/dashboard/wallet/'
     | '/_authenticated/system-settings/auth/'
     | '/_authenticated/system-settings/billing/'
     | '/_authenticated/system-settings/content/'
@@ -739,6 +854,8 @@ export interface FileRouteTypes {
     | '/_authenticated/system-settings/operations/'
     | '/_authenticated/system-settings/security/'
     | '/_authenticated/system-settings/site/'
+    | '/_authenticated/dashboard/admin/models/$section'
+    | '/_authenticated/dashboard/admin/models/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -1070,6 +1187,55 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PricingModelIdIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/dashboard/keys/': {
+      id: '/_authenticated/dashboard/keys/'
+      path: '/dashboard/keys'
+      fullPath: '/dashboard/keys/'
+      preLoaderRoute: typeof AuthenticatedDashboardKeysIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/dashboard/logs/': {
+      id: '/_authenticated/dashboard/logs/'
+      path: '/dashboard/logs'
+      fullPath: '/dashboard/logs/'
+      preLoaderRoute: typeof AuthenticatedDashboardLogsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/dashboard/logs/$section': {
+      id: '/_authenticated/dashboard/logs/$section'
+      path: '/dashboard/logs/$section'
+      fullPath: '/dashboard/logs/$section'
+      preLoaderRoute: typeof AuthenticatedDashboardLogsSectionRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/dashboard/playground/': {
+      id: '/_authenticated/dashboard/playground/'
+      path: '/dashboard/playground'
+      fullPath: '/dashboard/playground/'
+      preLoaderRoute: typeof AuthenticatedDashboardPlaygroundIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/dashboard/referrals/': {
+      id: '/_authenticated/dashboard/referrals/'
+      path: '/dashboard/referrals'
+      fullPath: '/dashboard/referrals/'
+      preLoaderRoute: typeof AuthenticatedDashboardReferralsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/dashboard/settings/': {
+      id: '/_authenticated/dashboard/settings/'
+      path: '/dashboard/settings'
+      fullPath: '/dashboard/settings/'
+      preLoaderRoute: typeof AuthenticatedDashboardSettingsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/dashboard/wallet/': {
+      id: '/_authenticated/dashboard/wallet/'
+      path: '/dashboard/wallet'
+      fullPath: '/dashboard/wallet/'
+      preLoaderRoute: typeof AuthenticatedDashboardWalletIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/system-settings/auth/': {
       id: '/_authenticated/system-settings/auth/'
       path: '/auth'
@@ -1167,6 +1333,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/system-settings/site/$section'
       preLoaderRoute: typeof AuthenticatedSystemSettingsSiteSectionRouteImport
       parentRoute: typeof AuthenticatedSystemSettingsRouteRoute
+    }
+    '/_authenticated/dashboard/admin/models/': {
+      id: '/_authenticated/dashboard/admin/models/'
+      path: '/dashboard/admin/models'
+      fullPath: '/dashboard/admin/models/'
+      preLoaderRoute: typeof AuthenticatedDashboardAdminModelsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/dashboard/admin/models/$section': {
+      id: '/_authenticated/dashboard/admin/models/$section'
+      path: '/dashboard/admin/models/$section'
+      fullPath: '/dashboard/admin/models/$section'
+      preLoaderRoute: typeof AuthenticatedDashboardAdminModelsSectionRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
     }
   }
 }
@@ -1274,6 +1454,15 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedUsageLogsIndexRoute: typeof AuthenticatedUsageLogsIndexRoute
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
   AuthenticatedWalletIndexRoute: typeof AuthenticatedWalletIndexRoute
+  AuthenticatedDashboardLogsSectionRoute: typeof AuthenticatedDashboardLogsSectionRoute
+  AuthenticatedDashboardKeysIndexRoute: typeof AuthenticatedDashboardKeysIndexRoute
+  AuthenticatedDashboardLogsIndexRoute: typeof AuthenticatedDashboardLogsIndexRoute
+  AuthenticatedDashboardPlaygroundIndexRoute: typeof AuthenticatedDashboardPlaygroundIndexRoute
+  AuthenticatedDashboardReferralsIndexRoute: typeof AuthenticatedDashboardReferralsIndexRoute
+  AuthenticatedDashboardSettingsIndexRoute: typeof AuthenticatedDashboardSettingsIndexRoute
+  AuthenticatedDashboardWalletIndexRoute: typeof AuthenticatedDashboardWalletIndexRoute
+  AuthenticatedDashboardAdminModelsSectionRoute: typeof AuthenticatedDashboardAdminModelsSectionRoute
+  AuthenticatedDashboardAdminModelsIndexRoute: typeof AuthenticatedDashboardAdminModelsIndexRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
@@ -1298,6 +1487,22 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedUsageLogsIndexRoute: AuthenticatedUsageLogsIndexRoute,
   AuthenticatedUsersIndexRoute: AuthenticatedUsersIndexRoute,
   AuthenticatedWalletIndexRoute: AuthenticatedWalletIndexRoute,
+  AuthenticatedDashboardLogsSectionRoute:
+    AuthenticatedDashboardLogsSectionRoute,
+  AuthenticatedDashboardKeysIndexRoute: AuthenticatedDashboardKeysIndexRoute,
+  AuthenticatedDashboardLogsIndexRoute: AuthenticatedDashboardLogsIndexRoute,
+  AuthenticatedDashboardPlaygroundIndexRoute:
+    AuthenticatedDashboardPlaygroundIndexRoute,
+  AuthenticatedDashboardReferralsIndexRoute:
+    AuthenticatedDashboardReferralsIndexRoute,
+  AuthenticatedDashboardSettingsIndexRoute:
+    AuthenticatedDashboardSettingsIndexRoute,
+  AuthenticatedDashboardWalletIndexRoute:
+    AuthenticatedDashboardWalletIndexRoute,
+  AuthenticatedDashboardAdminModelsSectionRoute:
+    AuthenticatedDashboardAdminModelsSectionRoute,
+  AuthenticatedDashboardAdminModelsIndexRoute:
+    AuthenticatedDashboardAdminModelsIndexRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =

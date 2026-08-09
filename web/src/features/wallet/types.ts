@@ -312,7 +312,12 @@ export interface WalletRules {
  * Wallet account summary (paid / bonus / affiliate split)
  */
 export interface WalletSummary {
+  /** paid + bonus + affiliate, for asset reporting only */
   total: number
+  /** paid + bonus; affiliate is not API-spendable */
+  spendable: number
+  /** affiliate balance available for withdrawal */
+  withdrawable: number
   paid: number
   bonus: number
   affiliate: number

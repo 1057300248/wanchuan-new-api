@@ -77,11 +77,18 @@ func RecordAffiliateRewardForRequest(sourceUserId, paidQuota int, refType, refId
 		}
 		common.SysError(fmt.Sprintf("create affiliate reward failed: source=%d inviter=%d ref=%s/%s err=%s",
 			sourceUserId, inviter.Id, refType, refId, err.Error()))
-		return false, nil
+		return false, err
 	}
 	common.SysLog(fmt.Sprintf("affiliate reward created: inviter=%d source=%d paid=%d reward=%d ref=%s/%s unlock_at=%d",
 		inviter.Id, sourceUserId, paidQuota, rewardQuota, refType, refId, reward.UnlockAt))
 	return true, nil
+}
+
+func recordAffiliateRewardOrLog(sourceUserId, paidQuota int, refType, refId string) {
+	if _, err := RecordAffiliateRewardForRequest(sourceUserId, paidQuota, refType, refId); err != nil {
+		common.SysError(fmt.Sprintf("affiliate reward deferred to reconciliation: source=%d ref=%s/%s err=%s",
+			sourceUserId, refType, refId, err.Error()))
+	}
 }
 
 // MatureAffiliateRewards 幂等成熟用户所有到期返利并返回本次成熟条数。

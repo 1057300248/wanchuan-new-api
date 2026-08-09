@@ -31,7 +31,10 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useWalletSummary, useReferralOverview } from '@/features/wallet/hooks/use-wallet'
+import {
+  useWalletSummary,
+  useReferralOverview,
+} from '@/features/wallet/hooks/use-wallet'
 import { cn } from '@/lib/utils'
 
 import {
@@ -40,20 +43,20 @@ import {
 } from '../../lib/wallet-summary'
 
 const ACCOUNT_ICONS: Record<
-  'total' | 'paid' | 'bonus' | 'affiliate',
+  'spendable' | 'paid' | 'bonus' | 'affiliate',
   typeof WalletCards
 > = {
-  total: WalletCards,
+  spendable: WalletCards,
   paid: CircleDollarSign,
   bonus: Gift,
   affiliate: HandCoins,
 }
 
 const ACCOUNT_TONES: Record<
-  'total' | 'paid' | 'bonus' | 'affiliate',
+  'spendable' | 'paid' | 'bonus' | 'affiliate',
   IconBadgeTone
 > = {
-  total: 'success',
+  spendable: 'success',
   paid: 'info',
   bonus: 'chart-2',
   affiliate: 'chart-3',
@@ -67,7 +70,7 @@ function LoadingBlock() {
         <Skeleton className='h-4 w-56' />
       </div>
       <div className='mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4'>
-        {['total', 'paid', 'bonus', 'affiliate'].map((key) => (
+        {['spendable', 'paid', 'bonus', 'affiliate'].map((key) => (
           <div key={key} className='rounded-lg border p-3 sm:p-4'>
             <Skeleton className='h-3.5 w-20' />
             <Skeleton className='mt-2 h-6 w-full' />
@@ -124,7 +127,7 @@ function ReadyBlock(props: { view: FinancialSummaryView }) {
           variant='ghost'
           size='sm'
           className='text-muted-foreground h-7 gap-1.5 px-2 text-xs'
-          render={<Link to='/wallet' />}
+          render={<Link to='/dashboard/wallet' />}
         >
           {t('View wallet')}
           <ArrowRight data-icon='inline-end' />

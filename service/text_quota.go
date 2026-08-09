@@ -485,7 +485,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	// quota units），并生成推荐返利（仅结算成功且 paid 净消费 > 0 时）。
 	if relayInfo.BillingSource == BillingSourceWallet && settleErr == nil {
 		if paidNet := FillWalletCostLogInfo(other, relayInfo.UserId, RelayWalletCostRefs(relayInfo)); paidNet > 0 {
-			_, _ = RecordAffiliateRewardForRequest(relayInfo.UserId, paidNet, "relay", relayInfo.RequestId)
+			recordAffiliateRewardOrLog(relayInfo.UserId, paidNet, "relay", relayInfo.RequestId)
 		}
 	}
 	if summary.ImageTokens != 0 {

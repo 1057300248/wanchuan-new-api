@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -468,6 +469,77 @@ func TestInsertSignupBonusDisabledGrantsNothing(t *testing.T) {
 	assert.Zero(t, count)
 }
 
+func configureInviteRegistrationTest(t *testing.T, signup, invitee, inviter int) {
+	t.Helper()
+	previousSignupEnabled := common.SignupBonusEnabled
+	previousSignup := common.QuotaForSignupBonus
+	previousInvitee := common.QuotaForInvitee
+	previousInviter := common.QuotaForInviter
+	payment := operation_setting.GetPaymentSetting()
+	previousPayment := *payment
+
+	common.SignupBonusEnabled = true
+	common.QuotaForSignupBonus = signup
+	common.QuotaForInvitee = invitee
+	common.QuotaForInviter = inviter
+	payment.ComplianceConfirmed = true
+	payment.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
+	t.Cleanup(func() {
+		common.SignupBonusEnabled = previousSignupEnabled
+		common.QuotaForSignupBonus = previousSignup
+		common.QuotaForInvitee = previousInvitee
+		common.QuotaForInviter = previousInviter
+		*payment = previousPayment
+	})
+}
+
+func TestInsertWithTxInviteRewardsCommitAtomically(t *testing.T) {
+	setupLedgerTestState(t)
+	configureInviteRegistrationTest(t, 100, 50, 25)
+	createLedgerTestUser(t, 230, 0)
+
+	user := &User{Username: "invited-oauth-user", Password: "password", Status: common.UserStatusEnabled}
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+		return user.InsertWithTx(tx, 230)
+	}))
+
+	created := getUserBalances(t, user.Id)
+	assert.Equal(t, 230, created.InviterId)
+	assert.Zero(t, created.QuotaPaid)
+	assert.Equal(t, 150, created.QuotaBonus)
+	assert.Equal(t, 150, created.Quota)
+	assertQuotaInvariant(t, created)
+
+	inviterUser := getUserBalances(t, 230)
+	assert.Equal(t, 1, inviterUser.AffCount)
+	assert.Equal(t, 25, inviterUser.AffQuota)
+	assert.Equal(t, 25, inviterUser.AffHistoryQuota)
+
+	var reasons []string
+	require.NoError(t, DB.Model(&BalanceLedger{}).
+		Where("user_id = ?", user.Id).Order("id asc").Pluck("reason", &reasons).Error)
+	assert.Equal(t, []string{LedgerReasonSignupBonus, LedgerReasonInviteeBonus}, reasons)
+}
+
+func TestInsertWithTxInvalidInviterRollsBackUserAndLedger(t *testing.T) {
+	setupLedgerTestState(t)
+	configureInviteRegistrationTest(t, 100, 50, 25)
+
+	user := &User{Username: "invalid-inviter-user", Password: "password", Status: common.UserStatusEnabled}
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		return user.InsertWithTx(tx, 999999)
+	})
+	require.Error(t, err)
+
+	var userCount int64
+	require.NoError(t, DB.Model(&User{}).
+		Where("username = ?", user.Username).Count(&userCount).Error)
+	assert.Zero(t, userCount)
+	var ledgerCount int64
+	require.NoError(t, DB.Model(&BalanceLedger{}).Count(&ledgerCount).Error)
+	assert.Zero(t, ledgerCount)
+}
+
 // TestInsertWithTxOAuthRollbackLeavesNoUserAndNoLedger 覆盖 OAuth 注册路径：
 // 用户创建与赠金在同一事务内，外层事务回滚时用户与账本流水一并消失，
 // 不会出现“用户不存在但赠金已发放”的半状态。
@@ -812,7 +884,7 @@ func TestTopupDuplicateCallbackNoDoubleCredit(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// legacy GetUserQuota / 缓存兼容
+// spendable GetUserQuota / 缓存兼容
 // ---------------------------------------------------------------------------
 
 func TestGetUserQuotaReadsMirrorAfterLedgerOps(t *testing.T) {
@@ -827,6 +899,28 @@ func TestGetUserQuotaReadsMirrorAfterLedgerOps(t *testing.T) {
 	quota, err := GetUserQuota(600, true)
 	require.NoError(t, err)
 	assert.Equal(t, 1800, quota)
+}
+
+func TestGetUserQuotaExcludesAffiliateBalance(t *testing.T) {
+	setupLedgerTestState(t)
+	createLedgerTestUser(t, 601, 1800)
+	_, err := CreditQuota(LedgerEntry{
+		UserId:        601,
+		Account:       AccountAffiliate,
+		Delta:         900,
+		Reason:        "test",
+		ReferenceType: "affiliate_reward",
+		ReferenceId:   "affiliate-only",
+	})
+	require.NoError(t, err)
+
+	quota, err := GetUserQuota(601, true)
+	require.NoError(t, err)
+	assert.Equal(t, 1800, quota)
+
+	user := getUserBalances(t, 601)
+	assert.Equal(t, 2700, user.Quota, "total compatibility mirror still includes affiliate")
+	assert.Equal(t, 1800, user.ToBaseUser().Quota, "relay cache must expose only spendable quota")
 }
 
 func TestRefreshUserQuotaCacheDisabledRedisNoop(t *testing.T) {

@@ -101,7 +101,7 @@ function UsageLogsContent() {
   const handleSectionChange = useCallback(
     (section: string) => {
       void navigate({
-        to: '/usage-logs/$section',
+        to: '/dashboard/logs/$section',
         params: { section: section as UsageLogsSectionId },
       })
     },

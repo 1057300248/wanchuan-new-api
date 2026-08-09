@@ -49,22 +49,22 @@ export function buildCustomerNavGroups(t: TFunction): NavGroup[] {
         },
         {
           title: t('API Keys'),
-          url: '/keys',
+          url: '/dashboard/keys',
           icon: Key,
         },
         {
           title: t('Usage Logs'),
-          url: '/usage-logs/common',
+          url: '/dashboard/logs/common',
           activeUrls: [
-            '/usage-logs/common',
-            '/usage-logs/task',
-            '/usage-logs/drawing',
+            '/dashboard/logs/common',
+            '/dashboard/logs/task',
+            '/dashboard/logs/drawing',
           ],
           icon: FileText,
         },
         {
           title: t('Playground'),
-          url: '/playground',
+          url: '/dashboard/playground',
           icon: FlaskConical,
         },
       ],
@@ -75,18 +75,18 @@ export function buildCustomerNavGroups(t: TFunction): NavGroup[] {
       items: [
         {
           title: t('Wallet'),
-          url: '/wallet',
+          url: '/dashboard/wallet',
           icon: Wallet,
         },
         {
           title: t('Referral Program'),
-          url: '/wallet#referral',
-          activeUrls: ['/wallet', '/wallet#referral'],
+          url: '/dashboard/referrals',
+          activeUrls: ['/dashboard/referrals'],
           icon: Share2,
         },
         {
           title: t('Profile'),
-          url: '/profile',
+          url: '/dashboard/settings',
           icon: User,
         },
       ],

@@ -1,3 +1,4 @@
+import type { ReferralOverview, WalletSummary } from '@/features/wallet/types'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -18,8 +19,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { formatQuota, quotaUnitsToDollars } from '@/lib/format'
 
-import type { ReferralOverview, WalletSummary } from '@/features/wallet/types'
-
 /**
  * Pure view-builder for the dashboard financial summary.
  *
@@ -29,7 +28,7 @@ import type { ReferralOverview, WalletSummary } from '@/features/wallet/types'
  * formatting (`formatQuota`), never through hard-coded multipliers.
  */
 export interface FinancialSummaryAccount {
-  key: 'total' | 'paid' | 'bonus' | 'affiliate'
+  key: 'spendable' | 'paid' | 'bonus' | 'affiliate'
   /** i18n key — English source string */
   labelKey: string
   /** Formatted via `formatQuota` */
@@ -59,10 +58,11 @@ export interface FinancialSummaryView {
 function buildAccounts(summary: WalletSummary): FinancialSummaryAccount[] {
   return [
     {
-      key: 'total',
-      labelKey: 'Total Balance',
-      value: formatQuota(summary.total),
-      descriptionKey: 'Sum of all wallet accounts',
+      key: 'spendable',
+      labelKey: 'Spendable Balance',
+      value: formatQuota(summary.spendable),
+      descriptionKey:
+        'Paid plus bonus balance; affiliate rewards are withdrawable only',
     },
     {
       key: 'paid',

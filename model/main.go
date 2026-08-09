@@ -310,6 +310,7 @@ func migrateDB() error {
 		&BalanceLedger{},
 		&ModelBonusEligibleAudit{},
 		&AffiliateReward{},
+		&AffiliateRewardReconcileState{},
 		&AffiliateWithdrawal{},
 	)
 	if err != nil {
@@ -379,6 +380,7 @@ func migrateDBFast() error {
 		{&BalanceLedger{}, "BalanceLedger"},
 		{&ModelBonusEligibleAudit{}, "ModelBonusEligibleAudit"},
 		{&AffiliateReward{}, "AffiliateReward"},
+		{&AffiliateRewardReconcileState{}, "AffiliateRewardReconcileState"},
 		{&AffiliateWithdrawal{}, "AffiliateWithdrawal"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大

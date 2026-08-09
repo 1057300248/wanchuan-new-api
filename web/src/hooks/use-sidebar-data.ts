@@ -56,7 +56,7 @@ export function useSidebarData(): SidebarData {
         items: [
           {
             title: t('Playground'),
-            url: '/playground',
+            url: '/dashboard/playground',
             icon: FlaskConical,
           },
           {
@@ -83,19 +83,19 @@ export function useSidebarData(): SidebarData {
           },
           {
             title: t('API Keys'),
-            url: '/keys',
+            url: '/dashboard/keys',
             icon: Key,
           },
           {
             title: t('Usage Logs'),
-            url: '/usage-logs/common',
+            url: '/dashboard/logs/common',
             icon: FileText,
           },
           {
             title: t('Task Logs'),
-            url: '/usage-logs/task',
-            activeUrls: ['/usage-logs/drawing'],
-            configUrls: ['/usage-logs/drawing', '/usage-logs/task'],
+            url: '/dashboard/logs/task',
+            activeUrls: ['/dashboard/logs/drawing'],
+            configUrls: ['/dashboard/logs/drawing', '/dashboard/logs/task'],
             icon: ListTodo,
           },
         ],
@@ -106,12 +106,12 @@ export function useSidebarData(): SidebarData {
         items: [
           {
             title: t('Wallet'),
-            url: '/wallet',
+            url: '/dashboard/wallet',
             icon: Wallet,
           },
           {
             title: t('Profile'),
-            url: '/profile',
+            url: '/dashboard/settings',
             icon: User,
           },
         ],
@@ -127,7 +127,7 @@ export function useSidebarData(): SidebarData {
           },
           {
             title: t('Models'),
-            url: '/models/metadata',
+            url: '/dashboard/admin/models/metadata',
             icon: Box,
           },
           {

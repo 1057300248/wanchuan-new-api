@@ -587,19 +587,23 @@ func TestUserSessionGrowthQueryIndexesExist(t *testing.T) {
 
 func TestUserBaseIncludesAuthorizationFields(t *testing.T) {
 	user := User{
-		Id:          42,
-		Username:    "cache-user",
-		Role:        common.RoleAdminUser,
-		Status:      common.UserStatusEnabled,
-		Group:       "vip",
-		Quota:       123,
-		AuthVersion: 7,
+		Id:             42,
+		Username:       "cache-user",
+		Role:           common.RoleAdminUser,
+		Status:         common.UserStatusEnabled,
+		Group:          "vip",
+		Quota:          1123,
+		QuotaPaid:      100,
+		QuotaBonus:     23,
+		QuotaAffiliate: 1000,
+		AuthVersion:    7,
 	}
 	base := user.ToBaseUser()
 	assert.Equal(t, user.Role, base.Role)
 	assert.Equal(t, user.AuthVersion, base.AuthVersion)
 	assert.Equal(t, userCacheSchemaVersion, base.CacheSchema)
-	assert.Equal(t, user.Quota, base.Quota)
+	assert.Equal(t, 123, base.Quota)
+	assert.Equal(t, user.QuotaPaid+user.QuotaBonus, base.Quota)
 }
 
 func TestUserUpdateBumpsAuthVersionOnlyForAuthorizationChanges(t *testing.T) {

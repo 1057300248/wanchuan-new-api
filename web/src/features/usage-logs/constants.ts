@@ -32,6 +32,8 @@ import type { LogStatistics, LogCategory } from './types'
  */
 export const DEFAULT_LOG_STATS: LogStatistics = {
   quota: 0,
+  request_count: 0,
+  token_count: 0,
   rpm: 0,
   tpm: 0,
 }

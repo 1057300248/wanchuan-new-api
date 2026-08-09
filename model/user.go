@@ -119,7 +119,7 @@ func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
 		Id:          user.Id,
 		Group:       user.Group,
-		Quota:       user.Quota,
+		Quota:       user.SpendableQuota(),
 		Status:      user.Status,
 		Role:        user.Role,
 		Username:    user.Username,
@@ -129,6 +129,16 @@ func (user *User) ToBaseUser() *UserBase {
 		CacheSchema: userCacheSchemaVersion,
 	}
 	return cache
+}
+
+// SpendableQuota returns the balance available for API consumption.
+// Affiliate rewards stay withdrawable until the user explicitly transfers
+// them into the paid account, so they must never authorize relay traffic.
+func (user *User) SpendableQuota() int {
+	if user == nil {
+		return 0
+	}
+	return user.QuotaPaid + user.QuotaBonus
 }
 
 func (user *User) GetAccessToken() string {
@@ -621,6 +631,7 @@ func (user *User) Insert(inviterId int) error {
 			if err := user.prepareForInsert(tx); err != nil {
 				return err
 			}
+			user.InviterId = inviterId
 			initialQuota := signupBonusQuota()
 			// 先以零余额创建用户，再由同一事务内账本入账，避免初始字段与
 			// CreditQuotaTx 各加一次造成注册赠额翻倍。
@@ -648,6 +659,9 @@ func (user *User) Insert(inviterId int) error {
 				}
 				user.QuotaBonus = result.TotalAfter
 				user.Quota = result.TotalAfter
+			}
+			if err := applyInviteRegistrationRewardsTx(tx, user, inviterId); err != nil {
+				return err
 			}
 			return nil
 		})
@@ -680,21 +694,10 @@ func (user *User) finishInsert(inviterId int) {
 	}
 	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() && common.SignupBonusEnabled {
 		if common.QuotaForInvitee > 0 {
-			// P1-1：邀请码被邀请人赠额进入 bonus 账户，不进 paid。
-			_, _ = CreditQuota(LedgerEntry{
-				UserId:        user.Id,
-				Account:       AccountBonus,
-				Delta:         common.QuotaForInvitee,
-				Reason:        LedgerReasonInviteeBonus,
-				ReferenceType: "user_invitee",
-				ReferenceId:   strconv.Itoa(user.Id),
-			})
 			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
 		}
 		if common.QuotaForInviter > 0 {
-			//_ = IncreaseUserQuota(inviterId, common.QuotaForInviter)
 			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
 		}
 	}
 }
@@ -711,6 +714,7 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 		if err := user.prepareForInsert(tx); err != nil {
 			return err
 		}
+		user.InviterId = inviterId
 		initialQuota := signupBonusQuota()
 		user.QuotaPaid = 0
 		user.QuotaBonus = 0
@@ -736,8 +740,50 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 			user.QuotaBonus = result.TotalAfter
 			user.Quota = result.TotalAfter
 		}
+		if err := applyInviteRegistrationRewardsTx(tx, user, inviterId); err != nil {
+			return err
+		}
 		return nil
 	})
+}
+
+// applyInviteRegistrationRewardsTx 将邀请码双方的注册奖励纳入用户创建事务。
+// 任一步骤失败都会回滚用户创建，避免注册成功但赠额/邀请计数静默丢失。
+func applyInviteRegistrationRewardsTx(tx *gorm.DB, user *User, inviterId int) error {
+	if tx == nil || user == nil || inviterId <= 0 ||
+		!operation_setting.IsPaymentComplianceConfirmed() || !common.SignupBonusEnabled {
+		return nil
+	}
+	if common.QuotaForInvitee > 0 {
+		result, err := CreditQuotaTx(tx, LedgerEntry{
+			UserId:         user.Id,
+			Account:        AccountBonus,
+			Delta:          common.QuotaForInvitee,
+			Reason:         LedgerReasonInviteeBonus,
+			ReferenceType:  "user_invitee",
+			ReferenceId:    strconv.Itoa(user.Id),
+			IdempotencyKey: fmt.Sprintf("invitee_bonus:user:%d", user.Id),
+		})
+		if err != nil {
+			return err
+		}
+		user.QuotaBonus = result.TotalAfter - user.QuotaPaid - user.QuotaAffiliate
+		user.Quota = result.TotalAfter
+	}
+	if common.QuotaForInviter > 0 {
+		res := tx.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]interface{}{
+			"aff_count":   gorm.Expr("aff_count + 1"),
+			"aff_quota":   gorm.Expr("aff_quota + ?", common.QuotaForInviter),
+			"aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter),
+		})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return fmt.Errorf("inviter not found: %d", inviterId)
+		}
+	}
+	return nil
 }
 
 // signupBonusQuota 返回注册赠金额度（quota units）。功能开关关闭时返回 0，
@@ -782,20 +828,10 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 	}
 	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() && common.SignupBonusEnabled {
 		if common.QuotaForInvitee > 0 {
-			// P1-1：邀请码被邀请人赠额进入 bonus 账户，不进 paid。
-			_, _ = CreditQuota(LedgerEntry{
-				UserId:        user.Id,
-				Account:       AccountBonus,
-				Delta:         common.QuotaForInvitee,
-				Reason:        LedgerReasonInviteeBonus,
-				ReferenceType: "user_invitee",
-				ReferenceId:   strconv.Itoa(user.Id),
-			})
 			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
 		}
 		if common.QuotaForInviter > 0 {
 			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
 		}
 	}
 }
@@ -1233,7 +1269,9 @@ func GetUserAccountBalances(id int) (paid int, bonus int, affiliate int, err err
 	return user.QuotaPaid, user.QuotaBonus, user.QuotaAffiliate, nil
 }
 
-// GetUserQuota gets quota from Redis first, falls back to DB if needed
+// GetUserQuota returns the spendable balance (paid + bonus). users.quota is a
+// compatibility mirror of all three accounts and includes withdrawable
+// affiliate rewards, so it must not be used for relay authorization.
 func GetUserQuota(id int, fromDB bool) (quota int, err error) {
 	if !fromDB && common.RedisEnabled {
 		quota, err := getUserQuotaCache(id)
@@ -1243,7 +1281,8 @@ func GetUserQuota(id int, fromDB bool) (quota int, err error) {
 		// Don't return error - fall through to DB
 	}
 	fromDB = true
-	err = DB.Model(&User{}).Where("id = ?", id).Select("quota").Find(&quota).Error
+	err = DB.Model(&User{}).Where("id = ?", id).
+		Select("quota_paid + quota_bonus").Find(&quota).Error
 	if err != nil {
 		return 0, err
 	}

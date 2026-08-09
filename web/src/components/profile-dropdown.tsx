@@ -102,13 +102,17 @@ export function ProfileDropdown() {
 
           <DropdownMenuSeparator />
 
-          <DropdownMenuItem onClick={() => navigate({ to: '/profile' })}>
+          <DropdownMenuItem
+            onClick={() => navigate({ to: '/dashboard/settings' })}
+          >
             <User className='size-4' />
             {t('Profile')}
           </DropdownMenuItem>
 
           {isWalletVisible && (
-            <DropdownMenuItem onClick={() => navigate({ to: '/wallet' })}>
+            <DropdownMenuItem
+              onClick={() => navigate({ to: '/dashboard/wallet' })}
+            >
               <Wallet className='size-4' />
               {t('Wallet')}
             </DropdownMenuItem>

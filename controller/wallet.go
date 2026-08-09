@@ -39,7 +39,7 @@ func walletRuleSummary() WalletRuleSummary {
 	}
 }
 
-// GetWalletSummary 返回登录用户钱包汇总：total/paid/bonus/affiliate 与规则摘要。
+// GetWalletSummary 返回登录用户钱包汇总：资产总额、可消费余额、paid/bonus/affiliate 与规则摘要。
 // 读取前先幂等成熟到期返利（lazy release）。
 func GetWalletSummary(c *gin.Context) {
 	userId := c.GetInt("id")
@@ -50,15 +50,18 @@ func GetWalletSummary(c *gin.Context) {
 		return
 	}
 	total := paid + bonus + affiliate
+	spendable := paid + bonus
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 		"data": gin.H{
-			"total":     total,
-			"paid":      paid,
-			"bonus":     bonus,
-			"affiliate": affiliate,
-			"rules":     walletRuleSummary(),
+			"total":        total,
+			"spendable":    spendable,
+			"withdrawable": affiliate,
+			"paid":         paid,
+			"bonus":        bonus,
+			"affiliate":    affiliate,
+			"rules":        walletRuleSummary(),
 		},
 	})
 }

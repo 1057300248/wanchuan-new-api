@@ -49,7 +49,13 @@ func Playground(c *gin.Context) {
 		return
 	}
 	userCache.WriteContext(c)
-	if userCache.Quota <= 0 {
+	paid, bonus, _, err := model.GetUserAccountBalances(userId)
+	if err != nil {
+		newAPIError = types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
+		return
+	}
+	spendableQuota := paid + bonus
+	if spendableQuota <= 0 {
 		newAPIError = types.NewErrorWithStatusCode(
 			errors.New("钱包余额不足，请充值后使用试验场"),
 			types.ErrorCodeInsufficientUserQuota,
@@ -88,6 +94,11 @@ func PlaygroundBootstrap(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	paid, bonus, affiliate, err := model.GetUserAccountBalances(userID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	groups := service.GetUserUsableGroups(userCache.Group)
 	// 复用定价目录投影：仅返回已通过状态、计费可用性与能力投影的模型，
@@ -118,7 +129,7 @@ func PlaygroundBootstrap(c *gin.Context) {
 
 	common.ApiSuccess(c, gin.H{
 		"id": user.Id, "username": user.Username, "display_name": user.DisplayName,
-		"quota": userCache.Quota, "quota_per_unit": common.QuotaPerUnit,
+		"quota": paid + bonus, "spendable_quota": paid + bonus, "paid_quota": paid, "bonus_quota": bonus, "affiliate_quota": affiliate, "quota_per_unit": common.QuotaPerUnit,
 		"quota_display_type":     operation_setting.GetQuotaDisplayType(),
 		"currency_symbol":        operation_setting.GetCurrencySymbol(),
 		"currency_exchange_rate": operation_setting.GetUsdToCurrencyRate(operation_setting.USDExchangeRate),

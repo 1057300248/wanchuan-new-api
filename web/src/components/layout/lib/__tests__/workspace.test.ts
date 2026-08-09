@@ -35,14 +35,14 @@ describe('resolveWorkspace', () => {
       '/dashboard/overview',
       '/dashboard',
       '/dashboard/',
-      '/keys',
-      '/usage-logs',
-      '/usage-logs/common',
-      '/usage-logs/task',
-      '/wallet',
-      '/wallet#referral',
-      '/profile',
-      '/playground',
+      '/dashboard/keys',
+      '/dashboard/logs',
+      '/dashboard/logs/common',
+      '/dashboard/logs/task',
+      '/dashboard/wallet',
+      '/dashboard/referrals',
+      '/dashboard/settings',
+      '/dashboard/playground',
       '/chat/0',
       '/chat2link',
       '/errors/not-found',
@@ -65,6 +65,8 @@ describe('resolveWorkspace', () => {
       '/system-settings',
       '/system-settings/site',
       '/system-settings/billing',
+      '/dashboard/admin/models',
+      '/dashboard/admin/models/metadata',
       '/dashboard/models',
       '/dashboard/users',
       '/dashboard/flow',
@@ -81,8 +83,8 @@ describe('resolveWorkspace', () => {
   test('prefix matching respects path-segment boundaries', () => {
     assert.equal(resolveWorkspace('/models-extra'), 'admin')
     assert.equal(resolveWorkspace('/dashboard/models-extra'), 'customer')
-    assert.equal(resolveWorkspace('/walletx'), 'admin')
-    assert.equal(resolveWorkspace('/usage-logs-extra'), 'admin')
+    assert.equal(resolveWorkspace('/dashboardx'), 'admin')
+    assert.equal(resolveWorkspace('/dashboard-admin'), 'admin')
   })
 
   test('unknown authenticated paths fall back to the admin shell', () => {
@@ -90,18 +92,27 @@ describe('resolveWorkspace', () => {
   })
 
   test('trailing slashes, query strings and hashes do not change the workspace', () => {
-    assert.equal(resolveWorkspace('/wallet/'), 'customer')
-    assert.equal(resolveWorkspace('/keys?page=2'), 'customer')
-    assert.equal(resolveWorkspace('/wallet?show_history=true#referral'), 'customer')
+    assert.equal(resolveWorkspace('/dashboard/wallet/'), 'customer')
+    assert.equal(resolveWorkspace('/dashboard/keys?page=2'), 'customer')
+    assert.equal(
+      resolveWorkspace('/dashboard/referrals?source=wallet#referral'),
+      'customer'
+    )
     assert.equal(resolveWorkspace('/users/?page=1'), 'admin')
   })
 })
 
 describe('normalizeWorkspacePath', () => {
   test('strips query, hash and trailing slashes but keeps the root', () => {
-    assert.equal(normalizeWorkspacePath('/wallet/?tab=1#x'), '/wallet')
+    assert.equal(
+      normalizeWorkspacePath('/dashboard/wallet/?tab=1#x'),
+      '/dashboard/wallet'
+    )
     assert.equal(normalizeWorkspacePath('/'), '/')
-    assert.equal(normalizeWorkspacePath('/dashboard/models'), '/dashboard/models')
+    assert.equal(
+      normalizeWorkspacePath('/dashboard/models'),
+      '/dashboard/models'
+    )
   })
 })
 
@@ -121,7 +132,7 @@ describe('isAdminWorkspaceSwitchVisible', () => {
 describe('workspace home constants', () => {
   test('customer home is the post-login default and admin home is a management route', () => {
     assert.equal(CUSTOMER_WORKSPACE_HOME, '/dashboard/overview')
-    assert.equal(ADMIN_WORKSPACE_HOME, '/dashboard/models')
+    assert.equal(ADMIN_WORKSPACE_HOME, '/dashboard/admin/models')
     assert.equal(resolveWorkspace(CUSTOMER_WORKSPACE_HOME), 'customer')
     assert.equal(resolveWorkspace(ADMIN_WORKSPACE_HOME), 'admin')
   })

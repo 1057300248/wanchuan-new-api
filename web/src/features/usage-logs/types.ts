@@ -254,6 +254,8 @@ export interface LogOtherData {
  */
 export interface LogStatistics {
   quota: number
+  request_count: number
+  token_count: number
   rpm: number
   tpm: number
 }

@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const userCacheSchemaVersion = 2
+const userCacheSchemaVersion = 3
 
 type UserBase struct {
 	Id          int    `json:"id"`
@@ -131,6 +131,10 @@ func cacheGetUserBase(userId int) (*UserBase, error) {
 		return nil, err
 	}
 	if userCache.Id != userId || userCache.CacheSchema != userCacheSchemaVersion || userCache.AuthVersion <= 0 {
+		// A schema change may also change the meaning of a cached field. Remove
+		// the complete stale hash so the database fallback can repopulate every
+		// field, including spendable quota, rather than preserving legacy data.
+		_ = invalidateUserCache(userId)
 		return nil, fmt.Errorf("user cache schema is stale")
 	}
 	floor, err := getUserAuthVersionFloor(userId)

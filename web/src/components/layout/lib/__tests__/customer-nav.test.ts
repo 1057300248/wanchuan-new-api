@@ -55,12 +55,12 @@ describe('buildCustomerNavGroups', () => {
 
     for (const expected of [
       '/dashboard/overview',
-      '/keys',
-      '/usage-logs/common',
-      '/wallet',
-      '/wallet#referral',
-      '/profile',
-      '/playground',
+      '/dashboard/keys',
+      '/dashboard/logs/common',
+      '/dashboard/wallet',
+      '/dashboard/referrals',
+      '/dashboard/settings',
+      '/dashboard/playground',
     ]) {
       assert.equal(urls.includes(expected), true, `missing ${expected}`)
     }
@@ -69,7 +69,11 @@ describe('buildCustomerNavGroups', () => {
   test('contains no admin management entries', () => {
     const urls = collectUrls(buildCustomerNavGroups(createStubT()))
     for (const adminUrl of ADMIN_URLS) {
-      assert.equal(urls.includes(adminUrl), false, `found admin url ${adminUrl}`)
+      assert.equal(
+        urls.includes(adminUrl),
+        false,
+        `found admin url ${adminUrl}`
+      )
     }
   })
 
@@ -77,25 +81,25 @@ describe('buildCustomerNavGroups', () => {
     const groups = buildCustomerNavGroups(createStubT())
     const referral = groups
       .flatMap((group) => group.items)
-      .find((item) => 'url' in item && item.url === '/wallet#referral')
+      .find((item) => 'url' in item && item.url === '/dashboard/referrals')
 
     assert.ok(referral)
     assert.ok('activeUrls' in referral)
-    assert.deepEqual(referral.activeUrls, ['/wallet', '/wallet#referral'])
+    assert.deepEqual(referral.activeUrls, ['/dashboard/referrals'])
   })
 
   test('usage logs item stays active across every log section', () => {
     const groups = buildCustomerNavGroups(createStubT())
     const usageLogs = groups
       .flatMap((group) => group.items)
-      .find((item) => 'url' in item && item.url === '/usage-logs/common')
+      .find((item) => 'url' in item && item.url === '/dashboard/logs/common')
 
     assert.ok(usageLogs)
     assert.ok('activeUrls' in usageLogs)
     assert.deepEqual(usageLogs.activeUrls, [
-      '/usage-logs/common',
-      '/usage-logs/task',
-      '/usage-logs/drawing',
+      '/dashboard/logs/common',
+      '/dashboard/logs/task',
+      '/dashboard/logs/drawing',
     ])
   })
 })
