@@ -16,9 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import {
+  createFileRoute,
+  redirect,
+  useLocation,
+} from '@tanstack/react-router'
 
-import { AuthenticatedLayout } from '@/components/layout'
+import {
+  AuthenticatedLayout,
+  CustomerCenterLayout,
+} from '@/components/layout'
+import { resolveWorkspace } from '@/components/layout/lib/workspace'
 import { useAuthStore } from '@/stores/auth-store'
 
 export const Route = createFileRoute('/_authenticated')({
@@ -32,5 +40,21 @@ export const Route = createFileRoute('/_authenticated')({
       })
     }
   },
-  component: AuthenticatedLayout,
+  component: WorkspaceLayout,
 })
+
+/**
+ * Path-driven dual shell: customer routes render the customer center,
+ * management routes keep the admin shell. Refreshes and deep links pick
+ * the correct shell from the pathname — no localStorage-only mode.
+ */
+function WorkspaceLayout() {
+  const pathname = useLocation({ select: (l) => l.pathname })
+  const workspace = resolveWorkspace(pathname)
+
+  if (workspace === 'customer') {
+    return <CustomerCenterLayout />
+  }
+
+  return <AuthenticatedLayout />
+}

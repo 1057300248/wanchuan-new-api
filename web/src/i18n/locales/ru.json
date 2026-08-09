@@ -5360,6 +5360,16 @@
     "Withdrawal request updated": "Заявка на вывод обновлена",
     "Reject": "Отклонить",
     "Approve": "Одобрить",
-    "Mark Paid": "Отметить оплаченной"
+    "Mark Paid": "Отметить оплаченной",
+    "Customer Center": "Клиентский центр",
+    "Admin Dashboard": "Панель администратора",
+    "Financial Summary": "Финансовая сводка",
+    "Account balances and referral rewards": "Балансы счетов и реферальные вознаграждения",
+    "View wallet": "Перейти к кошельку",
+    "Wallet summary unavailable": "Сводка кошелька недоступна",
+    "Could not load wallet data": "Не удалось загрузить данные кошелька",
+    "Reward rate: {{rate}}%": "Ставка вознаграждения: {{rate}}%",
+    "Unlock period: {{days}} days": "Срок разблокировки: {{days}} дней",
+    "Invited users": "Приглашённые пользователи"
   }
 }

@@ -5360,6 +5360,16 @@
     "Withdrawal request updated": "Đã cập nhật yêu cầu rút tiền",
     "Reject": "Từ chối",
     "Approve": "Duyệt",
-    "Mark Paid": "Đánh dấu đã trả"
+    "Mark Paid": "Đánh dấu đã trả",
+    "Customer Center": "Trung tâm khách hàng",
+    "Admin Dashboard": "Bảng điều khiển quản trị",
+    "Financial Summary": "Tóm tắt tài chính",
+    "Account balances and referral rewards": "Số dư tài khoản và thưởng giới thiệu",
+    "View wallet": "Xem ví",
+    "Wallet summary unavailable": "Không có tóm tắt ví",
+    "Could not load wallet data": "Không thể tải dữ liệu ví",
+    "Reward rate: {{rate}}%": "Tỷ lệ thưởng: {{rate}}%",
+    "Unlock period: {{days}} days": "Thời gian mở khóa: {{days}} ngày",
+    "Invited users": "Người dùng đã mời"
   }
 }

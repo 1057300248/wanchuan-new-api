@@ -5360,6 +5360,16 @@
     "Withdrawal request updated": "Demande de retrait mise à jour",
     "Reject": "Refuser",
     "Approve": "Approuver",
-    "Mark Paid": "Marquer payé"
+    "Mark Paid": "Marquer payé",
+    "Customer Center": "Espace client",
+    "Admin Dashboard": "Tableau de bord admin",
+    "Financial Summary": "Résumé financier",
+    "Account balances and referral rewards": "Soldes des comptes et récompenses de parrainage",
+    "View wallet": "Voir le portefeuille",
+    "Wallet summary unavailable": "Résumé du portefeuille indisponible",
+    "Could not load wallet data": "Impossible de charger les données du portefeuille",
+    "Reward rate: {{rate}}%": "Taux de récompense : {{rate}}%",
+    "Unlock period: {{days}} days": "Délai de déblocage : {{days}} jours",
+    "Invited users": "Utilisateurs invités"
   }
 }

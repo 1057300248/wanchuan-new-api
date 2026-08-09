@@ -370,13 +370,15 @@ export function Wallet(props: WalletProps) {
               />
             </div>
 
-            <ReferralRewardsCard
-              overview={referralOverview}
-              user={user}
-              affiliateLink={affiliateLink}
-              onWithdraw={() => setWithdrawalDialogOpen(true)}
-              loading={referralLoading}
-            />
+            <section id='referral' className='scroll-mt-4'>
+              <ReferralRewardsCard
+                overview={referralOverview}
+                user={user}
+                affiliateLink={affiliateLink}
+                onWithdraw={() => setWithdrawalDialogOpen(true)}
+                loading={referralLoading}
+              />
+            </section>
 
             <ReferralHistoryCard />
 

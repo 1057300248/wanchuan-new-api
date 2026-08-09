@@ -48,11 +48,11 @@ import {
 } from '@/components/ui/sidebar'
 
 import { checkIsActive } from '../lib/url-utils'
-import {
-  type NavCollapsible,
-  type NavChatPresets,
-  type NavLink,
-  type NavGroup as NavGroupProps,
+import type {
+  NavCollapsible,
+  NavChatPresets,
+  NavLink,
+  NavGroup as NavGroupProps,
 } from '../types'
 import { ChatPresetsItem } from './chat-presets-item'
 
@@ -122,12 +122,24 @@ function NavBadge({ children }: { children: ReactNode }) {
  */
 function SidebarMenuLink({ item, href }: { item: NavLink; href: string }) {
   const { setOpenMobile } = useSidebar()
+  const url = item.url
+  // Hash anchors (e.g. `/wallet#referral`) must navigate through the `href`
+  // prop — TanStack Router treats a string `to` purely as a pathname, so the
+  // `#` would leak into the path and match no route.
+  const isHashHref = typeof url === 'string' && url.includes('#')
+
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
         isActive={checkIsActive(href, item)}
         tooltip={item.title}
-        render={<Link to={item.url} onClick={() => setOpenMobile(false)} />}
+        render={
+          isHashHref ? (
+            <a href={url} onClick={() => setOpenMobile(false)} />
+          ) : (
+            <Link to={url} onClick={() => setOpenMobile(false)} />
+          )
+        }
       >
         {item.icon && <item.icon className='shrink-0' />}
         <span className='min-w-0 flex-1 truncate'>{item.title}</span>

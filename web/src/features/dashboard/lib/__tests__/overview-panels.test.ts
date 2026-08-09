@@ -32,22 +32,8 @@ const ALL_ON: OverviewPanelFlags = {
 }
 
 describe('getOverviewPanelVisibility', () => {
-  test('admin keeps every configured panel', () => {
-    assert.deepEqual(getOverviewPanelVisibility(ALL_ON, true), ALL_ON)
-  })
-
-  test('admin keeps the exact mixed configuration', () => {
-    const mixed: OverviewPanelFlags = {
-      apiInfo: false,
-      announcements: true,
-      faq: true,
-      uptimeKuma: false,
-    }
-    assert.deepEqual(getOverviewPanelVisibility(mixed, true), mixed)
-  })
-
-  test('regular user only keeps announcements and drops monitoring/FAQ/API info panels', () => {
-    assert.deepEqual(getOverviewPanelVisibility(ALL_ON, false), {
+  test('customer overview keeps only announcements and drops monitoring/FAQ/API info panels', () => {
+    assert.deepEqual(getOverviewPanelVisibility(ALL_ON), {
       apiInfo: false,
       announcements: true,
       faq: false,
@@ -55,16 +41,31 @@ describe('getOverviewPanelVisibility', () => {
     })
   })
 
-  test('regular user keeps announcements disabled when the config disables them', () => {
+  test('announcements stay disabled when the config disables them', () => {
     const withoutAnnouncements: OverviewPanelFlags = {
       apiInfo: true,
       announcements: false,
       faq: true,
       uptimeKuma: true,
     }
-    assert.deepEqual(getOverviewPanelVisibility(withoutAnnouncements, false), {
+    assert.deepEqual(getOverviewPanelVisibility(withoutAnnouncements), {
       apiInfo: false,
       announcements: false,
+      faq: false,
+      uptimeKuma: false,
+    })
+  })
+
+  test('admin visitors get the same customer-first layout since the overview lives in the customer center', () => {
+    const mixed: OverviewPanelFlags = {
+      apiInfo: false,
+      announcements: true,
+      faq: true,
+      uptimeKuma: false,
+    }
+    assert.deepEqual(getOverviewPanelVisibility(mixed), {
+      apiInfo: false,
+      announcements: true,
       faq: false,
       uptimeKuma: false,
     })

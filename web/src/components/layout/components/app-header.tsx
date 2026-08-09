@@ -23,12 +23,14 @@ import { ProfileDropdown } from '@/components/profile-dropdown'
 import { Search } from '@/components/search'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useTopNavLinks } from '@/hooks/use-top-nav-links'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { defaultTopNavLinks } from '../config/top-nav.config'
-import { type TopNavLink } from '../types'
+import type { TopNavLink } from '../types'
 import { Header } from './header'
 import { SystemBrand } from './system-brand'
 import { TopNav } from './top-nav'
+import { WorkspaceSwitch } from './workspace-switch'
 
 /**
  * General application Header component
@@ -91,6 +93,12 @@ type AppHeaderProps = {
    * @default true
    */
   showProfileDropdown?: boolean
+  /**
+   * Whether to show the workspace switch back to the customer center
+   * (admin shell only; the switch itself hides for non-admin roles)
+   * @default false
+   */
+  showCustomerCenterSwitch?: boolean
 }
 
 export function AppHeader({
@@ -102,6 +110,7 @@ export function AppHeader({
   showNotifications = true,
   showConfigDrawer = true,
   showProfileDropdown = true,
+  showCustomerCenterSwitch = false,
 }: AppHeaderProps) {
   // Prioritize dynamically generated links from backend
   const dynamicLinks = useTopNavLinks()
@@ -110,41 +119,44 @@ export function AppHeader({
   // Notifications hook
   const notifications = useNotifications()
 
+  // Workspace switch back to the customer center for the admin shell
+  const role = useAuthStore((state) => state.auth.user?.role)
+
   return (
-    <>
-      <Header>
-        <SystemBrand variant='inline' />
+    <Header>
+      <SystemBrand variant='inline' />
 
-        {leftContent ? (
-          <div className='ms-2 flex items-center'>{leftContent}</div>
-        ) : null}
+      {showCustomerCenterSwitch && <WorkspaceSwitch role={role} target='customer' />}
 
-        {rightContent ?? (
-          <div className='ms-auto flex items-center gap-1 sm:gap-2'>
-            {showTopNav && (
-              <div className='me-1 hidden lg:block'>
-                <TopNav links={links} />
-              </div>
-            )}
-            {showSearch && <Search />}
-            {showNotifications && (
-              <NotificationPopover
-                open={notifications.popoverOpen}
-                onOpenChange={notifications.setPopoverOpen}
-                unreadCount={notifications.unreadCount}
-                activeTab={notifications.activeTab}
-                onTabChange={notifications.setActiveTab}
-                notice={notifications.notice}
-                announcements={notifications.announcements}
-                loading={notifications.loading}
-              />
-            )}
-            <LanguageSwitcher />
-            {showConfigDrawer && <ConfigDrawer />}
-            {showProfileDropdown && <ProfileDropdown />}
-          </div>
-        )}
-      </Header>
-    </>
+      {leftContent ? (
+        <div className='ms-2 flex items-center'>{leftContent}</div>
+      ) : null}
+
+      {rightContent ?? (
+        <div className='ms-auto flex items-center gap-1 sm:gap-2'>
+          {showTopNav && (
+            <div className='me-1 hidden lg:block'>
+              <TopNav links={links} />
+            </div>
+          )}
+          {showSearch && <Search />}
+          {showNotifications && (
+            <NotificationPopover
+              open={notifications.popoverOpen}
+              onOpenChange={notifications.setPopoverOpen}
+              unreadCount={notifications.unreadCount}
+              activeTab={notifications.activeTab}
+              onTabChange={notifications.setActiveTab}
+              notice={notifications.notice}
+              announcements={notifications.announcements}
+              loading={notifications.loading}
+            />
+          )}
+          <LanguageSwitcher />
+          {showConfigDrawer && <ConfigDrawer />}
+          {showProfileDropdown && <ProfileDropdown />}
+        </div>
+      )}
+    </Header>
   )
 }

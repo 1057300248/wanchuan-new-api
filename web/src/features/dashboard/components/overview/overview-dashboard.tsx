@@ -52,7 +52,6 @@ import type { ApiKey } from '@/features/keys/types'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { getUserModels } from '@/lib/api'
 import { MOTION_TRANSITION } from '@/lib/motion'
-import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -64,7 +63,7 @@ import { getOverviewPanelVisibility } from '../../lib/overview-panels'
 import { AnnouncementsPanel } from './announcements-panel'
 import { ApiInfoPanel } from './api-info-panel'
 import { FAQPanel } from './faq-panel'
-import { PerformanceHealthPanel } from './performance-health-panel'
+import { FinancialSummaryCard } from './financial-summary-card'
 import { SummaryCards } from './summary-cards'
 import { UptimePanel } from './uptime-panel'
 
@@ -86,7 +85,6 @@ type DashboardActionPath =
   | '/keys'
   | '/wallet'
   | '/playground'
-  | '/channels'
   | '/usage-logs'
   | '/pricing'
 
@@ -103,7 +101,6 @@ interface QuickAction {
   description: string
   to: DashboardActionPath
   icon: LucideIcon
-  adminOnly?: boolean
 }
 
 interface RequestExample {
@@ -460,10 +457,8 @@ export function OverviewDashboard() {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
   const { items: apiInfoItems } = useApiInfo()
-  const isAdmin = Boolean(user?.role && user.role >= ROLE.ADMIN)
   const panelVisibility = getOverviewPanelVisibility(
-    useDashboardContentVisibility(),
-    isAdmin
+    useDashboardContentVisibility()
   )
   const {
     apiInfo: showApiInfoPanel,
@@ -538,13 +533,6 @@ export function OverviewDashboard() {
         icon: KeyRound,
       },
       {
-        title: t('Channels'),
-        description: t('Configure upstream providers and routing.'),
-        to: '/channels',
-        icon: RadioTower,
-        adminOnly: true,
-      },
-      {
         title: t('Usage Logs'),
         description: t('Inspect requests, errors, and billing details'),
         to: '/usage-logs',
@@ -558,11 +546,6 @@ export function OverviewDashboard() {
       },
     ],
     [t]
-  )
-
-  const visibleQuickActions = useMemo(
-    () => quickActions.filter((action) => !action.adminOnly || isAdmin),
-    [isAdmin, quickActions]
   )
 
   const heroSignals = useMemo<HeroSignal[]>(
@@ -613,7 +596,7 @@ export function OverviewDashboard() {
   const setupGuideExpanded =
     manualSetupGuideExpanded ?? (setupStatusReady && !setupComplete)
   const showLeftContentPanels =
-    isAdmin || showApiInfoPanel || showAnnouncementsPanel || showFAQPanel
+    showApiInfoPanel || showAnnouncementsPanel || showFAQPanel
   const showContentPanels = showLeftContentPanels || showUptimePanel
 
   const handleSetupGuideToggle = () => {
@@ -693,7 +676,7 @@ export function OverviewDashboard() {
                 </h3>
               </div>
               <div className='grid gap-2'>
-                {visibleQuickActions.map((action) => (
+                {quickActions.map((action) => (
                   <QuickActionItem key={action.title} action={action} />
                 ))}
               </div>
@@ -735,7 +718,7 @@ export function OverviewDashboard() {
                 </div>
 
                 <div className='flex flex-wrap items-center gap-2'>
-                  {visibleQuickActions.map((action) => (
+                  {quickActions.map((action) => (
                     <CompactQuickAction key={action.title} action={action} />
                   ))}
                   <Button
@@ -753,6 +736,8 @@ export function OverviewDashboard() {
           </CardStaggerItem>
         </CardStaggerContainer>
       )}
+
+      <FinancialSummaryCard />
 
       <SummaryCards />
 
@@ -773,11 +758,6 @@ export function OverviewDashboard() {
                   'lg:grid-cols-2'
               )}
             >
-              {isAdmin && (
-                <CardStaggerItem className='lg:col-span-2'>
-                  <PerformanceHealthPanel />
-                </CardStaggerItem>
-              )}
               {showApiInfoPanel && (
                 <CardStaggerItem>
                   <ApiInfoPanel />

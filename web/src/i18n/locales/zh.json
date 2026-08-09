@@ -5360,6 +5360,16 @@
     "Withdrawal request updated": "提现申请已更新",
     "Reject": "拒绝",
     "Approve": "批准",
-    "Mark Paid": "标记已付款"
+    "Mark Paid": "标记已付款",
+    "Customer Center": "客户中心",
+    "Admin Dashboard": "管理后台",
+    "Financial Summary": "财务摘要",
+    "Account balances and referral rewards": "账户余额与推荐返利",
+    "View wallet": "查看钱包",
+    "Wallet summary unavailable": "钱包摘要暂不可用",
+    "Could not load wallet data": "暂时无法获取账户与返利数据",
+    "Reward rate: {{rate}}%": "返利比例：{{rate}}%",
+    "Unlock period: {{days}} days": "解锁周期：{{days}} 天",
+    "Invited users": "邀请人数"
   }
 }
