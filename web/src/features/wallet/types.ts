@@ -218,6 +218,8 @@ export interface AmountRequest {
 export interface AffiliateTransferRequest {
   /** Quota amount to transfer */
   quota: number
+  /** Stable idempotency key for retries of one user action */
+  request_id: string
 }
 
 /**

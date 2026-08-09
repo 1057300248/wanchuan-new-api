@@ -423,11 +423,23 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 			relayInfo.SubscriptionPostDelta += delta
 		}
 	} else {
-		// Wallet
+		// Wallet：差额结算写账本（幂等键 = request_id + settle / settle_refund）
+		entry := model.LedgerEntry{
+			UserId:        relayInfo.UserId,
+			Account:       model.AccountPaid,
+			Reason:        model.LedgerReasonBillingSettle,
+			ReferenceType: "relay",
+			ReferenceId:   relayInfo.RequestId,
+			RequestId:     relayInfo.RequestId,
+		}
 		if quota > 0 {
-			err = model.DecreaseUserQuota(relayInfo.UserId, quota, false)
+			entry.Delta = quota
+			entry.IdempotencyKey = "billing:settle:" + relayInfo.RequestId
+			_, err = model.DebitQuota(entry, model.AccountPaid)
 		} else {
-			err = model.IncreaseUserQuota(relayInfo.UserId, -quota, false)
+			entry.Delta = -quota
+			entry.IdempotencyKey = "billing:settle_refund:" + relayInfo.RequestId
+			_, err = model.CreditQuota(entry)
 		}
 		if err != nil {
 			return err

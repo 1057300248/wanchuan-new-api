@@ -57,6 +57,8 @@ func TestMain(m *testing.M) {
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
+		&BalanceLedgerOperation{},
+		&BalanceLedger{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -67,6 +69,8 @@ func TestMain(m *testing.M) {
 func truncateTables(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
+		DB.Exec("DELETE FROM balance_ledger")
+		DB.Exec("DELETE FROM balance_ledger_operations")
 		DB.Exec("DELETE FROM tasks")
 		DB.Exec("DELETE FROM auth_flows")
 		DB.Exec("DELETE FROM external_identity_claims")

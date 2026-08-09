@@ -24,11 +24,17 @@ type FundingSource interface {
 
 // ---------------------------------------------------------------------------
 // WalletFunding — 钱包资金来源实现
+//
+// 所有余额变动通过模型层账本入口（model.CreditQuota / model.DebitQuota）执行，
+// 使用 request_id 派生幂等键；预扣/结算/退款各使用独立键，互不冲突。
+// 余额扣减不允许任一账户或合计为负：预扣前已做余额校验，
+// 结算/补充预扣在余额不足时返回错误（不再产生负余额欠费）。
 // ---------------------------------------------------------------------------
 
 type WalletFunding struct {
-	userId   int
-	consumed int // 实际预扣的用户额度
+	userId    int
+	requestId string
+	consumed  int // 实际预扣的用户额度
 }
 
 func (w *WalletFunding) Source() string { return BillingSourceWallet }
@@ -37,7 +43,16 @@ func (w *WalletFunding) PreConsume(amount int) error {
 	if amount <= 0 {
 		return nil
 	}
-	if err := model.DecreaseUserQuota(w.userId, amount, false); err != nil {
+	entry := model.LedgerEntry{
+		UserId:         w.userId,
+		Delta:          amount,
+		Reason:         model.LedgerReasonBillingPreConsume,
+		ReferenceType:  "relay",
+		ReferenceId:    w.requestId,
+		RequestId:      w.requestId,
+		IdempotencyKey: "billing:preconsume:" + w.requestId,
+	}
+	if _, err := model.DebitQuota(entry, model.AccountPaid); err != nil {
 		return err
 	}
 	w.consumed = amount
@@ -48,19 +63,44 @@ func (w *WalletFunding) Settle(delta int) error {
 	if delta == 0 {
 		return nil
 	}
-	if delta > 0 {
-		return model.DecreaseUserQuota(w.userId, delta, false)
+	// 补扣与退款方向使用不同幂等键，同一 request 两个方向互不冲突
+	entry := model.LedgerEntry{
+		UserId:        w.userId,
+		Account:       model.AccountPaid,
+		Reason:        model.LedgerReasonBillingSettle,
+		ReferenceType: "relay",
+		ReferenceId:   w.requestId,
+		RequestId:     w.requestId,
 	}
-	return model.IncreaseUserQuota(w.userId, -delta, false)
+	var err error
+	if delta > 0 {
+		entry.Delta = delta
+		entry.IdempotencyKey = "billing:settle:" + w.requestId
+		_, err = model.DebitQuota(entry, model.AccountPaid)
+	} else {
+		entry.Delta = -delta
+		entry.IdempotencyKey = "billing:settle_refund:" + w.requestId
+		_, err = model.CreditQuota(entry)
+	}
+	return err
 }
 
 func (w *WalletFunding) Refund() error {
 	if w.consumed <= 0 {
 		return nil
 	}
-	// IncreaseUserQuota 是 quota += N 的非幂等操作，不能重试，否则会多退额度。
-	// 订阅的 RefundSubscriptionPreConsume 有 requestId 幂等保护所以可以重试。
-	return model.IncreaseUserQuota(w.userId, w.consumed, false)
+	// 退款通过账本幂等键（request_id + refund）保证重放安全，可安全重试。
+	_, err := model.CreditQuota(model.LedgerEntry{
+		UserId:         w.userId,
+		Account:        model.AccountPaid,
+		Delta:          w.consumed,
+		Reason:         model.LedgerReasonBillingRefund,
+		ReferenceType:  "relay",
+		ReferenceId:    w.requestId,
+		RequestId:      w.requestId,
+		IdempotencyKey: "billing:refund:" + w.requestId,
+	})
+	return err
 }
 
 // ---------------------------------------------------------------------------

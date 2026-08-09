@@ -87,14 +87,31 @@ func taskIsSubscription(task *model.Task) bool {
 }
 
 // taskAdjustFunding 调整任务的资金来源（钱包或订阅），delta > 0 表示扣费，delta < 0 表示退还。
+// 钱包路径写账本，幂等键 = task id（结算与退款各用独立键）；任务状态 CAS 与
+// task.Quota 回写保证每个任务结算/退款各执行一次。
 func taskAdjustFunding(task *model.Task, delta int) error {
 	if taskIsSubscription(task) {
 		return model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
 	}
-	if delta > 0 {
-		return model.DecreaseUserQuota(task.UserId, delta, false)
+	entry := model.LedgerEntry{
+		UserId:        task.UserId,
+		Account:       model.AccountPaid,
+		ReferenceType: "task",
+		ReferenceId:   task.TaskID,
+		RequestId:     task.TaskID,
 	}
-	return model.IncreaseUserQuota(task.UserId, -delta, false)
+	if delta > 0 {
+		entry.Delta = delta
+		entry.Reason = model.LedgerReasonTaskSettle
+		entry.IdempotencyKey = "task:settle:" + task.TaskID
+		_, err := model.DebitQuota(entry, model.AccountPaid)
+		return err
+	}
+	entry.Delta = -delta
+	entry.Reason = model.LedgerReasonTaskRefund
+	entry.IdempotencyKey = "task:refund:" + task.TaskID
+	_, err := model.CreditQuota(entry)
+	return err
 }
 
 // taskAdjustTokenQuota 调整任务的令牌额度，delta > 0 表示扣费，delta < 0 表示退还。
