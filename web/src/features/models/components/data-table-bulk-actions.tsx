@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
-import { type Table } from '@tanstack/react-table'
-import { Power, PowerOff, Trash2, Copy } from 'lucide-react'
+import type { Table } from '@tanstack/react-table'
+import { Power, PowerOff, Trash2, Copy, Gift, Ban } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -37,6 +37,7 @@ import {
   handleBatchEnableModels,
   handleBatchDisableModels,
   handleBatchDeleteModels,
+  handleBatchBonusEligibility,
 } from '../lib'
 import type { Model } from '../types'
 
@@ -83,6 +84,15 @@ export function DataTableBulkActions<TData>({
     })
   }
 
+  const handleBonusEligibility = (eligible: boolean) => {
+    handleBatchBonusEligibility(
+      selectedIds,
+      eligible,
+      queryClient,
+      handleClearSelection
+    )
+  }
+
   const handleCopyNames = async () => {
     const names = selectedModels.map((m) => m.model_name).join(',')
     const success = await copyToClipboard(names)
@@ -114,6 +124,52 @@ export function DataTableBulkActions<TData>({
           </TooltipTrigger>
           <TooltipContent>
             <p>{t('Enable selected models')}</p>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='outline'
+                size='icon'
+                onClick={() => handleBonusEligibility(true)}
+                className='size-8'
+                aria-label={t('Allow bonus for selected models')}
+                title={t('Allow bonus for selected models')}
+              />
+            }
+          >
+            <Gift />
+            <span className='sr-only'>
+              {t('Allow bonus for selected models')}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{t('Allow bonus for selected models')}</p>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='outline'
+                size='icon'
+                onClick={() => handleBonusEligibility(false)}
+                className='size-8'
+                aria-label={t('Disallow bonus for selected models')}
+                title={t('Disallow bonus for selected models')}
+              />
+            }
+          >
+            <Ban />
+            <span className='sr-only'>
+              {t('Disallow bonus for selected models')}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{t('Disallow bonus for selected models')}</p>
           </TooltipContent>
         </Tooltip>
 

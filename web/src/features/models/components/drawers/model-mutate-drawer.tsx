@@ -84,6 +84,14 @@ import { safeJsonParse } from '@/features/system-settings/utils/json-parser'
 import { createModel, updateModel, getModel, getVendors } from '../../api'
 import { getNameRuleOptions, ENDPOINT_TEMPLATES } from '../../constants'
 import { modelsQueryKeys, vendorsQueryKeys, parseModelTags } from '../../lib'
+import {
+  isValidPositiveInt,
+  parseBonusEligible,
+  parseMetadataArray,
+  parsePositiveInt,
+  serializeBonusEligible,
+  serializeMetadataArray,
+} from '../../lib/model-metadata'
 import type { Model } from '../../types'
 
 // Extended schema for ratio configuration (internal form state only)
@@ -98,6 +106,19 @@ const extendedModelFormSchema = z.object({
   name_rule: z.number(),
   status: z.boolean(),
   sync_official: z.boolean(),
+  context_length: z.string().refine(isValidPositiveInt, {
+    message: 'Must be a positive integer or empty',
+  }),
+  max_output_tokens: z.string().refine(isValidPositiveInt, {
+    message: 'Must be a positive integer or empty',
+  }),
+  knowledge_cutoff: z.string(),
+  release_date: z.string(),
+  parameter_count: z.string(),
+  input_modalities: z.array(z.string()),
+  output_modalities: z.array(z.string()),
+  capabilities: z.array(z.string()),
+  bonus_eligible: z.enum(['unset', 'eligible', 'ineligible']),
   price: z.string().optional(),
   ratio: z.string().optional(),
   cacheRatio: z.string().optional(),
@@ -369,6 +390,15 @@ export function ModelMutateDrawer({
       name_rule: 0,
       status: true,
       sync_official: true,
+      context_length: '',
+      max_output_tokens: '',
+      knowledge_cutoff: '',
+      release_date: '',
+      parameter_count: '',
+      input_modalities: [],
+      output_modalities: [],
+      capabilities: [],
+      bonus_eligible: 'unset',
       price: '',
       ratio: '',
       cacheRatio: '',
@@ -437,6 +467,21 @@ export function ModelMutateDrawer({
         name_rule: model.name_rule || 0,
         status: model.status === 1,
         sync_official: model.sync_official === 1,
+        context_length:
+          model.context_length != null && model.context_length > 0
+            ? String(model.context_length)
+            : '',
+        max_output_tokens:
+          model.max_output_tokens != null && model.max_output_tokens > 0
+            ? String(model.max_output_tokens)
+            : '',
+        knowledge_cutoff: model.knowledge_cutoff || '',
+        release_date: model.release_date || '',
+        parameter_count: model.parameter_count || '',
+        input_modalities: parseMetadataArray(model.input_modalities),
+        output_modalities: parseMetadataArray(model.output_modalities),
+        capabilities: parseMetadataArray(model.capabilities),
+        bonus_eligible: parseBonusEligible(model.bonus_eligible),
         ...pricing.fields,
       })
     } else if (open && !isEditing) {
@@ -462,6 +507,15 @@ export function ModelMutateDrawer({
         name_rule: 0,
         status: true,
         sync_official: true,
+        context_length: '',
+        max_output_tokens: '',
+        knowledge_cutoff: '',
+        release_date: '',
+        parameter_count: '',
+        input_modalities: [],
+        output_modalities: [],
+        capabilities: [],
+        bonus_eligible: 'unset',
         ...pricing.fields,
       })
     }
@@ -477,6 +531,13 @@ export function ModelMutateDrawer({
           tags: Array.isArray(values.tags) ? values.tags.join(',') : '',
           status: values.status ? 1 : 0,
           sync_official: values.sync_official ? 1 : 0,
+          // 目录元数据：整数/空 -> number|null，数组 -> JSON 数组字符串，三态 -> boolean|null
+          context_length: parsePositiveInt(values.context_length),
+          max_output_tokens: parsePositiveInt(values.max_output_tokens),
+          input_modalities: serializeMetadataArray(values.input_modalities),
+          output_modalities: serializeMetadataArray(values.output_modalities),
+          capabilities: serializeMetadataArray(values.capabilities),
+          bonus_eligible: serializeBonusEligible(values.bonus_eligible),
         }
 
         // Remove ratio fields from model data (they're stored in system settings)
@@ -976,6 +1037,222 @@ export function ModelMutateDrawer({
                     <FormMessage />
                   </FormItem>
                 )}
+              />
+            </SideDrawerSection>
+
+            {/* Catalog Metadata */}
+            <SideDrawerSection>
+              <h3 className='text-sm font-semibold'>{t('Model Metadata')}</h3>
+
+              <FormField
+                control={form.control}
+                name='context_length'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Context Length')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='text'
+                        inputMode='numeric'
+                        placeholder={t('e.g. 128000')}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Maximum number of tokens the model can process per request.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='max_output_tokens'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Max Output Tokens')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='text'
+                        inputMode='numeric'
+                        placeholder={t('e.g. 16384')}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Maximum number of tokens the model can generate per response.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='knowledge_cutoff'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Knowledge Cutoff')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='text'
+                        placeholder={t('e.g. 2024-10')}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='release_date'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Release Date')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='text'
+                        placeholder={t('e.g. 2024-04')}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='parameter_count'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Parameter Count')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='text'
+                        placeholder={t('e.g. 8B')}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='input_modalities'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Input Modalities')}</FormLabel>
+                    <FormControl>
+                      <TagInput
+                        value={field.value || []}
+                        onChange={field.onChange}
+                        placeholder={t('Add tags...')}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t('Press Enter or comma to add tags')}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='output_modalities'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Output Modalities')}</FormLabel>
+                    <FormControl>
+                      <TagInput
+                        value={field.value || []}
+                        onChange={field.onChange}
+                        placeholder={t('Add tags...')}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t('Press Enter or comma to add tags')}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='capabilities'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Capabilities')}</FormLabel>
+                    <FormControl>
+                      <TagInput
+                        value={field.value || []}
+                        onChange={field.onChange}
+                        placeholder={t('Add tags...')}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t('Press Enter or comma to add tags')}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='bonus_eligible'
+                render={({ field }) => {
+                  const bonusOptions = [
+                    { value: 'unset', label: t('Not configured') },
+                    { value: 'eligible', label: t('Eligible') },
+                    { value: 'ineligible', label: t('Ineligible') },
+                  ]
+                  return (
+                    <FormItem>
+                      <FormLabel>{t('Bonus Eligible')}</FormLabel>
+                      <Select
+                        items={bonusOptions}
+                        onValueChange={field.onChange}
+                        value={field.value}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder={t('Not configured')} />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent alignItemWithTrigger={false}>
+                          <SelectGroup>
+                            {bonusOptions.map((option) => (
+                              <SelectItem
+                                key={option.value}
+                                value={option.value}
+                              >
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        {t(
+                          'Mark this model as eligible for bonus deduction campaigns.'
+                        )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )
+                }}
               />
             </SideDrawerSection>
 

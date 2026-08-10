@@ -456,6 +456,8 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'model.update': 'Updated a model',
   'model.delete': 'Deleted a model',
   'model.sync_upstream': 'Synced upstream models',
+  'model.bonus_eligible_batch':
+    'Batch set bonus eligibility to {{bonus_eligible}} for {{count}} models',
   // Deployments
   'deployment.create': 'Created a deployment',
   'deployment.update': 'Updated a deployment',

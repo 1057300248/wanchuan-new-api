@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
+import { isValidPositiveInt } from './lib/model-metadata'
+
 // ============================================================================
 // Model Types
 // ============================================================================
@@ -46,6 +48,17 @@ export interface Model {
   created_time: number
   updated_time: number
   name_rule: number
+  // Catalog metadata (backend: nullable ints / JSON array strings / tri-state)
+  context_length?: number | null
+  max_output_tokens?: number | null
+  knowledge_cutoff?: string
+  release_date?: string
+  parameter_count?: string
+  input_modalities?: string
+  output_modalities?: string
+  capabilities?: string
+  /** Tri-state: null = not configured, false = ineligible, true = eligible */
+  bonus_eligible?: boolean | null
   // Runtime fields
   bound_channels?: BoundChannel[]
   enable_groups?: string[]
@@ -238,6 +251,19 @@ export const modelFormSchema = z.object({
   name_rule: z.number().min(0).max(3).default(0),
   status: z.boolean().default(true),
   sync_official: z.boolean().default(true),
+  context_length: z.string().default('').refine(isValidPositiveInt, {
+    message: 'Must be a positive integer or empty',
+  }),
+  max_output_tokens: z.string().default('').refine(isValidPositiveInt, {
+    message: 'Must be a positive integer or empty',
+  }),
+  knowledge_cutoff: z.string().default(''),
+  release_date: z.string().default(''),
+  parameter_count: z.string().default(''),
+  input_modalities: z.array(z.string()).default([]),
+  output_modalities: z.array(z.string()).default([]),
+  capabilities: z.array(z.string()).default([]),
+  bonus_eligible: z.enum(['unset', 'eligible', 'ineligible']).default('unset'),
 })
 
 export type ModelFormValues = z.infer<typeof modelFormSchema>

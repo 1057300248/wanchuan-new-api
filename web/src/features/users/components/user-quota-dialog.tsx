@@ -49,7 +49,7 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
   const currencyLabel = getCurrencyLabel()
   const tokensOnly = currencyMeta.kind === 'tokens'
 
-  const amountValue = parseFloat(amount) || 0
+  const amountValue = Number.parseFloat(amount) || 0
   const quotaValue = parseQuotaFromDollars(Math.abs(amountValue))
 
   const getPreviewText = () => {
@@ -69,6 +69,17 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
     }
   }
 
+  const getModeLabel = (value: QuotaAdjustMode) => {
+    switch (value) {
+      case 'add':
+        return t('Add')
+      case 'subtract':
+        return t('Subtract')
+      default:
+        return t('Override')
+    }
+  }
+
   const handleConfirm = async () => {
     if (!amount && mode !== 'override') return
     if (quotaValue <= 0 && mode !== 'override') return
@@ -82,6 +93,7 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
         action: 'add_quota',
         mode,
         value: mode === 'override' ? value : Math.abs(value),
+        request_id: crypto.randomUUID(),
       })
       if (result.success) {
         toast.success(t('Quota adjusted successfully'))
@@ -149,11 +161,7 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
                   setAmount('')
                 }}
               >
-                {m === 'add'
-                  ? t('Add')
-                  : m === 'subtract'
-                    ? t('Subtract')
-                    : t('Override')}
+                {getModeLabel(m)}
               </Button>
             ))}
           </div>
