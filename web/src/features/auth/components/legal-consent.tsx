@@ -50,12 +50,7 @@ export function LegalConsent({
   }
 
   return (
-    <div
-      className={cn(
-        'border-border/60 bg-muted/40 flex items-start gap-3 rounded-md border p-3',
-        className
-      )}
-    >
+    <div className={cn('flex items-start gap-2.5', className)}>
       <Checkbox
         id='legal-consent'
         checked={checked}
@@ -78,7 +73,7 @@ export function LegalConsent({
               {t('User Agreement')}
             </a>
           )}
-          {hasUserAgreement && hasPrivacyPolicy && ' and the '}
+          {hasUserAgreement && hasPrivacyPolicy && <> {t('and')} </>}
           {hasPrivacyPolicy && (
             <a
               href='/privacy-policy'

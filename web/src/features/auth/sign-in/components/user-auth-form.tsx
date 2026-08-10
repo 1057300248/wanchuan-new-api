@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Link } from '@tanstack/react-router'
 import axios from 'axios'
-import { Loader2, LogIn, KeyRound } from 'lucide-react'
+import { Loader2, KeyRound } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -42,10 +42,14 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { login, wechatLoginByCode } from '@/features/auth/api'
 import { LegalConsent } from '@/features/auth/components/legal-consent'
-import { OAuthProviders } from '@/features/auth/components/oauth-providers'
+import {
+  AuthMethodDivider,
+  OAuthProviders,
+} from '@/features/auth/components/oauth-providers'
 import { loginFormSchema } from '@/features/auth/constants'
 import { useAuthRedirect } from '@/features/auth/hooks/use-auth-redirect'
 import { useTurnstile } from '@/features/auth/hooks/use-turnstile'
+import { hasOAuthProvider } from '@/features/auth/lib/oauth-provider-status'
 import { beginPasskeyLogin, finishPasskeyLogin } from '@/features/auth/passkey'
 import type { AuthFormProps } from '@/features/auth/types'
 import { useStatus } from '@/hooks/use-status'
@@ -104,14 +108,7 @@ export function UserAuthForm({
     !passkeySupported ||
     (requiresLegalConsent && !agreedToLegal)
   const hasWeChatLogin = Boolean(status?.wechat_login)
-  const hasOAuthLogin = Boolean(
-    status?.github_oauth ||
-    status?.discord_oauth ||
-    status?.oidc_enabled ||
-    status?.linuxdo_oauth ||
-    status?.telegram_oauth ||
-    (status?.custom_oauth_providers?.length ?? 0) > 0
-  )
+  const hasOAuthLogin = hasOAuthProvider(status)
   const hasAlternativeLogin =
     passkeyLoginEnabled || hasWeChatLogin || hasOAuthLogin
 
@@ -357,6 +354,8 @@ export function UserAuthForm({
       >
         {hasAlternativeLogin && alternativeLoginMethods}
 
+        {hasAlternativeLogin && passwordLoginEnabled && <AuthMethodDivider />}
+
         {passwordLoginEnabled && (
           <>
             {/* Username Field */}
@@ -404,10 +403,10 @@ export function UserAuthForm({
             {/* Submit Button */}
             <Button
               type='submit'
-              className='mt-2 w-full justify-center gap-2'
+              className='bg-foreground text-background hover:bg-foreground/85 mt-2 w-full justify-center gap-2'
               disabled={isLoading || (requiresLegalConsent && !agreedToLegal)}
             >
-              {isLoading ? <Loader2 className='animate-spin' /> : <LogIn />}
+              {isLoading ? <Loader2 className='animate-spin' /> : null}
               {t('Sign in')}
             </Button>
 
