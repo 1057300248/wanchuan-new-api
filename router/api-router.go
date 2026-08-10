@@ -113,6 +113,17 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/aff_transfer", middleware.UserCriticalRateLimit("aff-transfer"), controller.TransferAffQuota)
 				selfRoute.PUT("/setting", controller.UpdateUserSetting)
 
+				// TokenMix P1-2：钱包分账与账本
+				selfRoute.GET("/wallet", controller.GetWalletSummary)
+				selfRoute.GET("/wallet/ledger", controller.GetWalletLedger)
+
+				// TokenMix P1-3：推荐返利与提现
+				selfRoute.GET("/referral/overview", controller.GetReferralOverview)
+				selfRoute.GET("/referral/rewards", controller.GetReferralRewards)
+				selfRoute.POST("/referral/mature", controller.PostMatureReferralRewards)
+				selfRoute.GET("/referral/withdrawals", controller.GetReferralWithdrawals)
+				selfRoute.POST("/referral/withdrawals", middleware.CriticalRateLimit(), controller.PostReferralWithdrawal)
+
 				// 2FA routes
 				selfRoute.GET("/2fa/status", controller.Get2FAStatus)
 				selfRoute.POST("/2fa/setup", middleware.DisableCache(), controller.Setup2FA)
@@ -149,8 +160,16 @@ func SetApiRouter(router *gin.Engine) {
 				// Admin 2FA routes
 				adminRoute.GET("/2fa/stats", controller.Admin2FAStats)
 				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
+
+				// TokenMix P1-3：提现审核（人工审核账本流程）
+				adminRoute.GET("/referral/admin/withdrawals", controller.AdminListWithdrawals)
+				adminRoute.POST("/referral/admin/withdrawals/:id/approve", controller.AdminApproveWithdrawal)
+				adminRoute.POST("/referral/admin/withdrawals/:id/reject", controller.AdminRejectWithdrawal)
+				adminRoute.POST("/referral/admin/withdrawals/:id/pay", controller.AdminPayWithdrawal)
 			}
 		}
+
+		registerPlaygroundRoutes(apiRouter)
 
 		// Subscription billing (plans, purchase, admin management)
 		subscriptionRoute := apiRouter.Group("/subscription")
@@ -249,7 +268,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		usageRoute := apiRouter.Group("/usage")
-		usageRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
+		usageRoute.Use(middleware.CriticalRateLimit())
 		{
 			tokenUsageRoute := usageRoute.Group("/token")
 			tokenUsageRoute.Use(middleware.TokenAuthReadOnly())
@@ -301,7 +320,7 @@ func SetApiRouter(router *gin.Engine) {
 		dataRoute.GET("/flow", middleware.AdminAuth(), controller.GetAllFlowQuotaDates)
 		dataRoute.GET("/flow/self", middleware.UserAuth(), controller.GetUserFlowQuotaDates)
 
-		logRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
+		logRoute.Use(middleware.CriticalRateLimit())
 		{
 			logRoute.GET("/token", middleware.TokenAuthReadOnly(), controller.GetLogByKey)
 		}
@@ -349,6 +368,8 @@ func SetApiRouter(router *gin.Engine) {
 			modelsRoute.GET("/missing", controller.GetMissingModels)
 			modelsRoute.GET("/", controller.GetAllModelsMeta)
 			modelsRoute.GET("/search", controller.SearchModelsMeta)
+			modelsRoute.GET("/bonus_eligible/audits", controller.GetModelBonusEligibleAudits)
+			modelsRoute.POST("/bonus_eligible/batch", controller.BatchUpdateModelBonusEligible)
 			modelsRoute.GET("/:id", controller.GetModelMeta)
 			modelsRoute.POST("/", controller.CreateModelMeta)
 			modelsRoute.PUT("/", controller.UpdateModelMeta)
@@ -380,5 +401,14 @@ func SetApiRouter(router *gin.Engine) {
 			deploymentsRoute.POST("/:id/extend", controller.ExtendDeployment)
 			deploymentsRoute.DELETE("/:id", controller.DeleteDeployment)
 		}
+	}
+}
+
+func registerPlaygroundRoutes(apiRouter *gin.RouterGroup) {
+	playgroundRoute := apiRouter.Group("/user/playground")
+	playgroundRoute.Use(middleware.SessionAuth())
+	{
+		playgroundRoute.GET("/bootstrap", controller.PlaygroundBootstrap)
+		playgroundRoute.POST("/chat", middleware.SystemPerformanceCheck(), middleware.Distribute(), controller.Playground)
 	}
 }
