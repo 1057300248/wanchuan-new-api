@@ -502,7 +502,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 			return nil, errors.New("已达到该套餐购买上限")
 		}
 	}
-	nowUnix := GetDBTimestamp()
+	nowUnix := GetDBTimestamp(tx)
 	now := time.Unix(nowUnix, 0)
 	endUnix, err := calcPlanEndTime(now, plan)
 	if err != nil {
@@ -752,6 +752,7 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 	var logMoney float64
 	var chargedQuota int
 	var upgradeGroup string
+	var ledgerTotalAfter int
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		plan, err := getSubscriptionPlanByIdTx(tx, planId)
 		if err != nil {
@@ -772,18 +773,30 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 			return err
 		}
 
+		// 订单号在扣款前生成，作为余额扣减的幂等业务引用
+		tradeNo := fmt.Sprintf("SUBBALUSR%dNO%s%d", userId, common.GetRandomString(6), time.Now().UnixNano())
+
 		var user User
 		if err := lockForUpdate(tx).Where("id = ?", userId).First(&user).Error; err != nil {
 			return err
 		}
-		if requiredQuota > 0 && user.Quota < requiredQuota {
+		// P0-4 默认消费账户仅为 paid；bonus 资格与消费顺序在 P0-5 再启用。
+		if requiredQuota > 0 && user.QuotaPaid < requiredQuota {
 			return errors.New("余额不足")
 		}
 		if requiredQuota > 0 {
-			if err := tx.Model(&User{}).Where("id = ?", userId).
-				Update("quota", gorm.Expr("quota - ?", requiredQuota)).Error; err != nil {
+			// 余额扣减写账本（同一事务；幂等键 = 订阅订单号）
+			result, err := DebitQuotaTx(tx, LedgerEntry{
+				UserId:        userId,
+				Delta:         requiredQuota,
+				Reason:        LedgerReasonSubscriptionPurchase,
+				ReferenceType: "subscription_order",
+				ReferenceId:   tradeNo,
+			}, AccountPaid)
+			if err != nil {
 				return err
 			}
+			ledgerTotalAfter = result.TotalAfter
 		}
 
 		subscription, err := CreateUserSubscriptionFromPlanTx(tx, userId, plan, PaymentMethodBalance)
@@ -792,7 +805,6 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 		}
 
 		now := common.GetTimestamp()
-		tradeNo := fmt.Sprintf("SUBBALUSR%dNO%s%d", userId, common.GetRandomString(6), time.Now().UnixNano())
 		order := &SubscriptionOrder{
 			UserId:          userId,
 			PlanId:          plan.Id,
@@ -822,9 +834,8 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 	}
 
 	if chargedQuota > 0 {
-		if err := cacheDecrUserQuota(userId, int64(chargedQuota)); err != nil {
-			common.SysLog("failed to decrease user quota cache after subscription balance purchase: " + err.Error())
-		}
+		// 事务成功后刷新额度缓存
+		RefreshUserQuotaCache(userId, ledgerTotalAfter)
 	}
 	if upgradeGroup != "" {
 		refreshSubscriptionUserGroupCache(userId, "subscription balance purchase")

@@ -112,6 +112,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 	}
 
 	var quota float64
+	var ledgerTotalAfter int
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -141,12 +142,26 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		}
 
 		quota = topUp.Money * common.QuotaPerUnit
-		err = tx.Model(&User{}).Where("id = ?", topUp.UserId).Updates(map[string]interface{}{"stripe_customer": customerId, "quota": gorm.Expr("quota + ?", quota)}).Error
+		quotaToAdd := common.QuotaFromFloat(quota)
+		if quotaToAdd <= 0 {
+			return errors.New("无效的充值额度")
+		}
+		// 充值入账并写账本（同一事务；幂等键 = trade_no）
+		ledgerResult, err := CreditQuotaTx(tx, LedgerEntry{
+			UserId:        topUp.UserId,
+			Account:       AccountPaid,
+			Delta:         quotaToAdd,
+			Reason:        LedgerReasonTopup,
+			ReferenceType: "topup",
+			ReferenceId:   topUp.TradeNo,
+		})
 		if err != nil {
 			return err
 		}
+		ledgerTotalAfter = ledgerResult.TotalAfter
 
-		return nil
+		// 兼容字段：充值成功后在订单上同步 stripe_customer
+		return tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("stripe_customer", customerId).Error
 	})
 
 	if err != nil {
@@ -154,6 +169,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		return errors.New("充值失败，请稍后重试")
 	}
 
+	RefreshUserQuotaCache(topUp.UserId, ledgerTotalAfter)
 	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%d", logger.FormatQuota(int(quota)), topUp.Amount), callerIp, topUp.PaymentMethod, PaymentMethodStripe)
 
 	return nil
@@ -331,6 +347,8 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	var quotaToAdd int
 	var payMoney float64
 	var paymentMethod string
+	var ledgerTotalAfter int
+	completed := false
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		topUp := &TopUp{}
@@ -370,10 +388,20 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 			return err
 		}
 
-		// 增加用户额度（立即写库，保持一致性）
-		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
+		// 增加用户额度并写账本（同一事务；幂等键 = trade_no）
+		ledgerResult, err := CreditQuotaTx(tx, LedgerEntry{
+			UserId:        topUp.UserId,
+			Account:       AccountPaid,
+			Delta:         quotaToAdd,
+			Reason:        LedgerReasonAdminTopup,
+			ReferenceType: "topup",
+			ReferenceId:   tradeNo,
+		})
+		if err != nil {
 			return err
 		}
+		ledgerTotalAfter = ledgerResult.TotalAfter
+		completed = true
 
 		userId = topUp.UserId
 		payMoney = topUp.Money
@@ -384,6 +412,11 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	if err != nil {
 		return err
 	}
+	if !completed {
+		return nil
+	}
+
+	RefreshUserQuotaCache(userId, ledgerTotalAfter)
 
 	// 事务外记录日志，避免阻塞
 	RecordTopupLog(userId, fmt.Sprintf("管理员补单成功，充值金额: %v，支付金额：%f", logger.FormatQuota(quotaToAdd), payMoney), callerIp, paymentMethod, "admin")
@@ -395,6 +428,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	}
 
 	var quota int64
+	var ledgerTotalAfter int
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -425,11 +459,23 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 
 		// Creem 直接使用 Amount 作为充值额度（整数）
 		quota = topUp.Amount
-
-		// 构建更新字段，优先使用邮箱，如果邮箱为空则使用用户名
-		updateFields := map[string]interface{}{
-			"quota": gorm.Expr("quota + ?", quota),
+		if quota <= 0 {
+			return errors.New("无效的充值额度")
 		}
+
+		// 充值入账并写账本（同一事务；幂等键 = trade_no）
+		ledgerResult, err := CreditQuotaTx(tx, LedgerEntry{
+			UserId:        topUp.UserId,
+			Account:       AccountPaid,
+			Delta:         int(quota),
+			Reason:        LedgerReasonTopup,
+			ReferenceType: "topup",
+			ReferenceId:   topUp.TradeNo,
+		})
+		if err != nil {
+			return err
+		}
+		ledgerTotalAfter = ledgerResult.TotalAfter
 
 		// 如果有客户邮箱，尝试更新用户邮箱（仅当用户邮箱为空时）
 		if customerEmail != "" {
@@ -442,13 +488,10 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 
 			// 如果用户邮箱为空，则更新为支付时使用的邮箱
 			if user.Email == "" {
-				updateFields["email"] = customerEmail
+				if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("email", customerEmail).Error; err != nil {
+					return err
+				}
 			}
-		}
-
-		err = tx.Model(&User{}).Where("id = ?", topUp.UserId).Updates(updateFields).Error
-		if err != nil {
-			return err
 		}
 
 		return nil
@@ -459,6 +502,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 		return errors.New("充值失败，请稍后重试")
 	}
 
+	RefreshUserQuotaCache(topUp.UserId, ledgerTotalAfter)
 	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用Creem充值成功，充值额度: %v，支付金额：%.2f", quota, topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodCreem)
 
 	return nil
@@ -470,6 +514,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 	}
 
 	var quotaToAdd int
+	var ledgerTotalAfter int
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -508,9 +553,19 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 			return err
 		}
 
-		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
+		// 充值入账并写账本（同一事务；幂等键 = trade_no）
+		ledgerResult, err := CreditQuotaTx(tx, LedgerEntry{
+			UserId:        topUp.UserId,
+			Account:       AccountPaid,
+			Delta:         quotaToAdd,
+			Reason:        LedgerReasonTopup,
+			ReferenceType: "topup",
+			ReferenceId:   tradeNo,
+		})
+		if err != nil {
 			return err
 		}
+		ledgerTotalAfter = ledgerResult.TotalAfter
 
 		return nil
 	})
@@ -521,6 +576,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 	}
 
 	if quotaToAdd > 0 {
+		RefreshUserQuotaCache(topUp.UserId, ledgerTotalAfter)
 		RecordTopupLog(topUp.UserId, fmt.Sprintf("Waffo充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodWaffo)
 	}
 
@@ -533,6 +589,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 	}
 
 	var quotaToAdd int
+	var ledgerTotalAfter int
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -569,9 +626,19 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 			return err
 		}
 
-		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
+		// 充值入账并写账本（同一事务；幂等键 = trade_no）
+		ledgerResult, err := CreditQuotaTx(tx, LedgerEntry{
+			UserId:        topUp.UserId,
+			Account:       AccountPaid,
+			Delta:         quotaToAdd,
+			Reason:        LedgerReasonTopup,
+			ReferenceType: "topup",
+			ReferenceId:   tradeNo,
+		})
+		if err != nil {
 			return err
 		}
+		ledgerTotalAfter = ledgerResult.TotalAfter
 
 		return nil
 	})
@@ -582,6 +649,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 	}
 
 	if quotaToAdd > 0 {
+		RefreshUserQuotaCache(topUp.UserId, ledgerTotalAfter)
 		RecordLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("Waffo Pancake充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money))
 	}
 

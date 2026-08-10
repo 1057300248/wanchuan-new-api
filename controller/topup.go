@@ -19,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 )
 
 func GetTopUpInfo(c *gin.Context) {
@@ -387,24 +388,56 @@ func EpayNotify(c *gin.Context) {
 				logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 实际支付方式与订单不同 trade_no=%s order_payment_method=%s actual_type=%s client_ip=%s", verifyInfo.ServiceTradeNo, topUp.PaymentMethod, verifyInfo.Type, c.ClientIP()))
 				topUp.PaymentMethod = verifyInfo.Type
 			}
-			topUp.Status = common.TopUpStatusSuccess
-			err := topUp.Update()
-			if err != nil {
-				logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 更新充值订单失败 trade_no=%s user_id=%d client_ip=%s error=%q topup=%q", topUp.TradeNo, topUp.UserId, c.ClientIP(), err.Error(), common.GetJsonString(topUp)))
-				return
-			}
-			//user, _ := model.GetUserById(topUp.UserId, false)
-			//user.Quota += topUp.Amount * 500000
 			dAmount := decimal.NewFromInt(int64(topUp.Amount))
 			dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-			quotaToAdd := int(dAmount.Mul(dQuotaPerUnit).IntPart())
-			err = model.IncreaseUserQuota(topUp.UserId, quotaToAdd, true)
+			quotaToAdd := common.QuotaFromDecimal(dAmount.Mul(dQuotaPerUnit))
+			if quotaToAdd <= 0 {
+				logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 无效的充值额度 trade_no=%s user_id=%d client_ip=%s quota_to_add=%d topup=%q", topUp.TradeNo, topUp.UserId, c.ClientIP(), quotaToAdd, common.GetJsonString(topUp)))
+				return
+			}
+			// 状态 CAS + 入账 + 账本在同一事务；并发回调只有一方能通过状态翻转，
+			// 账本幂等键（trade_no）作为第二道防线，杜绝重复入账。
+			var ledgerTotalAfter int
+			credited := false
+			err := model.DB.Transaction(func(tx *gorm.DB) error {
+				res := tx.Model(&model.TopUp{}).
+					Where("trade_no = ? AND status = ?", topUp.TradeNo, common.TopUpStatusPending).
+					Updates(map[string]interface{}{
+						"status":         common.TopUpStatusSuccess,
+						"payment_method": topUp.PaymentMethod,
+					})
+				if res.Error != nil {
+					return res.Error
+				}
+				if res.RowsAffected == 0 {
+					return nil // 并发回调已处理过该订单
+				}
+				result, err := model.CreditQuotaTx(tx, model.LedgerEntry{
+					UserId:        topUp.UserId,
+					Account:       model.AccountPaid,
+					Delta:         quotaToAdd,
+					Reason:        model.LedgerReasonTopup,
+					ReferenceType: "topup",
+					ReferenceId:   topUp.TradeNo,
+				})
+				if err != nil {
+					return err
+				}
+				ledgerTotalAfter = result.TotalAfter
+				credited = true
+				return nil
+			})
 			if err != nil {
 				logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 更新用户额度失败 trade_no=%s user_id=%d client_ip=%s quota_to_add=%d error=%q topup=%q", topUp.TradeNo, topUp.UserId, c.ClientIP(), quotaToAdd, err.Error(), common.GetJsonString(topUp)))
 				return
 			}
-			logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 充值成功 trade_no=%s user_id=%d client_ip=%s quota_to_add=%d money=%.2f topup=%q", topUp.TradeNo, topUp.UserId, c.ClientIP(), quotaToAdd, topUp.Money, common.GetJsonString(topUp)))
-			model.RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%f", logger.LogQuota(quotaToAdd), topUp.Money), c.ClientIP(), topUp.PaymentMethod, "epay")
+			if credited {
+				model.RefreshUserQuotaCache(topUp.UserId, ledgerTotalAfter)
+				logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 充值成功 trade_no=%s user_id=%d client_ip=%s quota_to_add=%d money=%.2f topup=%q", topUp.TradeNo, topUp.UserId, c.ClientIP(), quotaToAdd, topUp.Money, common.GetJsonString(topUp)))
+				model.RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%f", logger.LogQuota(quotaToAdd), topUp.Money), c.ClientIP(), topUp.PaymentMethod, "epay")
+			} else {
+				logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 重复回调已忽略 trade_no=%s user_id=%d client_ip=%s", topUp.TradeNo, topUp.UserId, c.ClientIP()))
+			}
 		}
 	} else {
 		logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 webhook 忽略事件 trade_no=%s callback_type=%s trade_status=%s client_ip=%s verify_info=%q", verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.TradeStatus, c.ClientIP(), common.GetJsonString(verifyInfo)))
