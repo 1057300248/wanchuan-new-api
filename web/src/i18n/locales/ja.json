@@ -5360,16 +5360,6 @@
     "Withdrawal request updated": "出金申請を更新しました",
     "Reject": "拒否",
     "Approve": "承認",
-    "Mark Paid": "支払い済みにする",
-    "Customer Center": "カスタマーセンター",
-    "Admin Dashboard": "管理ダッシュボード",
-    "Financial Summary": "財務サマリー",
-    "Account balances and referral rewards": "アカウント残高と紹介報酬",
-    "View wallet": "ウォレットを見る",
-    "Wallet summary unavailable": "ウォレットのサマリーを取得できません",
-    "Could not load wallet data": "ウォレットデータを読み込めませんでした",
-    "Reward rate: {{rate}}%": "報酬率：{{rate}}%",
-    "Unlock period: {{days}} days": "ロック解除期間：{{days}} 日",
-    "Invited users": "招待ユーザー数"
+    "Mark Paid": "支払い済みにする"
   }
 }

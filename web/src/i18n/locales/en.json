@@ -5362,16 +5362,6 @@
     "Withdrawal request updated": "Withdrawal request updated",
     "Reject": "Reject",
     "Approve": "Approve",
-    "Mark Paid": "Mark Paid",
-    "Customer Center": "Customer Center",
-    "Admin Dashboard": "Admin Dashboard",
-    "Financial Summary": "Financial Summary",
-    "Account balances and referral rewards": "Account balances and referral rewards",
-    "View wallet": "View wallet",
-    "Wallet summary unavailable": "Wallet summary unavailable",
-    "Could not load wallet data": "Could not load wallet data",
-    "Reward rate: {{rate}}%": "Reward rate: {{rate}}%",
-    "Unlock period: {{days}} days": "Unlock period: {{days}} days",
-    "Invited users": "Invited users"
+    "Mark Paid": "Mark Paid"
   }
 }

@@ -24,17 +24,19 @@ export interface OverviewPanelFlags {
 }
 
 /**
- * Decide which info panels the dashboard overview may render.
+ * Decide which info panels the dashboard overview may render for the
+ * signed-in user.
  *
- * The overview lives inside the customer center, so every visitor
- * (including admins) gets the customer-first layout: only announcements
- * are shown; API info, FAQ and uptime/monitoring panels are dropped so
- * the first screen stays focused on real usage data. Admins reach the
- * performance/monitoring views from the admin dashboard instead.
+ * Admins keep every panel (performance health is additionally rendered
+ * by the caller). Regular users get a customer-first overview: only
+ * announcements are shown; API info, FAQ and uptime/monitoring panels
+ * are dropped so the first screen stays focused on real usage data.
  */
 export function getOverviewPanelVisibility(
-  flags: OverviewPanelFlags
+  flags: OverviewPanelFlags,
+  isAdmin: boolean
 ): OverviewPanelFlags {
+  if (isAdmin) return flags
   return {
     apiInfo: false,
     announcements: flags.announcements,

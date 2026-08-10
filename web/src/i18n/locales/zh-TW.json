@@ -5360,16 +5360,6 @@
     "Withdrawal request updated": "提領申請已更新",
     "Reject": "拒絕",
     "Approve": "批准",
-    "Mark Paid": "標記已付款",
-    "Customer Center": "客戶中心",
-    "Admin Dashboard": "管理後台",
-    "Financial Summary": "財務摘要",
-    "Account balances and referral rewards": "帳戶餘額與推薦返利",
-    "View wallet": "查看錢包",
-    "Wallet summary unavailable": "錢包摘要暫不可用",
-    "Could not load wallet data": "暫時無法取得帳戶與返利資料",
-    "Reward rate: {{rate}}%": "返利比例：{{rate}}%",
-    "Unlock period: {{days}} days": "解鎖週期：{{days}} 天",
-    "Invited users": "邀請人數"
+    "Mark Paid": "標記已付款"
   }
 }
