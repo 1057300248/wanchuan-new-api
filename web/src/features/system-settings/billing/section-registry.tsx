@@ -63,6 +63,13 @@ const BILLING_SECTIONS = [
           PreConsumedQuota: settings.PreConsumedQuota,
           QuotaForInviter: settings.QuotaForInviter,
           QuotaForInvitee: settings.QuotaForInvitee,
+          SignupBonusEnabled: settings.SignupBonusEnabled ?? false,
+          QuotaForSignupBonus: settings.QuotaForSignupBonus ?? 0,
+          AffiliateRewardEnabled: settings.AffiliateRewardEnabled ?? false,
+          AffiliateRewardRate: settings.AffiliateRewardRate ?? 0.2,
+          AffiliateRewardFreezeDays: settings.AffiliateRewardFreezeDays ?? 7,
+          AffiliateMinWithdrawQuota:
+            settings.AffiliateMinWithdrawQuota ?? 25000000,
           TopUpLink: settings.TopUpLink,
           general_setting: {
             docs_link: settings['general_setting.docs_link'],

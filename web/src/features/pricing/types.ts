@@ -68,6 +68,8 @@ export type PricingModel = {
   input_modalities?: Modality[]
   output_modalities?: Modality[]
   capabilities?: ModelCapability[]
+  /** Tri-state: absent = not configured, false = ineligible, true = eligible */
+  bonus_eligible?: boolean | null
 }
 
 /** Input/output modalities supported by a model. */

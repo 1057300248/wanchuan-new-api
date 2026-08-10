@@ -55,6 +55,12 @@ const quotaSchema = z.object({
   PreConsumedQuota: z.coerce.number().min(0),
   QuotaForInviter: z.coerce.number().min(0),
   QuotaForInvitee: z.coerce.number().min(0),
+  SignupBonusEnabled: z.boolean(),
+  QuotaForSignupBonus: z.coerce.number().min(0),
+  AffiliateRewardEnabled: z.boolean(),
+  AffiliateRewardRate: z.coerce.number().min(0).max(1),
+  AffiliateRewardFreezeDays: z.coerce.number().min(0),
+  AffiliateMinWithdrawQuota: z.coerce.number().min(0),
   TopUpLink: z.string(),
   general_setting: z.object({
     docs_link: z.string(),
@@ -231,6 +237,157 @@ export function QuotaSettingsSection({
                     {t('Quota given to invited users ({{formattedQuota}})', {
                       formattedQuota: formatQuotaInputValue(field.value),
                     })}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='SignupBonusEnabled'
+              render={({ field }) => (
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>{t('Signup Bonus')}</FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Grant a bonus account balance to newly registered users'
+                      )}
+                    </FormDescription>
+                  </SettingsSwitchContent>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </SettingsSwitchItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='QuotaForSignupBonus'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Signup Bonus Quota')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      value={field.value ?? ''}
+                      onChange={handleNumberChange(field.onChange)}
+                      name={field.name}
+                      onBlur={field.onBlur}
+                      ref={field.ref}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Bonus quota for new users ({{formattedQuota}}), credited to the bonus account',
+                      { formattedQuota: formatQuotaInputValue(field.value) }
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='AffiliateRewardEnabled'
+              render={({ field }) => (
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>{t('Referral Rewards')}</FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Reward inviters with a share of referred paid consumption'
+                      )}
+                    </FormDescription>
+                  </SettingsSwitchContent>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </SettingsSwitchItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='AffiliateRewardRate'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Referral Reward Rate')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      step='0.05'
+                      min='0'
+                      max='1'
+                      value={field.value ?? ''}
+                      onChange={handleNumberChange(field.onChange)}
+                      name={field.name}
+                      onBlur={field.onBlur}
+                      ref={field.ref}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t('Share of paid consumption given as referral reward')}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='AffiliateRewardFreezeDays'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Reward Freeze Days')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      value={field.value ?? ''}
+                      onChange={handleNumberChange(field.onChange)}
+                      name={field.name}
+                      onBlur={field.onBlur}
+                      ref={field.ref}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t('Days before pending referral rewards become available')}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='AffiliateMinWithdrawQuota'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Minimum Withdrawal')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      value={field.value ?? ''}
+                      onChange={handleNumberChange(field.onChange)}
+                      name={field.name}
+                      onBlur={field.onBlur}
+                      ref={field.ref}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Minimum withdrawal amount in quota units ({{formattedQuota}})',
+                      { formattedQuota: formatQuotaInputValue(field.value) }
+                    )}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
