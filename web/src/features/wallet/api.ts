@@ -39,6 +39,12 @@ import type {
   WaffoPaymentResponse,
   WaffoPancakePaymentRequest,
   WaffoPancakePaymentResponse,
+  WalletSummary,
+  WalletLedgerPage,
+  ReferralOverview,
+  AffiliateRewardPage,
+  WithdrawalPage,
+  WithdrawalCreateRequest,
 } from './types'
 
 // ============================================================================
@@ -244,5 +250,145 @@ export async function completeOrder(
   request: CompleteOrderRequest
 ): Promise<ApiResponse> {
   const res = await api.post('/api/user/topup/complete', request)
+  return res.data
+}
+
+// ============================================================================
+// TokenMix P1：钱包分账、账本与推荐返利 API
+// ============================================================================
+
+/**
+ * Get wallet account summary (total/paid/bonus/affiliate + rules)
+ */
+export async function getWalletSummary(): Promise<ApiResponse<WalletSummary>> {
+  const res = await api.get('/api/user/wallet')
+  return res.data
+}
+
+/**
+ * Get paginated balance ledger for the current user
+ */
+export async function getWalletLedger(params: {
+  p: number
+  page_size: number
+  account?: string
+  reason?: string
+  start_time?: number
+  end_time?: number
+}): Promise<ApiResponse<WalletLedgerPage>> {
+  const search = new URLSearchParams({
+    p: String(params.p),
+    page_size: String(params.page_size),
+  })
+  if (params.account) search.append('account', params.account)
+  if (params.reason) search.append('reason', params.reason)
+  if (params.start_time) search.append('start_time', String(params.start_time))
+  if (params.end_time) search.append('end_time', String(params.end_time))
+  const res = await api.get(`/api/user/wallet/ledger?${search.toString()}`)
+  return res.data
+}
+
+/**
+ * Get referral overview (pending / available / withdrawn)
+ */
+export async function getReferralOverview(): Promise<
+  ApiResponse<ReferralOverview>
+> {
+  const res = await api.get('/api/user/referral/overview')
+  return res.data
+}
+
+/**
+ * Get paginated affiliate reward records
+ */
+export async function getReferralRewards(
+  p: number,
+  page_size: number
+): Promise<ApiResponse<AffiliateRewardPage>> {
+  const res = await api.get(
+    `/api/user/referral/rewards?p=${p}&page_size=${page_size}`
+  )
+  return res.data
+}
+
+/**
+ * Explicitly mature due referral rewards (idempotent)
+ */
+export async function matureReferralRewards(): Promise<
+  ApiResponse<{ matured: number }>
+> {
+  const res = await api.post('/api/user/referral/mature')
+  return res.data
+}
+
+/**
+ * Get paginated withdrawal requests for the current user
+ */
+export async function getReferralWithdrawals(
+  p: number,
+  page_size: number,
+  status?: string
+): Promise<ApiResponse<WithdrawalPage>> {
+  const search = new URLSearchParams({
+    p: String(p),
+    page_size: String(page_size),
+  })
+  if (status) search.append('status', status)
+  const res = await api.get(
+    `/api/user/referral/withdrawals?${search.toString()}`
+  )
+  return res.data
+}
+
+/**
+ * Submit a withdrawal request (freezes available affiliate quota)
+ */
+export async function createReferralWithdrawal(
+  request: WithdrawalCreateRequest
+): Promise<ApiResponse<{ id: number; status: string; replayed: boolean }>> {
+  const res = await api.post('/api/user/referral/withdrawals', request)
+  return res.data
+}
+
+export async function getAdminReferralWithdrawals(
+  p: number,
+  pageSize: number,
+  status?: string
+): Promise<ApiResponse<WithdrawalPage>> {
+  const search = new URLSearchParams({
+    p: String(p),
+    page_size: String(pageSize),
+  })
+  if (status) search.append('status', status)
+  const res = await api.get(
+    `/api/user/referral/admin/withdrawals?${search.toString()}`
+  )
+  return res.data
+}
+
+export async function approveAdminReferralWithdrawal(
+  id: number
+): Promise<ApiResponse> {
+  const res = await api.post(
+    `/api/user/referral/admin/withdrawals/${id}/approve`
+  )
+  return res.data
+}
+
+export async function rejectAdminReferralWithdrawal(
+  id: number,
+  reason: string
+): Promise<ApiResponse> {
+  const res = await api.post(
+    `/api/user/referral/admin/withdrawals/${id}/reject`,
+    { reason }
+  )
+  return res.data
+}
+
+export async function payAdminReferralWithdrawal(
+  id: number
+): Promise<ApiResponse> {
+  const res = await api.post(`/api/user/referral/admin/withdrawals/${id}/pay`)
   return res.data
 }
