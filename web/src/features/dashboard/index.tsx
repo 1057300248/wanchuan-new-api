@@ -46,6 +46,7 @@ import {
   getSavedGranularity,
   saveChartPreferences,
 } from './lib'
+import { isDashboardSectionAccessible } from './lib/section-access'
 import {
   type DashboardSectionId,
   DASHBOARD_DEFAULT_SECTION,
@@ -248,9 +249,11 @@ export function Dashboard() {
   const visibleSections = useMemo(
     () =>
       DASHBOARD_SECTION_IDS.filter(
-        (section) => section !== 'overview' && (section !== 'users' || isAdmin)
+        (section) =>
+          section !== DASHBOARD_DEFAULT_SECTION &&
+          isDashboardSectionAccessible(section, userRole)
       ),
-    [isAdmin]
+    [userRole]
   )
   const handleSectionChange = useCallback(
     (section: string) => {
