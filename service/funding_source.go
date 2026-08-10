@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
@@ -25,6 +26,14 @@ type FundingSource interface {
 
 // ---------------------------------------------------------------------------
 // WalletFunding — 钱包资金来源实现
+//
+// 所有余额变动通过模型层账本入口（model.CreditQuota / model.DebitQuota）执行，
+// 使用 request_id 派生幂等键；预扣/结算/退款各使用独立键，互不冲突。
+// 余额扣减不允许任一账户或合计为负：预扣前已做余额校验，
+// 结算/补充预扣在余额不足时返回错误（不再产生负余额欠费）。
+//
+// P0-5：扣减顺序由 debitOrder 决定（eligible 模型 bonus->paid，否则仅 paid），
+// 预扣实际份额记录在 debitShares，结算退款与全额退款按原账户精确退回。
 // ---------------------------------------------------------------------------
 
 // ErrInsufficientWalletQuota 钱包原子预扣失败（余额不足），未发生任何扣减。
@@ -33,8 +42,14 @@ type FundingSource interface {
 var ErrInsufficientWalletQuota = errors.New("wallet quota insufficient")
 
 type WalletFunding struct {
-	userId   int
-	consumed int // 实际预扣的用户额度
+	userId    int
+	requestId string
+	consumed  int // 实际预扣的用户额度
+	// debitOrder 账户扣减顺序（NewBillingSession 依据模型赠金资格构造）。
+	debitOrder []model.LedgerAccount
+	// debitShares 本次请求各账户实际扣减份额（预扣 + 追扣 + 结算补扣累计），
+	// 退款必须按此精确退回，不得把 bonus 退进 paid。
+	debitShares map[model.LedgerAccount]int
 }
 
 func (w *WalletFunding) Source() string { return BillingSourceWallet }
@@ -43,14 +58,32 @@ func (w *WalletFunding) PreConsume(amount int) error {
 	if amount <= 0 {
 		return nil
 	}
-	reserved, err := model.TryReserveUserQuota(w.userId, amount)
+	entry := model.LedgerEntry{
+		UserId:         w.userId,
+		Delta:          amount,
+		Reason:         model.LedgerReasonBillingPreConsume,
+		ReferenceType:  "relay",
+		ReferenceId:    w.requestId,
+		RequestId:      w.requestId,
+		IdempotencyKey: "billing:preconsume:" + w.requestId,
+	}
+	result, err := model.DebitQuota(entry, w.debitOrder...)
 	if err != nil {
+		if errors.Is(err, model.ErrLedgerInsufficientBalance) {
+			// P0-5：赠金资格 fail-closed——bonus_eligible=false/null 时不得
+			// 静默扣减赠金；否则映射为官方"余额不足"哨兵错误，由
+			// BillingSession 统一转成"用户额度不足"响应（未发生任何扣减）。
+			if !w.bonusEligible() {
+				return ErrModelBonusNotSupported
+			}
+			return ErrInsufficientWalletQuota
+		}
 		return err
 	}
-	if !reserved {
-		return ErrInsufficientWalletQuota
-	}
 	w.consumed = amount
+	if !result.Replayed {
+		w.addSharesFromResult(result)
+	}
 	return nil
 }
 
@@ -58,19 +91,158 @@ func (w *WalletFunding) Settle(delta int) error {
 	if delta == 0 {
 		return nil
 	}
-	if delta > 0 {
-		return model.DecreaseUserQuota(w.userId, delta, false)
+	// 补扣与退款方向使用不同幂等键；同一 request 同方向可能按不同差额多次结算
+	// （WSS 分段计费、测试场景），幂等键包含目标差额，避免同键不同参数冲突。
+	entry := model.LedgerEntry{
+		UserId:        w.userId,
+		Account:       model.AccountPaid,
+		Reason:        model.LedgerReasonBillingSettle,
+		ReferenceType: "relay",
+		ReferenceId:   w.requestId,
+		RequestId:     w.requestId,
 	}
-	return model.IncreaseUserQuota(w.userId, -delta, false)
+	var err error
+	if delta > 0 {
+		// 补扣与预扣同一顺序；份额计入累计，保证后续（如有）退款精确
+		entry.Delta = delta
+		entry.IdempotencyKey = fmt.Sprintf("billing:settle:%s:%d", w.requestId, delta)
+		var result *model.LedgerResult
+		result, err = model.DebitQuota(entry, w.debitOrder...)
+		if err == nil && !result.Replayed {
+			w.addSharesFromResult(result)
+		}
+	} else {
+		refund := -delta
+		if shares := w.refundShares(refund); len(shares) > 0 {
+			entry.IdempotencyKey = fmt.Sprintf("billing:settle_refund:%s:%d", w.requestId, refund)
+			_, err = model.CreditQuotaShares(entry, shares)
+		} else {
+			// 兼容旧路径：无份额记录时退回 paid 账户
+			entry.Delta = refund
+			entry.IdempotencyKey = fmt.Sprintf("billing:settle_refund:%s:%d", w.requestId, refund)
+			_, err = model.CreditQuota(entry)
+		}
+	}
+	return err
 }
 
 func (w *WalletFunding) Refund() error {
 	if w.consumed <= 0 {
 		return nil
 	}
-	// IncreaseUserQuota 是 quota += N 的非幂等操作，不能重试，否则会多退额度。
-	// 订阅的 RefundSubscriptionPreConsume 有 requestId 幂等保护所以可以重试。
-	return model.IncreaseUserQuota(w.userId, w.consumed, false)
+	entry := model.LedgerEntry{
+		UserId:         w.userId,
+		Account:        model.AccountPaid,
+		Reason:         model.LedgerReasonBillingRefund,
+		ReferenceType:  "relay",
+		ReferenceId:    w.requestId,
+		RequestId:      w.requestId,
+		IdempotencyKey: "billing:refund:" + w.requestId,
+	}
+	if shares := w.refundShares(w.consumed); len(shares) > 0 {
+		_, err := model.CreditQuotaShares(entry, shares)
+		return err
+	}
+	// 兼容旧路径：无份额记录时退回 paid 账户
+	entry.Delta = w.consumed
+	_, err := model.CreditQuota(entry)
+	return err
+}
+
+// bonusEligible 返回本次请求是否允许使用赠金（依据 debitOrder）。
+func (w *WalletFunding) bonusEligible() bool {
+	for _, account := range w.debitOrder {
+		if account == model.AccountBonus {
+			return true
+		}
+	}
+	return false
+}
+
+// addSharesFromResult 把一次扣减结果的各账户份额累计进 debitShares。
+func (w *WalletFunding) addSharesFromResult(result *model.LedgerResult) {
+	if result == nil {
+		return
+	}
+	if w.debitShares == nil {
+		w.debitShares = make(map[model.LedgerAccount]int)
+	}
+	for _, row := range result.Rows {
+		if row.Delta >= 0 {
+			continue
+		}
+		account := model.LedgerAccount(row.Account)
+		w.debitShares[account] += -row.Delta
+	}
+}
+
+// refundShares 按累计扣减份额拆分退款；无记录时返回 nil（由调用方退回 paid）。
+func (w *WalletFunding) refundShares(amount int) []model.LedgerShare {
+	if len(w.debitShares) == 0 {
+		return nil
+	}
+	shares := w.debitSharesInOrder()
+	return SplitRefund(shares, amount)
+}
+
+// debitSharesInOrder 按 debitOrder 顺序输出非零份额（未配置顺序时按 map 顺序）。
+func (w *WalletFunding) debitSharesInOrder() []model.LedgerShare {
+	if len(w.debitShares) == 0 {
+		return nil
+	}
+	if len(w.debitOrder) > 0 {
+		out := make([]model.LedgerShare, 0, len(w.debitOrder))
+		for _, account := range w.debitOrder {
+			if amount := w.debitShares[account]; amount > 0 {
+				out = append(out, model.LedgerShare{Account: account, Amount: amount})
+			}
+		}
+		return out
+	}
+	out := make([]model.LedgerShare, 0, len(w.debitShares))
+	for account, amount := range w.debitShares {
+		if amount > 0 {
+			out = append(out, model.LedgerShare{Account: account, Amount: amount})
+		}
+	}
+	return out
+}
+
+// DebitShares 返回累计扣减份额（供异步任务持久化，退款按原账户精确退回）。
+func (w *WalletFunding) DebitShares() []model.LedgerShare {
+	return w.debitSharesInOrder()
+}
+
+// Reserve 补充预扣份额（幂等键已含目标预扣值）。
+func (w *WalletFunding) Reserve(targetQuota int) error {
+	if targetQuota <= w.consumed {
+		return nil
+	}
+	delta := targetQuota - w.consumed
+	entry := model.LedgerEntry{
+		UserId:         w.userId,
+		Delta:          delta,
+		Reason:         model.LedgerReasonBillingReserve,
+		ReferenceType:  "relay",
+		ReferenceId:    w.requestId,
+		RequestId:      w.requestId,
+		IdempotencyKey: fmt.Sprintf("billing:reserve:%s:%d", w.requestId, targetQuota),
+	}
+	result, err := model.DebitQuota(entry, w.debitOrder...)
+	if err != nil {
+		if errors.Is(err, model.ErrLedgerInsufficientBalance) {
+			if !w.bonusEligible() {
+				return ErrModelBonusNotSupported
+			}
+			return ErrInsufficientWalletQuota
+		}
+		return err
+	}
+	w.consumed = targetQuota
+	if !result.Replayed {
+		w.addSharesFromResult(result)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

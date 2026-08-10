@@ -426,7 +426,8 @@ func GenerateAccessToken(c *gin.Context) {
 }
 
 type TransferAffQuotaRequest struct {
-	Quota int `json:"quota" binding:"required"`
+	Quota     int    `json:"quota" binding:"required"`
+	RequestId string `json:"request_id"`
 }
 
 func TransferAffQuota(c *gin.Context) {
@@ -445,7 +446,11 @@ func TransferAffQuota(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	err = user.TransferAffQuotaToQuota(tran.Quota)
+	requestId := strings.TrimSpace(tran.RequestId)
+	if requestId == "" {
+		requestId = strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	}
+	err = user.TransferAffQuotaToQuota(tran.Quota, requestId)
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgUserTransferFailed, map[string]any{"Error": err.Error()})
 		return
@@ -1075,10 +1080,11 @@ func updateAdminPermissionsForUserInTx(c *gin.Context, tx *gorm.DB, userID int, 
 }
 
 type ManageRequest struct {
-	Id     int    `json:"id"`
-	Action string `json:"action"`
-	Value  int    `json:"value"`
-	Mode   string `json:"mode"`
+	Id        int    `json:"id"`
+	Action    string `json:"action"`
+	Value     int    `json:"value"`
+	Mode      string `json:"mode"`
+	RequestId string `json:"request_id"`
 }
 
 // ManageUser Only admin user can do this
@@ -1161,13 +1167,35 @@ func ManageUser(c *gin.Context) {
 		}
 		user.Role = common.RoleCommonUser
 	case "add_quota":
+		operatorId := c.GetInt("id")
+		requestId := strings.TrimSpace(req.RequestId)
+		if requestId == "" {
+			requestId = strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+		}
+		if requestId == "" {
+			requestId = model.NewAutoLedgerKey("admin_quota_request")
+		}
+		if len(requestId) > 128 {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		operationKey := fmt.Sprintf("admin_quota:%d:%s", operatorId, requestId)
 		switch req.Mode {
 		case "add":
 			if req.Value <= 0 {
 				common.ApiErrorI18n(c, i18n.MsgUserQuotaChangeZero)
 				return
 			}
-			if err := model.IncreaseUserQuota(user.Id, req.Value, true); err != nil {
+			if _, err := model.CreditQuota(model.LedgerEntry{
+				UserId:         user.Id,
+				Account:        model.AccountPaid,
+				Delta:          req.Value,
+				Reason:         model.LedgerReasonAdminAdd,
+				ReferenceType:  "admin_quota",
+				ReferenceId:    requestId,
+				OperatorId:     operatorId,
+				IdempotencyKey: operationKey,
+			}); err != nil {
 				common.ApiError(c, err)
 				return
 			}
@@ -1179,7 +1207,15 @@ func ManageUser(c *gin.Context) {
 				common.ApiErrorI18n(c, i18n.MsgUserQuotaChangeZero)
 				return
 			}
-			if err := model.DecreaseUserQuota(user.Id, req.Value, true); err != nil {
+			if _, err := model.DebitQuota(model.LedgerEntry{
+				UserId:         user.Id,
+				Delta:          req.Value,
+				Reason:         model.LedgerReasonAdminSubtract,
+				ReferenceType:  "admin_quota",
+				ReferenceId:    requestId,
+				OperatorId:     operatorId,
+				IdempotencyKey: operationKey,
+			}, model.AccountPaid); err != nil {
 				common.ApiError(c, err)
 				return
 			}
@@ -1188,7 +1224,16 @@ func ManageUser(c *gin.Context) {
 			})
 		case "override":
 			oldQuota := user.Quota
-			if err := model.DB.Model(&model.User{}).Where("id = ?", user.Id).Update("quota", req.Value).Error; err != nil {
+			if _, err := model.OverrideQuota(model.LedgerEntry{
+				UserId:         user.Id,
+				Account:        model.AccountPaid,
+				Delta:          req.Value,
+				Reason:         model.LedgerReasonAdminOverride,
+				ReferenceType:  "admin_quota",
+				ReferenceId:    requestId,
+				OperatorId:     operatorId,
+				IdempotencyKey: operationKey,
+			}); err != nil {
 				common.ApiError(c, err)
 				return
 			}

@@ -52,6 +52,7 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 		DisplayName:     "before",
 		Status:          common.UserStatusEnabled,
 		Quota:           1000,
+		QuotaPaid:       1000,
 		UsedQuota:       20,
 		RequestCount:    3,
 		AffCount:        2,
@@ -65,13 +66,16 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 	require.NoError(t, err)
 
 	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]interface{}{
-		"quota":         gorm.Expr("quota - ?", 400),
-		"used_quota":    gorm.Expr("used_quota + ?", 400),
-		"request_count": gorm.Expr("request_count + ?", 1),
-		"aff_count":     gorm.Expr("aff_count + ?", 1),
-		"aff_quota":     gorm.Expr("aff_quota - ?", 500),
-		"aff_history":   gorm.Expr("aff_history + ?", 500),
-		"access_token":  "rotated-token",
+		"quota":          gorm.Expr("quota - ?", 400),
+		"used_quota":     gorm.Expr("used_quota + ?", 400),
+		"request_count":  gorm.Expr("request_count + ?", 1),
+		"quota_paid":     gorm.Expr("quota_paid - ?", 400),
+		"quota_bonus":    gorm.Expr("quota_bonus + ?", 100),
+		"quota_affiliate": gorm.Expr("quota_affiliate + ?", 300),
+		"aff_count":      gorm.Expr("aff_count + ?", 1),
+		"aff_quota":      gorm.Expr("aff_quota - ?", 500),
+		"aff_history":    gorm.Expr("aff_history + ?", 500),
+		"access_token":   "rotated-token",
 	}).Error)
 
 	staleUser.DisplayName = "after"
@@ -83,6 +87,9 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 	assert.Equal(t, 600, got.Quota)
 	assert.Equal(t, 420, got.UsedQuota)
 	assert.Equal(t, 4, got.RequestCount)
+	assert.Equal(t, 600, got.QuotaPaid)
+	assert.Equal(t, 100, got.QuotaBonus)
+	assert.Equal(t, 300, got.QuotaAffiliate)
 	assert.Equal(t, 3, got.AffCount)
 	assert.Equal(t, 300, got.AffQuota)
 	assert.Equal(t, 1700, got.AffHistoryQuota)
