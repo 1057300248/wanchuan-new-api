@@ -18,6 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { TFunction } from 'i18next'
 
+import {
+  DASHBOARD_ADMIN_ONLY_SECTIONS,
+  DASHBOARD_OVERVIEW_SECTION,
+} from '@/features/dashboard/lib/section-access'
 import { createSectionRegistry } from '@/features/system-settings/utils/section-registry'
 
 /**
@@ -25,7 +29,7 @@ import { createSectionRegistry } from '@/features/system-settings/utils/section-
  */
 const DASHBOARD_SECTIONS = [
   {
-    id: 'overview',
+    id: DASHBOARD_OVERVIEW_SECTION,
     titleKey: 'Overview',
     build: () => null,
   },
@@ -42,14 +46,13 @@ const DASHBOARD_SECTIONS = [
   {
     id: 'users',
     titleKey: 'User Analytics',
-    adminOnly: true,
     build: () => null,
   },
 ] as const
 
 export type DashboardSectionId = (typeof DASHBOARD_SECTIONS)[number]['id']
 
-const ADMIN_ONLY_SECTIONS = new Set<string>(['users'])
+const ADMIN_ONLY_SECTIONS = new Set<string>(DASHBOARD_ADMIN_ONLY_SECTIONS)
 
 const dashboardRegistry = createSectionRegistry<
   DashboardSectionId,
