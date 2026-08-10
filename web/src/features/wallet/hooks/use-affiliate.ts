@@ -65,7 +65,10 @@ export function useAffiliate() {
   const transferQuota = useCallback(async (quota: number): Promise<boolean> => {
     try {
       setTransferring(true)
-      const response = await transferAffiliateQuota({ quota })
+      const response = await transferAffiliateQuota({
+        quota,
+        request_id: crypto.randomUUID(),
+      })
 
       if (response.success) {
         toast.success(response.message || i18next.t('Transfer successful'))
@@ -75,7 +78,7 @@ export function useAffiliate() {
 
       toast.error(response.message || i18next.t('Transfer failed'))
       return false
-    } catch (_error) {
+    } catch {
       toast.error(i18next.t('Transfer failed'))
       return false
     } finally {

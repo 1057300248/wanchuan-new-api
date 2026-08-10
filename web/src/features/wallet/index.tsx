@@ -23,14 +23,20 @@ import { SectionPageLayout } from '@/components/layout'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
 
-import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
+import { AdminWithdrawalsCard } from './components/admin-withdrawals-card'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
 import { TransferDialog } from './components/dialogs/transfer-dialog'
+import { WithdrawalDialog } from './components/dialogs/withdrawal-dialog'
+import { LedgerTable } from './components/ledger-table'
 import { RechargeFormCard } from './components/recharge-form-card'
+import { ReferralHistoryCard } from './components/referral-history-card'
+import { ReferralRewardsCard } from './components/referral-rewards-card'
 import { SubscriptionPlansCard } from './components/subscription-plans-card'
+import { WalletAccountsCard } from './components/wallet-accounts-card'
 import { WalletStatsCard } from './components/wallet-stats-card'
 import { DEFAULT_DISCOUNT_RATE, PAYMENT_TYPES } from './constants'
 import {
@@ -41,6 +47,8 @@ import {
   useCreemPayment,
   useWaffoPayment,
   useWaffoPancakePayment,
+  useWalletSummary,
+  useReferralOverview,
 } from './hooks'
 import {
   getDefaultPaymentType,
@@ -79,10 +87,22 @@ export function Wallet(props: WalletProps) {
   const [selectedCreemProduct, setSelectedCreemProduct] =
     useState<CreemProduct | null>(null)
   const [showSubscriptionPanel, setShowSubscriptionPanel] = useState(true)
+  const [withdrawalDialogOpen, setWithdrawalDialogOpen] = useState(false)
 
   const { status } = useStatus()
   const { currency } = useSystemConfig()
   const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
+  const {
+    summary: walletSummary,
+    loading: walletLoading,
+    refetch: refetchWalletSummary,
+  } = useWalletSummary()
+  const {
+    overview: referralOverview,
+    loading: referralLoading,
+    submitting: withdrawalSubmitting,
+    submitWithdrawal,
+  } = useReferralOverview()
 
   // Calculate effective exchange rate - when display type is USD, use rate of 1
   const effectiveUsdExchangeRate = useMemo(() => {
@@ -97,12 +117,7 @@ export function Wallet(props: WalletProps) {
     calculatePaymentAmount,
     processPayment,
   } = usePayment()
-  const {
-    affiliateLink,
-    loading: affiliateLoading,
-    transferQuota,
-    transferring,
-  } = useAffiliate()
+  const { affiliateLink, transferQuota, transferring } = useAffiliate()
   const { redeeming, redeemCode } = useRedemption()
   const { processing: creemProcessing, processCreemPayment } = useCreemPayment()
   const { processing: waffoProcessing, processWaffoPayment } = useWaffoPayment()
@@ -282,6 +297,17 @@ export function Wallet(props: WalletProps) {
     []
   )
 
+  const handleWithdrawalConfirm = useCallback(
+    async (quota: number) => {
+      const success = await submitWithdrawal(quota)
+      if (success) {
+        refetchWalletSummary()
+      }
+      return success
+    },
+    [submitWithdrawal, refetchWalletSummary]
+  )
+
   return (
     <>
       <SectionPageLayout>
@@ -289,6 +315,11 @@ export function Wallet(props: WalletProps) {
         <SectionPageLayout.Content>
           <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
             <WalletStatsCard user={user} loading={userLoading} />
+
+            <WalletAccountsCard
+              summary={walletSummary}
+              loading={walletLoading}
+            />
 
             <div
               className={
@@ -339,15 +370,19 @@ export function Wallet(props: WalletProps) {
               />
             </div>
 
-            <AffiliateRewardsCard
+            <ReferralRewardsCard
+              overview={referralOverview}
               user={user}
               affiliateLink={affiliateLink}
-              onTransfer={() => setTransferDialogOpen(true)}
-              complianceConfirmed={
-                topupInfo?.payment_compliance_confirmed !== false
-              }
-              loading={affiliateLoading}
+              onWithdraw={() => setWithdrawalDialogOpen(true)}
+              loading={referralLoading}
             />
+
+            <ReferralHistoryCard />
+
+            {(user?.role ?? 0) >= ROLE.ADMIN ? <AdminWithdrawalsCard /> : null}
+
+            <LedgerTable />
           </div>
         </SectionPageLayout.Content>
       </SectionPageLayout>
@@ -371,6 +406,17 @@ export function Wallet(props: WalletProps) {
         onConfirm={handleTransfer}
         availableQuota={user?.aff_quota ?? 0}
         transferring={transferring}
+      />
+
+      <WithdrawalDialog
+        open={withdrawalDialogOpen}
+        onOpenChange={setWithdrawalDialogOpen}
+        onConfirm={handleWithdrawalConfirm}
+        availableQuota={referralOverview?.available_quota ?? 0}
+        minWithdrawQuota={
+          referralOverview?.rules?.affiliate_min_withdraw_quota ?? 0
+        }
+        submitting={withdrawalSubmitting}
       />
 
       <BillingHistoryDialog
