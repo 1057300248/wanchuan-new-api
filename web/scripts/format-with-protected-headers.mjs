@@ -17,7 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { spawnSync } from 'node:child_process'
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { join, relative } from 'node:path'
 
 const mode = process.argv[2]
@@ -65,7 +71,7 @@ function walk(dir, files = []) {
       continue
     }
 
-    if (entry.isFile()) {
+    if (entry.isFile() && entry.name !== '.git') {
       files.push(join(dir, entry.name))
     }
   }
@@ -140,15 +146,34 @@ let exitCode = 0
 
 try {
   headers = stripProtectedHeaders(files)
-  const result = spawnSync(
-    'oxfmt',
-    ['-c', '.oxfmtrc.json', '--ignore-path', '.gitignore', '--write', '.'],
-    {
-      cwd: root,
-      stdio: 'inherit',
-    }
+  const oxfmtBinary = join(
+    root,
+    'node_modules',
+    '.bin',
+    process.platform === 'win32' ? 'oxfmt.cmd' : 'oxfmt'
   )
-  exitCode = result.status ?? 1
+  if (!existsSync(oxfmtBinary)) {
+    console.error(
+      `Failed to start oxfmt: ${oxfmtBinary} not found; run "bun install" first`
+    )
+    exitCode = 1
+  } else {
+    const result = spawnSync(
+      oxfmtBinary,
+      ['-c', '.oxfmtrc.json', '--ignore-path', '.gitignore', '--write', '.'],
+      {
+        cwd: root,
+        stdio: 'inherit',
+        shell: process.platform === 'win32',
+      }
+    )
+    if (result.error) {
+      console.error(`Failed to start oxfmt: ${result.error.message}`)
+      exitCode = 1
+    } else {
+      exitCode = result.status ?? 1
+    }
+  }
   restoreProtectedHeaders(headers)
 
   if (mode === '--check' && exitCode === 0) {

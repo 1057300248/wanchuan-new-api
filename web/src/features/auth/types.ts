@@ -123,6 +123,12 @@ export interface SystemStatus {
     display_in_currency?: boolean
     display_token_stat_enabled?: boolean
     quota_per_unit?: number
+    signup_bonus_enabled?: boolean
+    signup_bonus_quota?: number
+    affiliate_reward_enabled?: boolean
+    affiliate_reward_rate?: number
+    affiliate_freeze_days?: number
+    affiliate_min_withdraw_quota?: number
     quota_display_type?: string
     usd_exchange_rate?: number
     custom_currency_symbol?: string
@@ -168,6 +174,12 @@ export interface SystemStatus {
   display_in_currency?: boolean
   display_token_stat_enabled?: boolean
   quota_per_unit?: number
+  signup_bonus_enabled?: boolean
+  signup_bonus_quota?: number
+  affiliate_reward_enabled?: boolean
+  affiliate_reward_rate?: number
+  affiliate_freeze_days?: number
+  affiliate_min_withdraw_quota?: number
   quota_display_type?: string
   usd_exchange_rate?: number
   custom_currency_symbol?: string

@@ -572,4 +572,7 @@ export const STATIC_I18N_KEYS = [
   'This user account is disabled.',
   'Telegram binding failed. Please try again.',
   'Verification scope is missing',
+
+  // Model form validation (zod refine messages, translated at render time)
+  'Must be a positive integer or empty',
 ] as const
