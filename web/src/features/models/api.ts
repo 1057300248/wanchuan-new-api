@@ -111,6 +111,23 @@ export async function deleteModel(
   return res.data
 }
 
+/**
+ * Batch update model bonus eligibility with a client-generated idempotency key.
+ * null clears the explicit setting and keeps the backend fail-closed.
+ */
+export async function batchUpdateModelBonusEligible(data: {
+  model_ids: number[]
+  bonus_eligible: boolean | null
+  idempotency_key: string
+}): Promise<{
+  success: boolean
+  message?: string
+  data?: { changed?: number; idempotency_key?: string }
+}> {
+  const res = await api.post('/api/models/bonus_eligible/batch', data)
+  return res.data
+}
+
 // ============================================================================
 // Vendor Management
 // ============================================================================

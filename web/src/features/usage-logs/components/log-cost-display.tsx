@@ -120,8 +120,10 @@ function SubscriptionBadge(props: { quota: number }) {
 export function LogCostDisplay(props: LogCostDisplayProps) {
   const isSubscription = props.other?.billing_source === 'subscription'
   const showToolSurcharge = hasToolSurcharge(props.other)
+  const walletCost = props.other?.wallet_cost
+  const hasWalletCost = walletCost != null && (walletCost.paid ?? 0) > 0
 
-  if (!isSubscription && !showToolSurcharge) {
+  if (!isSubscription && !showToolSurcharge && !hasWalletCost) {
     return (
       <div className='flex flex-col gap-0.5'>
         <QuotaBadge quota={props.quota} />
@@ -137,8 +139,50 @@ export function LogCostDisplay(props: LogCostDisplayProps) {
         ) : (
           <QuotaBadge quota={props.quota} />
         )}
+        {hasWalletCost && !isSubscription ? (
+          <WalletCostBadge cost={walletCost} />
+        ) : null}
         {showToolSurcharge ? <ToolSurchargeMarker /> : null}
       </div>
     </TooltipProvider>
+  )
+}
+
+function WalletCostBadge(props: {
+  cost: NonNullable<LogOtherData['wallet_cost']>
+}) {
+  const { t } = useTranslation()
+  const parts: string[] = []
+  if ((props.cost.paid ?? 0) > 0) {
+    parts.push(`${t('Paid')} ${formatLogQuota(props.cost.paid ?? 0)}`)
+  }
+  if ((props.cost.bonus ?? 0) > 0) {
+    parts.push(`${t('Bonus')} ${formatLogQuota(props.cost.bonus ?? 0)}`)
+  }
+  const label = `${t('Wallet account split')}: ${parts.join(' / ')}`
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Badge
+            variant='secondary'
+            className='h-5 min-w-5 cursor-help gap-0 rounded-full px-1'
+            role='img'
+            aria-label={label}
+            tabIndex={0}
+          >
+            <HugeiconsIcon
+              icon={Wrench01Icon}
+              strokeWidth={2}
+              className='size-3'
+            />
+          </Badge>
+        }
+      />
+      <TooltipContent>
+        <span>{label}</span>
+      </TooltipContent>
+    </Tooltip>
   )
 }
