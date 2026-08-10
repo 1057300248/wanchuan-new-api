@@ -380,9 +380,7 @@ export function Wallet(props: WalletProps) {
 
             <ReferralHistoryCard />
 
-            {(user?.role ?? 0) >= ROLE.ADMIN ? (
-              <AdminWithdrawalsCard />
-            ) : null}
+            {(user?.role ?? 0) >= ROLE.ADMIN ? <AdminWithdrawalsCard /> : null}
 
             <LedgerTable />
           </div>

@@ -24,10 +24,16 @@ import { ledgerReasonLabelKey, withdrawalStatusLabelKey } from '../ledger'
 describe('ledgerReasonLabelKey', () => {
   test('maps known backend reasons to i18n keys', () => {
     assert.equal(ledgerReasonLabelKey('signup_bonus'), 'Signup Bonus')
-    assert.equal(ledgerReasonLabelKey('billing_pre_consume'), 'Billing Pre-consumed')
+    assert.equal(
+      ledgerReasonLabelKey('billing_pre_consume'),
+      'Billing Pre-consumed'
+    )
     assert.equal(ledgerReasonLabelKey('affiliate_reward'), 'Referral Reward')
     assert.equal(ledgerReasonLabelKey('withdrawal_hold'), 'Withdrawal Hold')
-    assert.equal(ledgerReasonLabelKey('withdrawal_reject_refund'), 'Withdrawal Refund')
+    assert.equal(
+      ledgerReasonLabelKey('withdrawal_reject_refund'),
+      'Withdrawal Refund'
+    )
   })
 
   test('passes through unknown reasons for forward compatibility', () => {

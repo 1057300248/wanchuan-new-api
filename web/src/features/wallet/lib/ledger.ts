@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-
 // 账本 reason 到 i18n 文案键的映射。未知 reason 原样展示（后端兼容旧数据）。
 const REASON_LABEL_KEYS: Record<string, string> = {
   topup: 'Top-up',

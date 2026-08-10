@@ -44,9 +44,7 @@ function normalizeMetadataItems(items: unknown[]): string[] {
  * Parse a JSON array string into a string array. Empty, invalid or
  * non-array values degrade safely to an empty array.
  */
-export function parseMetadataArray(
-  raw: string | null | undefined
-): string[] {
+export function parseMetadataArray(raw: string | null | undefined): string[] {
   if (!raw) return []
   try {
     const parsed: unknown = JSON.parse(raw)

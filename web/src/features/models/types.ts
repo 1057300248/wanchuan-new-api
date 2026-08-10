@@ -251,18 +251,12 @@ export const modelFormSchema = z.object({
   name_rule: z.number().min(0).max(3).default(0),
   status: z.boolean().default(true),
   sync_official: z.boolean().default(true),
-  context_length: z
-    .string()
-    .default('')
-    .refine(isValidPositiveInt, {
-      message: 'Must be a positive integer or empty',
-    }),
-  max_output_tokens: z
-    .string()
-    .default('')
-    .refine(isValidPositiveInt, {
-      message: 'Must be a positive integer or empty',
-    }),
+  context_length: z.string().default('').refine(isValidPositiveInt, {
+    message: 'Must be a positive integer or empty',
+  }),
+  max_output_tokens: z.string().default('').refine(isValidPositiveInt, {
+    message: 'Must be a positive integer or empty',
+  }),
   knowledge_cutoff: z.string().default(''),
   release_date: z.string().default(''),
   parameter_count: z.string().default(''),

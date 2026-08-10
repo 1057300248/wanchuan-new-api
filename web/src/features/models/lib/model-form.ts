@@ -49,18 +49,12 @@ export const modelFormSchema = z.object({
   sync_official: z.boolean().default(true),
   enable_groups: z.array(z.string()).default([]),
   quota_types: z.array(z.number()).default([]),
-  context_length: z
-    .string()
-    .default('')
-    .refine(isValidPositiveInt, {
-      message: 'Must be a positive integer or empty',
-    }),
-  max_output_tokens: z
-    .string()
-    .default('')
-    .refine(isValidPositiveInt, {
-      message: 'Must be a positive integer or empty',
-    }),
+  context_length: z.string().default('').refine(isValidPositiveInt, {
+    message: 'Must be a positive integer or empty',
+  }),
+  max_output_tokens: z.string().default('').refine(isValidPositiveInt, {
+    message: 'Must be a positive integer or empty',
+  }),
   knowledge_cutoff: z.string().default(''),
   release_date: z.string().default(''),
   parameter_count: z.string().default(''),

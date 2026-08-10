@@ -30,10 +30,7 @@ import {
 
 describe('parseMetadataArray', () => {
   test('parses a valid JSON array string into items', () => {
-    assert.deepEqual(parseMetadataArray('["text","image"]'), [
-      'text',
-      'image',
-    ])
+    assert.deepEqual(parseMetadataArray('["text","image"]'), ['text', 'image'])
   })
 
   test('returns empty array for empty, null or undefined input', () => {
