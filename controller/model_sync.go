@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -64,6 +65,18 @@ type upstreamModel struct {
 	Status      int             `json:"status"`
 	Tags        string          `json:"tags"`
 	VendorName  string          `json:"vendor_name"`
+
+	// 可选模型元数据：指针/切片仅在 JSON 中实际存在时才非 nil，
+	// 兼容上游尚未提供这些字段的旧数据。
+	ContextLength    *int     `json:"context_length"`
+	MaxOutputTokens  *int     `json:"max_output_tokens"`
+	KnowledgeCutoff  string   `json:"knowledge_cutoff"`
+	ReleaseDate      string   `json:"release_date"`
+	ParameterCount   string   `json:"parameter_count"`
+	InputModalities  []string `json:"input_modalities"`
+	OutputModalities []string `json:"output_modalities"`
+	Capabilities     []string `json:"capabilities"`
+	BonusEligible    *bool    `json:"bonus_eligible"`
 }
 
 type upstreamVendor struct {
@@ -381,6 +394,34 @@ func SyncUpstreamModels(c *gin.Context) {
 			Status:      chooseStatus(up.Status, 1),
 			NameRule:    up.NameRule,
 		}
+		// 可选元数据：仅在上游字段实际存在时写入，不编造默认
+		if up.ContextLength != nil {
+			mi.ContextLength = up.ContextLength
+		}
+		if up.MaxOutputTokens != nil {
+			mi.MaxOutputTokens = up.MaxOutputTokens
+		}
+		if strings.TrimSpace(up.KnowledgeCutoff) != "" {
+			mi.KnowledgeCutoff = up.KnowledgeCutoff
+		}
+		if strings.TrimSpace(up.ReleaseDate) != "" {
+			mi.ReleaseDate = up.ReleaseDate
+		}
+		if strings.TrimSpace(up.ParameterCount) != "" {
+			mi.ParameterCount = up.ParameterCount
+		}
+		if up.InputModalities != nil {
+			mi.InputModalities = upstreamMetadataArray(up.InputModalities)
+		}
+		if up.OutputModalities != nil {
+			mi.OutputModalities = upstreamMetadataArray(up.OutputModalities)
+		}
+		if up.Capabilities != nil {
+			mi.Capabilities = upstreamMetadataArray(up.Capabilities)
+		}
+		if up.BonusEligible != nil {
+			mi.BonusEligible = up.BonusEligible
+		}
 		if err := mi.Insert(); err == nil {
 			createdModels++
 			createdList = append(createdList, name)
@@ -437,6 +478,43 @@ func SyncUpstreamModels(c *gin.Context) {
 					local.Status = chooseStatus(up.Status, local.Status)
 					needUpdate = true
 				}
+				// 可选元数据：仅在上游字段实际存在时覆盖
+				if containsField(ow.Fields, "context_length") && up.ContextLength != nil {
+					local.ContextLength = up.ContextLength
+					needUpdate = true
+				}
+				if containsField(ow.Fields, "max_output_tokens") && up.MaxOutputTokens != nil {
+					local.MaxOutputTokens = up.MaxOutputTokens
+					needUpdate = true
+				}
+				if containsField(ow.Fields, "knowledge_cutoff") && strings.TrimSpace(up.KnowledgeCutoff) != "" {
+					local.KnowledgeCutoff = up.KnowledgeCutoff
+					needUpdate = true
+				}
+				if containsField(ow.Fields, "release_date") && strings.TrimSpace(up.ReleaseDate) != "" {
+					local.ReleaseDate = up.ReleaseDate
+					needUpdate = true
+				}
+				if containsField(ow.Fields, "parameter_count") && strings.TrimSpace(up.ParameterCount) != "" {
+					local.ParameterCount = up.ParameterCount
+					needUpdate = true
+				}
+				if containsField(ow.Fields, "input_modalities") && up.InputModalities != nil {
+					local.InputModalities = upstreamMetadataArray(up.InputModalities)
+					needUpdate = true
+				}
+				if containsField(ow.Fields, "output_modalities") && up.OutputModalities != nil {
+					local.OutputModalities = upstreamMetadataArray(up.OutputModalities)
+					needUpdate = true
+				}
+				if containsField(ow.Fields, "capabilities") && up.Capabilities != nil {
+					local.Capabilities = upstreamMetadataArray(up.Capabilities)
+					needUpdate = true
+				}
+				if containsField(ow.Fields, "bonus_eligible") && up.BonusEligible != nil {
+					local.BonusEligible = up.BonusEligible
+					needUpdate = true
+				}
 				if !needUpdate {
 					return nil
 				}
@@ -476,6 +554,66 @@ func containsField(fields []string, key string) bool {
 		}
 	}
 	return false
+}
+
+// upstreamMetadataArray 将上游数组字段序列化为 JSON 数组字符串；空/无效时返回空串。
+func upstreamMetadataArray(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	b, err := common.Marshal(items)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// metadataIntConflict 比较可选整数元数据字段：上游未提供时无冲突（无法覆盖），
+// 本地与上游一致时也无冲突。
+func metadataIntConflict(local, upstream *int) (localValue, upstreamValue interface{}, present bool) {
+	if upstream == nil {
+		return nil, nil, false
+	}
+	if local != nil && *local == *upstream {
+		return nil, nil, false
+	}
+	if local == nil {
+		return nil, *upstream, true
+	}
+	return *local, *upstream, true
+}
+
+// metadataBoolConflict 比较可选布尔元数据字段（bonus_eligible 三态）：
+// 上游未提供（nil）时无冲突（无法覆盖），本地与上游一致时也无冲突。
+func metadataBoolConflict(local, upstream *bool) (localValue, upstreamValue interface{}, present bool) {
+	if upstream == nil {
+		return nil, nil, false
+	}
+	if local != nil && *local == *upstream {
+		return nil, nil, false
+	}
+	if local == nil {
+		return nil, *upstream, true
+	}
+	return *local, *upstream, true
+}
+
+// metadataArrayConflict 比较可选数组元数据字段（本地为 JSON 数组字符串）：
+// 上游未提供（nil）时无冲突；空数组与空数组视为一致。
+func metadataArrayConflict(local string, upstream []string) (localValue, upstreamValue interface{}, present bool) {
+	if upstream == nil {
+		return nil, nil, false
+	}
+	localItems := model.ParseModelMetadataArray(local)
+	upstreamItems := make([]string, len(upstream))
+	copy(upstreamItems, upstream)
+	if len(localItems) == 0 && len(upstreamItems) == 0 {
+		return nil, nil, false
+	}
+	if slices.Equal(localItems, upstreamItems) {
+		return nil, nil, false
+	}
+	return localItems, upstreamItems, true
 }
 
 func coalesce(a, b string) string {
@@ -593,7 +731,7 @@ func SyncUpstreamPreview(c *gin.Context) {
 		if !ok {
 			continue
 		}
-		fields := make([]conflictField, 0, 6)
+		fields := make([]conflictField, 0, 16)
 		if strings.TrimSpace(local.Description) != strings.TrimSpace(up.Description) {
 			fields = append(fields, conflictField{Field: "description", Local: local.Description, Upstream: up.Description})
 		}
@@ -613,6 +751,34 @@ func SyncUpstreamPreview(c *gin.Context) {
 		}
 		if local.Status != chooseStatus(up.Status, local.Status) {
 			fields = append(fields, conflictField{Field: "status", Local: local.Status, Upstream: up.Status})
+		}
+		// 可选元数据：仅上游实际提供且与本地不一致时报告冲突
+		if localValue, upstreamValue, present := metadataIntConflict(local.ContextLength, up.ContextLength); present {
+			fields = append(fields, conflictField{Field: "context_length", Local: localValue, Upstream: upstreamValue})
+		}
+		if localValue, upstreamValue, present := metadataIntConflict(local.MaxOutputTokens, up.MaxOutputTokens); present {
+			fields = append(fields, conflictField{Field: "max_output_tokens", Local: localValue, Upstream: upstreamValue})
+		}
+		if strings.TrimSpace(up.KnowledgeCutoff) != "" && strings.TrimSpace(local.KnowledgeCutoff) != strings.TrimSpace(up.KnowledgeCutoff) {
+			fields = append(fields, conflictField{Field: "knowledge_cutoff", Local: local.KnowledgeCutoff, Upstream: up.KnowledgeCutoff})
+		}
+		if strings.TrimSpace(up.ReleaseDate) != "" && strings.TrimSpace(local.ReleaseDate) != strings.TrimSpace(up.ReleaseDate) {
+			fields = append(fields, conflictField{Field: "release_date", Local: local.ReleaseDate, Upstream: up.ReleaseDate})
+		}
+		if strings.TrimSpace(up.ParameterCount) != "" && strings.TrimSpace(local.ParameterCount) != strings.TrimSpace(up.ParameterCount) {
+			fields = append(fields, conflictField{Field: "parameter_count", Local: local.ParameterCount, Upstream: up.ParameterCount})
+		}
+		if localValue, upstreamValue, present := metadataArrayConflict(local.InputModalities, up.InputModalities); present {
+			fields = append(fields, conflictField{Field: "input_modalities", Local: localValue, Upstream: upstreamValue})
+		}
+		if localValue, upstreamValue, present := metadataArrayConflict(local.OutputModalities, up.OutputModalities); present {
+			fields = append(fields, conflictField{Field: "output_modalities", Local: localValue, Upstream: upstreamValue})
+		}
+		if localValue, upstreamValue, present := metadataArrayConflict(local.Capabilities, up.Capabilities); present {
+			fields = append(fields, conflictField{Field: "capabilities", Local: localValue, Upstream: upstreamValue})
+		}
+		if localValue, upstreamValue, present := metadataBoolConflict(local.BonusEligible, up.BonusEligible); present {
+			fields = append(fields, conflictField{Field: "bonus_eligible", Local: localValue, Upstream: upstreamValue})
 		}
 		if len(fields) > 0 {
 			conflicts = append(conflicts, conflictItem{ModelName: local.ModelName, Fields: fields})
