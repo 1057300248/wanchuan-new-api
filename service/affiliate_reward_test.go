@@ -51,6 +51,30 @@ func countAffiliateRewards(t *testing.T, inviterId int) int64 {
 	return count
 }
 
+func seedAffiliatePaidCost(t *testing.T, sourceUserId, inviterId, quota int, referenceId string) {
+	t.Helper()
+	seedAffiliateUser(t, sourceUserId, inviterId)
+	_, err := model.CreditQuota(model.LedgerEntry{
+		UserId:         sourceUserId,
+		Account:        model.AccountPaid,
+		Delta:          quota,
+		Reason:         model.LedgerReasonSystem,
+		ReferenceType:  "test_seed",
+		ReferenceId:    referenceId,
+		IdempotencyKey: fmt.Sprintf("test:affiliate:credit:%d:%s", sourceUserId, referenceId),
+	})
+	require.NoError(t, err)
+	_, err = model.DebitQuota(model.LedgerEntry{
+		UserId:         sourceUserId,
+		Delta:          quota,
+		Reason:         model.LedgerReasonBillingPreConsume,
+		ReferenceType:  "relay",
+		ReferenceId:    referenceId,
+		IdempotencyKey: fmt.Sprintf("test:affiliate:debit:%d:%s", sourceUserId, referenceId),
+	}, model.AccountPaid)
+	require.NoError(t, err)
+}
+
 func TestRecordAffiliateRewardPaidConsumptionCreatesReward(t *testing.T) {
 	truncate(t)
 	seedAffiliateRewardConfig(t, true, 0.2)
@@ -159,6 +183,8 @@ func TestMatureAffiliateRewardsSevenDayFreeze(t *testing.T) {
 	truncate(t)
 	seedAffiliateRewardConfig(t, true, 0.2)
 	seedAffiliateUser(t, 611, 0)
+	seedAffiliatePaidCost(t, 612, 611, 1000, "REQ-future")
+	seedAffiliatePaidCost(t, 613, 611, 500, "REQ-due")
 
 	now := common.GetTimestamp()
 	// 未到期（未来解锁）：保持 pending，不转入余额
@@ -203,6 +229,107 @@ func TestMatureAffiliateRewardsSevenDayFreeze(t *testing.T) {
 	user = getUserBalances(t, 611)
 	assert.Equal(t, 100, user.QuotaAffiliate)
 	assertQuotaInvariant(t, user)
+}
+
+func TestMatureAffiliateRewardsRecalculatesAfterPartialRefund(t *testing.T) {
+	truncate(t)
+	seedAffiliateRewardConfig(t, true, 0.2)
+	seedAffiliateUser(t, 650, 0)
+	seedAffiliatePaidCost(t, 651, 650, 1000, "REQ-partial-refund")
+
+	now := common.GetTimestamp()
+	reward := &model.AffiliateReward{
+		UserId: 650, SourceUserId: 651, EligiblePaidQuota: 1000, RewardQuota: 200,
+		Status: string(model.AffiliateRewardPending), UnlockAt: now - 1,
+		ReferenceType: "relay", ReferenceId: "REQ-partial-refund",
+		IdempotencyKey: "affiliate_reward:relay:REQ-partial-refund", CreatedAt: now,
+	}
+	require.NoError(t, model.CreateAffiliateReward(reward))
+	_, err := model.CreditQuota(model.LedgerEntry{
+		UserId:         651,
+		Account:        model.AccountPaid,
+		Delta:          500,
+		Reason:         model.LedgerReasonBillingRefund,
+		ReferenceType:  "relay",
+		ReferenceId:    "REQ-partial-refund",
+		IdempotencyKey: "test:affiliate:partial-refund",
+	})
+	require.NoError(t, err)
+
+	matured, err := MatureAffiliateRewards(650)
+	require.NoError(t, err)
+	assert.Equal(t, 1, matured)
+
+	user := getUserBalances(t, 650)
+	assert.Equal(t, 100, user.QuotaAffiliate)
+	var row model.AffiliateReward
+	require.NoError(t, model.DB.First(&row, reward.Id).Error)
+	assert.Equal(t, 500, row.EligiblePaidQuota)
+	assert.Equal(t, 100, row.RewardQuota)
+	assert.Equal(t, string(model.AffiliateRewardAvailable), row.Status)
+}
+
+func TestMatureAffiliateRewardsCancelsDisabledSource(t *testing.T) {
+	truncate(t)
+	seedAffiliateRewardConfig(t, true, 0.2)
+	seedAffiliateUser(t, 652, 0)
+	seedAffiliatePaidCost(t, 653, 652, 500, "REQ-disabled-at-maturity")
+
+	now := common.GetTimestamp()
+	reward := &model.AffiliateReward{
+		UserId: 652, SourceUserId: 653, EligiblePaidQuota: 500, RewardQuota: 100,
+		Status: string(model.AffiliateRewardPending), UnlockAt: now - 1,
+		ReferenceType: "relay", ReferenceId: "REQ-disabled-at-maturity",
+		IdempotencyKey: "affiliate_reward:relay:REQ-disabled-at-maturity", CreatedAt: now,
+	}
+	require.NoError(t, model.CreateAffiliateReward(reward))
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", 653).
+		Update("status", common.UserStatusDisabled).Error)
+
+	matured, err := MatureAffiliateRewards(652)
+	require.NoError(t, err)
+	assert.Zero(t, matured)
+	assert.Zero(t, getUserBalances(t, 652).QuotaAffiliate)
+
+	var row model.AffiliateReward
+	require.NoError(t, model.DB.First(&row, reward.Id).Error)
+	assert.Equal(t, string(model.AffiliateRewardCancelled), row.Status)
+	assert.Equal(t, "source_disabled", row.CancelReason)
+	assert.Equal(t, now, row.CancelledAt)
+}
+
+func TestAffiliateLedgerReconciliationCreatesDurableReward(t *testing.T) {
+	truncate(t)
+	seedAffiliateRewardConfig(t, true, 0.2)
+	seedAffiliateUser(t, 654, 0)
+	seedAffiliatePaidCost(t, 655, 654, 750, "REQ-reconcile")
+
+	candidates, err := model.ListAffiliatePaidCostCandidates(common.GetTimestamp()+1, 10)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	reconcileAffiliatePaidCost(candidates[0])
+
+	var reward model.AffiliateReward
+	require.NoError(t, model.DB.Where(
+		"source_user_id = ? AND reference_type = ? AND reference_id = ?",
+		655, "relay", "REQ-reconcile",
+	).First(&reward).Error)
+	assert.Equal(t, 750, reward.EligiblePaidQuota)
+	assert.Equal(t, 150, reward.RewardQuota)
+
+	var state model.AffiliateRewardReconcileState
+	require.NoError(t, model.DB.Where(
+		"source_user_id = ? AND reference_type = ? AND reference_id = ?",
+		655, "relay", "REQ-reconcile",
+	).First(&state).Error)
+	assert.Equal(t, model.AffiliateReconcileProcessed, state.Status)
+	assert.Equal(t, "relay", state.CanonicalReferenceType)
+	assert.Equal(t, "REQ-reconcile", state.CanonicalReferenceId)
+	assert.Equal(t, 1, state.AttemptCount)
+
+	remaining, err := model.ListAffiliatePaidCostCandidates(common.GetTimestamp()+1, 10)
+	require.NoError(t, err)
+	assert.Empty(t, remaining)
 }
 
 func TestFillWalletCostLogInfoNetSharesAfterRefund(t *testing.T) {

@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -31,6 +32,7 @@ type AffiliateRewardStatus string
 const (
 	AffiliateRewardPending   AffiliateRewardStatus = "pending"   // 冻结中，未成熟
 	AffiliateRewardAvailable AffiliateRewardStatus = "available" // 已成熟，转入 affiliate 余额
+	AffiliateRewardCancelled AffiliateRewardStatus = "cancelled" // 冻结期资格失效或消费已退款
 )
 
 // AffiliateWithdrawalStatus 提现申请状态。
@@ -57,6 +59,8 @@ type AffiliateReward struct {
 	IdempotencyKey    string `json:"idempotency_key" gorm:"type:varchar(255);not null;uniqueIndex"`
 	CreatedAt         int64  `json:"created_at" gorm:"bigint;autoCreateTime;index:idx_reward_ref,priority:2"`
 	UnlockedAt        int64  `json:"unlocked_at" gorm:"bigint;default:0"`
+	CancelledAt       int64  `json:"cancelled_at" gorm:"bigint;default:0"`
+	CancelReason      string `json:"cancel_reason" gorm:"type:varchar(128);not null;default:''"`
 }
 
 func (AffiliateReward) TableName() string {
@@ -162,30 +166,87 @@ func matureOneAffiliateReward(userId, rewardId int, now int64) (bool, error) {
 		if reward.Status != string(AffiliateRewardPending) || reward.UnlockAt > now {
 			return nil
 		}
+
+		var receiver User
+		if err := lockForUpdate(tx).Where("id = ?", reward.UserId).First(&receiver).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return cancelAffiliateRewardTx(tx, &reward, now, "receiver_missing")
+			}
+			return err
+		}
+		if receiver.Status != common.UserStatusEnabled {
+			return cancelAffiliateRewardTx(tx, &reward, now, "receiver_disabled")
+		}
+
+		var source User
+		if err := lockForUpdate(tx).Where("id = ?", reward.SourceUserId).First(&source).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return cancelAffiliateRewardTx(tx, &reward, now, "source_missing")
+			}
+			return err
+		}
+		if source.Status != common.UserStatusEnabled {
+			return cancelAffiliateRewardTx(tx, &reward, now, "source_disabled")
+		}
+		if source.InviterId != reward.UserId {
+			return cancelAffiliateRewardTx(tx, &reward, now, "inviter_changed")
+		}
+
+		refs, eligible, err := affiliateRewardCostRefsTx(tx, &reward)
+		if err != nil {
+			return err
+		}
+		if !eligible {
+			return cancelAffiliateRewardTx(tx, &reward, now, "source_not_eligible")
+		}
+		cost, err := NetCostByReferencesTx(tx, reward.SourceUserId, refs)
+		if err != nil {
+			return err
+		}
+		currentPaidQuota := -cost[AccountPaid]
+		if currentPaidQuota <= 0 {
+			return cancelAffiliateRewardTx(tx, &reward, now, "paid_cost_refunded")
+		}
+
+		adjustedRewardQuota := reward.RewardQuota
+		if reward.EligiblePaidQuota > 0 && currentPaidQuota != reward.EligiblePaidQuota {
+			rateSnapshot := float64(reward.RewardQuota) / float64(reward.EligiblePaidQuota)
+			adjustedRewardQuota = int(math.Round(float64(currentPaidQuota) * rateSnapshot))
+		}
+		if adjustedRewardQuota <= 0 {
+			return cancelAffiliateRewardTx(tx, &reward, now, "reward_rounds_to_zero")
+		}
+
 		entry := LedgerEntry{
 			UserId:         reward.UserId,
 			Account:        AccountAffiliate,
-			Delta:          reward.RewardQuota,
+			Delta:          adjustedRewardQuota,
 			Reason:         LedgerReasonAffiliateReward,
 			ReferenceType:  "affiliate_reward",
 			ReferenceId:    strconv.Itoa(reward.Id),
 			IdempotencyKey: fmt.Sprintf("affiliate_reward:unlock:%d", reward.Id),
 		}
-		result, err := CreditQuotaTx(tx, entry)
-		if err != nil {
+		if _, err := CreditQuotaTx(tx, entry); err != nil {
 			return err
 		}
 		reward.Status = string(AffiliateRewardAvailable)
 		reward.UnlockedAt = now
-		if err := tx.Model(&AffiliateReward{}).
+		reward.EligiblePaidQuota = currentPaidQuota
+		reward.RewardQuota = adjustedRewardQuota
+		res := tx.Model(&AffiliateReward{}).
 			Where("id = ? AND status = ?", reward.Id, string(AffiliateRewardPending)).
 			Updates(map[string]interface{}{
-				"status":      reward.Status,
-				"unlocked_at": reward.UnlockedAt,
-			}).Error; err != nil {
-			return err
+				"status":              reward.Status,
+				"unlocked_at":         reward.UnlockedAt,
+				"eligible_paid_quota": reward.EligiblePaidQuota,
+				"reward_quota":        reward.RewardQuota,
+			})
+		if res.Error != nil {
+			return res.Error
 		}
-		_ = result
+		if res.RowsAffected != 1 {
+			return fmt.Errorf("affiliate reward %d concurrent maturity conflict", reward.Id)
+		}
 		done = true
 		return nil
 	})
@@ -193,6 +254,52 @@ func matureOneAffiliateReward(userId, rewardId int, now int64) (bool, error) {
 		return false, err
 	}
 	return done, nil
+}
+
+func affiliateRewardCostRefsTx(tx *gorm.DB, reward *AffiliateReward) ([][2]string, bool, error) {
+	if reward == nil || reward.ReferenceType == "" || reward.ReferenceId == "" {
+		return nil, false, nil
+	}
+	refs := [][2]string{{reward.ReferenceType, reward.ReferenceId}}
+	if reward.ReferenceType != "task" {
+		return refs, true, nil
+	}
+	var task Task
+	if err := tx.Where("user_id = ? AND task_id = ?", reward.SourceUserId, reward.ReferenceId).First(&task).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if task.Status != TaskStatusSuccess {
+		return nil, false, nil
+	}
+	refs = refs[:0]
+	if task.PrivateData.RequestId != "" {
+		refs = append(refs, [2]string{"relay", task.PrivateData.RequestId})
+	}
+	refs = append(refs, [2]string{"task", task.TaskID})
+	return refs, true, nil
+}
+
+func cancelAffiliateRewardTx(tx *gorm.DB, reward *AffiliateReward, now int64, reason string) error {
+	if reward == nil {
+		return fmt.Errorf("nil affiliate reward")
+	}
+	res := tx.Model(&AffiliateReward{}).
+		Where("id = ? AND status = ?", reward.Id, string(AffiliateRewardPending)).
+		Updates(map[string]interface{}{
+			"status":        string(AffiliateRewardCancelled),
+			"cancelled_at":  now,
+			"cancel_reason": reason,
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected != 1 {
+		return fmt.Errorf("affiliate reward %d concurrent cancellation conflict", reward.Id)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
