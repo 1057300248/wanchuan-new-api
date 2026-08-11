@@ -252,7 +252,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	// P1-2：钱包净份额记录与推荐返利（仅结算成功且 paid 净消费 > 0）
 	if relayInfo.BillingSource == BillingSourceWallet && settleErr == nil {
 		if paidNet := FillWalletCostLogInfo(other, relayInfo.UserId, RelayWalletCostRefs(relayInfo)); paidNet > 0 {
-			_, _ = RecordAffiliateRewardForRequest(relayInfo.UserId, paidNet, "relay", relayInfo.RequestId)
+			recordAffiliateRewardOrLog(relayInfo.UserId, paidNet, "relay", relayInfo.RequestId)
 		}
 	}
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
@@ -382,7 +382,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	// P1-2：钱包净份额记录与推荐返利（仅结算成功且 paid 净消费 > 0）
 	if relayInfo.BillingSource == BillingSourceWallet && settleErr == nil {
 		if paidNet := FillWalletCostLogInfo(other, relayInfo.UserId, RelayWalletCostRefs(relayInfo)); paidNet > 0 {
-			_, _ = RecordAffiliateRewardForRequest(relayInfo.UserId, paidNet, "relay", relayInfo.RequestId)
+			recordAffiliateRewardOrLog(relayInfo.UserId, paidNet, "relay", relayInfo.RequestId)
 		}
 	}
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{

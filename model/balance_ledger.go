@@ -1015,6 +1015,19 @@ func normalizeLedgerPagination(page, pageSize int) (int, int) {
 // （reference_type + reference_id）的全部流水，天然包含预扣、追扣、结算与
 // 退款，退款后即反映最终净份额。调用方按需要取反得到净消费。
 func AccountNetCost(userId int, referenceType, referenceId string) (map[LedgerAccount]int, error) {
+	return accountNetCostWithDB(DB, userId, referenceType, referenceId)
+}
+
+// AccountNetCostTx is the transactional variant used while validating frozen
+// affiliate rewards immediately before maturity.
+func AccountNetCostTx(tx *gorm.DB, userId int, referenceType, referenceId string) (map[LedgerAccount]int, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("nil database transaction")
+	}
+	return accountNetCostWithDB(tx, userId, referenceType, referenceId)
+}
+
+func accountNetCostWithDB(db *gorm.DB, userId int, referenceType, referenceId string) (map[LedgerAccount]int, error) {
 	result := make(map[LedgerAccount]int)
 	if userId <= 0 || referenceType == "" || referenceId == "" {
 		return result, nil
@@ -1024,7 +1037,7 @@ func AccountNetCost(userId int, referenceType, referenceId string) (map[LedgerAc
 		Delta   int64
 	}
 	var sums []accountSum
-	err := DB.Model(&BalanceLedger{}).
+	err := db.Model(&BalanceLedger{}).
 		Select("account, SUM(delta) AS delta").
 		Where("user_id = ? AND reference_type = ? AND reference_id = ?", userId, referenceType, referenceId).
 		Group("account").
@@ -1052,9 +1065,21 @@ func AccountNetCost(userId int, referenceType, referenceId string) (map[LedgerAc
 // NetCostByReferences 汇总多个引用的账户净消费（同一请求可能跨引用记账，
 // 例如异步任务预扣在 relay 引用、结算在 task 引用）。
 func NetCostByReferences(userId int, refs [][2]string) (map[LedgerAccount]int, error) {
+	return netCostByReferencesWithDB(DB, userId, refs)
+}
+
+// NetCostByReferencesTx is the transactional variant used by reward maturity.
+func NetCostByReferencesTx(tx *gorm.DB, userId int, refs [][2]string) (map[LedgerAccount]int, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("nil database transaction")
+	}
+	return netCostByReferencesWithDB(tx, userId, refs)
+}
+
+func netCostByReferencesWithDB(db *gorm.DB, userId int, refs [][2]string) (map[LedgerAccount]int, error) {
 	result := make(map[LedgerAccount]int)
 	for _, ref := range refs {
-		cost, err := AccountNetCost(userId, ref[0], ref[1])
+		cost, err := accountNetCostWithDB(db, userId, ref[0], ref[1])
 		if err != nil {
 			return nil, err
 		}
