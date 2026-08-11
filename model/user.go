@@ -530,15 +530,22 @@ func HardDeleteUserById(id int) error {
 	return user.HardDelete()
 }
 
+// inviteUser 只做邀请计数的原子列增量。禁止改成 GetUserById + DB.Save(user)
+// 的读-改-写：旧快照会把并发的账本事务（quota_paid/quota_bonus/quota_affiliate
+// 及 quota 镜像）覆盖回旧值。更新仍必须命中用户行，防止已删除用户被"复活"。
 func inviteUser(inviterId int) (err error) {
-	user, err := GetUserById(inviterId, true)
-	if err != nil {
-		return err
+	result := DB.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]interface{}{
+		"aff_count":   gorm.Expr("aff_count + ?", 1),
+		"aff_quota":   gorm.Expr("aff_quota + ?", common.QuotaForInviter),
+		"aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter),
+	})
+	if result.Error != nil {
+		return result.Error
 	}
-	user.AffCount++
-	user.AffQuota += common.QuotaForInviter
-	user.AffHistoryQuota += common.QuotaForInviter
-	return DB.Save(user).Error
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (user *User) TransferAffQuotaToQuota(quota int, requestId string) error {
@@ -1271,7 +1278,11 @@ func GetUserAccountBalances(id int) (paid int, bonus int, affiliate int, err err
 	return user.QuotaPaid, user.QuotaBonus, user.QuotaAffiliate, nil
 }
 
-// GetUserQuota gets quota from Redis first, falls back to DB if needed
+// GetUserQuota gets quota from Redis first, falls back to DB if needed.
+// 不直接回填缓存 Quota 字段：旧 DB 读取可能在并发的账本提交/缓存失效之后
+// 把过期余额写回（覆盖新到账额度），也会创建缺少 Id/CacheSchema 的残缺哈希。
+// 缓存未命中/过期由 GetUserCache 从数据库整体水合，守卫式 Lua 增量对
+// 不存在的哈希直接跳过。
 func GetUserQuota(id int, fromDB bool) (quota int, err error) {
 	if !fromDB && common.RedisEnabled {
 		return getUserQuotaCache(id)
@@ -1280,14 +1291,6 @@ func GetUserQuota(id int, fromDB bool) (quota int, err error) {
 	if err != nil {
 		return 0, err
 	}
-	// 同步回填缓存，避免旧 DB 读取在异步任务中晚于后续余额提交写回，
-	// 与账本提交后的缓存失效配合形成 cache-aside 顺序保证。
-	if common.RedisEnabled {
-		if cacheErr := updateUserQuotaCache(id, quota); cacheErr != nil {
-			common.SysLog("failed to update user quota cache: " + cacheErr.Error())
-		}
-	}
-
 	return quota, nil
 }
 
