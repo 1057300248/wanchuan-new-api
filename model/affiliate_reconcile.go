@@ -91,13 +91,17 @@ func SaveAffiliateRewardReconcileState(state AffiliateRewardReconcileState) erro
 	if state.UpdatedAt == 0 {
 		state.UpdatedAt = common.GetTimestamp()
 	}
+	attemptCountExpression := "attempt_count + 1"
+	if DB.Dialector.Name() == "postgres" {
+		attemptCountExpression = `"affiliate_reward_reconcile_states"."attempt_count" + 1`
+	}
 	return DB.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "source_user_id"}, {Name: "reference_type"}, {Name: "reference_id"}},
 		DoUpdates: clause.Assignments(map[string]interface{}{
 			"canonical_reference_type": state.CanonicalReferenceType,
 			"canonical_reference_id":   state.CanonicalReferenceId,
 			"status":                   state.Status,
-			"attempt_count":            gormExpr("attempt_count + 1"),
+			"attempt_count":            gormExpr(attemptCountExpression),
 			"last_error":               state.LastError,
 			"updated_at":               state.UpdatedAt,
 		}),
