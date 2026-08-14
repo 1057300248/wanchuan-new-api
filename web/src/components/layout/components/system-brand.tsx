@@ -25,8 +25,9 @@ import {
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
 import { useStatus } from '@/hooks/use-status'
-import { useSystemConfig } from '@/hooks/use-system-config'
 import { cn } from '@/lib/utils'
+
+const brandLogo = '/brand/wanchuan-mark-v2.png'
 
 type SystemBrandProps = {
   defaultName?: string
@@ -48,7 +49,6 @@ type SystemBrandProps = {
 export function SystemBrand(props: SystemBrandProps) {
   const { t } = useTranslation()
   const { status } = useStatus()
-  const { logo } = useSystemConfig()
 
   const variant = props.variant ?? 'sidebar'
   const name = status?.system_name || props.defaultName || 'New API'
@@ -67,9 +67,9 @@ export function SystemBrand(props: SystemBrandProps) {
       >
         <div className='flex size-5 items-center justify-center overflow-hidden rounded-md'>
           <img
-            src={logo}
+            src={brandLogo}
             alt={t('Logo')}
-            className='size-full rounded-md object-cover'
+            className='size-full object-contain p-0.5 invert dark:invert-0'
           />
         </div>
         <span className='max-w-[12rem] truncate'>{name}</span>
@@ -87,9 +87,9 @@ export function SystemBrand(props: SystemBrandProps) {
         >
           <div className='flex aspect-square size-8 items-center justify-center overflow-hidden rounded-lg'>
             <img
-              src={logo}
+              src={brandLogo}
               alt={t('Logo')}
-              className='size-full rounded-lg object-cover'
+              className='size-full object-contain p-1 invert dark:invert-0'
             />
           </div>
           <div className='grid flex-1 text-start text-sm leading-tight group-data-[collapsible=icon]:hidden'>
