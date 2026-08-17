@@ -22,7 +22,6 @@ import type {
   RedemptionRequest,
   PaymentRequest,
   AmountRequest,
-  AffiliateTransferRequest,
   ApiResponse,
   TopupInfoResponse,
   RedemptionResponse,
@@ -30,7 +29,6 @@ import type {
   PaymentResponse,
   StripePaymentResponse,
   AffiliateCodeResponse,
-  AffiliateTransferResponse,
   BillingHistoryResponse,
   CompleteOrderRequest,
   CreemPaymentRequest,
@@ -39,6 +37,10 @@ import type {
   WaffoPaymentResponse,
   WaffoPancakePaymentRequest,
   WaffoPancakePaymentResponse,
+  WalletSummary,
+  WalletLedgerPage,
+  ReferralOverview,
+  AffiliateRewardPage,
 } from './types'
 
 // ============================================================================
@@ -190,16 +192,6 @@ export async function getAffiliateCode(): Promise<AffiliateCodeResponse> {
 }
 
 /**
- * Transfer affiliate quota to balance
- */
-export async function transferAffiliateQuota(
-  request: AffiliateTransferRequest
-): Promise<AffiliateTransferResponse> {
-  const res = await api.post('/api/user/aff_transfer', request)
-  return res.data
-}
-
-/**
  * Get billing history for current user
  */
 export async function getUserBillingHistory(
@@ -244,5 +236,63 @@ export async function completeOrder(
   request: CompleteOrderRequest
 ): Promise<ApiResponse> {
   const res = await api.post('/api/user/topup/complete', request)
+  return res.data
+}
+
+// ============================================================================
+// 独立 Dashboard 使用的钱包、账本与推荐赠金 API
+// ============================================================================
+
+/**
+ * Get wallet account summary (total/paid/bonus + rules)
+ */
+export async function getWalletSummary(): Promise<ApiResponse<WalletSummary>> {
+  const res = await api.get('/api/user/wallet')
+  return res.data
+}
+
+/**
+ * Get paginated balance ledger for the current user
+ */
+export async function getWalletLedger(params: {
+  p: number
+  page_size: number
+  account?: string
+  reason?: string
+  start_time?: number
+  end_time?: number
+}): Promise<ApiResponse<WalletLedgerPage>> {
+  const search = new URLSearchParams({
+    p: String(params.p),
+    page_size: String(params.page_size),
+  })
+  if (params.account) search.append('account', params.account)
+  if (params.reason) search.append('reason', params.reason)
+  if (params.start_time) search.append('start_time', String(params.start_time))
+  if (params.end_time) search.append('end_time', String(params.end_time))
+  const res = await api.get(`/api/user/wallet/ledger?${search.toString()}`)
+  return res.data
+}
+
+/**
+ * Get referral overview (pending / credited bonus)
+ */
+export async function getReferralOverview(): Promise<
+  ApiResponse<ReferralOverview>
+> {
+  const res = await api.get('/api/user/referral/overview')
+  return res.data
+}
+
+/**
+ * Get paginated affiliate reward records
+ */
+export async function getReferralRewards(
+  p: number,
+  page_size: number
+): Promise<ApiResponse<AffiliateRewardPage>> {
+  const res = await api.get(
+    `/api/user/referral/rewards?p=${p}&page_size=${page_size}`
+  )
   return res.data
 }

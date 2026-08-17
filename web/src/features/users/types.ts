@@ -48,8 +48,6 @@ export const userSchema = z.object({
   group: z.string(),
   aff_code: z.string().optional(),
   aff_count: z.number().optional(),
-  aff_quota: z.number().optional(),
-  aff_history_quota: z.number().optional(),
   inviter_id: z.number().optional(),
   linux_do_id: z.string().optional(),
   status: userStatusSchema,
@@ -143,6 +141,7 @@ export interface ManageUserQuotaPayload {
   action: 'add_quota'
   mode: QuotaAdjustMode
   value: number
+  request_id: string
 }
 
 // ============================================================================

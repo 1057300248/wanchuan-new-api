@@ -10,7 +10,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
@@ -93,13 +92,16 @@ type User struct {
 	VerificationCode string                     `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
 	AccessToken      *string                    `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
 	Quota            int                        `json:"quota" gorm:"type:int;default:0"`
-	UsedQuota        int                        `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
-	RequestCount     int                        `json:"request_count" gorm:"type:int;default:0;"`               // request number
+	QuotaPaid        int                        `json:"quota_paid" gorm:"type:int;default:0;column:quota_paid"`   // 付费账户余额（quota units），quota 为三账户合计的兼容镜像
+	QuotaBonus       int                        `json:"quota_bonus" gorm:"type:int;default:0;column:quota_bonus"` // 赠金账户余额（本阶段仅建账户与账本）
+	QuotaAffiliate   int                        `json:"-" gorm:"type:int;default:0;column:quota_affiliate"`       // 仅保留给历史迁移与对账
+	UsedQuota        int                        `json:"used_quota" gorm:"type:int;default:0;column:used_quota"`   // used quota
+	RequestCount     int                        `json:"request_count" gorm:"type:int;default:0;"`                 // request number
 	Group            string                     `json:"group" gorm:"type:varchar(64);default:'default'"`
 	AffCode          string                     `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
 	AffCount         int                        `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
-	AffQuota         int                        `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
-	AffHistoryQuota  int                        `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
+	AffQuota         int                        `json:"-" gorm:"type:int;default:0;column:aff_quota"`   // 仅保留给历史迁移
+	AffHistoryQuota  int                        `json:"-" gorm:"type:int;default:0;column:aff_history"` // 仅保留给历史审计
 	InviterId        int                        `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
 	DeletedAt        gorm.DeletedAt             `gorm:"index"`
 	LinuxDOId        string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`
@@ -139,11 +141,9 @@ func (user *User) SetAccessToken(token string) {
 	user.AccessToken = &token
 }
 
-// UpdateUserAccessToken rotates a dashboard personal access token without
-// writing a stale user snapshot back over concurrently updated fields.
 func UpdateUserAccessToken(id int, token string) error {
 	if id == 0 {
-		return errors.New("id 为空！")
+		return errors.New("id 为空")
 	}
 	result := DB.Model(&User{}).Where("id = ?", id).Update("access_token", token)
 	if result.Error != nil {
@@ -529,11 +529,10 @@ func HardDeleteUserById(id int) error {
 	return user.HardDelete()
 }
 
-func inviteUser(inviterId int) error {
+// inviteUser 只维护邀请人数。奖励由下级实际 paid 消费产生，不在注册时创建余额。
+func inviteUser(inviterId int) (err error) {
 	result := DB.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]interface{}{
-		"aff_count":   gorm.Expr("aff_count + ?", 1),
-		"aff_quota":   gorm.Expr("aff_quota + ?", common.QuotaForInviter),
-		"aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter),
+		"aff_count": gorm.Expr("aff_count + ?", 1),
 	})
 	if result.Error != nil {
 		return result.Error
@@ -542,43 +541,6 @@ func inviteUser(inviterId int) error {
 		return gorm.ErrRecordNotFound
 	}
 	return nil
-}
-
-func (user *User) TransferAffQuotaToQuota(quota int) error {
-	// 检查quota是否小于最小额度
-	if float64(quota) < common.QuotaPerUnit {
-		return fmt.Errorf("转移额度最小为%s！", logger.LogQuota(common.QuotaFromFloat(common.QuotaPerUnit)))
-	}
-
-	// 开始数据库事务
-	tx := DB.Begin()
-	if tx.Error != nil {
-		return tx.Error
-	}
-	defer tx.Rollback() // 确保在函数退出时事务能回滚
-
-	// 加锁查询用户以确保数据一致性
-	err := lockForUpdate(tx).First(user, user.Id).Error
-	if err != nil {
-		return err
-	}
-
-	// 再次检查用户的AffQuota是否足够
-	if user.AffQuota < quota {
-		return errors.New("邀请额度不足！")
-	}
-
-	// 更新用户额度
-	user.AffQuota -= quota
-	user.Quota += quota
-
-	// 保存用户状态
-	if err := tx.Save(user).Error; err != nil {
-		return err
-	}
-
-	// 提交事务
-	return tx.Commit().Error
 }
 
 func (user *User) prepareForInsert(tx *gorm.DB) error {
@@ -638,7 +600,13 @@ func (user *User) Insert(inviterId int) error {
 			if err := user.prepareForInsert(tx); err != nil {
 				return err
 			}
-			user.Quota = common.QuotaForNewUser
+			initialQuota := signupBonusQuota()
+			// 先以零余额创建用户，再由同一事务内账本入账，避免初始字段与
+			// CreditQuotaTx 各加一次造成注册赠额翻倍。
+			user.QuotaPaid = 0
+			user.QuotaBonus = 0
+			user.QuotaAffiliate = 0
+			user.Quota = 0
 			user.AffCode = common.GetRandomString(4)
 
 			// 初始化用户设置，包括默认的边栏配置
@@ -648,7 +616,19 @@ func (user *User) Insert(inviterId int) error {
 				user.SetSetting(defaultSetting)
 			}
 
-			return tx.Create(user).Error
+			if err := tx.Create(user).Error; err != nil {
+				return err
+			}
+			// 注册赠金写入账本（同一事务、幂等键 = user id；P1-1 进入 bonus 账户）
+			if initialQuota > 0 {
+				result, err := recordSignupBonusTx(tx, user, initialQuota)
+				if err != nil {
+					return err
+				}
+				user.QuotaBonus = result.TotalAfter
+				user.Quota = result.TotalAfter
+			}
+			return nil
 		})
 	}); err != nil {
 		return err
@@ -674,19 +654,11 @@ func (user *User) finishInsert(inviterId int) {
 		}
 	}
 
-	if common.QuotaForNewUser > 0 {
-		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
+	if bonusQuota := signupBonusQuota(); bonusQuota > 0 {
+		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠金 %s", logger.LogQuota(bonusQuota)))
 	}
-	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
-		if common.QuotaForInvitee > 0 {
-			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
-		}
-		if common.QuotaForInviter > 0 {
-			//_ = IncreaseUserQuota(inviterId, common.QuotaForInviter)
-			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
-		}
+	if inviterId != 0 {
+		_ = inviteUser(inviterId)
 	}
 }
 
@@ -702,7 +674,11 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 		if err := user.prepareForInsert(tx); err != nil {
 			return err
 		}
-		user.Quota = common.QuotaForNewUser
+		initialQuota := signupBonusQuota()
+		user.QuotaPaid = 0
+		user.QuotaBonus = 0
+		user.QuotaAffiliate = 0
+		user.Quota = 0
 		user.AffCode = common.GetRandomString(4)
 
 		// 初始化用户设置
@@ -711,7 +687,40 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 			user.SetSetting(defaultSetting)
 		}
 
-		return tx.Create(user).Error
+		if err := tx.Create(user).Error; err != nil {
+			return err
+		}
+		// 注册赠金写入账本（同一事务、幂等键 = user id；P1-1 进入 bonus 账户）
+		if initialQuota > 0 {
+			result, err := recordSignupBonusTx(tx, user, initialQuota)
+			if err != nil {
+				return err
+			}
+			user.QuotaBonus = result.TotalAfter
+			user.Quota = result.TotalAfter
+		}
+		return nil
+	})
+}
+
+// signupBonusQuota 返回注册赠金额度（quota units）。功能开关关闭时返回 0，
+// 不发放任何注册奖励。安全默认：SignupBonusEnabled=false、额度 0。
+func signupBonusQuota() int {
+	if !common.SignupBonusEnabled {
+		return 0
+	}
+	return common.QuotaForSignupBonus
+}
+
+// recordSignupBonusTx 在同一事务内为新用户注册赠金写入账本（bonus 账户）。
+func recordSignupBonusTx(tx *gorm.DB, user *User, amount int) (*LedgerResult, error) {
+	return CreditQuotaTx(tx, LedgerEntry{
+		UserId:        user.Id,
+		Account:       AccountBonus,
+		Delta:         amount,
+		Reason:        LedgerReasonSignupBonus,
+		ReferenceType: "user",
+		ReferenceId:   strconv.Itoa(user.Id),
 	})
 }
 
@@ -731,18 +740,11 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 		}
 	}
 
-	if common.QuotaForNewUser > 0 {
-		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
+	if bonusQuota := signupBonusQuota(); bonusQuota > 0 {
+		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠金 %s", logger.LogQuota(bonusQuota)))
 	}
-	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
-		if common.QuotaForInvitee > 0 {
-			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
-		}
-		if common.QuotaForInviter > 0 {
-			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
-		}
+	if inviterId != 0 {
+		_ = inviteUser(inviterId)
 	}
 }
 
@@ -792,16 +794,7 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 			return err
 		}
 	}
-	if err = tx.Model(&current).Omit(
-		"access_token",
-		"quota",
-		"used_quota",
-		"request_count",
-		"aff_count",
-		"aff_quota",
-		"aff_history",
-		"auth_version",
-	).Updates(newUser).Error; err != nil {
+	if err = tx.Model(&current).Omit("quota", "quota_paid", "quota_bonus", "quota_affiliate", "used_quota", "request_count", "access_token", "aff_count", "aff_quota", "aff_history", "auth_version").Updates(newUser).Error; err != nil {
 		return err
 	}
 	return tx.First(user, user.Id).Error
@@ -1178,7 +1171,21 @@ func ValidateAccessToken(token string) (*User, error) {
 	return user, nil
 }
 
-// GetUserQuota gets quota from Redis first, falls back to DB if needed
+// GetUserAccountBalances 返回用户三账户余额（数据库权威值）。
+// 供钱包计费按账户做预扣前校验（赠金资格只影响 bonus/paid 顺序）。
+func GetUserAccountBalances(id int) (paid int, bonus int, affiliate int, err error) {
+	var user User
+	if err := DB.Select("quota_paid", "quota_bonus", "quota_affiliate").Where("id = ?", id).First(&user).Error; err != nil {
+		return 0, 0, 0, err
+	}
+	return user.QuotaPaid, user.QuotaBonus, user.QuotaAffiliate, nil
+}
+
+// GetUserQuota gets quota from Redis first, falls back to DB if needed.
+// 不直接回填缓存 Quota 字段：旧 DB 读取可能在并发的账本提交/缓存失效之后
+// 把过期余额写回（覆盖新到账额度），也会创建缺少 Id/CacheSchema 的残缺哈希。
+// 缓存未命中/过期由 GetUserCache 从数据库整体水合，守卫式 Lua 增量对
+// 不存在的哈希直接跳过。
 func GetUserQuota(id int, fromDB bool) (quota int, err error) {
 	if !fromDB && common.RedisEnabled {
 		return getUserQuotaCache(id)
@@ -1187,7 +1194,6 @@ func GetUserQuota(id int, fromDB bool) (quota int, err error) {
 	if err != nil {
 		return 0, err
 	}
-
 	return quota, nil
 }
 
@@ -1267,67 +1273,6 @@ func GetUserSetting(id int, fromDB bool) (settingMap dto.UserSetting, err error)
 	return userBase.GetSetting(), nil
 }
 
-func IncreaseUserQuota(id int, quota int, db bool) (err error) {
-	if quota < 0 {
-		return errors.New("quota 不能为负数！")
-	}
-	gopool.Go(func() {
-		err := cacheIncrUserQuota(id, int64(quota))
-		if err != nil {
-			common.SysLog("failed to increase user quota: " + err.Error())
-		}
-	})
-	if !db && common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeUserQuota, id, quota)
-		return nil
-	}
-	return increaseUserQuota(id, quota)
-}
-
-func increaseUserQuota(id int, quota int) (err error) {
-	err = DB.Model(&User{}).Where("id = ?", id).Update("quota", gorm.Expr("quota + ?", quota)).Error
-	if err != nil {
-		return err
-	}
-	return err
-}
-
-func DecreaseUserQuota(id int, quota int, db bool) (err error) {
-	if quota < 0 {
-		return errors.New("quota 不能为负数！")
-	}
-	gopool.Go(func() {
-		err := cacheDecrUserQuota(id, int64(quota))
-		if err != nil {
-			common.SysLog("failed to decrease user quota: " + err.Error())
-		}
-	})
-	if !db && common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeUserQuota, id, -quota)
-		return nil
-	}
-	return decreaseUserQuota(id, quota)
-}
-
-func decreaseUserQuota(id int, quota int) (err error) {
-	err = DB.Model(&User{}).Where("id = ?", id).Update("quota", gorm.Expr("quota - ?", quota)).Error
-	if err != nil {
-		return err
-	}
-	return err
-}
-
-func DeltaUpdateUserQuota(id int, delta int) (err error) {
-	if delta == 0 {
-		return nil
-	}
-	if delta > 0 {
-		return IncreaseUserQuota(id, delta, false)
-	} else {
-		return DecreaseUserQuota(id, -delta, false)
-	}
-}
-
 //func GetRootUserEmail() (email string) {
 //	DB.Model(&User{}).Where("role = ?", common.RoleRootUser).Select("email").Find(&email)
 //	return email
@@ -1380,23 +1325,6 @@ func updateUserUsedQuotaAndRequestCount(id int, quota int, count int) {
 	//if err := invalidateUserCache(id); err != nil {
 	//	common.SysError("failed to invalidate user cache: " + err.Error())
 	//}
-}
-
-func updateUserQuotaUsedQuotaAndRequestCount(id int, quota int, usedQuota int, requestCount int) {
-	if quota == 0 && usedQuota == 0 && requestCount == 0 {
-		return
-	}
-
-	err := DB.Model(&User{}).Where("id = ?", id).Updates(
-		map[string]interface{}{
-			"quota":         gorm.Expr("quota + ?", quota),
-			"used_quota":    gorm.Expr("used_quota + ?", usedQuota),
-			"request_count": gorm.Expr("request_count + ?", requestCount),
-		},
-	).Error
-	if err != nil {
-		common.SysLog("failed to batch update user quota, used quota and request count: " + err.Error())
-	}
 }
 
 // GetUsernameById gets username from Redis first, falls back to DB if needed

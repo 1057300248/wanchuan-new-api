@@ -26,6 +26,8 @@ import {
 import { applyAuthBundle } from '@/lib/api'
 import type { AuthBundle } from '@/stores/auth-store'
 
+const POST_AUTH_REDIRECT_KEY = 'wanchuan-post-auth-redirect'
+
 /**
  * Hook for handling authentication redirects and user data management
  */
@@ -47,15 +49,26 @@ export function useAuthRedirect() {
       await i18n.changeLanguage(savedLang)
     }
 
+    const storedRedirect = window.sessionStorage.getItem(POST_AUTH_REDIRECT_KEY)
     const targetPath =
-      sanitizeAuthRedirect(redirectTo, window.location.origin) ?? '/dashboard'
+      sanitizeAuthRedirect(
+        redirectTo ?? storedRedirect ?? undefined,
+        window.location.origin
+      ) ?? '/dashboard'
+    window.sessionStorage.removeItem(POST_AUTH_REDIRECT_KEY)
     navigate({ href: targetPath, replace: true })
   }
 
   /**
    * Redirect to 2FA page
    */
-  const redirectTo2FA = () => {
+  const redirectTo2FA = (redirectTo?: string) => {
+    const targetPath = sanitizeAuthRedirect(redirectTo, window.location.origin)
+    if (targetPath) {
+      window.sessionStorage.setItem(POST_AUTH_REDIRECT_KEY, targetPath)
+    } else {
+      window.sessionStorage.removeItem(POST_AUTH_REDIRECT_KEY)
+    }
     navigate({ to: '/otp', replace: true })
   }
 

@@ -122,8 +122,24 @@ var TelegramBotToken = ""
 var TelegramBotName = ""
 
 var QuotaForNewUser = 0
-var QuotaForInviter = 0
-var QuotaForInvitee = 0
+
+// ---------------------------------------------------------------------------
+// TokenMix P1：注册赠金与推荐返利配置
+//
+// SignupBonusEnabled 关闭时新注册用户不发放任何注册赠金（含邀请码被邀请人
+// 赠额），历史记录仍可查询。QuotaForSignupBonus 以 quota units 计，默认 0
+// （安全默认：不发放），生产由主代理按需设置。
+//
+// AffiliateRewardEnabled 关闭时不产生新的推荐赠金。
+// AffiliateRewardRate 为实际 paid 消费的奖励比例（默认 20%），
+// AffiliateRewardFreezeDays 为模型赠金冻结天数（默认 7 天）。
+// ---------------------------------------------------------------------------
+var SignupBonusEnabled = false
+var QuotaForSignupBonus = 0
+var AffiliateRewardEnabled = false
+var AffiliateRewardRate = 0.2
+var AffiliateRewardFreezeDays = 7
+
 var ChannelDisableThreshold = 5.0
 var AutomaticDisableChannelEnabled = false
 var AutomaticEnableChannelEnabled = false

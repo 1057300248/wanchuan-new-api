@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -25,8 +24,10 @@ import {
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
 import { useStatus } from '@/hooks/use-status'
-import { useSystemConfig } from '@/hooks/use-system-config'
+import { CHUANAPI_PUBLIC_HOME } from '@/lib/chuanapi-navigation'
 import { cn } from '@/lib/utils'
+
+const brandLogo = '/brand/wanchuan-mark-v2.png'
 
 type SystemBrandProps = {
   defaultName?: string
@@ -48,7 +49,6 @@ type SystemBrandProps = {
 export function SystemBrand(props: SystemBrandProps) {
   const { t } = useTranslation()
   const { status } = useStatus()
-  const { logo } = useSystemConfig()
 
   const variant = props.variant ?? 'sidebar'
   const name = status?.system_name || props.defaultName || 'New API'
@@ -57,8 +57,8 @@ export function SystemBrand(props: SystemBrandProps) {
 
   if (variant === 'inline') {
     return (
-      <Link
-        to='/'
+      <a
+        href={CHUANAPI_PUBLIC_HOME}
         aria-label={t('Go to home')}
         className={cn(
           'text-foreground inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-sm font-medium transition-colors outline-none select-none',
@@ -67,13 +67,13 @@ export function SystemBrand(props: SystemBrandProps) {
       >
         <div className='flex size-5 items-center justify-center overflow-hidden rounded-md'>
           <img
-            src={logo}
+            src={brandLogo}
             alt={t('Logo')}
-            className='size-full rounded-md object-cover'
+            className='size-full object-contain p-0.5 invert dark:invert-0'
           />
         </div>
         <span className='max-w-[12rem] truncate'>{name}</span>
-      </Link>
+      </a>
     )
   }
 
@@ -87,9 +87,9 @@ export function SystemBrand(props: SystemBrandProps) {
         >
           <div className='flex aspect-square size-8 items-center justify-center overflow-hidden rounded-lg'>
             <img
-              src={logo}
+              src={brandLogo}
               alt={t('Logo')}
-              className='size-full rounded-lg object-cover'
+              className='size-full object-contain p-1 invert dark:invert-0'
             />
           </div>
           <div className='grid flex-1 text-start text-sm leading-tight group-data-[collapsible=icon]:hidden'>
