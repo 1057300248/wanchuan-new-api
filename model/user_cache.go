@@ -155,6 +155,8 @@ func cacheDecrUserQuota(userId int, delta int64) error {
 // syncCreditUserQuotaCache 在授信事务（充值/兑换等）提交后同步把增量补进缓存
 // 余额。预扣以缓存值为准（存在期间），授信不能绕过它，否则新到账的额度在
 // 缓存过期前不可用；缓存未命中无需处理，下次读取会从已提交的数据库余额水合。
+// 三账户账本路径还会在提交后失效整条用户缓存（RefreshUserQuotaCache），
+// 两者叠加安全：守卫式 Lua 对已删除的哈希直接跳过。
 func syncCreditUserQuotaCache(userId int, quota int, operation string) {
 	if quota <= 0 {
 		return

@@ -425,34 +425,6 @@ func GenerateAccessToken(c *gin.Context) {
 	return
 }
 
-type TransferAffQuotaRequest struct {
-	Quota int `json:"quota" binding:"required"`
-}
-
-func TransferAffQuota(c *gin.Context) {
-	if !requirePaymentCompliance(c) {
-		return
-	}
-
-	id := c.GetInt("id")
-	user, err := model.GetUserById(id, true)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	tran := TransferAffQuotaRequest{}
-	if err := c.ShouldBindJSON(&tran); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	err = user.TransferAffQuotaToQuota(tran.Quota)
-	if err != nil {
-		common.ApiErrorI18n(c, i18n.MsgUserTransferFailed, map[string]any{"Error": err.Error()})
-		return
-	}
-	common.ApiSuccessI18n(c, i18n.MsgUserTransferSuccess, nil)
-}
-
 func GetAffCode(c *gin.Context) {
 	id := c.GetInt("id")
 	user, err := model.GetUserById(id, true)
@@ -510,31 +482,29 @@ func buildSelfUserData(user *model.User) map[string]interface{} {
 	permissions := calculateUserPermissions(user.Role)
 	permissions["admin_permissions"] = authz.Capabilities(user.Id, user.Role)
 	return map[string]interface{}{
-		"id":                user.Id,
-		"username":          user.Username,
-		"display_name":      user.DisplayName,
-		"role":              user.Role,
-		"status":            user.Status,
-		"email":             user.Email,
-		"github_id":         user.GitHubId,
-		"discord_id":        user.DiscordId,
-		"oidc_id":           user.OidcId,
-		"wechat_id":         user.WeChatId,
-		"telegram_id":       user.TelegramId,
-		"group":             user.Group,
-		"quota":             user.Quota,
-		"used_quota":        user.UsedQuota,
-		"request_count":     user.RequestCount,
-		"aff_code":          user.AffCode,
-		"aff_count":         user.AffCount,
-		"aff_quota":         user.AffQuota,
-		"aff_history_quota": user.AffHistoryQuota,
-		"inviter_id":        user.InviterId,
-		"linux_do_id":       user.LinuxDOId,
-		"setting":           user.Setting,
-		"stripe_customer":   user.StripeCustomer,
-		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
-		"permissions":       permissions,
+		"id":              user.Id,
+		"username":        user.Username,
+		"display_name":    user.DisplayName,
+		"role":            user.Role,
+		"status":          user.Status,
+		"email":           user.Email,
+		"github_id":       user.GitHubId,
+		"discord_id":      user.DiscordId,
+		"oidc_id":         user.OidcId,
+		"wechat_id":       user.WeChatId,
+		"telegram_id":     user.TelegramId,
+		"group":           user.Group,
+		"quota":           user.Quota,
+		"used_quota":      user.UsedQuota,
+		"request_count":   user.RequestCount,
+		"aff_code":        user.AffCode,
+		"aff_count":       user.AffCount,
+		"inviter_id":      user.InviterId,
+		"linux_do_id":     user.LinuxDOId,
+		"setting":         user.Setting,
+		"stripe_customer": user.StripeCustomer,
+		"sidebar_modules": userSetting.SidebarModules, // 正确提取sidebar_modules字段
+		"permissions":     permissions,
 	}
 }
 
@@ -1075,10 +1045,11 @@ func updateAdminPermissionsForUserInTx(c *gin.Context, tx *gorm.DB, userID int, 
 }
 
 type ManageRequest struct {
-	Id     int    `json:"id"`
-	Action string `json:"action"`
-	Value  int    `json:"value"`
-	Mode   string `json:"mode"`
+	Id        int    `json:"id"`
+	Action    string `json:"action"`
+	Value     int    `json:"value"`
+	Mode      string `json:"mode"`
+	RequestId string `json:"request_id"`
 }
 
 // ManageUser Only admin user can do this
@@ -1161,13 +1132,35 @@ func ManageUser(c *gin.Context) {
 		}
 		user.Role = common.RoleCommonUser
 	case "add_quota":
+		operatorId := c.GetInt("id")
+		requestId := strings.TrimSpace(req.RequestId)
+		if requestId == "" {
+			requestId = strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+		}
+		if requestId == "" {
+			requestId = model.NewAutoLedgerKey("admin_quota_request")
+		}
+		if len(requestId) > 128 {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		operationKey := fmt.Sprintf("admin_quota:%d:%s", operatorId, requestId)
 		switch req.Mode {
 		case "add":
 			if req.Value <= 0 {
 				common.ApiErrorI18n(c, i18n.MsgUserQuotaChangeZero)
 				return
 			}
-			if err := model.IncreaseUserQuota(user.Id, req.Value, true); err != nil {
+			if _, err := model.CreditQuota(model.LedgerEntry{
+				UserId:         user.Id,
+				Account:        model.AccountPaid,
+				Delta:          req.Value,
+				Reason:         model.LedgerReasonAdminAdd,
+				ReferenceType:  "admin_quota",
+				ReferenceId:    requestId,
+				OperatorId:     operatorId,
+				IdempotencyKey: operationKey,
+			}); err != nil {
 				common.ApiError(c, err)
 				return
 			}
@@ -1179,7 +1172,15 @@ func ManageUser(c *gin.Context) {
 				common.ApiErrorI18n(c, i18n.MsgUserQuotaChangeZero)
 				return
 			}
-			if err := model.DecreaseUserQuota(user.Id, req.Value, true); err != nil {
+			if _, err := model.DebitQuota(model.LedgerEntry{
+				UserId:         user.Id,
+				Delta:          req.Value,
+				Reason:         model.LedgerReasonAdminSubtract,
+				ReferenceType:  "admin_quota",
+				ReferenceId:    requestId,
+				OperatorId:     operatorId,
+				IdempotencyKey: operationKey,
+			}, model.AccountPaid); err != nil {
 				common.ApiError(c, err)
 				return
 			}
@@ -1188,7 +1189,16 @@ func ManageUser(c *gin.Context) {
 			})
 		case "override":
 			oldQuota := user.Quota
-			if err := model.DB.Model(&model.User{}).Where("id = ?", user.Id).Update("quota", req.Value).Error; err != nil {
+			if _, err := model.OverrideQuota(model.LedgerEntry{
+				UserId:         user.Id,
+				Account:        model.AccountPaid,
+				Delta:          req.Value,
+				Reason:         model.LedgerReasonAdminOverride,
+				ReferenceType:  "admin_quota",
+				ReferenceId:    requestId,
+				OperatorId:     operatorId,
+				IdempotencyKey: operationKey,
+			}); err != nil {
 				common.ApiError(c, err)
 				return
 			}

@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -75,7 +74,6 @@ const DEFAULT_FORM_VALUES: SetupFormValues = {
 
 export function SetupWizard() {
   const { t } = useTranslation()
-  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { systemName, logo, loading: systemConfigLoading } = useSystemConfig()
 
@@ -108,7 +106,7 @@ export function SetupWizard() {
         toast.success(t('System initialized successfully! Redirecting…'))
         await queryClient.invalidateQueries({ queryKey: ['setup-status'] })
         setTimeout(() => {
-          navigate({ to: '/' })
+          window.location.assign('/')
         }, 1200)
       } else {
         toast.error(
@@ -133,7 +131,7 @@ export function SetupWizard() {
     if (!status) return
 
     if (status.status) {
-      navigate({ to: '/' })
+      window.location.assign('/')
       return
     }
 
@@ -161,7 +159,7 @@ export function SetupWizard() {
       })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusResponse, navigate, form])
+  }, [statusResponse, form])
 
   useEffect(() => {
     if (!setupStatus) return

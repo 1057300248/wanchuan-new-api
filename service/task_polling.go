@@ -640,21 +640,52 @@ func truncateBase64(s string) string {
 //
 //  2. taskResult.TotalTokens > 0 → 按 token 重算
 //  3. 都不满足 → 保持预扣额度不变
+//
+// 任务成功结算后为 wallet 计费生成推荐返利（幂等键 = task 引用；
+// 失败/退款任务不经过这里，不产生返利）。
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	// 0. 按次计费的任务不做差额结算
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.PerCallBilling {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，跳过差额结算", task.TaskID))
+		recordTaskAffiliateReward(ctx, task)
 		return
 	}
 	// 1. 优先让 adaptor 决定最终额度
 	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
 		RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
+		recordTaskAffiliateReward(ctx, task)
 		return
 	}
 	// 2. 回退到 token 重算
 	if taskResult.TotalTokens > 0 {
 		RecalculateTaskQuotaByTokens(ctx, task, taskResult.TotalTokens)
+		recordTaskAffiliateReward(ctx, task)
 		return
 	}
 	// 3. 无调整，保持预扣额度
+	recordTaskAffiliateReward(ctx, task)
+}
+
+// recordTaskAffiliateReward 任务成功结算后，依据账本净份额为邀请人创建返利。
+// 仅钱包计费且 paid 净消费 > 0 时生效；订阅计费与失败退款任务不产生返利。
+func recordTaskAffiliateReward(ctx context.Context, task *model.Task) {
+	if task == nil || taskIsSubscription(task) || task.UserId <= 0 {
+		return
+	}
+	refs := TaskWalletCostRefs(task)
+	if len(refs) == 0 {
+		return
+	}
+	cost, err := model.NetCostByReferences(task.UserId, refs)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("查询任务钱包净成本失败 task %s: %s", task.TaskID, err.Error()))
+		return
+	}
+	paidNet := -cost[model.AccountPaid]
+	if paidNet <= 0 {
+		return
+	}
+	if _, err := RecordAffiliateRewardForRequest(task.UserId, paidNet, "task", task.TaskID); err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("创建任务返利失败 task %s: %s", task.TaskID, err.Error()))
+	}
 }

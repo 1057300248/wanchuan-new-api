@@ -35,7 +35,7 @@ export const Route = createFileRoute('/rankings/')({
   beforeLoad: async ({ location }) => {
     const access = await getFreshModuleAccess('rankings')
     if (!access.enabled) {
-      throw redirect({ to: '/' })
+      throw redirect({ to: '/', reloadDocument: true })
     }
     if (access.requireAuth) {
       const { auth } = useAuthStore.getState()

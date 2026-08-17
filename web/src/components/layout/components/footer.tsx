@@ -48,17 +48,35 @@ const NEW_API_FOOTER_ATTRIBUTION_KEY = [
   'projectAttributionSuffix',
 ].join('.')
 
+const DOCUMENT_NAV_PATHS = new Set([
+  '/',
+  '/models',
+  '/pricing',
+  '/playground',
+  '/about',
+  '/apps',
+  '/docs',
+  '/blog',
+  '/status',
+  '/support',
+  '/terms',
+  '/privacy',
+  '/refund',
+])
+
 function FooterLinkItem(props: { link: FooterLink }) {
   const { t } = useTranslation()
   const isExternal = props.link.href.startsWith('http')
+  const path = props.link.href.split(/[?#]/, 1)[0].replace(/\/$/, '') || '/'
+  const isMarketingPath = DOCUMENT_NAV_PATHS.has(path)
   const label = t(props.link.text)
 
-  if (isExternal) {
+  if (isExternal || isMarketingPath) {
     return (
       <a
         href={props.link.href}
-        target='_blank'
-        rel='noopener noreferrer'
+        target={isExternal ? '_blank' : undefined}
+        rel={isExternal ? 'noopener noreferrer' : undefined}
         className='text-muted-foreground hover:text-foreground text-sm transition-colors duration-200'
       >
         {label}
@@ -254,7 +272,7 @@ export function Footer(props: FooterProps) {
         <div className='flex flex-col justify-between gap-10 md:flex-row md:gap-16'>
           {/* Brand column */}
           <div className='shrink-0'>
-            <Link to='/' className='group flex items-center gap-2.5'>
+            <a href='/' className='group flex items-center gap-2.5'>
               <img
                 src={displayLogo}
                 alt={displayName}
@@ -263,7 +281,7 @@ export function Footer(props: FooterProps) {
               <span className='text-sm font-semibold tracking-tight'>
                 {displayName}
               </span>
-            </Link>
+            </a>
             <p className='text-muted-foreground/60 mt-3 max-w-[200px] text-xs leading-relaxed'>
               {t('Powerful API Management Platform')}
             </p>

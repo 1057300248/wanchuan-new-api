@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate, useParams, useSearch } from '@tanstack/react-router'
+import { useParams, useSearch } from '@tanstack/react-router'
 import {
   ArrowLeft,
   CalendarClock,
@@ -1248,7 +1248,6 @@ export function ModelDetails() {
   const { t } = useTranslation()
   const { modelId } = useParams({ from: '/pricing/$modelId/' })
   const search = useSearch({ from: '/pricing/$modelId/' })
-  const navigate = useNavigate()
 
   const {
     models,
@@ -1270,7 +1269,7 @@ export function ModelDetails() {
   }, [models, modelId])
 
   const handleBack = () => {
-    navigate({ to: '/pricing', search })
+    window.location.assign(`/pricing${window.location.search}`)
   }
 
   if (isLoading) {
