@@ -86,7 +86,6 @@ export function useTopNavLinks(): TopNavLink[] {
       title: t('Model Square'),
       href: '/pricing',
       requiresAuth,
-      documentNavigation: true,
     })
   }
 
