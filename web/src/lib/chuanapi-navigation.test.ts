@@ -41,6 +41,26 @@ describe('ChuanAPI cross-shell navigation', () => {
     expect(links).toMatch(/documentNavigation: true/)
   })
 
+  test('keeps New API pricing navigation inside the SPA', () => {
+    const links = source('hooks/use-top-nav-links.ts')
+    const pricingBlock = links.match(
+      /links\.push\(\{\s*title: t\('Model Square'\),[\s\S]*?\}\)/
+    )?.[0]
+
+    expect(pricingBlock).toContain("href: '/pricing'")
+    expect(pricingBlock).not.toContain('documentNavigation')
+  })
+
+  test('renders pricing routes without self-reloading the document', () => {
+    const pricingRoute = source('routes/pricing/index.tsx')
+    const modelRoute = source('routes/pricing/$modelId/index.tsx')
+
+    expect(pricingRoute).toMatch(/component: Pricing/)
+    expect(modelRoute).toMatch(/component: ModelDetails/)
+    expect(pricingRoute).not.toMatch(/reloadDocument/)
+    expect(modelRoute).not.toMatch(/reloadDocument/)
+  })
+
   test('brand links bypass the New API SPA router', () => {
     const brand = source('components/layout/components/system-brand.tsx')
     expect(brand).toMatch(/<a[\s\S]*href=\{CHUANAPI_PUBLIC_HOME\}/)
