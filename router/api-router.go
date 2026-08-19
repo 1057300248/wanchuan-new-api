@@ -12,6 +12,16 @@ import (
 )
 
 func SetApiRouter(router *gin.Engine) {
+	// The marketing catalogue has one explicit anonymous endpoint. Keep it
+	// separate from the authenticated dashboard pricing API so Caddy can expose
+	// /public-api/pricing without weakening /api/pricing.
+	publicApiRouter := router.Group("/public-api")
+	publicApiRouter.Use(middleware.RouteTag("public-api"))
+	publicApiRouter.Use(gzip.Gzip(gzip.DefaultCompression))
+	publicApiRouter.Use(middleware.GlobalAPIRateLimit())
+	publicApiRouter.GET("/pricing", controller.GetPublicPricing)
+	publicApiRouter.HEAD("/pricing", controller.GetPublicPricing)
+
 	apiRouter := router.Group("/api")
 	apiRouter.Use(middleware.RouteTag("api"))
 	apiRouter.Use(gzip.Gzip(gzip.DefaultCompression))
@@ -31,7 +41,7 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/about", controller.GetAbout)
 		//apiRouter.GET("/midjourney", controller.GetMidjourney)
 		apiRouter.GET("/home_page_content", controller.GetHomePageContent)
-		apiRouter.GET("/pricing", middleware.HeaderNavModuleAuth("pricing"), controller.GetPricing)
+		apiRouter.GET("/pricing", middleware.UserAuth(), controller.GetPricing)
 		perfMetricsRoute := apiRouter.Group("/perf-metrics")
 		perfMetricsRoute.Use(middleware.HeaderNavModulePublicOrUserAuth("pricing"))
 		{
