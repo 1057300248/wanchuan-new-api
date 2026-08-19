@@ -21,6 +21,13 @@ import LanguageDetector from 'i18next-browser-languagedetector'
 import { initReactI18next } from 'react-i18next'
 
 import { convertDetectedLanguage } from './languages'
+import chuanapiEn from './locales/chuanapi/en.json'
+import chuanapiFr from './locales/chuanapi/fr.json'
+import chuanapiJa from './locales/chuanapi/ja.json'
+import chuanapiRu from './locales/chuanapi/ru.json'
+import chuanapiVi from './locales/chuanapi/vi.json'
+import chuanapiZhTW from './locales/chuanapi/zh-TW.json'
+import chuanapiZhCN from './locales/chuanapi/zh.json'
 import en from './locales/en.json'
 import fr from './locales/fr.json'
 import ja from './locales/ja.json'
@@ -29,14 +36,27 @@ import vi from './locales/vi.json'
 import zhTW from './locales/zh-TW.json'
 import zhCN from './locales/zh.json'
 
+type Bundle = { translation: Record<string, string> }
+
+/**
+ * ChuanAPI 自有文案独立成 locales/chuanapi/*.json，在此浅合并。
+ * 上游 locales/*.json 保持零改动，升级时不产生冲突。
+ */
+function withOverride(base: Bundle, override: Bundle): Bundle {
+  return {
+    ...base,
+    translation: { ...base.translation, ...override.translation },
+  }
+}
+
 export const resources = {
-  en,
-  zhCN,
-  fr,
-  ru,
-  ja,
-  vi,
-  zhTW,
+  en: withOverride(en, chuanapiEn),
+  zhCN: withOverride(zhCN, chuanapiZhCN),
+  fr: withOverride(fr, chuanapiFr),
+  ru: withOverride(ru, chuanapiRu),
+  ja: withOverride(ja, chuanapiJa),
+  vi: withOverride(vi, chuanapiVi),
+  zhTW: withOverride(zhTW, chuanapiZhTW),
 } as const
 
 i18n
