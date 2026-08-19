@@ -61,6 +61,17 @@ describe('ChuanAPI cross-shell navigation', () => {
     expect(modelRoute).not.toMatch(/reloadDocument/)
   })
 
+  test('renders the original authenticated Playground inside New API', () => {
+    const playgroundRoute = source('routes/_authenticated/playground/index.tsx')
+
+    expect(playgroundRoute).toMatch(
+      /createFileRoute\('\/_authenticated\/playground\/'\)/
+    )
+    expect(playgroundRoute).toMatch(/component: PlaygroundPage/)
+    expect(playgroundRoute).toMatch(/<Playground \/>/)
+    expect(playgroundRoute).not.toMatch(/reloadDocument/)
+  })
+
   test('brand links bypass the New API SPA router', () => {
     const brand = source('components/layout/components/system-brand.tsx')
     expect(brand).toMatch(/<a[\s\S]*href=\{CHUANAPI_PUBLIC_HOME\}/)
