@@ -418,5 +418,6 @@ export interface UserInfo {
   group?: string
   aff_code?: string
   aff_count?: number
+  aff_quota?: number
   remark?: string
 }

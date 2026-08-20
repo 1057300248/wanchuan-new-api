@@ -17,4 +17,4 @@
  * 均不得暴露 affiliate 额度。推荐奖励改由 bonus 账户体系承载，展示位在
  * 钱包页的「推荐奖励」卡片。
  */
-export const SHOW_LEGACY_AFFILIATE_QUOTA: boolean = false
+export const SHOW_LEGACY_AFFILIATE_QUOTA = false as const
