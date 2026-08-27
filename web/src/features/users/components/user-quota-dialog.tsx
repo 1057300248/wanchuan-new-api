@@ -82,6 +82,7 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
         action: 'add_quota',
         mode,
         value: mode === 'override' ? value : Math.abs(value),
+        request_id: globalThis.crypto.randomUUID(),
       })
       if (result.success) {
         toast.success(t('Quota adjusted successfully'))

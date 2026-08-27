@@ -136,9 +136,7 @@ export function UserInfoDialog({
           </div>
 
           {/* Invitation Info */}
-          {(userInfo.aff_code ||
-            userInfo.aff_count !== undefined ||
-            (userInfo.aff_quota !== undefined && userInfo.aff_quota > 0)) && (
+          {(userInfo.aff_code || userInfo.aff_count !== undefined) && (
             <>
               <div className='grid grid-cols-2 gap-4'>
                 {userInfo.aff_code && (
@@ -154,13 +152,6 @@ export function UserInfoDialog({
                   />
                 )}
               </div>
-
-              {userInfo.aff_quota !== undefined && userInfo.aff_quota > 0 && (
-                <InfoItem
-                  label={t('Invitation Quota')}
-                  value={formatQuota(userInfo.aff_quota)}
-                />
-              )}
             </>
           )}
 

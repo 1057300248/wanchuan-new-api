@@ -22,7 +22,7 @@ import { MODELS_DEFAULT_SECTION } from '@/features/models/section-registry'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
-export const Route = createFileRoute('/_authenticated/models/')({
+export const Route = createFileRoute('/_authenticated/model-management/')({
   beforeLoad: () => {
     const { auth } = useAuthStore.getState()
 
@@ -33,7 +33,7 @@ export const Route = createFileRoute('/_authenticated/models/')({
     }
 
     throw redirect({
-      to: '/models/$section',
+      to: '/model-management/$section',
       params: { section: MODELS_DEFAULT_SECTION },
     })
   },

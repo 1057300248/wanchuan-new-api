@@ -26,6 +26,7 @@ type BaseNavItem = {
   title: string
   badge?: string
   icon?: React.ElementType
+  external?: boolean
   activeUrls?: (LinkProps['to'] | (string & {}))[]
   configUrls?: (LinkProps['to'] | (string & {}))[]
   /**
@@ -97,6 +98,8 @@ export type TopNavLink = {
   disabled?: boolean
   requiresAuth?: boolean
   external?: boolean
+  /** Force a same-tab document request instead of the New API SPA router. */
+  documentNavigation?: boolean
 }
 
 /**

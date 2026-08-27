@@ -16,25 +16,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { describe, expect, test } from 'vitest'
 
-import { Main } from '@/components/layout'
-import { Playground } from '@/features/playground'
-import { isSidebarModuleEnabled } from '@/lib/nav-modules'
+import { ledgerReasonLabelKey } from '../ledger'
 
-export const Route = createFileRoute('/_authenticated/playground/')({
-  beforeLoad: () => {
-    if (!isSidebarModuleEnabled('chat', 'playground')) {
-      throw redirect({ to: '/dashboard' })
-    }
-  },
-  component: PlaygroundPage,
+describe('ledgerReasonLabelKey', () => {
+  test('maps known backend reasons to i18n keys', () => {
+    expect(ledgerReasonLabelKey('signup_bonus')).toBe('Signup Bonus')
+    expect(ledgerReasonLabelKey('billing_pre_consume')).toBe(
+      'Billing Pre-consumed'
+    )
+    expect(ledgerReasonLabelKey('referral_bonus')).toBe('Referral Bonus')
+  })
+
+  test('passes through unknown reasons for forward compatibility', () => {
+    expect(ledgerReasonLabelKey('future_reason')).toBe('future_reason')
+    expect(ledgerReasonLabelKey('')).toBe('')
+  })
 })
-
-function PlaygroundPage() {
-  return (
-    <Main className='p-0'>
-      <Playground />
-    </Main>
-  )
-}

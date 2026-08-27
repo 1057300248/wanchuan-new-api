@@ -47,7 +47,7 @@ import { UpdateConfigDialog } from './dialogs/update-config-dialog'
 import { ViewDetailsDialog } from './dialogs/view-details-dialog'
 import { ViewLogsDialog } from './dialogs/view-logs-dialog'
 
-const route = getRouteApi('/_authenticated/models/$section')
+const route = getRouteApi('/_authenticated/model-management/$section')
 
 export function DeploymentsTable() {
   const { t } = useTranslation()

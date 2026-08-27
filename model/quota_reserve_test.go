@@ -74,23 +74,95 @@ func resetBatchUpdateTestState(t *testing.T) {
 	})
 }
 
-func TestTryReserveQuotaWithoutRedis(t *testing.T) {
+func TestTryReserveUserQuotaFailsClosed(t *testing.T) {
 	truncateTables(t)
 	resetBatchUpdateTestState(t)
 
+	// ChuanAPI 下 users.quota 是三账户兼容镜像，只能由账本事务维护；
+	// 上游单列预扣 API 无安全调用条件，Redis 关闭时也必须 fail-closed。
 	user := createReserveTestUser(t, 100)
 	reserved, err := TryReserveUserQuota(user.Id, 60)
-	require.NoError(t, err)
-	assert.True(t, reserved)
-	assert.Equal(t, 40, getUserQuotaFromDB(t, user.Id))
-
-	reserved, err = TryReserveUserQuota(user.Id, 41)
-	require.NoError(t, err)
 	assert.False(t, reserved)
-	assert.Equal(t, 40, getUserQuotaFromDB(t, user.Id))
+	assert.ErrorIs(t, err, ErrUserQuotaReserveUnavailable)
+	assert.Equal(t, 100, getUserQuotaFromDB(t, user.Id), "reserve must not touch the quota mirror")
+}
+
+// TestTryReserveUserQuotaContractViaLedger 验证 ChuanAPI 的等价预扣契约：
+// 余额只通过 DebitQuota 账本路径扣减，paid 优先、余额不足拒绝、quota 镜像
+// 同步、balance_ledger 落账。
+func TestTryReserveUserQuotaContractViaLedger(t *testing.T) {
+	truncateTables(t)
+	setupLedgerTestState(t)
+
+	user := User{
+		Username:    "reserve-ledger-user-" + common.GetRandomString(6),
+		Password:    "unused-password-hash",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+		AuthVersion: 1,
+		Quota:       100,
+		QuotaPaid:   100,
+		AffCode:     "reserve-aff-" + common.GetRandomString(8),
+	}
+	require.NoError(t, DB.Create(&user).Error)
+
+	reserved, err := TryReserveUserQuota(user.Id, 60)
+	assert.False(t, reserved)
+	assert.ErrorIs(t, err, ErrUserQuotaReserveUnavailable)
+
+	// 账本等价路径：预扣 60，paid 全额承担。
+	result, err := DebitQuota(LedgerEntry{
+		UserId:         user.Id,
+		Delta:          60,
+		Reason:         LedgerReasonBillingPreConsume,
+		ReferenceType:  "test",
+		ReferenceId:    "reserve-ledger-debit-1",
+		IdempotencyKey: "test:reserve-ledger-debit-1",
+	}, AccountPaid, AccountBonus)
+	require.NoError(t, err)
+	require.False(t, result.Replayed)
+	got := getUserBalances(t, user.Id)
+	assert.Equal(t, 40, got.QuotaPaid)
+	assert.Equal(t, 0, got.QuotaBonus)
+	assert.Equal(t, 0, got.QuotaAffiliate)
+	assert.Equal(t, 40, got.Quota)
+	assertQuotaInvariant(t, got)
+
+	// 余额不足时拒绝，且不破坏镜像。
+	_, err = DebitQuota(LedgerEntry{
+		UserId:         user.Id,
+		Delta:          41,
+		Reason:         LedgerReasonBillingPreConsume,
+		ReferenceType:  "test",
+		ReferenceId:    "reserve-ledger-debit-2",
+		IdempotencyKey: "test:reserve-ledger-debit-2",
+	}, AccountPaid, AccountBonus)
+	require.ErrorIs(t, err, ErrLedgerInsufficientBalance)
+	got = getUserBalances(t, user.Id)
+	assert.Equal(t, 40, got.Quota)
+	assertQuotaInvariant(t, got)
+
+	// 幂等重放：同键同参数不重复扣减。
+	replayed, err := DebitQuota(LedgerEntry{
+		UserId:         user.Id,
+		Delta:          60,
+		Reason:         LedgerReasonBillingPreConsume,
+		ReferenceType:  "test",
+		ReferenceId:    "reserve-ledger-debit-1",
+		IdempotencyKey: "test:reserve-ledger-debit-1",
+	}, AccountPaid, AccountBonus)
+	require.NoError(t, err)
+	require.True(t, replayed.Replayed)
+	assert.Equal(t, 40, getUserBalances(t, user.Id).Quota)
+}
+
+func TestTryReserveTokenQuotaWithoutRedis(t *testing.T) {
+	truncateTables(t)
+	resetBatchUpdateTestState(t)
 
 	token := createReserveTestToken(t, 80)
-	reserved, err = TryReserveTokenQuota(token.Id, token.Key, 25, false)
+	reserved, err := TryReserveTokenQuota(token.Id, token.Key, 25, false)
 	require.NoError(t, err)
 	assert.True(t, reserved)
 	reloaded := getTokenFromDB(t, token.Id)
@@ -103,24 +175,44 @@ func TestTryReserveQuotaWithoutRedis(t *testing.T) {
 	assert.Equal(t, 55, getTokenFromDB(t, token.Id).RemainQuota)
 }
 
-func TestRedisBatchReserveNeverFallsBackToStaleDatabaseBalance(t *testing.T) {
+func TestBatchReserveUserQuotaFailsClosedWhileTokenBatchSurvives(t *testing.T) {
 	truncateTables(t)
 	resetBatchUpdateTestState(t)
 	useUserCacheMiniRedis(t)
 	common.BatchUpdateEnabled = true
 
-	user := createReserveTestUser(t, 10)
+	user := User{
+		Username:    "reserve-batch-user-" + common.GetRandomString(6),
+		Password:    "unused-password-hash",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+		AuthVersion: 1,
+		Quota:       10,
+		QuotaPaid:   10,
+		AffCode:     "reserve-aff-" + common.GetRandomString(8),
+	}
+	require.NoError(t, DB.Create(&user).Error)
+	// 批量模式启用时，上游会把缓存预扣增量入队并在 batchUpdate 时落库；
+	// ChuanAPI 下该路径会绕过账本，因此 reserve 必须 fail-closed，且不触碰
+	// 缓存与数据库余额。
 	reserved, err := TryReserveUserQuota(user.Id, 8)
-	require.NoError(t, err)
-	assert.True(t, reserved)
-	assert.Equal(t, 10, getUserQuotaFromDB(t, user.Id), "batch delta is not flushed yet")
+	assert.False(t, reserved)
+	assert.ErrorIs(t, err, ErrUserQuotaReserveUnavailable)
+	assert.Equal(t, 10, getUserQuotaFromDB(t, user.Id))
 
-	reserved, err = TryReserveUserQuota(user.Id, 3)
+	// 等价账本路径立即可见，不依赖批量落盘。
+	result, err := DebitQuota(LedgerEntry{
+		UserId:         user.Id,
+		Delta:          8,
+		Reason:         LedgerReasonBillingPreConsume,
+		ReferenceType:  "test",
+		ReferenceId:    "batch-ledger-debit",
+		IdempotencyKey: "test:batch-ledger-debit",
+	}, AccountPaid, AccountBonus)
 	require.NoError(t, err)
-	assert.False(t, reserved, "stale DB balance must not authorize a second spend")
-	cachedUser, err := GetUserCache(user.Id)
-	require.NoError(t, err)
-	assert.Equal(t, 2, cachedUser.Quota)
+	require.False(t, result.Replayed)
+	assert.Equal(t, 2, getUserQuotaFromDB(t, user.Id), "ledger debit updates the mirror immediately")
 
 	token := createReserveTestToken(t, 9)
 	reserved, err = TryReserveTokenQuota(token.Id, token.Key, 7, false)
@@ -132,6 +224,7 @@ func TestRedisBatchReserveNeverFallsBackToStaleDatabaseBalance(t *testing.T) {
 	assert.Equal(t, 9, getTokenFromDB(t, token.Id).RemainQuota)
 
 	batchUpdate()
+	// token 批量落库保留；user 镜像由账本事务维护，batchUpdate 不刷新该类型。
 	assert.Equal(t, 2, getUserQuotaFromDB(t, user.Id))
 	reloadedToken := getTokenFromDB(t, token.Id)
 	assert.Equal(t, 2, reloadedToken.RemainQuota)
@@ -179,16 +272,23 @@ func TestReserveFallsBackToDatabaseWhenRedisIsUnavailable(t *testing.T) {
 	require.NoError(t, populateUserCache(user))
 	server.Close()
 
-	// Redis 故障时降级为数据库条件更新：服务保持可用且不会超扣。
+	// Redis 故障时 user reserve 同样 fail-closed：不降级为绕过账本的单列扣减。
 	reserved, err := TryReserveUserQuota(user.Id, 5)
+	assert.False(t, reserved)
+	assert.ErrorIs(t, err, ErrUserQuotaReserveUnavailable)
+	assert.Equal(t, 20, getUserQuotaFromDB(t, user.Id))
+
+	// token 降级路径保留：数据库条件更新保证服务可用且不会超扣。
+	token := createReserveTestToken(t, 20)
+	reserved, err = TryReserveTokenQuota(token.Id, token.Key, 5, false)
 	require.NoError(t, err)
 	assert.True(t, reserved)
-	assert.Equal(t, 15, getUserQuotaFromDB(t, user.Id))
+	assert.Equal(t, 15, getTokenFromDB(t, token.Id).RemainQuota)
 
-	reserved, err = TryReserveUserQuota(user.Id, 16)
+	reserved, err = TryReserveTokenQuota(token.Id, token.Key, 16, false)
 	require.NoError(t, err)
 	assert.False(t, reserved)
-	assert.Equal(t, 15, getUserQuotaFromDB(t, user.Id))
+	assert.Equal(t, 15, getTokenFromDB(t, token.Id).RemainQuota)
 }
 
 func TestSynchronousReserveCompensatesCacheWhenPersistenceFails(t *testing.T) {
@@ -196,17 +296,19 @@ func TestSynchronousReserveCompensatesCacheWhenPersistenceFails(t *testing.T) {
 	resetBatchUpdateTestState(t)
 	useUserCacheMiniRedis(t)
 
+	// fail-closed 的 user reserve 不触碰缓存：已水合的缓存余额保持不变。
 	user := createReserveTestUser(t, 10)
 	require.NoError(t, populateUserCache(user))
 	require.NoError(t, DB.Delete(&user).Error)
 
 	reserved, err := TryReserveUserQuota(user.Id, 6)
 	assert.False(t, reserved)
-	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	assert.ErrorIs(t, err, ErrUserQuotaReserveUnavailable)
 	cached, cacheErr := cacheGetUserBase(user.Id)
 	require.NoError(t, cacheErr)
 	assert.Equal(t, 10, cached.Quota)
 
+	// token 补偿路径保留：用户/令牌删除后回滚缓存预扣。
 	token := createReserveTestToken(t, 12)
 	_, err = GetTokenByKey(token.Key, true)
 	require.NoError(t, err)

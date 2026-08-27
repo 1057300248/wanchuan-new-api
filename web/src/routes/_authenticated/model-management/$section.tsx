@@ -40,7 +40,9 @@ const modelsSearchSchema = z.object({
   dStatus: z.array(z.string()).optional().catch([]),
 })
 
-export const Route = createFileRoute('/_authenticated/models/$section')({
+export const Route = createFileRoute(
+  '/_authenticated/model-management/$section'
+)({
   beforeLoad: ({ params }) => {
     const { auth } = useAuthStore.getState()
 
@@ -53,7 +55,7 @@ export const Route = createFileRoute('/_authenticated/models/$section')({
     const validSections = MODELS_SECTION_IDS as unknown as string[]
     if (!validSections.includes(params.section)) {
       throw redirect({
-        to: '/models/$section',
+        to: '/model-management/$section',
         params: { section: MODELS_DEFAULT_SECTION },
       })
     }
