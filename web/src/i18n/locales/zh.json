@@ -2069,7 +2069,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "相关项目",
     "footer.defaultCopyright": "版权所有。",
-    "footer.new\u0061pi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
+    "footer.newapi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "对于 2025 年 5 月 10 日之后添加的渠道，在部署时无需从模型名称中移除 \".\"",
     "For private deployments, format: https://fastgpt.run/api/openapi": "对于私有部署，格式为：https://fastgpt.run/api/openapi",
     "For security, existing access tokens cannot be displayed. Regenerate only when you need a new token.": "出于安全考虑，现有访问令牌无法再次显示。仅在需要新令牌时重新生成。",
@@ -5316,6 +5316,18 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "API Documentation": "API 文档",
+    "Quick Start": "快速开始",
+    "Base URL:": "接口地址（Base URL）：",
+    "Common Endpoints": "常用端点",
+    "Request Example": "请求示例",
+    "More documentation is on the way.": "更多文档持续补充中。",
+    "Go to API keys": "前往 API 密钥",
+    "An OpenAI-compatible endpoint for chat, embeddings, images and audio models.": "OpenAI 兼容端点，支持对话、向量、图像与语音模型。",
+    "Create an API key in the console, then authenticate with the Authorization header.": "在控制台创建 API 密钥，请求时通过 Authorization 头认证。",
+    "Send your key as a Bearer token in the Authorization header of every request.": "每个请求都在 Authorization 头中携带 Bearer 密钥。",
+    "Streaming responses follow the OpenAI SSE format with stream: true.": "传入 stream: true 即以 OpenAI SSE 格式流式返回。",
+    "Usage is prepaid and billed per token against your wallet balance. Check the wallet page for top-up and the usage logs page for request-level details.": "预付费按量计费，用量按 token 从钱包余额扣除；充值请前往钱包页，请求级明细请查看用量日志页。"
   }
 }

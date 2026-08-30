@@ -96,7 +96,7 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({ title: t('Rankings'), href: '/rankings', requiresAuth })
   }
 
-  // Docs (supports external links)
+  // Docs (supports external links; falls back to the built-in /help page)
   if (modules?.docs !== false) {
     if (docsLink) {
       links.push({
@@ -107,8 +107,7 @@ export function useTopNavLinks(): TopNavLink[] {
     } else {
       links.push({
         title: t('Docs'),
-        href: '/docs',
-        documentNavigation: true,
+        href: '/help',
       })
     }
   }
