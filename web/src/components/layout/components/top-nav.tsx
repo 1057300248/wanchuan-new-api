@@ -29,7 +29,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 
-import { type TopNavLink } from '../types'
+import type { TopNavLink } from '../types'
 
 type TopNavProps = React.HTMLAttributes<HTMLElement> & {
   links: TopNavLink[]
@@ -64,47 +64,51 @@ export function TopNav({ className, links, ...props }: TopNavProps) {
             <Menu />
           </DropdownMenuTrigger>
           <DropdownMenuContent side='bottom' align='start'>
-            {normalizedLinks.map(
-              ({
+            {normalizedLinks.map((link) => {
+              const {
                 title,
                 href,
                 isActive,
                 disabled,
                 external,
                 documentNavigation,
-              }) => (
-                <DropdownMenuItem
-                  key={`${title}-${href}`}
-                  render={
-                    documentNavigation ? (
-                      <a
-                        href={href}
-                        className={!isActive ? 'text-muted-foreground' : ''}
-                      >
-                        {title}
-                      </a>
-                    ) : external ? (
-                      <a
-                        href={href}
-                        target='_blank'
-                        rel='noopener noreferrer'
-                        className={!isActive ? 'text-muted-foreground' : ''}
-                      >
-                        {title}
-                      </a>
-                    ) : (
-                      <Link
-                        to={href}
-                        className={!isActive ? 'text-muted-foreground' : ''}
-                        disabled={disabled}
-                      >
-                        {title}
-                      </Link>
-                    )
-                  }
-                ></DropdownMenuItem>
+              } = link
+              let target
+              if (documentNavigation) {
+                target = (
+                  <a
+                    href={href}
+                    className={!isActive ? 'text-muted-foreground' : ''}
+                  >
+                    {title}
+                  </a>
+                )
+              } else if (external) {
+                target = (
+                  <a
+                    href={href}
+                    target='_blank'
+                    rel='noopener noreferrer'
+                    className={!isActive ? 'text-muted-foreground' : ''}
+                  >
+                    {title}
+                  </a>
+                )
+              } else {
+                target = (
+                  <Link
+                    to={href}
+                    className={!isActive ? 'text-muted-foreground' : ''}
+                    disabled={disabled}
+                  >
+                    {title}
+                  </Link>
+                )
+              }
+              return (
+                <DropdownMenuItem key={`${title}-${href}`} render={target} />
               )
-            )}
+            })}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -117,37 +121,47 @@ export function TopNav({ className, links, ...props }: TopNavProps) {
         )}
         {...props}
       >
-        {normalizedLinks.map(
-          ({ title, href, isActive, disabled, external, documentNavigation }) =>
-            documentNavigation ? (
-              <a
-                key={`${title}-${href}`}
-                href={href}
-                className={`hover:text-primary text-sm font-medium transition-colors ${isActive ? '' : 'text-muted-foreground'}`}
-              >
+        {normalizedLinks.map((link) => {
+          const {
+            title,
+            href,
+            isActive,
+            disabled,
+            external,
+            documentNavigation,
+          } = link
+          const linkClassName = `hover:text-primary text-sm font-medium transition-colors ${isActive ? '' : 'text-muted-foreground'}`
+          if (documentNavigation) {
+            return (
+              <a key={`${title}-${href}`} href={href} className={linkClassName}>
                 {title}
               </a>
-            ) : external ? (
+            )
+          }
+          if (external) {
+            return (
               <a
                 key={`${title}-${href}`}
                 href={href}
                 target='_blank'
                 rel='noopener noreferrer'
-                className={`hover:text-primary text-sm font-medium transition-colors ${isActive ? '' : 'text-muted-foreground'}`}
+                className={linkClassName}
               >
                 {title}
               </a>
-            ) : (
-              <Link
-                key={`${title}-${href}`}
-                to={href}
-                disabled={disabled}
-                className={`hover:text-primary text-sm font-medium transition-colors ${isActive ? '' : 'text-muted-foreground'}`}
-              >
-                {title}
-              </Link>
             )
-        )}
+          }
+          return (
+            <Link
+              key={`${title}-${href}`}
+              to={href}
+              disabled={disabled}
+              className={linkClassName}
+            >
+              {title}
+            </Link>
+          )
+        })}
       </nav>
     </>
   )

@@ -1,4 +1,3 @@
-import { useMemo, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import {
   ArrowLeft,
@@ -10,6 +9,7 @@ import {
   Menu,
   Server,
 } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
@@ -30,10 +30,7 @@ import { ApiEndpointTree } from '../components/api-endpoint-tree'
 import { getEndpoint } from '../content/endpoints'
 import type { EndpointDoc, HttpMethod } from '../content/types'
 import { generateEndpointSamples, sampleLanguages } from '../lib/api-samples'
-import {
-  buildEndpointMarkdown,
-  getDocsOrigin,
-} from '../lib/docs-utils'
+import { buildEndpointMarkdown, getDocsOrigin } from '../lib/docs-utils'
 
 function methodClass(method: HttpMethod): string {
   return method === 'GET'
@@ -127,7 +124,10 @@ function ApiExamples({
         <Tabs defaultValue={firstResponse}>
           <TabsList variant='line'>
             {endpoint.responses.map((response) => (
-              <TabsTrigger key={response.status} value={String(response.status)}>
+              <TabsTrigger
+                key={response.status}
+                value={String(response.status)}
+              >
                 {response.status}
               </TabsTrigger>
             ))}
@@ -139,7 +139,9 @@ function ApiExamples({
               className='space-y-2'
             >
               <div>
-                <p className='text-foreground text-sm font-medium'>{response.label}</p>
+                <p className='text-foreground text-sm font-medium'>
+                  {response.label}
+                </p>
                 <p className='text-muted-foreground text-xs leading-relaxed'>
                   {response.description}
                 </p>
@@ -154,7 +156,9 @@ function ApiExamples({
       </section>
 
       <section className='border-border bg-muted/20 space-y-2 rounded-xl border p-3'>
-        <p className='text-foreground text-sm font-medium'>{t('On this page')}</p>
+        <p className='text-foreground text-sm font-medium'>
+          {t('On this page')}
+        </p>
         <Button
           type='button'
           variant='ghost'
@@ -223,7 +227,10 @@ export function ApiReferencePage({
             </div>
           </aside>
 
-          <article id='content' className='min-w-0 px-4 py-6 sm:px-6 lg:px-8 lg:py-8'>
+          <article
+            id='content'
+            className='min-w-0 px-4 py-6 sm:px-6 lg:px-8 lg:py-8'
+          >
             <Collapsible
               open={mobileTreeOpen}
               onOpenChange={setMobileTreeOpen}
@@ -282,7 +289,7 @@ export function ApiReferencePage({
                 </div>
                 <div className='flex flex-wrap items-center gap-3 px-4 py-3'>
                   <MethodBadge method={endpoint.method} />
-                  <code className='text-foreground min-w-0 flex-1 break-all font-mono text-sm'>
+                  <code className='text-foreground min-w-0 flex-1 font-mono text-sm break-all'>
                     {endpoint.path}
                   </code>
                   <CopyButton
@@ -301,7 +308,7 @@ export function ApiReferencePage({
                     <KeyRound className='text-primary size-4' />
                     {t('Authentication')}
                   </div>
-                  <code className='text-muted-foreground mt-2 block break-all text-xs'>
+                  <code className='text-muted-foreground mt-2 block text-xs break-all'>
                     {authDescription(endpoint)}
                   </code>
                 </div>
@@ -331,19 +338,25 @@ export function ApiReferencePage({
 
               <div className='grid gap-3 md:grid-cols-3'>
                 <div className='border-border bg-card rounded-xl border p-4'>
-                  <p className='text-muted-foreground text-xs'>{t('Authentication')}</p>
+                  <p className='text-muted-foreground text-xs'>
+                    {t('Authentication')}
+                  </p>
                   <p className='text-foreground mt-1 text-sm font-medium'>
                     {authDescription(endpoint)}
                   </p>
                 </div>
                 <div className='border-border bg-card rounded-xl border p-4'>
-                  <p className='text-muted-foreground text-xs'>{t('Relay format')}</p>
+                  <p className='text-muted-foreground text-xs'>
+                    {t('Relay format')}
+                  </p>
                   <p className='text-foreground mt-1 text-sm font-medium'>
                     {endpoint.relayFormat}
                   </p>
                 </div>
                 <div className='border-border bg-card rounded-xl border p-4'>
-                  <p className='text-muted-foreground text-xs'>{t('Response type')}</p>
+                  <p className='text-muted-foreground text-xs'>
+                    {t('Response type')}
+                  </p>
                   <p className='text-foreground mt-1 text-sm font-medium'>
                     {endpoint.responseType}
                   </p>
@@ -364,8 +377,13 @@ export function ApiReferencePage({
               <div className='border-primary/20 bg-primary/5 flex gap-3 rounded-xl border p-4'>
                 <CircleHelp className='text-primary mt-0.5 size-5 shrink-0' />
                 <p className='text-muted-foreground text-sm leading-relaxed'>
-                  {t('Endpoint availability depends on the model catalog and API key group.')}{' '}
-                  <Link to='/pricing' className='text-primary font-medium hover:underline'>
+                  {t(
+                    'Endpoint availability depends on the model catalog and API key group.'
+                  )}{' '}
+                  <Link
+                    to='/pricing'
+                    className='text-primary font-medium hover:underline'
+                  >
                     {t('Check the pricing catalog')}
                   </Link>
                 </p>

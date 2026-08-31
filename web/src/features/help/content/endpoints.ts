@@ -159,7 +159,8 @@ export const endpointCategories: readonly EndpointCategory[] = [
         name: 'Responses',
         method: 'POST',
         path: '/v1/responses',
-        description: '使用 OpenAI Responses 格式生成文本、工具调用或多模态响应。',
+        description:
+          '使用 OpenAI Responses 格式生成文本、工具调用或多模态响应。',
         relayFormat: '原生 OpenAI Responses 格式',
         responseType: 'application/json 或 text/event-stream',
         requestKind: 'json',
@@ -182,7 +183,12 @@ export const endpointCategories: readonly EndpointCategory[] = [
             {
               type: 'message',
               role: 'assistant',
-              content: [{ type: 'output_text', text: 'Idempotency prevents duplicate side effects.' }],
+              content: [
+                {
+                  type: 'output_text',
+                  text: 'Idempotency prevents duplicate side effects.',
+                },
+              ],
             },
           ],
         }),
@@ -200,7 +206,10 @@ export const endpointCategories: readonly EndpointCategory[] = [
         requestBody: json({
           model: 'MODEL_ID',
           input: [
-            { role: 'user', content: 'Keep the important implementation decisions.' },
+            {
+              role: 'user',
+              content: 'Keep the important implementation decisions.',
+            },
           ],
         }),
         notes: [
@@ -228,21 +237,29 @@ export const endpointCategories: readonly EndpointCategory[] = [
         requestBody: json({
           model: 'MODEL_ID',
           max_tokens: 256,
-          messages: [{ role: 'user', content: 'Explain retry backoff briefly.' }],
+          messages: [
+            { role: 'user', content: 'Explain retry backoff briefly.' },
+          ],
         }),
         notes: [
           'Anthropic SDK 的 base URL 填站点根地址，不追加 /v1。',
           '鉴权使用 x-api-key，同时发送 anthropic-version。',
           commonAvailabilityNote,
         ],
-        responses: responses('Claude 消息完成', '返回 Anthropic message 对象。', {
-          id: 'msg_abc123',
-          type: 'message',
-          role: 'assistant',
-          model: 'MODEL_ID',
-          content: [{ type: 'text', text: 'Use exponential backoff with jitter.' }],
-          stop_reason: 'end_turn',
-        }),
+        responses: responses(
+          'Claude 消息完成',
+          '返回 Anthropic message 对象。',
+          {
+            id: 'msg_abc123',
+            type: 'message',
+            role: 'assistant',
+            model: 'MODEL_ID',
+            content: [
+              { type: 'text', text: 'Use exponential backoff with jitter.' },
+            ],
+            stop_reason: 'end_turn',
+          }
+        ),
       },
       {
         id: 'completions',
@@ -267,7 +284,13 @@ export const endpointCategories: readonly EndpointCategory[] = [
           id: 'cmpl-abc123',
           object: 'text_completion',
           model: 'MODEL_ID',
-          choices: [{ index: 0, text: ' retry transient errors with backoff.', finish_reason: 'stop' }],
+          choices: [
+            {
+              index: 0,
+              text: ' retry transient errors with backoff.',
+              finish_reason: 'stop',
+            },
+          ],
         }),
       },
     ],
@@ -286,11 +309,20 @@ export const endpointCategories: readonly EndpointCategory[] = [
         relayFormat: 'OpenAI Embeddings 格式',
         responseType: 'application/json',
         requestKind: 'json',
-        requestBody: json({ model: 'MODEL_ID', input: ['first document', 'second document'] }),
+        requestBody: json({
+          model: 'MODEL_ID',
+          input: ['first document', 'second document'],
+        }),
         notes: [commonAvailabilityNote],
         responses: responses('嵌入完成', '返回每条输入对应的向量。', {
           object: 'list',
-          data: [{ object: 'embedding', index: 0, embedding: [0.012, -0.031, 0.008] }],
+          data: [
+            {
+              object: 'embedding',
+              index: 0,
+              embedding: [0.012, -0.031, 0.008],
+            },
+          ],
           model: 'MODEL_ID',
           usage: { prompt_tokens: 4, total_tokens: 4 },
         }),
@@ -372,7 +404,9 @@ export const endpointCategories: readonly EndpointCategory[] = [
           { name: 'response_format', value: 'json' },
         ],
         notes: ['上传大小还受网关请求体限制约束。', commonAvailabilityNote],
-        responses: responses('转写完成', '返回识别文本。', { text: 'Transcribed audio text.' }),
+        responses: responses('转写完成', '返回识别文本。', {
+          text: 'Transcribed audio text.',
+        }),
       },
       {
         id: 'audio-translations',
@@ -390,7 +424,9 @@ export const endpointCategories: readonly EndpointCategory[] = [
           { name: 'response_format', value: 'json' },
         ],
         notes: ['输入语言与格式支持取决于所选模型。', commonAvailabilityNote],
-        responses: responses('翻译完成', '返回英文转写文本。', { text: 'Translated audio text.' }),
+        responses: responses('翻译完成', '返回英文转写文本。', {
+          text: 'Translated audio text.',
+        }),
       },
       {
         id: 'audio-speech',
@@ -408,8 +444,15 @@ export const endpointCategories: readonly EndpointCategory[] = [
           input: 'Hello from the API.',
           response_format: 'mp3',
         }),
-        notes: ['客户端应把响应按二进制音频保存，不要按 JSON 解析。', commonAvailabilityNote],
-        responses: responses('语音合成完成', '响应体是二进制音频流。', '(binary audio stream)'),
+        notes: [
+          '客户端应把响应按二进制音频保存，不要按 JSON 解析。',
+          commonAvailabilityNote,
+        ],
+        responses: responses(
+          '语音合成完成',
+          '响应体是二进制音频流。',
+          '(binary audio stream)'
+        ),
       },
     ],
   },
@@ -435,7 +478,10 @@ export const endpointCategories: readonly EndpointCategory[] = [
         responses: responses(
           '连接升级成功',
           'HTTP 连接升级为 WebSocket，随后接收 session 事件。',
-          json({ type: 'session.created', session: { id: 'sess_abc123', model: 'MODEL_ID' } }),
+          json({
+            type: 'session.created',
+            session: { id: 'sess_abc123', model: 'MODEL_ID' },
+          }),
           101
         ),
       },
@@ -461,7 +507,10 @@ export const endpointCategories: readonly EndpointCategory[] = [
           n: 1,
           size: '1024x1024',
         }),
-        notes: ['图片返回 URL 或 base64 取决于模型与请求参数。', commonAvailabilityNote],
+        notes: [
+          '图片返回 URL 或 base64 取决于模型与请求参数。',
+          commonAvailabilityNote,
+        ],
         responses: responses('图片生成完成', '返回图片 URL 或 base64 数据。', {
           created: 1710000000,
           data: [{ url: 'https://example.invalid/generated-image.png' }],
@@ -482,7 +531,10 @@ export const endpointCategories: readonly EndpointCategory[] = [
           { name: 'model', value: 'MODEL_ID' },
           { name: 'prompt', value: 'Add a blue night sky.' },
         ],
-        notes: ['可接受的图片格式与尺寸由所选模型决定。', commonAvailabilityNote],
+        notes: [
+          '可接受的图片格式与尺寸由所选模型决定。',
+          commonAvailabilityNote,
+        ],
         responses: responses('图片编辑完成', '返回编辑后的图片数据。', {
           created: 1710000000,
           data: [{ url: 'https://example.invalid/edited-image.png' }],
@@ -523,7 +575,11 @@ export const endpointCategories: readonly EndpointCategory[] = [
             {
               content: {
                 role: 'model',
-                parts: [{ text: 'A circuit breaker stops repeated calls to a failing dependency.' }],
+                parts: [
+                  {
+                    text: 'A circuit breaker stops repeated calls to a failing dependency.',
+                  },
+                ],
               },
               finishReason: 'STOP',
             },

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronsUpDown, Search } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
@@ -153,7 +153,10 @@ export function ApiEndpointTree({
                 <span className='text-muted-foreground flex items-center gap-1.5 text-xs'>
                   {category.endpoints.length}
                   <ChevronDown
-                    className={cn('size-3.5 transition-transform', open && 'rotate-180')}
+                    className={cn(
+                      'size-3.5 transition-transform',
+                      open && 'rotate-180'
+                    )}
                   />
                 </span>
               </CollapsibleTrigger>

@@ -1,7 +1,4 @@
-import type {
-  EndpointDoc,
-  SampleLanguage,
-} from '../content/types'
+import type { EndpointDoc, SampleLanguage } from '../content/types'
 
 export const sampleLanguages: readonly {
   id: SampleLanguage
@@ -50,7 +47,9 @@ function curlSample(endpoint: EndpointDoc, origin: string): string {
     ].join('\n')
   }
 
-  const lines = [`curl -X ${endpoint.method} "${origin}${samplePath(endpoint.path)}"`]
+  const lines = [
+    `curl -X ${endpoint.method} "${origin}${samplePath(endpoint.path)}"`,
+  ]
   for (const [name, value] of requestHeaders(endpoint, '$API_TOKEN')) {
     lines[lines.length - 1] += ' \\'
     lines.push(`  -H "${name}: ${value}"`)
@@ -62,9 +61,7 @@ function curlSample(endpoint: EndpointDoc, origin: string): string {
   if (endpoint.requestKind === 'multipart') {
     for (const field of endpoint.multipartFields ?? []) {
       lines[lines.length - 1] += ' \\'
-      lines.push(
-        `  -F "${field.name}=${field.file ? '@' : ''}${field.value}"`
-      )
+      lines.push(`  -F "${field.name}=${field.file ? '@' : ''}${field.value}"`)
     }
   }
   return lines.join('\n')
@@ -85,16 +82,16 @@ socket.on('open', () => {
 socket.on('message', (data) => console.log(JSON.parse(data.toString())))`
   }
 
-  const headers = Object.fromEntries(
-    requestHeaders(endpoint, 'YOUR_API_TOKEN')
-  )
+  const headers = Object.fromEntries(requestHeaders(endpoint, 'YOUR_API_TOKEN'))
   const options = [
     `  method: '${endpoint.method}',`,
     `  headers: ${JSON.stringify(headers, null, 2).replaceAll('\n', '\n  ')},`,
   ]
   let prelude = ''
   if (endpoint.requestKind === 'json' && endpoint.requestBody) {
-    options.push(`  body: JSON.stringify(${endpoint.requestBody.replaceAll('\n', '\n  ')}),`)
+    options.push(
+      `  body: JSON.stringify(${endpoint.requestBody.replaceAll('\n', '\n  ')}),`
+    )
   }
   if (endpoint.requestKind === 'multipart') {
     prelude = `import { openAsBlob } from 'node:fs'
@@ -136,9 +133,7 @@ async def main():
 asyncio.run(main())`
   }
 
-  const headers = Object.fromEntries(
-    requestHeaders(endpoint, 'YOUR_API_TOKEN')
-  )
+  const headers = Object.fromEntries(requestHeaders(endpoint, 'YOUR_API_TOKEN'))
   const args = [
     `    "${endpoint.method}",`,
     `    "${origin}${samplePath(endpoint.path)}",`,
@@ -151,7 +146,9 @@ asyncio.run(main())`
   }
   if (endpoint.requestKind === 'multipart') {
     const files = (endpoint.multipartFields ?? []).filter((field) => field.file)
-    const fields = (endpoint.multipartFields ?? []).filter((field) => !field.file)
+    const fields = (endpoint.multipartFields ?? []).filter(
+      (field) => !field.file
+    )
     prelude += `${files
       .map((field) => `${field.name}_file = open("${field.value}", "rb")`)
       .join('\n')}\n\n`

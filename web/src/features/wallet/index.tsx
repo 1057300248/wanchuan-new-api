@@ -60,8 +60,9 @@ export function Wallet(_props: WalletProps) {
     try {
       setUserLoading(true)
       const response = await getSelf()
-      if (response.success && response.data)
+      if (response.success && response.data) {
         setUser(response.data as UserWalletData)
+      }
     } finally {
       setUserLoading(false)
     }

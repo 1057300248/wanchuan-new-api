@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from 'react'
 import { ChevronDown, Menu } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PublicLayout } from '@/components/layout'

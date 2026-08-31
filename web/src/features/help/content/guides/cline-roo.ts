@@ -3,7 +3,8 @@ import type { GuideDoc } from '../types'
 export const clineRoo: GuideDoc = {
   slug: 'cline-roo',
   title: '接入 Cline / Roo Code',
-  description: '在 VS Code 中配置 OpenAI Compatible 供应商，并确认工具调用可用。',
+  description:
+    '在 VS Code 中配置 OpenAI Compatible 供应商，并确认工具调用可用。',
   updated: '2026-08-30',
   body: `
 > 编码代理高度依赖**工具调用**。选模型时先确认它支持 tools，否则代理会一直卡在「无法编辑文件」。

@@ -1,5 +1,4 @@
 import type { GuideDoc } from '../types'
-
 import { anthropicSdk } from './anthropic-sdk'
 import { authentication } from './authentication'
 import { billing } from './billing'

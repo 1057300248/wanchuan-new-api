@@ -3,7 +3,8 @@ import type { GuideDoc } from '../types'
 export const ccSwitch: GuideDoc = {
   slug: 'cc-switch',
   title: 'CC Switch 一键配置',
-  description: '用开源工具 CC Switch 把本站保存为供应商，在多个中转站之间一键切换。',
+  description:
+    '用开源工具 CC Switch 把本站保存为供应商，在多个中转站之间一键切换。',
   updated: '2026-08-30',
   body: `
 > CC Switch 是第三方开源桌面工具（[GitHub](https://github.com/farion1231/cc-switch)），用于管理 Claude Code / Codex CLI 的供应商配置并一键切换。它把你手动改环境变量、改 config.toml 的工作变成了点选。

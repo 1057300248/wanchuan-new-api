@@ -27,7 +27,12 @@ export function DocsIndexPage() {
           </p>
           <div className='flex flex-wrap gap-2'>
             <Button
-              render={<Link to='/help/guides/$slug' params={{ slug: 'quick-start' }} />}
+              render={
+                <Link
+                  to='/help/guides/$slug'
+                  params={{ slug: 'quick-start' }}
+                />
+              }
             >
               <Rocket />
               {t('Quick Start')}

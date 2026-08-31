@@ -3,7 +3,8 @@ import type { GuideDoc } from '../types'
 export const troubleshooting: GuideDoc = {
   slug: 'troubleshooting',
   title: '错误码与排障',
-  description: '401 / 402 / 403 / 404 / 429 / 5xx 在本站分别意味着什么，以及如何解决。',
+  description:
+    '401 / 402 / 403 / 404 / 429 / 5xx 在本站分别意味着什么，以及如何解决。',
   updated: '2026-08-30',
   body: `
 > 状态码只说明「哪一类问题」，具体原因在响应体里。排查时务必把 response body 一起打出来，只看状态码往往不足以定位。
