@@ -20,6 +20,7 @@ import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useStatus } from '@/hooks/use-status'
+import { CHUANAPI_PUBLIC_HOME } from '@/lib/chuanapi-navigation'
 import { parseHeaderNavModulesFromStatus } from '@/lib/nav-modules'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -29,6 +30,7 @@ export type TopNavLink = {
   disabled?: boolean
   requiresAuth?: boolean
   external?: boolean
+  documentNavigation?: boolean
 }
 
 /**
@@ -64,7 +66,11 @@ export function useTopNavLinks(): TopNavLink[] {
 
   // Home
   if (modules?.home !== false) {
-    links.push({ title: t('Home'), href: '/' })
+    links.push({
+      title: t('Home'),
+      href: CHUANAPI_PUBLIC_HOME,
+      documentNavigation: true,
+    })
   }
 
   // Console -> /dashboard (new console path)
@@ -76,7 +82,11 @@ export function useTopNavLinks(): TopNavLink[] {
   const pricing = modules?.pricing
   if (pricing && typeof pricing === 'object' && pricing.enabled) {
     const requiresAuth = pricing.requireAuth && !isAuthed
-    links.push({ title: t('Model Square'), href: '/pricing', requiresAuth })
+    links.push({
+      title: t('Model Square'),
+      href: '/pricing',
+      requiresAuth,
+    })
   }
 
   // Rankings
@@ -86,18 +96,29 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({ title: t('Rankings'), href: '/rankings', requiresAuth })
   }
 
-  // Docs (supports external links)
+  // Docs (supports external links; falls back to the built-in /help page)
   if (modules?.docs !== false) {
     if (docsLink) {
-      links.push({ title: t('Docs'), href: docsLink, external: true })
+      links.push({
+        title: t('Docs'),
+        href: docsLink,
+        documentNavigation: true,
+      })
     } else {
-      links.push({ title: t('Docs'), href: '/docs' })
+      links.push({
+        title: t('Docs'),
+        href: '/help',
+      })
     }
   }
 
   // About
   if (modules?.about !== false) {
-    links.push({ title: t('About'), href: '/about' })
+    links.push({
+      title: t('About'),
+      href: '/about',
+      documentNavigation: true,
+    })
   }
 
   return links

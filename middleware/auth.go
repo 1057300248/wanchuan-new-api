@@ -91,6 +91,30 @@ func TryUserAuth() func(c *gin.Context) {
 	}
 }
 
+// SessionAuth accepts only the live dashboard refresh cookie. It deliberately
+// does not accept PATs or caller-supplied bearer tokens, so the standalone
+// same-site playground is bound to the user's browser login session.
+func SessionAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		rawRefreshToken, err := c.Cookie(service.RefreshCookieName)
+		if err != nil || strings.TrimSpace(rawRefreshToken) == "" {
+			writeDashboardAuthError(c, service.ErrRefreshTokenInvalid)
+			return
+		}
+		identity, user, err := service.ValidateRefreshLoginSession(rawRefreshToken)
+		if err != nil {
+			writeDashboardAuthError(c, err)
+			return
+		}
+		if user.Status != common.UserStatusEnabled || user.Role < common.RoleCommonUser || !validUserInfo(user.Username, user.Role) {
+			writeDashboardAuthError(c, service.ErrLoginSessionRevoked)
+			return
+		}
+		setDashboardAuthContext(c, user, identity, false)
+		c.Next()
+	}
+}
+
 func UserAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		authHelper(c, common.RoleCommonUser)

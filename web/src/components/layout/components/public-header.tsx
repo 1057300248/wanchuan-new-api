@@ -30,6 +30,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { useTopNavLinks } from '@/hooks/use-top-nav-links'
+import { CHUANAPI_PUBLIC_HOME } from '@/lib/chuanapi-navigation'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -68,7 +69,7 @@ export function PublicHeader(props: PublicHeaderProps) {
     showLanguageSwitcher = true,
     logo: customLogo,
     siteName: customSiteName,
-    homeUrl = '/',
+    homeUrl = CHUANAPI_PUBLIC_HOME,
     showAuthButtons = true,
     showNotifications = true,
   } = props
@@ -191,8 +192,8 @@ export function PublicHeader(props: PublicHeaderProps) {
             )}
           >
             {/* Logo */}
-            <Link
-              to={homeUrl}
+            <a
+              href={homeUrl}
               className='group flex shrink-0 items-center gap-2.5'
             >
               <div className='flex size-7 shrink-0 items-center justify-center transition-all duration-300 group-hover:scale-105'>
@@ -212,12 +213,29 @@ export function PublicHeader(props: PublicHeaderProps) {
               <span className='text-sm font-semibold tracking-tight'>
                 {loading ? <Skeleton className='h-4 w-16' /> : displaySiteName}
               </span>
-            </Link>
+            </a>
 
             {/* Desktop nav */}
             <div className='hidden items-center gap-0.5 sm:flex'>
               {links.map((link, i) => {
                 const isActive = pathname === link.href
+                if (link.documentNavigation) {
+                  return (
+                    <a
+                      key={i}
+                      href={link.href}
+                      aria-disabled={link.disabled}
+                      tabIndex={link.disabled ? -1 : undefined}
+                      onClick={(event) => handleNavLinkClick(event, link)}
+                      className={cn(
+                        'text-muted-foreground hover:text-foreground rounded-lg px-3 py-1.5 text-sm font-medium transition-colors duration-200',
+                        link.disabled && 'pointer-events-none opacity-50'
+                      )}
+                    >
+                      {t(link.title)}
+                    </a>
+                  )
+                }
                 if (link.external) {
                   return (
                     <a
@@ -360,6 +378,21 @@ export function PublicHeader(props: PublicHeaderProps) {
               )
               const transitionStyle = {
                 transitionDelay: mobileOpen ? `${100 + i * 50}ms` : '0ms',
+              }
+              if (link.documentNavigation) {
+                return (
+                  <a
+                    key={i}
+                    href={link.href}
+                    aria-disabled={link.disabled}
+                    tabIndex={link.disabled ? -1 : undefined}
+                    onClick={(event) => handleNavLinkClick(event, link, true)}
+                    className={linkClassName}
+                    style={transitionStyle}
+                  >
+                    {t(link.title)}
+                  </a>
+                )
               }
               if (link.external) {
                 return (

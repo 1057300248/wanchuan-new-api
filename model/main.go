@@ -76,16 +76,30 @@ func createRootAccountIfNeed() error {
 		if err != nil {
 			return err
 		}
-		rootUser := User{
-			Username:    "root",
-			Password:    hashedPassword,
-			Role:        common.RoleRootUser,
-			Status:      common.UserStatusEnabled,
-			DisplayName: "Root User",
-			AccessToken: nil,
-			Quota:       100000000,
-		}
-		DB.Create(&rootUser)
+		return DB.Transaction(func(tx *gorm.DB) error {
+			rootUser := User{
+				Username:    "root",
+				Password:    hashedPassword,
+				Role:        common.RoleRootUser,
+				Status:      common.UserStatusEnabled,
+				DisplayName: "Root User",
+				AccessToken: nil,
+				Quota:       0,
+				QuotaPaid:   0,
+			}
+			if err := tx.Create(&rootUser).Error; err != nil {
+				return err
+			}
+			_, err := CreditQuotaTx(tx, LedgerEntry{
+				UserId:        rootUser.Id,
+				Account:       AccountPaid,
+				Delta:         100000000,
+				Reason:        LedgerReasonSystem,
+				ReferenceType: "root_init",
+				ReferenceId:   fmt.Sprintf("%d", rootUser.Id),
+			})
+			return err
+		})
 	}
 	return nil
 }
@@ -364,6 +378,11 @@ func migrateDB() error {
 		&SystemTaskLock{},
 		&CasbinRule{},
 		&AuthzRole{},
+		&BalanceLedgerOperation{},
+		&BalanceLedger{},
+		&ModelBonusEligibleAudit{},
+		&AffiliateReward{},
+		&AffiliateRewardReconcileState{},
 	)
 	if err != nil {
 		return err
@@ -374,6 +393,9 @@ func migrateDB() error {
 	if err := InitializeExternalIdentityClaims(); err != nil {
 		return err
 	}
+	if err := migrateQuotaAccounts(); err != nil {
+		return err
+	}
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
 			return err
@@ -382,6 +404,19 @@ func migrateDB() error {
 		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// migrateQuotaAccounts 启动时执行的资金账户迁移（幂等）：
+// 旧用户三账户均为 0 且 quota 非 0 时，一次性把旧 quota 回填到 paid 账户。
+func migrateQuotaAccounts() error {
+	affected, err := BackfillLegacyQuotaAccounts()
+	if err != nil {
+		return err
+	}
+	if affected > 0 {
+		common.SysLog(fmt.Sprintf("legacy quota backfilled to paid account for %d users", affected))
 	}
 	return nil
 }

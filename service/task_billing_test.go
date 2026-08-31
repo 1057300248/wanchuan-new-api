@@ -55,6 +55,13 @@ func TestMain(m *testing.M) {
 		&model.UserSubscription{},
 		&model.SystemTask{},
 		&model.SystemTaskLock{},
+		&model.BalanceLedgerOperation{},
+		&model.BalanceLedger{},
+		&model.Model{},
+		&model.Vendor{},
+		&model.ModelBonusEligibleAudit{},
+		&model.AffiliateReward{},
+		&model.AffiliateRewardReconcileState{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -69,6 +76,10 @@ func TestMain(m *testing.M) {
 func truncate(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
+		model.DB.Exec("DELETE FROM balance_ledger")
+		model.DB.Exec("DELETE FROM balance_ledger_operations")
+		model.DB.Exec("DELETE FROM affiliate_rewards")
+		model.DB.Exec("DELETE FROM affiliate_reward_reconcile_states")
 		model.DB.Exec("DELETE FROM tasks")
 		model.DB.Exec("DELETE FROM users")
 		model.DB.Exec("DELETE FROM tokens")
@@ -79,12 +90,16 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM user_subscriptions")
 		model.DB.Exec("DELETE FROM system_task_locks")
 		model.DB.Exec("DELETE FROM system_tasks")
+		model.DB.Exec("DELETE FROM models")
+		model.DB.Exec("DELETE FROM vendors")
+		model.DB.Exec("DELETE FROM model_bonus_eligible_audits")
+		model.InvalidateModelBonusEligibleCache()
 	})
 }
 
 func seedUser(t *testing.T, id int, quota int) {
 	t.Helper()
-	user := &model.User{Id: id, Username: "test_user", Quota: quota, Status: common.UserStatusEnabled}
+	user := &model.User{Id: id, Username: "test_user", Quota: quota, QuotaPaid: quota, Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 }
 

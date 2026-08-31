@@ -30,6 +30,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { SHOW_LEGACY_AFFILIATE_QUOTA } from '@/lib/chuanapi-flags'
 import { formatQuota, formatTimestamp } from '@/lib/format'
 
 import {
@@ -244,21 +245,23 @@ export function useUsersColumns(): ColumnDef<User>[] {
                 <p className='text-xs'>{t('Number of users invited')}</p>
               </TooltipContent>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <StatusBadge
-                    label={`${t('Revenue')}: ${formatQuota(affHistoryQuota)}`}
-                    variant='neutral'
-                    copyable={false}
-                    className='cursor-help'
-                  />
-                }
-              />
-              <TooltipContent>
-                <p className='text-xs'>{t('Total invitation revenue')}</p>
-              </TooltipContent>
-            </Tooltip>
+            {SHOW_LEGACY_AFFILIATE_QUOTA && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <StatusBadge
+                      label={`${t('Revenue')}: ${formatQuota(affHistoryQuota)}`}
+                      variant='neutral'
+                      copyable={false}
+                      className='cursor-help'
+                    />
+                  }
+                />
+                <TooltipContent>
+                  <p className='text-xs'>{t('Total invitation revenue')}</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
             {inviterId > 0 && (
               <Tooltip>
                 <TooltipTrigger

@@ -33,6 +33,8 @@ func setupManageUserTestDB(t *testing.T) *gorm.DB {
 	model.DB, model.LOG_DB = db, db
 	require.NoError(t, db.AutoMigrate(
 		&model.User{}, &model.UserSession{}, &model.Log{}, &model.CasbinRule{}, &model.AuthzRole{},
+		&model.BalanceLedgerOperation{},
+		&model.BalanceLedger{},
 	))
 
 	t.Cleanup(func() {
@@ -179,4 +181,36 @@ func TestManageUserQuotaRespectsWalletCeiling(t *testing.T) {
 	assert.Contains(t, recorder.Body.String(), `"success":false`)
 	require.NoError(t, db.First(&updated, user.Id).Error)
 	assert.Equal(t, common.MaxWalletQuota-1, updated.Quota)
+}
+
+func TestManageUserSubtractQuotaDebitsLedgerAmount(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	user := model.User{
+		Username: "managed-subtract-user", Password: "password", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1,
+		Quota: 5000, QuotaPaid: 5000, AffCode: "subtract-aff",
+	}
+	require.NoError(t, db.Create(&user).Error)
+
+	body := fmt.Sprintf(`{"id":%d,"action":"add_quota","mode":"subtract","value":1200,"request_id":"admin-subtract-1"}`, user.Id)
+	recorder := performManageUserRequest(t, body)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"success":true`)
+	// 网络重试复用 request_id：命中账本重放，不再次扣款。
+	recorder = performManageUserRequest(t, body)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"success":true`)
+
+	var updated model.User
+	require.NoError(t, db.First(&updated, user.Id).Error)
+	assert.Equal(t, 3800, updated.QuotaPaid)
+	assert.Equal(t, 3800, updated.Quota)
+
+	var row model.BalanceLedger
+	require.NoError(t, db.Where("user_id = ? AND reason = ?", user.Id, model.LedgerReasonAdminSubtract).First(&row).Error)
+	assert.Equal(t, -1200, row.Delta)
+	var count int64
+	require.NoError(t, db.Model(&model.BalanceLedger{}).Where("user_id = ? AND reason = ?", user.Id, model.LedgerReasonAdminSubtract).Count(&count).Error)
+	assert.EqualValues(t, 1, count)
+
 }

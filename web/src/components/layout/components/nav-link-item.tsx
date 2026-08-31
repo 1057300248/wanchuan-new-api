@@ -38,6 +38,18 @@ export function NavLinkItem({ link, className }: NavLinkItemProps) {
     className
   )
 
+  if (link.documentNavigation) {
+    return (
+      <a
+        href={link.href}
+        className={linkClassName}
+        aria-disabled={link.disabled}
+      >
+        {link.title}
+      </a>
+    )
+  }
+
   if (link.external) {
     return (
       <a

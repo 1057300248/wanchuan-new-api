@@ -89,10 +89,6 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	if relayInfo.UsePrice {
 		return nil
 	}
-	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
-	if err != nil {
-		return err
-	}
 
 	token, err := model.GetTokenByKey(strings.TrimPrefix(relayInfo.TokenKey, "sk-"), false)
 	if err != nil {
@@ -138,8 +134,18 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	quota, clamp := calculateAudioQuota(quotaInfo)
 	noteQuotaClamp(relayInfo, clamp)
 
-	if userQuota < quota {
-		return fmt.Errorf("user quota is not enough, user quota: %s, need quota: %s", logger.FormatQuota(userQuota), logger.FormatQuota(quota))
+	// P0-5：余额校验按模型赠金资格分账户进行：eligible 检查 bonus+paid；
+	// 非 eligible 仅允许 paid，不足时返回明确错误，不得静默扣减赠金。
+	paid, bonus, _, accountErr := model.GetUserAccountBalances(relayInfo.UserId)
+	if accountErr != nil {
+		return accountErr
+	}
+	if WalletBonusEligible(relayInfo) {
+		if paid+bonus < quota {
+			return fmt.Errorf("user quota is not enough, user quota: %s, need quota: %s", logger.FormatQuota(paid+bonus), logger.FormatQuota(quota))
+		}
+	} else if paid < quota {
+		return fmt.Errorf("%w, need quota: %s", ErrModelBonusNotSupported, logger.FormatQuota(quota))
 	}
 
 	if !token.UnlimitedQuota && token.RemainQuota < quota {
@@ -227,8 +233,9 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
 
-	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
-		logger.LogError(ctx, "error settling billing: "+err.Error())
+	settleErr := SettleBilling(ctx, relayInfo, quota)
+	if settleErr != nil {
+		logger.LogError(ctx, "error settling billing: "+settleErr.Error())
 	}
 
 	logModel := modelName
@@ -241,6 +248,12 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
 	attachQuotaSaturation(ctx, relayInfo, other)
+	// P1-2：钱包净份额记录与推荐返利（仅结算成功且 paid 净消费 > 0）
+	if relayInfo.BillingSource == BillingSourceWallet && settleErr == nil {
+		if paidNet := FillWalletCostLogInfo(other, relayInfo.UserId, RelayWalletCostRefs(relayInfo)); paidNet > 0 {
+			recordAffiliateRewardOrLog(relayInfo.UserId, paidNet, "relay", relayInfo.RequestId)
+		}
+	}
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.InputTokens,
@@ -355,8 +368,9 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
 
-	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
-		logger.LogError(ctx, "error settling billing: "+err.Error())
+	settleErr := SettleBilling(ctx, relayInfo, quota)
+	if settleErr != nil {
+		logger.LogError(ctx, "error settling billing: "+settleErr.Error())
 	}
 
 	logModel := relayInfo.OriginModelName
@@ -369,6 +383,12 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
 	attachQuotaSaturation(ctx, relayInfo, other)
+	// P1-2：钱包净份额记录与推荐返利（仅结算成功且 paid 净消费 > 0）
+	if relayInfo.BillingSource == BillingSourceWallet && settleErr == nil {
+		if paidNet := FillWalletCostLogInfo(other, relayInfo.UserId, RelayWalletCostRefs(relayInfo)); paidNet > 0 {
+			recordAffiliateRewardOrLog(relayInfo.UserId, paidNet, "relay", relayInfo.RequestId)
+		}
+	}
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.PromptTokens,
@@ -435,11 +455,41 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 			relayInfo.SubscriptionPostDelta += delta
 		}
 	} else {
-		// Wallet
+		// Wallet：差额结算写账本（幂等键 = request_id + settle / settle_refund）。
+		// P0-5：扣减与退款均按模型赠金资格确定账户顺序/份额（与预扣一致）。
+		entry := model.LedgerEntry{
+			UserId:        relayInfo.UserId,
+			Account:       model.AccountPaid,
+			Reason:        model.LedgerReasonBillingSettle,
+			ReferenceType: "relay",
+			ReferenceId:   relayInfo.RequestId,
+			RequestId:     relayInfo.RequestId,
+		}
 		if quota > 0 {
-			err = model.DecreaseUserQuota(relayInfo.UserId, quota, false)
+			entry.Delta = quota
+			// 幂等键包含差额：同一 request 同方向可能按不同差额多次结算（WSS 分段计费）
+			entry.IdempotencyKey = fmt.Sprintf("billing:settle:%s:%d", relayInfo.RequestId, quota)
+			var ledgerResult *model.LedgerResult
+			ledgerResult, err = model.DebitQuota(entry, WalletDebitOrder(relayInfo)...)
+			if err != nil {
+				if !WalletBonusEligible(relayInfo) && errors.Is(err, model.ErrLedgerInsufficientBalance) {
+					return result, ErrModelBonusNotSupported
+				}
+				return result, err
+			}
+			if !ledgerResult.Replayed {
+				relayInfo.WalletDebitShares = appendShares(relayInfo.WalletDebitShares, ledgerResult)
+			}
 		} else {
-			err = model.IncreaseUserQuota(relayInfo.UserId, -quota, false)
+			refund := -quota
+			if shares := splitFromRelayShares(relayInfo.WalletDebitShares, refund); len(shares) > 0 {
+				entry.IdempotencyKey = fmt.Sprintf("billing:settle_refund:%s:%d", relayInfo.RequestId, refund)
+				_, err = model.CreditQuotaShares(entry, shares)
+			} else {
+				entry.Delta = refund
+				entry.IdempotencyKey = fmt.Sprintf("billing:settle_refund:%s:%d", relayInfo.RequestId, refund)
+				_, err = model.CreditQuota(entry)
+			}
 		}
 		if err != nil {
 			return result, err

@@ -224,6 +224,12 @@ export interface LogOtherData {
   po?: string[]
   billing_source?: string
   group?: string
+  // TokenMix P1-2: net wallet account split for this request (quota units)
+  wallet_quota_deducted?: number
+  wallet_cost?: {
+    paid?: number
+    bonus?: number
+  }
   stream_status?: {
     status?: string
     end_reason?: string

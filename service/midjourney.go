@@ -100,9 +100,31 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		return true
 	}
 
-	if err := model.IncreaseUserQuota(task.UserId, quota, false); err != nil {
+	entry := model.LedgerEntry{
+		UserId:         task.UserId,
+		Account:        model.AccountPaid,
+		Delta:          quota,
+		Reason:         model.LedgerReasonTaskRefund,
+		ReferenceType:  "mj_task",
+		ReferenceId:    task.MjId,
+		RequestId:      task.MjId,
+		IdempotencyKey: "midjourney:refund:" + task.MjId,
+	}
+	entry.SetMetadata(map[string]interface{}{
+		"fallback_account": "paid",
+		"reason":           reason,
+	})
+	result, err := model.CreditQuota(entry)
+	if err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("退还 Midjourney 用户额度失败 task %s: %s", task.MjId, err.Error()))
 		return false
+	}
+	if result.Replayed {
+		task.Quota = 0
+		if err := task.UpdateBillingState(); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("Midjourney 退款重放后清除 quota 失败 task %s: %s", task.MjId, err.Error()))
+		}
+		return true
 	}
 
 	if task.TokenId > 0 {

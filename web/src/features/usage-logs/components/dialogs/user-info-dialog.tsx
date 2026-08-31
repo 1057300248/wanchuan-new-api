@@ -23,6 +23,7 @@ import { toast } from 'sonner'
 
 import { Dialog } from '@/components/dialog'
 import { Label } from '@/components/ui/label'
+import { SHOW_LEGACY_AFFILIATE_QUOTA } from '@/lib/chuanapi-flags'
 import { formatQuota, formatCompactNumber } from '@/lib/format'
 
 import { getUserInfo } from '../../api'
@@ -138,7 +139,9 @@ export function UserInfoDialog({
           {/* Invitation Info */}
           {(userInfo.aff_code ||
             userInfo.aff_count !== undefined ||
-            (userInfo.aff_quota !== undefined && userInfo.aff_quota > 0)) && (
+            (SHOW_LEGACY_AFFILIATE_QUOTA &&
+              userInfo.aff_quota !== undefined &&
+              userInfo.aff_quota > 0)) && (
             <>
               <div className='grid grid-cols-2 gap-4'>
                 {userInfo.aff_code && (
@@ -155,12 +158,14 @@ export function UserInfoDialog({
                 )}
               </div>
 
-              {userInfo.aff_quota !== undefined && userInfo.aff_quota > 0 && (
-                <InfoItem
-                  label={t('Invitation Quota')}
-                  value={formatQuota(userInfo.aff_quota)}
-                />
-              )}
+              {SHOW_LEGACY_AFFILIATE_QUOTA &&
+                userInfo.aff_quota !== undefined &&
+                userInfo.aff_quota > 0 && (
+                  <InfoItem
+                    label={t('Invitation Quota')}
+                    value={formatQuota(userInfo.aff_quota)}
+                  />
+                )}
             </>
           )}
 

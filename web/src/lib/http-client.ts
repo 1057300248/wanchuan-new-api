@@ -128,6 +128,18 @@ api.interceptors.response.use(
       } else if (!skipErrorHandler) {
         toast.error(t('Session expired!'))
       }
+    } else if (status === 429 && !skipErrorHandler) {
+      const retryAfterValue = Number.parseInt(
+        String(error?.response?.headers?.['retry-after'] ?? ''),
+        10
+      )
+      const retryAfterHint =
+        Number.isFinite(retryAfterValue) && retryAfterValue > 0
+          ? ` (${Math.ceil(retryAfterValue)}s)`
+          : ''
+      toast.error(
+        `${t('Too many requests')}. ${t('Please wait a moment before trying again.')}${retryAfterHint}`
+      )
     } else if (!skipErrorHandler) {
       const messageKey = getServerErrorMessageKey(error)
       const message = messageKey

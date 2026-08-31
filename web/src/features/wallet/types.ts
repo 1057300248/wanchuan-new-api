@@ -40,7 +40,6 @@ export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
 }
 export type StripePaymentResponse = ApiResponse<{ pay_link: string }>
 export type AffiliateCodeResponse = ApiResponse<string>
-export type AffiliateTransferResponse = ApiResponse
 export type CreemPaymentResponse = ApiResponse<{ checkout_url: string }>
 export type WaffoPaymentResponse = ApiResponse<
   { payment_url?: string } | string
@@ -213,14 +212,6 @@ export interface AmountRequest {
 }
 
 /**
- * Affiliate quota transfer request
- */
-export interface AffiliateTransferRequest {
-  /** Quota amount to transfer */
-  quota: number
-}
-
-/**
  * User wallet data
  */
 export interface UserWalletData {
@@ -234,14 +225,12 @@ export interface UserWalletData {
   used_quota: number
   /** Total request count */
   request_count: number
-  /** Affiliate quota (pending rewards) */
-  aff_quota: number
-  /** Total affiliate quota earned (historical) */
-  aff_history_quota: number
   /** Number of successful affiliate invites */
   aff_count: number
   /** User group */
   group: string
+  /** User role: 1=user, 10=admin, 100=root */
+  role?: number
 }
 
 /**
@@ -286,4 +275,92 @@ export interface BillingHistoryResponse {
  */
 export interface CompleteOrderRequest {
   trade_no: string
+}
+
+// ============================================================================
+// 独立 Dashboard 复用的钱包、账本与推荐赠金类型
+// ============================================================================
+
+/**
+ * Wallet rules summary (configuration snapshot returned by the wallet API)
+ */
+export interface WalletRules {
+  signup_bonus_enabled: boolean
+  signup_bonus_quota: number
+  referral_bonus_enabled: boolean
+  referral_bonus_rate: number
+  referral_bonus_freeze_days: number
+}
+
+/**
+ * Wallet account summary (paid / bonus)
+ */
+export interface WalletSummary {
+  total: number
+  paid: number
+  bonus: number
+  rules: WalletRules
+}
+
+/**
+ * Single balance ledger row
+ */
+export interface WalletLedgerRow {
+  id: number
+  account: 'paid' | 'bonus'
+  delta: number
+  before: number
+  after: number
+  total_before: number
+  total_after: number
+  reason: string
+  reference_type: string
+  reference: string
+  request_id: string
+  operator_id: number
+  created_at: number
+}
+
+export interface WalletLedgerPage {
+  items: WalletLedgerRow[]
+  total: number
+}
+
+/**
+ * Referral overview
+ */
+export interface ReferralOverview {
+  aff_code: string
+  inviter_id: number
+  invite_count: number
+  pending_count: number
+  eligible_paid_quota: number
+  pending_bonus_quota: number
+  credited_bonus_quota: number
+  total_bonus_quota: number
+  reward_rate: number
+  freeze_days: number
+  rules: WalletRules
+}
+
+/**
+ * Affiliate reward record
+ */
+export interface AffiliateRewardItem {
+  id: number
+  user_id: number
+  source_user_id: number
+  eligible_paid_quota: number
+  reward_quota: number
+  status: 'pending' | 'credited' | 'cancelled'
+  unlock_at: number
+  reference_type: string
+  reference_id: string
+  created_at: number
+  unlocked_at: number
+}
+
+export interface AffiliateRewardPage {
+  items: AffiliateRewardItem[]
+  total: number
 }

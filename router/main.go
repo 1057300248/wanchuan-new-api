@@ -13,6 +13,7 @@ import (
 )
 
 func SetRouter(router *gin.Engine, assets WebAssets) {
+	router.Use(middleware.CORS())
 	SetApiRouter(router)
 	SetDashboardRouter(router)
 	SetRelayRouter(router)
@@ -20,6 +21,7 @@ func SetRouter(router *gin.Engine, assets WebAssets) {
 	SetVideoRouter(router)
 	SetTaskRouter(router)
 	pluginDispatcher := SetPluginRouter(router)
+	SetLlmsRouter(router)
 	frontendBaseUrl := os.Getenv("FRONTEND_BASE_URL")
 	if common.IsMasterNode && frontendBaseUrl != "" {
 		frontendBaseUrl = ""

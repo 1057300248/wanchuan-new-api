@@ -178,6 +178,23 @@ func CriticalRateLimit() func(c *gin.Context) {
 	return defNext
 }
 
+// CriticalRateLimitByScope isolates unrelated critical flows while preserving
+// the configured critical limit and duration. This prevents background session
+// refreshes, logout, or OAuth traffic from exhausting the password-login bucket.
+func CriticalRateLimitByScope(scope string) func(c *gin.Context) {
+	if !common.CriticalRateLimitEnable {
+		return defNext
+	}
+	if scope == "" {
+		return CriticalRateLimit()
+	}
+	return rateLimitFactory(
+		common.CriticalRateLimitNum,
+		common.CriticalRateLimitDuration,
+		"CT:"+scope,
+	)
+}
+
 func UserCriticalRateLimit(scope string) func(c *gin.Context) {
 	if !common.CriticalRateLimitEnable {
 		return defNext

@@ -59,6 +59,7 @@ export function useSidebarData(): SidebarData {
             title: t('Playground'),
             url: '/playground',
             icon: FlaskConical,
+            external: true,
           },
           {
             title: t('Chat'),
@@ -127,7 +128,7 @@ export function useSidebarData(): SidebarData {
           },
           {
             title: t('Models'),
-            url: '/models/metadata',
+            url: '/model-management/metadata',
             icon: Box,
           },
           {
