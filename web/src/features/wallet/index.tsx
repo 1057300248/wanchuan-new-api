@@ -26,7 +26,6 @@ import { LedgerTable } from './components/ledger-table'
 import { RedemptionCard } from './components/redemption-card'
 import { ReferralHistoryCard } from './components/referral-history-card'
 import { ReferralRewardsCard } from './components/referral-rewards-card'
-import { WalletAccountsCard } from './components/wallet-accounts-card'
 import { WalletStatsCard } from './components/wallet-stats-card'
 import {
   useAffiliate,
@@ -81,8 +80,12 @@ export function Wallet(_props: WalletProps) {
       <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
       <SectionPageLayout.Content>
         <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
-          <WalletStatsCard user={user} loading={userLoading} />
-          <WalletAccountsCard summary={summary} loading={walletLoading} />
+          <WalletStatsCard
+            user={user}
+            summary={summary}
+            userLoading={userLoading}
+            summaryLoading={walletLoading}
+          />
           <RedemptionCard
             enabled={topupInfo?.enable_redemption === true}
             onRedeemed={refreshBalances}

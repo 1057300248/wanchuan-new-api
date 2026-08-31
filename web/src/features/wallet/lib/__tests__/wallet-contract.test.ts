@@ -32,7 +32,7 @@ describe('ChuanAPI wallet surface contract', () => {
   test('wallet page composes only safe funding surfaces', () => {
     const wallet = source('index.tsx')
     for (const component of [
-      'WalletAccountsCard',
+      'WalletStatsCard',
       'RedemptionCard',
       'ReferralRewardsCard',
       'ReferralHistoryCard',
@@ -41,8 +41,21 @@ describe('ChuanAPI wallet surface contract', () => {
       expect(wallet).toMatch(new RegExp(`<${component}`))
     }
     expect(wallet).not.toMatch(
-      /RechargeFormCard|SubscriptionPlansCard|AffiliateRewardsCard|BillingHistoryDialog|TransferDialog/
+      /WalletAccountsCard|RechargeFormCard|SubscriptionPlansCard|AffiliateRewardsCard|BillingHistoryDialog|TransferDialog/
     )
+  })
+
+  test('wallet summary exposes only paid, bonus, usage, and request metrics', () => {
+    const stats = source('components/wallet-stats-card.tsx')
+    for (const label of [
+      'Paid Balance',
+      'Bonus Balance',
+      'Total Usage',
+      'API Requests',
+    ]) {
+      expect(stats).toContain(`t('${label}')`)
+    }
+    expect(stats).not.toMatch(/t\('(Current Balance|Total Balance)'\)/)
   })
 
   test('ledger filters expose paid and bonus but never affiliate', () => {
