@@ -767,7 +767,7 @@ func applyLedgerTx(tx *gorm.DB, entry LedgerEntry, key string, op ledgerOpKind, 
 	// rc.26 对齐 wallet 上限：任何入账后用户三账户总额不得超过 JS 安全整数域。
 	// 负向（扣款/结算退款为负 delta 场景由 debit 路径处理）不受此约束。
 	if op == ledgerOpCredit && totalAfter > common.MaxWalletQuota {
-		return nil, fmt.Errorf("wallet quota exceeds %d", common.MaxWalletQuota)
+		return nil, fmt.Errorf("%w: max %d", ErrWalletQuotaLimitExceeded, common.MaxWalletQuota)
 	}
 	createdAt := common.GetTimestamp()
 	operation := BalanceLedgerOperation{

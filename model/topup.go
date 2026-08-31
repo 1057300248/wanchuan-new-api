@@ -81,7 +81,6 @@ func ValidateTopUpQuotaCapacity(userId int, creditedQuota int) error {
 	return nil
 }
 
-
 // creditTopUpQuota preserves the upstream wallet ceiling while routing every
 // successful top-up through the paid account and balance ledger. CreditQuotaTx
 // holds the user row lock; returning an error after its result rolls the entire
@@ -93,9 +92,12 @@ func creditTopUpQuota(tx *gorm.DB, entry LedgerEntry) (*LedgerResult, error) {
 	result, err := CreditQuotaTx(tx, entry)
 
 	if err != nil {
+		if errors.Is(err, ErrWalletQuotaLimitExceeded) {
+			return nil, ErrTopUpQuotaLimitExceeded
+		}
 		return nil, err
 	}
-	if result.TotalAfter >= common.MaxWalletQuota {
+	if result.TotalAfter > common.MaxWalletQuota {
 		return nil, ErrTopUpQuotaLimitExceeded
 	}
 	return result, nil
@@ -267,7 +269,6 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		if err != nil {
 			return err
 		}
-
 
 		quota, err = common.WalletQuotaFromDecimalStrict(
 
@@ -590,7 +591,6 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 		if err != nil {
 			return err
 		}
-
 
 		// Creem 直接使用 Amount 作为充值额度（整数）
 		quota, err = common.WalletQuotaFromDecimalStrict(decimal.NewFromInt(topUp.Amount))

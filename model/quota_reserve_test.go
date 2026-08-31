@@ -21,6 +21,7 @@ func createReserveTestUser(t *testing.T, quota int) User {
 		Group:       "default",
 		AuthVersion: 1,
 		Quota:       quota,
+		QuotaPaid:   quota,
 		AffCode:     "reserve-aff-" + common.GetRandomString(8),
 	}
 	require.NoError(t, DB.Create(&user).Error)
@@ -231,17 +232,35 @@ func TestBatchReserveUserQuotaFailsClosedWhileTokenBatchSurvives(t *testing.T) {
 	assert.Equal(t, 7, reloadedToken.UsedQuota)
 }
 
-func TestBatchUpdateAccumulatesTwoMaximumRequestCharges(t *testing.T) {
+func TestLedgerAccumulatesTwoMaximumRequestCharges(t *testing.T) {
 	truncateTables(t)
-	resetBatchUpdateTestState(t)
-	common.BatchUpdateEnabled = true
+	setupLedgerTestState(t)
 
 	user := createReserveTestUser(t, common.MaxQuota*2+100)
-	require.NoError(t, DecreaseUserQuota(user.Id, common.MaxQuota, false))
-	require.NoError(t, DecreaseUserQuota(user.Id, common.MaxQuota, false))
+	for _, requestID := range []string{"max-charge-1", "max-charge-2"} {
+		result, err := DebitQuota(LedgerEntry{
+			UserId:         user.Id,
+			Delta:          common.MaxQuota,
+			Reason:         LedgerReasonBillingPreConsume,
+			ReferenceType:  "test",
+			ReferenceId:    requestID,
+			RequestId:      requestID,
+			IdempotencyKey: "test:" + requestID,
+		}, AccountPaid)
+		require.NoError(t, err)
+		require.False(t, result.Replayed)
+	}
 
-	batchUpdate()
-	assert.Equal(t, 100, getUserQuotaFromDB(t, user.Id))
+	balances := getUserBalances(t, user.Id)
+	assert.Equal(t, 100, balances.QuotaPaid)
+	assert.Equal(t, 100, balances.Quota)
+	assertQuotaInvariant(t, balances)
+
+	var ledgerCount int64
+	require.NoError(t, DB.Model(&BalanceLedger{}).
+		Where("user_id = ? AND reason = ?", user.Id, LedgerReasonBillingPreConsume).
+		Count(&ledgerCount).Error)
+	assert.EqualValues(t, 2, ledgerCount)
 }
 
 func TestBatchUpdateAccumulatorSaturatesOverflow(t *testing.T) {

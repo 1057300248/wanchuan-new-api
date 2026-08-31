@@ -162,7 +162,6 @@ func TestManageUserDeleteReturnsImmediatelyAndUnknownActionFails(t *testing.T) {
 	assert.Equal(t, common.UserStatusEnabled, unchanged.Status)
 }
 
-
 func TestManageUserQuotaRespectsWalletCeiling(t *testing.T) {
 	db := setupManageUserTestDB(t)
 	user := model.User{
@@ -182,6 +181,7 @@ func TestManageUserQuotaRespectsWalletCeiling(t *testing.T) {
 	assert.Contains(t, recorder.Body.String(), `"success":false`)
 	require.NoError(t, db.First(&updated, user.Id).Error)
 	assert.Equal(t, common.MaxWalletQuota-1, updated.Quota)
+}
 
 func TestManageUserSubtractQuotaDebitsLedgerAmount(t *testing.T) {
 	db := setupManageUserTestDB(t)
