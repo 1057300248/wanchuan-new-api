@@ -525,7 +525,14 @@ func (t *Task) UpdateQuota() error {
 // falls back to INSERT ON CONFLICT when the WHERE-guarded UPDATE matches
 // zero rows, which silently bypasses the CAS guard.
 func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
-	result := DB.Model(t).Where("status = ?", fromStatus).Select("*").Updates(t)
+	// GORM may write timestamps and serialized fields back to the value passed to
+	// Updates. Use a snapshot so polling observers can safely read the in-memory
+	// task while the conditional database update is running.
+	updateSnapshot := *t
+	result := DB.Model(&Task{}).
+		Where("id = ? AND status = ?", t.ID, fromStatus).
+		Select("*").
+		Updates(&updateSnapshot)
 	if result.Error != nil {
 		return false, result.Error
 	}
