@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/extension"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/clickhouse"
@@ -284,14 +285,30 @@ func InitLogDB() (err error) {
 
 var userQuotaColumns = []string{"quota", "used_quota", "aff_quota", "aff_history"}
 
+// chuanapiWalletQuotaColumns 是万川钱包的三个子账户余额列。它们是资金真源
+// （users.quota 只是三者合计的兼容镜像），且注册表的 quota 回填 DataStep
+// （chuanapi -> BackfillLegacyQuotaAccountsWithDB）每次启动都会把 64 位
+// users.quota 回填进 quota_paid，32 位列会在非严格模式下静默截断。因此这三列的
+// 检查不受 SKIP_64BIT_QUOTA_SCHEMA_CHECK 影响，不提供任何绕过方式。
+var chuanapiWalletQuotaColumns = []string{"quota_paid", "quota_bonus", "quota_affiliate"}
+
 // ensureUserQuotaColumns rejects a legacy 32-bit wallet schema before any
 // migrations run. The 64-bit-only build intentionally does not auto-upgrade
 // an existing wallet; operators must migrate it explicitly before starting.
+//
+// 官方四列沿用 SKIP_64BIT_QUOTA_SCHEMA_CHECK 的既有语义；万川钱包三列无条件检查。
+//
+// 由此产生一处与官方不同的语义，运维必须知道：SKIP_64BIT_QUOTA_SCHEMA_CHECK=true
+// 不再是「本检查一定不阻断启动」。校验钱包列必须先读到 schema，因此探测失败
+// （ColumnTypes 报错）在 SKIP=true 下也会阻断启动——无法确认钱包列位宽时
+// fail-closed 才是安全默认值。
+//
+// 列缺失视为通过（内层循环不匹配即跳过），这是官方既有行为，且是必要的：
+// rc.26 库升级到 rc.30 时 quota_paid 等列尚不存在，由随后的 AutoMigrate 建出。
+// 建出的列是否为 64 位取决于 model 侧的 GORM tag，因此 tag 必须显式 bigint
+// （见 model/user.go:94-104）——否则本检查放行、AutoMigrate 建出 32 位列，
+// 下一次启动才失败。
 func ensureUserQuotaColumns(db *gorm.DB, dbType common.DatabaseType) error {
-	if common.GetEnvOrDefaultBool("SKIP_64BIT_QUOTA_SCHEMA_CHECK", false) {
-		common.SysLog("SKIP_64BIT_QUOTA_SCHEMA_CHECK=true; skipping user quota schema check")
-		return nil
-	}
 	if db == nil || dbType == common.DatabaseTypeSQLite {
 		return nil
 	}
@@ -302,14 +319,29 @@ func ensureUserQuotaColumns(db *gorm.DB, dbType common.DatabaseType) error {
 	if err != nil {
 		return fmt.Errorf("failed to inspect users schema: %w", err)
 	}
-	for _, expected := range userQuotaColumns {
+	if common.GetEnvOrDefaultBool("SKIP_64BIT_QUOTA_SCHEMA_CHECK", false) {
+		common.SysLog("SKIP_64BIT_QUOTA_SCHEMA_CHECK=true; skipping user quota schema check for " +
+			strings.Join(userQuotaColumns, ", ") +
+			"; ChuanAPI wallet columns (" + strings.Join(chuanapiWalletQuotaColumns, ", ") +
+			") are always verified and cannot be skipped")
+	} else if err := assertUserColumns64Bit(columnTypes, dbType, userQuotaColumns, ""); err != nil {
+		return err
+	}
+	return assertUserColumns64Bit(columnTypes, dbType, chuanapiWalletQuotaColumns,
+		"; this is a ChuanAPI wallet balance column and SKIP_64BIT_QUOTA_SCHEMA_CHECK does not apply to it")
+}
+
+// assertUserColumns64Bit 校验 users 表中指定列均为 64 位整型；hint 追加到错误消息，
+// 用于区分官方列与不可跳过的万川钱包列。
+func assertUserColumns64Bit(columnTypes []gorm.ColumnType, dbType common.DatabaseType, expectedColumns []string, hint string) error {
+	for _, expected := range expectedColumns {
 		for _, actual := range columnTypes {
 			if !strings.EqualFold(actual.Name(), expected) {
 				continue
 			}
 			dataType := actual.DatabaseTypeName()
 			if !is64BitIntegerType(dbType, dataType) {
-				return fmt.Errorf("users.%s uses %s; 32-bit is not supported", expected, dataType)
+				return fmt.Errorf("users.%s uses %s; 32-bit is not supported%s", expected, dataType, hint)
 			}
 		}
 	}
@@ -342,7 +374,42 @@ func migrateDB() error {
 		return err
 	}
 
-	err := DB.AutoMigrate(
+	registry := extension.Default()
+	models := mainAutoMigrateModels(registry)
+
+	err := DB.AutoMigrate(models...)
+	if err != nil {
+		return err
+	}
+	if err := InitializeUserAuthVersions(); err != nil {
+		return err
+	}
+	if err := InitializeExternalIdentityClaims(); err != nil {
+		return err
+	}
+	// 扩展数据迁移的执行点：核心模型迁移与外部身份初始化之后、SQLite
+	// SubscriptionPlan 分支之前，与此前 migrateQuotaAccounts() 的位置一致。
+	if err := registry.RunStepsFor(DB, extension.PhaseAfterCoreData); err != nil {
+		return err
+	}
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
+			return err
+		}
+	} else {
+		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mainAutoMigrateModels returns the exact model sequence for migrateDB's single
+// AutoMigrate call. Keeping construction behind this tested boundary prevents
+// a registry refactor from silently moving, dropping, or reordering a core
+// model while still allowing extensions to append models after the core list.
+func mainAutoMigrateModels(registry *extension.Registry) []any {
+	coreModels := []any{
 		&Channel{},
 		&Token{},
 		&User{},
@@ -378,47 +445,11 @@ func migrateDB() error {
 		&SystemTaskLock{},
 		&CasbinRule{},
 		&AuthzRole{},
-		&BalanceLedgerOperation{},
-		&BalanceLedger{},
-		&ModelBonusEligibleAudit{},
-		&AffiliateReward{},
-		&AffiliateRewardReconcileState{},
-	)
-	if err != nil {
-		return err
 	}
-	if err := InitializeUserAuthVersions(); err != nil {
-		return err
+	if registry == nil {
+		return coreModels
 	}
-	if err := InitializeExternalIdentityClaims(); err != nil {
-		return err
-	}
-	if err := migrateQuotaAccounts(); err != nil {
-		return err
-	}
-	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
-		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
-			return err
-		}
-	} else {
-		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// migrateQuotaAccounts 启动时执行的资金账户迁移（幂等）：
-// 旧用户三账户均为 0 且 quota 非 0 时，一次性把旧 quota 回填到 paid 账户。
-func migrateQuotaAccounts() error {
-	affected, err := BackfillLegacyQuotaAccounts()
-	if err != nil {
-		return err
-	}
-	if affected > 0 {
-		common.SysLog(fmt.Sprintf("legacy quota backfilled to paid account for %d users", affected))
-	}
-	return nil
+	return append(coreModels, registry.ModelsFor(extension.PhaseAfterCoreModels)...)
 }
 
 func migrateLOGDB() error {

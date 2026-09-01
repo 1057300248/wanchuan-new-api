@@ -166,6 +166,26 @@ type TaskBillingContext struct {
 	TieredSnapshot  *billingexpr.BillingSnapshot `json:"tiered_snapshot,omitempty"`
 }
 
+// EffectiveRequestID 解析提交请求的账本引用（预扣费 reference），供账本与返利对账使用。
+//
+// 优先级：
+//  1. Execution.RequestID —— RC30 及之后创建的任务的唯一真源。它在提交时一次性
+//     写入，之后不再改写。
+//  2. RequestId —— 历史字段，仅为让 RC30 之前持久化的任务仍能对账而保留；
+//     任何情况下都不会优先于 Execution.RequestID。
+//
+// 两者同时非空且不一致时选 Execution.RequestID：此时残留的 legacy 值属于旧写入
+// 路径，而 Execution 快照才与实际写入的账本条目匹配。两者均为空时返回 ""。
+func (p *TaskPrivateData) EffectiveRequestID() string {
+	if p == nil {
+		return ""
+	}
+	if p.Execution != nil && p.Execution.RequestID != "" {
+		return p.Execution.RequestID
+	}
+	return p.RequestId
+}
+
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）
 // 旧数据没有 UpstreamTaskID 时，TaskID 本身就是上游 ID
 func (t *Task) GetUpstreamTaskID() string {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/moneyport"
 )
 
 // ---------------------------------------------------------------------------
@@ -23,6 +24,21 @@ type FundingSource interface {
 	// Refund 退还所有预扣费
 	Refund() error
 }
+
+// 编译期能力断言。BillingSession 按 moneyport 能力而非实现类型分派，
+// 这里锁定各资金来源的能力集：
+//   - 钱包按账户拆分扣减，故提供扣减回执；预扣状态由令牌额度反映，
+//     不报告独立的待退预扣（否则 needsRefund 语义会改变）。
+//   - 订阅不按账户拆分，故无回执；但可能在 tokenConsumed=0 时仍有预扣，
+//     故必须报告待退预扣。
+var (
+	_ FundingSource                        = (*WalletFunding)(nil)
+	_ moneyport.ReservableFunding          = (*WalletFunding)(nil)
+	_ moneyport.FundingReceipt             = (*WalletFunding)(nil)
+	_ FundingSource                        = (*SubscriptionFunding)(nil)
+	_ moneyport.ReservableFunding          = (*SubscriptionFunding)(nil)
+	_ moneyport.OutstandingReserveReporter = (*SubscriptionFunding)(nil)
+)
 
 // ---------------------------------------------------------------------------
 // WalletFunding — 钱包资金来源实现
@@ -208,9 +224,19 @@ func (w *WalletFunding) debitSharesInOrder() []model.LedgerShare {
 	return out
 }
 
-// DebitShares 返回累计扣减份额（供异步任务持久化，退款按原账户精确退回）。
-func (w *WalletFunding) DebitShares() []model.LedgerShare {
-	return w.debitSharesInOrder()
+// Receipt 返回累计扣减份额（预扣 + 追扣 + 结算补扣），供异步任务持久化，
+// 退款按原账户精确退回。实现 moneyport.FundingReceipt：每次调用重新构造切片，
+// 调用方改写返回值不会影响 debitShares。
+func (w *WalletFunding) Receipt() []moneyport.AccountShare {
+	shares := w.debitSharesInOrder()
+	if len(shares) == 0 {
+		return nil
+	}
+	out := make([]moneyport.AccountShare, 0, len(shares))
+	for _, share := range shares {
+		out = append(out, moneyport.AccountShare{Account: string(share.Account), Amount: share.Amount})
+	}
+	return out
 }
 
 // Reserve 补充预扣份额（幂等键已含目标预扣值）。
@@ -256,6 +282,11 @@ type SubscriptionFunding struct {
 	amount         int64 // 预扣的订阅额度（subConsume）
 	subscriptionId int
 	preConsumed    int64
+	// reserveDelta 通过 Reserve 累计补充预扣的增量；预扣基线是 amount，
+	// 故当前预扣目标为 amount + reserveDelta。它只负责把 Reserve 的绝对目标值
+	// 换算回订阅侧需要的增量：与它同值的 BillingSession.extraReserved 才是
+	// RelayInfo 同步与补充预扣回滚的唯一依据，两者不得叠加。
+	reserveDelta int
 	// 以下字段在 PreConsume 成功后填充，供 RelayInfo 同步使用
 	AmountTotal     int64
 	AmountUsedAfter int64
@@ -288,6 +319,38 @@ func (s *SubscriptionFunding) Settle(delta int) error {
 		return nil
 	}
 	return model.PostConsumeUserSubscriptionDelta(s.subscriptionId, int64(delta))
+}
+
+// Reserve 把订阅预扣抬升到 target（实现 moneyport.ReservableFunding）。
+// 订阅侧只接受增量，因此这里把绝对目标值换算成相对当前预扣基线的差额；
+// target 不高于基线（重复或下降的目标）时为 no-op，不触碰订阅用量。
+func (s *SubscriptionFunding) Reserve(target int) error {
+	reserved := int(s.amount) + s.reserveDelta
+	if target <= reserved {
+		return nil
+	}
+	delta := target - reserved
+	if err := model.PostConsumeUserSubscriptionDelta(s.subscriptionId, int64(delta)); err != nil {
+		return err
+	}
+	s.reserveDelta += delta
+	return nil
+}
+
+// OutstandingReserve 返回订阅侧仍处于预扣状态的额度
+// （实现 moneyport.OutstandingReserveReporter）。
+// 订阅可能在令牌额度未扣减（tokenConsumed=0）时仍已预扣，
+// BillingSession 据此判断失败请求是否仍需退还预扣费。
+//
+// 只报告 preConsumed，不含 reserveDelta，这两点缺一不可：
+//  1. 归属：reserveDelta 由 BillingSession.extraReserved 独立回滚
+//     （见 BillingSession.Refund），而 Refund() 只退 preConsumed。
+//     把它计入会让同一笔额度被两条退款路径各算一次。
+//  2. 无遗漏：reserveDelta 只在 BillingSession.Reserve 成功时增长，
+//     而那里 tokenConsumed 同步增长同一个 delta，故 reserveDelta>0 时
+//     needsRefundLocked 早已在 tokenConsumed>0 处返回 true。
+func (s *SubscriptionFunding) OutstandingReserve() int {
+	return int(s.preConsumed)
 }
 
 func (s *SubscriptionFunding) Refund() error {

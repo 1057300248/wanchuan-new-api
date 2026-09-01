@@ -15,9 +15,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/QuantumNous/new-api/chuanapi"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/controller"
+	"github.com/QuantumNous/new-api/extension"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
@@ -133,8 +135,10 @@ func main() {
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
 
-	// Ledger-driven affiliate reward reconciliation and maturity.
-	service.StartAffiliateRewardMaintenance()
+	// Register ledger-driven affiliate reward reconciliation and maturity as a
+	// scheduled system task. The system-task runner provides DB-lease dedup,
+	// run history and durable failure state across multiple master instances.
+	service.RegisterAffiliateRewardMaintenanceSystemTask()
 
 	// Report this process as a system instance so the System Info page can show
 	// all currently alive nodes in multi-instance deployments.
@@ -203,10 +207,13 @@ func main() {
 	InjectGoogleAnalytics()
 
 	// 设置路由
-	router.SetRouter(server, router.WebAssets{
+	if err := router.SetRouter(server, router.WebAssets{
 		BuildFS:   buildFS,
 		IndexPage: indexPage,
-	})
+	}); err != nil {
+		common.FatalLog("failed to initialize routes: " + err.Error())
+		return
+	}
 	var port = os.Getenv("PORT")
 	if port == "" {
 		port = strconv.Itoa(*common.Port)
@@ -310,6 +317,21 @@ func InitResources() error {
 	service.InitHttpClient()
 
 	service.InitTokenEncoders()
+
+	// Compose the extension registry before any migration runs: model.InitDB
+	// reads extension.Default() to append extension models to the core
+	// AutoMigrate call and to run extension data steps. Registration is
+	// build-time and explicit, so a wiring failure here must abort startup
+	// rather than silently start with an unmigrated extension schema.
+	registry := extension.NewRegistry()
+	if err := chuanapi.Register(registry); err != nil {
+		common.FatalLog("failed to register chuanapi extension: " + err.Error())
+		return err
+	}
+	if err := extension.SetDefault(registry); err != nil {
+		common.FatalLog("failed to install extension registry: " + err.Error())
+		return err
+	}
 
 	// Initialize SQL Database
 	err = model.InitDB()

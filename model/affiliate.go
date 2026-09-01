@@ -26,8 +26,8 @@ type AffiliateReward struct {
 	Id                int    `json:"id" gorm:"primaryKey;autoIncrement"`
 	UserId            int    `json:"user_id" gorm:"not null;index:idx_reward_user_status,priority:1"`
 	SourceUserId      int    `json:"source_user_id" gorm:"not null;index"`
-	EligiblePaidQuota int    `json:"eligible_paid_quota" gorm:"not null"`
-	RewardQuota       int    `json:"reward_quota" gorm:"not null"`
+	EligiblePaidQuota int    `json:"eligible_paid_quota" gorm:"type:bigint;not null"`
+	RewardQuota       int    `json:"reward_quota" gorm:"type:bigint;not null"`
 	Status            string `json:"status" gorm:"type:varchar(16);not null;index:idx_reward_user_status,priority:2"`
 	UnlockAt          int64  `json:"unlock_at" gorm:"bigint;not null;index"`
 	ReferenceType     string `json:"reference_type" gorm:"type:varchar(64);not null"`
@@ -209,8 +209,8 @@ func affiliateRewardCostRefsTx(tx *gorm.DB, reward *AffiliateReward) ([][2]strin
 		return nil, false, nil
 	}
 	refs = refs[:0]
-	if task.PrivateData.RequestId != "" {
-		refs = append(refs, [2]string{"relay", task.PrivateData.RequestId})
+	if reqID := task.PrivateData.EffectiveRequestID(); reqID != "" {
+		refs = append(refs, [2]string{"relay", reqID})
 	}
 	refs = append(refs, [2]string{"task", task.TaskID})
 	return refs, true, nil

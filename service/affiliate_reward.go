@@ -155,8 +155,8 @@ func TaskWalletCostRefs(task *model.Task) [][2]string {
 		return nil
 	}
 	var refs [][2]string
-	if task.PrivateData.RequestId != "" {
-		refs = append(refs, [2]string{"relay", task.PrivateData.RequestId})
+	if reqID := task.PrivateData.EffectiveRequestID(); reqID != "" {
+		refs = append(refs, [2]string{"relay", reqID})
 	}
 	if task.TaskID != "" {
 		refs = append(refs, [2]string{"task", task.TaskID})

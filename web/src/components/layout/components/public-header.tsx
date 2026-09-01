@@ -27,10 +27,10 @@ import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { extensionPublicHomeUrl } from '@/extensions'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { useTopNavLinks } from '@/hooks/use-top-nav-links'
-import { CHUANAPI_PUBLIC_HOME } from '@/lib/chuanapi-navigation'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -69,7 +69,7 @@ export function PublicHeader(props: PublicHeaderProps) {
     showLanguageSwitcher = true,
     logo: customLogo,
     siteName: customSiteName,
-    homeUrl = CHUANAPI_PUBLIC_HOME,
+    homeUrl = extensionPublicHomeUrl(),
     showAuthButtons = true,
     showNotifications = true,
   } = props

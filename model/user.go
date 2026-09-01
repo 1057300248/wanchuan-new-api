@@ -91,17 +91,17 @@ type User struct {
 	TelegramId       string                     `json:"telegram_id" gorm:"column:telegram_id;index"`
 	VerificationCode string                     `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
 	AccessToken      *string                    `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
-	Quota            int                        `json:"quota" gorm:"type:int;default:0"`
-	QuotaPaid        int                        `json:"quota_paid" gorm:"type:int;default:0;column:quota_paid"`   // 付费账户余额（quota units），quota 为三账户合计的兼容镜像
-	QuotaBonus       int                        `json:"quota_bonus" gorm:"type:int;default:0;column:quota_bonus"` // 赠金账户余额（本阶段仅建账户与账本）
-	QuotaAffiliate   int                        `json:"-" gorm:"type:int;default:0;column:quota_affiliate"`       // 仅保留给历史迁移与对账
-	UsedQuota        int                        `json:"used_quota" gorm:"type:int;default:0;column:used_quota"`   // used quota
-	RequestCount     int                        `json:"request_count" gorm:"type:int;default:0;"`                 // request number
+	Quota            int                        `json:"quota" gorm:"type:bigint;default:0"`
+	QuotaPaid        int                        `json:"quota_paid" gorm:"type:bigint;default:0;column:quota_paid"`   // 付费账户余额（quota units），quota 为三账户合计的兼容镜像
+	QuotaBonus       int                        `json:"quota_bonus" gorm:"type:bigint;default:0;column:quota_bonus"` // 赠金账户余额（本阶段仅建账户与账本）
+	QuotaAffiliate   int                        `json:"-" gorm:"type:bigint;default:0;column:quota_affiliate"`       // 仅保留给历史迁移与对账
+	UsedQuota        int                        `json:"used_quota" gorm:"type:bigint;default:0;column:used_quota"`   // used quota
+	RequestCount     int                        `json:"request_count" gorm:"type:int;default:0;"`                    // request number
 	Group            string                     `json:"group" gorm:"type:varchar(64);default:'default'"`
 	AffCode          string                     `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
 	AffCount         int                        `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
-	AffQuota         int                        `json:"-" gorm:"type:int;default:0;column:aff_quota"`   // 仅保留给历史迁移
-	AffHistoryQuota  int                        `json:"-" gorm:"type:int;default:0;column:aff_history"` // 仅保留给历史审计
+	AffQuota         int                        `json:"-" gorm:"type:bigint;default:0;column:aff_quota"`   // 仅保留给历史迁移
+	AffHistoryQuota  int                        `json:"-" gorm:"type:bigint;default:0;column:aff_history"` // 仅保留给历史审计
 	InviterId        int                        `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
 	DeletedAt        gorm.DeletedAt             `gorm:"index"`
 	LinuxDOId        string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`
@@ -1272,7 +1272,6 @@ func GetUserSetting(id int, fromDB bool) (settingMap dto.UserSetting, err error)
 	}
 	return userBase.GetSetting(), nil
 }
-
 
 //func GetRootUserEmail() (email string) {
 //	DB.Model(&User{}).Where("role = ?", common.RoleRootUser).Select("email").Find(&email)

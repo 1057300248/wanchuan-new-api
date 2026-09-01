@@ -134,7 +134,7 @@ func FindTaskByRequestId(userId int, requestId string) (*Task, bool, error) {
 		return nil, false, err
 	}
 	for _, task := range tasks {
-		if task != nil && task.PrivateData.RequestId == requestId {
+		if task != nil && task.PrivateData.EffectiveRequestID() == requestId {
 			return task, true, nil
 		}
 	}

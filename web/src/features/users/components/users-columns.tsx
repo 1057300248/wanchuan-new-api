@@ -30,7 +30,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { SHOW_LEGACY_AFFILIATE_QUOTA } from '@/lib/chuanapi-flags'
+import { SHOW_LEGACY_AFFILIATE_QUOTA } from '@/extensions/chuanapi/flags'
 import { formatQuota, formatTimestamp } from '@/lib/format'
 
 import {

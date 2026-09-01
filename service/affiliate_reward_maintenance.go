@@ -1,9 +1,9 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"fmt"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -16,44 +16,71 @@ const (
 	affiliateMaintenanceBatch    = 200
 )
 
-var (
-	affiliateMaintenanceOnce    sync.Once
-	affiliateMaintenanceRunning atomic.Bool
-)
-
-// StartAffiliateRewardMaintenance continuously reconciles durable paid-ledger
-// costs into idempotent reward records and matures due rewards. It runs on the
-// master node so reward delivery does not depend on a caller opening Wallet.
-func StartAffiliateRewardMaintenance() {
-	affiliateMaintenanceOnce.Do(func() {
-		if !common.IsMasterNode {
-			return
-		}
-		go func() {
-			runAffiliateRewardMaintenanceOnce()
-			ticker := time.NewTicker(affiliateMaintenanceInterval)
-			defer ticker.Stop()
-			for range ticker.C {
-				runAffiliateRewardMaintenanceOnce()
-			}
-		}()
-	})
+// AffiliateRewardMaintenanceResult is persisted on every scheduled run. It is
+// intentionally compact: detailed per-reference retry state remains in
+// affiliate_reward_reconcile_states, while system_tasks records the run-level
+// outcome operators need for scheduling and failure diagnosis.
+type AffiliateRewardMaintenanceResult struct {
+	ReconcileCandidates int `json:"reconcile_candidates"`
+	MaturedUsers        int `json:"matured_users"`
+	MaturedRewards      int `json:"matured_rewards"`
 }
 
-func runAffiliateRewardMaintenanceOnce() {
-	if !affiliateMaintenanceRunning.CompareAndSwap(false, true) {
-		return
+type affiliateRewardMaintenanceHandler struct{}
+
+func (affiliateRewardMaintenanceHandler) Type() string {
+	return model.SystemTaskTypeAffiliateRewardMaintenance
+}
+
+// Matured rewards must continue to be revalidated even when creation of new
+// rewards is disabled, so this scheduled handler itself is always enabled.
+func (affiliateRewardMaintenanceHandler) Enabled() bool { return true }
+
+func (affiliateRewardMaintenanceHandler) Interval() time.Duration {
+	return affiliateMaintenanceInterval
+}
+
+func (affiliateRewardMaintenanceHandler) NewPayload() any { return nil }
+
+func (affiliateRewardMaintenanceHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	result, err := runAffiliateRewardMaintenance(ctx)
+	status := model.SystemTaskStatusSucceeded
+	errorMessage := ""
+	if err != nil {
+		status = model.SystemTaskStatusFailed
+		errorMessage = err.Error()
 	}
-	defer affiliateMaintenanceRunning.Store(false)
+	if finishErr := model.FinishSystemTask(task.TaskID, runnerID, status, result, errorMessage); finishErr != nil {
+		logSystemTaskLockError(ctx, task, finishErr)
+	}
+}
+
+// RegisterAffiliateRewardMaintenanceSystemTask registers the maintenance job
+// before StartSystemTaskRunner. Registration is explicit (no init hook), so the
+// composition root controls whether the ChuanAPI behavior is present.
+func RegisterAffiliateRewardMaintenanceSystemTask() {
+	RegisterSystemTaskHandler(affiliateRewardMaintenanceHandler{})
+}
+
+func runAffiliateRewardMaintenance(ctx context.Context) (AffiliateRewardMaintenanceResult, error) {
+	result := AffiliateRewardMaintenanceResult{}
+	errs := make([]error, 0)
 
 	if common.AffiliateRewardEnabled {
 		cutoff := common.GetTimestamp() - int64(affiliateReconcileGrace/time.Second)
 		candidates, err := model.ListAffiliatePaidCostCandidates(cutoff, affiliateMaintenanceBatch)
 		if err != nil {
-			common.SysError("affiliate reward reconciliation query failed: " + err.Error())
+			errs = append(errs, fmt.Errorf("affiliate reward reconciliation query failed: %w", err))
 		} else {
 			for _, candidate := range candidates {
-				reconcileAffiliatePaidCost(candidate)
+				if err := ctx.Err(); err != nil {
+					errs = append(errs, err)
+					break
+				}
+				result.ReconcileCandidates++
+				if err := reconcileAffiliatePaidCostWithError(candidate); err != nil {
+					errs = append(errs, err)
+				}
 			}
 		}
 	}
@@ -63,17 +90,32 @@ func runAffiliateRewardMaintenanceOnce() {
 	// either mature or are cancelled.
 	userIds, err := model.ListDueAffiliateRewardUserIds(common.GetTimestamp(), affiliateMaintenanceBatch)
 	if err != nil {
-		common.SysError("affiliate reward maturity query failed: " + err.Error())
-		return
+		errs = append(errs, fmt.Errorf("affiliate reward maturity query failed: %w", err))
+		return result, errors.Join(errs...)
 	}
 	for _, userId := range userIds {
-		if _, err := model.MatureAffiliateRewards(userId); err != nil {
-			common.SysError(fmt.Sprintf("affiliate reward maturity failed: user=%d err=%s", userId, err.Error()))
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
+			break
 		}
+		matured, err := model.MatureAffiliateRewards(userId)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("affiliate reward maturity failed: user=%d: %w", userId, err))
+			continue
+		}
+		result.MaturedUsers++
+		result.MaturedRewards += matured
 	}
+	return result, errors.Join(errs...)
 }
 
 func reconcileAffiliatePaidCost(candidate model.AffiliatePaidCostCandidate) {
+	if err := reconcileAffiliatePaidCostWithError(candidate); err != nil {
+		common.SysError(err.Error())
+	}
+}
+
+func reconcileAffiliatePaidCostWithError(candidate model.AffiliatePaidCostCandidate) error {
 	canonicalType, canonicalId, paidQuota, retry, err := resolveAffiliatePaidCost(candidate)
 	state := model.AffiliateRewardReconcileState{
 		SourceUserId:           candidate.SourceUserId,
@@ -91,9 +133,9 @@ func reconcileAffiliatePaidCost(candidate model.AffiliatePaidCostCandidate) {
 			state.LastError = "canonical task is not settled yet"
 		}
 		if saveErr := model.SaveAffiliateRewardReconcileState(state); saveErr != nil {
-			common.SysError("save affiliate reconciliation retry state failed: " + saveErr.Error())
+			return fmt.Errorf("save affiliate reconciliation retry state failed: %w", saveErr)
 		}
-		return
+		return nil
 	}
 
 	if paidQuota > 0 && canonicalType != "" && canonicalId != "" {
@@ -101,14 +143,15 @@ func reconcileAffiliatePaidCost(candidate model.AffiliatePaidCostCandidate) {
 			state.Status = model.AffiliateReconcileRetry
 			state.LastError = err.Error()
 			if saveErr := model.SaveAffiliateRewardReconcileState(state); saveErr != nil {
-				common.SysError("save affiliate reconciliation error state failed: " + saveErr.Error())
+				return fmt.Errorf("save affiliate reconciliation error state failed: %w", saveErr)
 			}
-			return
+			return nil
 		}
 	}
 	if err := model.SaveAffiliateRewardReconcileState(state); err != nil {
-		common.SysError("save affiliate reconciliation processed state failed: " + err.Error())
+		return fmt.Errorf("save affiliate reconciliation processed state failed: %w", err)
 	}
+	return nil
 }
 
 func resolveAffiliatePaidCost(candidate model.AffiliatePaidCostCandidate) (string, string, int, bool, error) {

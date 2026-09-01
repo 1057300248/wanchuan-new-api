@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/moneyport"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 
@@ -129,12 +130,11 @@ func TestWalletFundingEligibleBonusFirstOrder(t *testing.T) {
 
 	// bonus 优先：800 来自 bonus，200 来自 paid（paid 剩 800）
 	assertUserBalances(t, userID, 0, 800, 0)
-	shares := funding.DebitShares()
-	require.Len(t, shares, 2)
-	assert.Equal(t, model.AccountBonus, shares[0].Account)
-	assert.Equal(t, 800, shares[0].Amount)
-	assert.Equal(t, model.AccountPaid, shares[1].Account)
-	assert.Equal(t, 200, shares[1].Amount)
+	// 扣减回执走 moneyport.FundingReceipt 能力（异步任务持久化的生产路径）
+	assert.Equal(t, []moneyport.AccountShare{
+		{Account: string(model.AccountBonus), Amount: 800},
+		{Account: string(model.AccountPaid), Amount: 200},
+	}, funding.Receipt())
 
 	// 结算退款：按份额比例退回（实际 400 -> 退 600）
 	require.NoError(t, funding.Settle(-600))

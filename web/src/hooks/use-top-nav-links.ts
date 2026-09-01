@@ -19,19 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import type { TopNavLink } from '@/components/layout/types'
+import { applyNavigationExtensions } from '@/extensions'
 import { useStatus } from '@/hooks/use-status'
-import { CHUANAPI_PUBLIC_HOME } from '@/lib/chuanapi-navigation'
 import { parseHeaderNavModulesFromStatus } from '@/lib/nav-modules'
 import { useAuthStore } from '@/stores/auth-store'
-
-export type TopNavLink = {
-  title: string
-  href: string
-  disabled?: boolean
-  requiresAuth?: boolean
-  external?: boolean
-  documentNavigation?: boolean
-}
 
 /**
  * Generate top navigation links based on HeaderNavModules configuration from backend /api/status
@@ -68,8 +60,7 @@ export function useTopNavLinks(): TopNavLink[] {
   if (modules?.home !== false) {
     links.push({
       title: t('Home'),
-      href: CHUANAPI_PUBLIC_HOME,
-      documentNavigation: true,
+      href: '/',
     })
   }
 
@@ -121,5 +112,8 @@ export function useTopNavLinks(): TopNavLink[] {
     })
   }
 
-  return links
+  return applyNavigationExtensions(links, {
+    isAuthenticated: isAuthed,
+    status: (status as Record<string, unknown> | null) ?? null,
+  })
 }

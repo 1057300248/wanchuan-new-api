@@ -23,11 +23,10 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
+import { extensionPublicHomeUrl } from '@/extensions'
+import { CHUANAPI_BRAND_LOGO } from '@/extensions/chuanapi'
 import { useStatus } from '@/hooks/use-status'
-import { CHUANAPI_PUBLIC_HOME } from '@/lib/chuanapi-navigation'
 import { cn } from '@/lib/utils'
-
-const brandLogo = '/brand/wanchuan-mark-v2.png'
 
 type SystemBrandProps = {
   defaultName?: string
@@ -58,7 +57,7 @@ export function SystemBrand(props: SystemBrandProps) {
   if (variant === 'inline') {
     return (
       <a
-        href={CHUANAPI_PUBLIC_HOME}
+        href={extensionPublicHomeUrl()}
         aria-label={t('Go to home')}
         className={cn(
           'text-foreground inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-sm font-medium transition-colors outline-none select-none',
@@ -67,7 +66,7 @@ export function SystemBrand(props: SystemBrandProps) {
       >
         <div className='flex size-5 items-center justify-center overflow-hidden rounded-md'>
           <img
-            src={brandLogo}
+            src={CHUANAPI_BRAND_LOGO}
             alt={t('Logo')}
             className='size-full object-contain p-0.5 invert dark:invert-0'
           />
@@ -87,7 +86,7 @@ export function SystemBrand(props: SystemBrandProps) {
         >
           <div className='flex aspect-square size-8 items-center justify-center overflow-hidden rounded-lg'>
             <img
-              src={brandLogo}
+              src={CHUANAPI_BRAND_LOGO}
               alt={t('Logo')}
               className='size-full object-contain p-1 invert dark:invert-0'
             />

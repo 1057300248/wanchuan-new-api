@@ -82,8 +82,8 @@ type BalanceLedgerOperation struct {
 	UserId             int    `json:"user_id" gorm:"not null;index"`
 	Operation          string `json:"operation" gorm:"type:varchar(16);not null"`
 	OperationSignature string `json:"operation_signature" gorm:"type:char(64);not null"`
-	TotalBefore        int    `json:"total_before" gorm:"not null"`
-	TotalAfter         int    `json:"total_after" gorm:"not null"`
+	TotalBefore        int    `json:"total_before" gorm:"type:bigint;not null"`
+	TotalAfter         int    `json:"total_after" gorm:"type:bigint;not null"`
 	CreatedAt          int64  `json:"created_at" gorm:"bigint;autoCreateTime;index"`
 }
 
@@ -97,11 +97,11 @@ type BalanceLedger struct {
 	OperationId    int    `json:"operation_id" gorm:"not null;index"`
 	UserId         int    `json:"user_id" gorm:"not null;index:idx_ledger_user_time,priority:1"`
 	Account        string `json:"account" gorm:"type:varchar(16);not null"`
-	Delta          int    `json:"delta" gorm:"not null"`
-	BalanceBefore  int    `json:"balance_before" gorm:"not null"`
-	BalanceAfter   int    `json:"balance_after" gorm:"not null"`
-	TotalBefore    int    `json:"total_before" gorm:"not null"`
-	TotalAfter     int    `json:"total_after" gorm:"not null"`
+	Delta          int    `json:"delta" gorm:"type:bigint;not null"`
+	BalanceBefore  int    `json:"balance_before" gorm:"type:bigint;not null"`
+	BalanceAfter   int    `json:"balance_after" gorm:"type:bigint;not null"`
+	TotalBefore    int    `json:"total_before" gorm:"type:bigint;not null"`
+	TotalAfter     int    `json:"total_after" gorm:"type:bigint;not null"`
 	Reason         string `json:"reason" gorm:"type:varchar(64);not null"`
 	ReferenceType  string `json:"reference_type" gorm:"type:varchar(64);index:idx_ledger_ref,priority:1"`
 	ReferenceId    string `json:"reference_id" gorm:"type:varchar(128);index:idx_ledger_ref,priority:2"`
@@ -871,13 +871,26 @@ func RefreshUserQuotaCache(userId int, _ int) {
 // 幂等回填与对账
 // ---------------------------------------------------------------------------
 
-// BackfillLegacyQuotaAccounts 将旧版 users.quota 余额一次性回填到 paid 账户：
+// BackfillLegacyQuotaAccounts 将旧版 users.quota 余额一次性回填到 paid 账户，
+// 使用包级 DB。保留给不持有 *gorm.DB 句柄的既有调用方。
+func BackfillLegacyQuotaAccounts() (int64, error) {
+	return BackfillLegacyQuotaAccountsWithDB(DB)
+}
+
+// BackfillLegacyQuotaAccountsWithDB 将旧版 users.quota 余额一次性回填到 paid 账户：
 // 仅处理三个账户均为 0 且 quota 非 0 的存量用户，bonus/affiliate 保持 0。
 // 每个用户在同一事务内写 migration operation + ledger 明细 + paid 余额，重复执行
 // 无副作用（已回填用户不再满足条件，幂等头也有全局唯一键）。
-func BackfillLegacyQuotaAccounts() (int64, error) {
+//
+// db 由调用方显式注入，候选查询与每个用户的事务都只走这一个句柄，从不回退到包级
+// DB。迁移注册表在 AutoMigrate 之后用同一个句柄驱动本步骤，因此在包级 DB 尚未赋值
+// 或与迁移目标库不同的情况下（迁移编排、测试夹具）语义仍然正确。
+func BackfillLegacyQuotaAccountsWithDB(db *gorm.DB) (int64, error) {
+	if db == nil {
+		return 0, errors.New("backfill legacy quota accounts: database must not be nil")
+	}
 	var candidates []User
-	if err := DB.Select("id", "quota", "quota_paid", "quota_bonus", "quota_affiliate").
+	if err := db.Select("id", "quota", "quota_paid", "quota_bonus", "quota_affiliate").
 		Where("quota_paid = 0 AND quota_bonus = 0 AND quota_affiliate = 0 AND quota <> 0").
 		Order("id asc").Find(&candidates).Error; err != nil {
 		return 0, err
@@ -885,7 +898,7 @@ func BackfillLegacyQuotaAccounts() (int64, error) {
 	var affected int64
 	for _, candidate := range candidates {
 		migrated := false
-		err := DB.Transaction(func(tx *gorm.DB) error {
+		err := db.Transaction(func(tx *gorm.DB) error {
 			var user User
 			if err := lockForUpdate(tx).Where("id = ?", candidate.Id).First(&user).Error; err != nil {
 				return err

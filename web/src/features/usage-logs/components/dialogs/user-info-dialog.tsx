@@ -23,7 +23,7 @@ import { toast } from 'sonner'
 
 import { Dialog } from '@/components/dialog'
 import { Label } from '@/components/ui/label'
-import { SHOW_LEGACY_AFFILIATE_QUOTA } from '@/lib/chuanapi-flags'
+import { SHOW_LEGACY_AFFILIATE_QUOTA } from '@/extensions/chuanapi/flags'
 import { formatQuota, formatCompactNumber } from '@/lib/format'
 
 import { getUserInfo } from '../../api'
