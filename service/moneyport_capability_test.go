@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // ledgerRow 是账本条目中与计费语义相关的字段投影。
@@ -212,6 +213,83 @@ func TestSubscriptionReserveUsesTargetDeltaWithoutDoubleCount(t *testing.T) {
 	assert.EqualValues(t, 8_000, relayInfo.SubscriptionAmountUsedAfterPreConsume)
 	assert.Equal(t, 8_000, relayInfo.FinalPreConsumedQuota)
 	assert.Equal(t, subID, relayInfo.SubscriptionId)
+}
+
+// ---------------------------------------------------------------------------
+// Reserve 生命周期：资金失败 -> 令牌回滚 -> 同目标重试真实扣款
+// ---------------------------------------------------------------------------
+
+// TestReserveFundingFailureRollsBackTokenAndRetryDebitsFresh 锁定 token-first
+// reserve 顺序的生命周期不变量：
+//  1. 资金 reserve 失败时已扣令牌额度必须回滚，会话状态不前进；
+//  2. 失败的尝试不落账本（无幂等键占位）；
+//  3. 充值后同目标重试必须发生真实扣款，不得被旧幂等键重放吞掉；
+//  4. 全程钱包余额 / 令牌额度 / 账本一致，无免费用量。
+func TestReserveFundingFailureRollsBackTokenAndRetryDebitsFresh(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID = 8814, 7702
+	const tokenKey = "moneyport-reserve-retry-token"
+	const initialPaid = 4_000
+	seedBonusUser(t, userID, 0, initialPaid)
+	seedToken(t, tokenID, userID, tokenKey, 10_000)
+
+	const requestID = "moneyport-reserve-retry-1"
+	funding := &WalletFunding{
+		userId:     userID,
+		requestId:  requestID,
+		debitOrder: []model.LedgerAccount{model.AccountPaid},
+	}
+	// 生产路径：初始预扣 2_000 已完成（钱包 4_000 -> 2_000）。
+	require.NoError(t, funding.PreConsume(2_000))
+
+	session := &BillingSession{
+		relayInfo: &relaycommon.RelayInfo{
+			UserId:   userID,
+			TokenId:  tokenID,
+			TokenKey: tokenKey,
+		},
+		funding:          funding,
+		preConsumedQuota: 2_000,
+		tokenConsumed:    2_000,
+	}
+
+	// 1. 同目标补充预扣 3_000：钱包仅剩 2_000，资金失败。
+	err := session.Reserve(5_000)
+	require.Error(t, err, "余额不足必须失败，不得产生负余额欠费")
+	assert.ErrorIs(t, err, ErrModelBonusNotSupported,
+		"paid-only 扣减顺序下余额不足映射为赠金不可用哨兵错误")
+
+	// 2. 先令牌后资金：资金失败必须回滚已扣令牌，钱包分文未动。
+	assert.Equal(t, 10_000, getTokenRemainQuota(t, tokenID), "令牌额度必须回滚")
+	assert.Equal(t, initialPaid-2_000, getUserBalances(t, userID).QuotaPaid, "资金失败不得扣减钱包")
+	assert.Equal(t, 2_000, session.preConsumedQuota)
+	assert.Zero(t, session.extraReserved)
+	assert.Equal(t, []ledgerRow{
+		{Account: "paid", Delta: -2_000, Reason: model.LedgerReasonBillingPreConsume, IdempotencyKey: "billing:preconsume:" + requestID},
+	}, ledgerRowsFor(t, userID), "失败的 reserve 尝试不得留下账本条目")
+
+	// 3. 充值 +2_000（增量写入，保持 quota = paid + bonus 恒等式），同目标重试。
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", userID).Updates(map[string]any{
+		"quota":      gorm.Expr("quota + ?", 2_000),
+		"quota_paid": gorm.Expr("quota_paid + ?", 2_000),
+	}).Error)
+	require.NoError(t, session.Reserve(5_000), "同目标重试必须真实扣款，不得被旧幂等键重放吞掉")
+
+	assert.Equal(t, 7_000, getTokenRemainQuota(t, tokenID), "令牌扣减 3_000")
+	assert.Equal(t, initialPaid+2_000-2_000-3_000, getUserBalances(t, userID).QuotaPaid)
+	assert.Equal(t, []ledgerRow{
+		{Account: "paid", Delta: -2_000, Reason: model.LedgerReasonBillingPreConsume, IdempotencyKey: "billing:preconsume:" + requestID},
+		{Account: "paid", Delta: -3_000, Reason: model.LedgerReasonBillingReserve, IdempotencyKey: "billing:reserve:" + requestID + ":5000"},
+	}, ledgerRowsFor(t, userID))
+	assert.Equal(t, 5_000, session.preConsumedQuota)
+	assert.Equal(t, 3_000, session.extraReserved)
+	assert.Equal(t, 5_000, funding.consumed)
+
+	// 4. 达到目标后重复 Reserve 是 no-op：钱包 / 令牌 / 账本完全一致。
+	require.NoError(t, session.Reserve(5_000))
+	assert.Equal(t, 7_000, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, initialPaid-3_000, getUserBalances(t, userID).QuotaPaid)
 }
 
 // ---------------------------------------------------------------------------

@@ -157,13 +157,27 @@ type TaskPluginAuthorSnapshot struct {
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
 type TaskBillingContext struct {
-	ModelPrice      float64                      `json:"model_price,omitempty"`       // 模型单价
-	GroupRatio      float64                      `json:"group_ratio,omitempty"`       // 分组倍率
-	ModelRatio      float64                      `json:"model_ratio,omitempty"`       // 模型倍率
-	OtherRatios     map[string]float64           `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
-	OriginModelName string                       `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
-	PerCallBilling  bool                         `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
-	TieredSnapshot  *billingexpr.BillingSnapshot `json:"tiered_snapshot,omitempty"`
+	ModelPrice       float64                      `json:"model_price,omitempty"`        // 模型单价
+	GroupRatio       float64                      `json:"group_ratio,omitempty"`        // 分组倍率
+	ModelRatio       float64                      `json:"model_ratio,omitempty"`        // 模型倍率
+	OtherRatios      map[string]float64           `json:"other_ratios,omitempty"`       // 附加倍率（时长、分辨率等）
+	OriginModelName  string                       `json:"origin_model_name,omitempty"`  // 用户请求/逻辑模型身份（旧任务唯一身份来源，必须保留）
+	BillingModelName string                       `json:"billing_model_name,omitempty"` // 价格/倍率/赠金资格使用的计费模型身份
+	PerCallBilling   bool                         `json:"per_call_billing,omitempty"`   // 按次计费：跳过轮询阶段的差额结算
+	TieredSnapshot   *billingexpr.BillingSnapshot `json:"tiered_snapshot,omitempty"`
+}
+
+// EffectiveBillingModelName 返回任务的计费模型身份。
+// 新任务直接使用提交时持久化的 BillingModelName；旧任务（仅写入
+// OriginModelName 的历史数据）回退到 OriginModelName，保证老数据结算行为不变。
+func (c *TaskBillingContext) EffectiveBillingModelName() string {
+	if c == nil {
+		return ""
+	}
+	if c.BillingModelName != "" {
+		return c.BillingModelName
+	}
+	return c.OriginModelName
 }
 
 // EffectiveRequestID 解析提交请求的账本引用（预扣费 reference），供账本与返利对账使用。

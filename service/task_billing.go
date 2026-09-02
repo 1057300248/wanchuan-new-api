@@ -21,8 +21,8 @@ import (
 func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model.Task) {
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
-	// 支持任务仅按次计费
-	if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) {
+	// 支持任务仅按次计费（按计费模型身份判断，与价格口径一致）
+	if common.StringsContains(constant.TaskPricePatches, info.GetBillingModelName()) {
 		logContent = fmt.Sprintf("%s，按次计费", logContent)
 	} else {
 		var contents []string
@@ -74,7 +74,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	}
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
-		ModelName: info.OriginModelName,
+		ModelName: info.GetBillingModelName(),
 		TokenName: tokenName,
 		Quota:     info.PriceData.Quota,
 		Content:   logContent,
@@ -156,7 +156,7 @@ func taskDebitOrder(task *model.Task) []model.LedgerAccount {
 		}
 		return order
 	}
-	return WalletDebitOrder(&relaycommon.RelayInfo{OriginModelName: taskModelName(task)})
+	return WalletDebitOrder(&relaycommon.RelayInfo{BillingModelName: taskModelName(task)})
 }
 
 // appendTaskShares 把一次扣减结果的各账户份额累计进任务份额列表。
@@ -274,10 +274,14 @@ func taskBillingContextPriceData(bc *model.TaskBillingContext) *types.PriceData 
 	return priceData
 }
 
-// taskModelName 从 BillingContext 或 Properties 中获取模型名称。
+// taskModelName 返回任务的计费模型身份（BillingContext.BillingModelName 优先，
+// 旧任务回退 OriginModelName；再回退 Properties.OriginModelName）。
+// 计费重算、赠金资格与任务日志均使用该身份，保证与提交时价格口径一致。
 func taskModelName(task *model.Task) string {
-	if bc := task.PrivateData.BillingContext; bc != nil && bc.OriginModelName != "" {
-		return bc.OriginModelName
+	if bc := task.PrivateData.BillingContext; bc != nil {
+		if name := bc.EffectiveBillingModelName(); name != "" {
+			return name
+		}
 	}
 	return task.Properties.OriginModelName
 }

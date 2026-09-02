@@ -238,6 +238,84 @@ func TestWalletFundingReserveUsesSameOrder(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// 资金身份矩阵：OriginModelName != BillingModelName 时，价格与赠金资格
+// 必须同源（GetBillingModelName），UpstreamModelName 不得影响资金规则。
+// ---------------------------------------------------------------------------
+
+func TestWalletFinancialIdentityMatrix(t *testing.T) {
+	truncate(t)
+	seedBonusEligibleModel(t, "gemini-2.5-flash-thinking-8192", boolPtr(true))
+	seedBonusEligibleModel(t, "matrix-paid-only", boolPtr(false))
+	seedBonusEligibleModel(t, "matrix-alias-eligible", boolPtr(true))
+
+	cases := []struct {
+		name        string
+		origin      string
+		billing     string
+		upstream    string
+		bonusFirst  bool
+		description string
+	}{
+		{
+			name:        "reasoning suffix keeps origin as pricing alias",
+			origin:      "gemini-2.5-flash-thinking-8192",
+			upstream:    "gemini-2.5-flash",
+			bonusFirst:  true,
+			description: "带 reasoning 后缀的 origin 是计费别名：赠金资格跟随 origin（未显式设置 BillingModelName 时为回退身份）",
+		},
+		{
+			name:        "explicit billing identity overrides origin",
+			origin:      "matrix-paid-only",
+			billing:     "matrix-alias-eligible",
+			upstream:    "matrix-alias-eligible",
+			bonusFirst:  true,
+			description: "显式 BillingModelName（价格身份）决定赠金资格，origin 不再参与",
+		},
+		{
+			name:        "billing identity disables bonus even when origin eligible",
+			origin:      "matrix-alias-eligible",
+			billing:     "matrix-paid-only",
+			bonusFirst:  false,
+			description: "计费身份不可用赠金时，不得借用 origin 的赠金资格",
+		},
+		{
+			name:        "upstream routing identity never affects financial rules",
+			origin:      "matrix-alias-eligible",
+			upstream:    "matrix-paid-only",
+			bonusFirst:  true,
+			description: "UpstreamModelName 只是路由身份：上游模型不可用赠金不影响本请求的资金规则",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			relayInfo := &relaycommon.RelayInfo{
+				UserId:           917,
+				OriginModelName:  tc.origin,
+				BillingModelName: tc.billing,
+			}
+			if tc.upstream != "" {
+				relayInfo.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: tc.upstream}
+			}
+
+			order := WalletDebitOrder(relayInfo)
+			if tc.bonusFirst {
+				assert.Equal(t, []model.LedgerAccount{model.AccountBonus, model.AccountPaid}, order, tc.description)
+			} else {
+				assert.Equal(t, []model.LedgerAccount{model.AccountPaid}, order, tc.description)
+			}
+			assert.Equal(t, tc.bonusFirst, WalletBonusEligible(relayInfo),
+				"WalletBonusEligible 必须与 WalletDebitOrder 同源")
+		})
+	}
+}
+
+func TestWalletDebitOrderAndBonusEligibleHandleNilRelayInfo(t *testing.T) {
+	assert.Equal(t, []model.LedgerAccount{model.AccountPaid}, WalletDebitOrder(nil))
+	assert.False(t, WalletBonusEligible(nil))
+}
+
+// ---------------------------------------------------------------------------
 // NewBillingSession 预扣前校验（清晰错误 + 订阅回退不受影响）
 // ---------------------------------------------------------------------------
 

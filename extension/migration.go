@@ -63,6 +63,18 @@ func (s ModelSet) id() descriptorID {
 	return descriptorID{extension: s.Extension, name: s.Name}
 }
 
+// Host-executed phases. The production startup path (model.migrateDB /
+// mainAutoMigrateModels) executes exactly two (kind, phase) pairs:
+//
+//	ModelSet  -> ModelsFor(PhaseAfterCoreModels)   (appended to core AutoMigrate)
+//	DataStep  -> RunStepsFor(PhaseAfterCoreData)   (fixed point in migrateDB)
+//
+// validate() restricts each descriptor kind to its executed phase so the
+// registry can never accept a descriptor the host would silently never run.
+func (s ModelSet) executedPhase() MigrationPhase { return PhaseAfterCoreModels }
+
+func (s DataStep) executedPhase() MigrationPhase { return PhaseAfterCoreData }
+
 func (s ModelSet) validate() error {
 	id := s.id()
 	if s.Extension == "" {
@@ -73,6 +85,9 @@ func (s ModelSet) validate() error {
 	}
 	if !s.Phase.valid() {
 		return fmt.Errorf("extension: model set %s has invalid phase %s", id, s.Phase)
+	}
+	if s.Phase != s.executedPhase() {
+		return fmt.Errorf("extension: model set %s has phase %s: model sets may only register for %s, the only phase the host executes for AutoMigrate", id, s.Phase, s.executedPhase())
 	}
 	if len(s.Models) == 0 {
 		return fmt.Errorf("extension: model set %s has no models", id)
@@ -125,6 +140,9 @@ func (s DataStep) validate() error {
 	}
 	if !s.Phase.valid() {
 		return fmt.Errorf("extension: data step %s has invalid phase %s", id, s.Phase)
+	}
+	if s.Phase != s.executedPhase() {
+		return fmt.Errorf("extension: data step %s has phase %s: data steps may only register for %s, the only phase the host executes for RunStepsFor", id, s.Phase, s.executedPhase())
 	}
 	if s.Run == nil {
 		return fmt.Errorf("extension: data step %s has a nil Run function", id)

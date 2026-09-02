@@ -22,8 +22,14 @@ import (
 var ErrModelBonusNotSupported = errors.New("该模型不支持赠金支付，付费余额不足")
 
 // WalletDebitOrder 返回请求钱包计费使用的账户扣减顺序。
+// 资金身份必须使用 GetBillingModelName()（价格/倍率身份），禁止直接使用
+// OriginModelName：reasoning suffix / 模型映射可能让两者不同。
 func WalletDebitOrder(relayInfo *relaycommon.RelayInfo) []model.LedgerAccount {
-	if relayInfo != nil && model.IsModelBonusEligible(relayInfo.OriginModelName) {
+	billingModel := ""
+	if relayInfo != nil {
+		billingModel = relayInfo.GetBillingModelName()
+	}
+	if model.IsModelBonusEligible(billingModel) {
 		return []model.LedgerAccount{model.AccountBonus, model.AccountPaid}
 	}
 	return []model.LedgerAccount{model.AccountPaid}
@@ -31,7 +37,10 @@ func WalletDebitOrder(relayInfo *relaycommon.RelayInfo) []model.LedgerAccount {
 
 // WalletBonusEligible 返回请求模型是否允许使用赠金（与 WalletDebitOrder 同源）。
 func WalletBonusEligible(relayInfo *relaycommon.RelayInfo) bool {
-	return relayInfo != nil && model.IsModelBonusEligible(relayInfo.OriginModelName)
+	if relayInfo == nil {
+		return false
+	}
+	return model.IsModelBonusEligible(relayInfo.GetBillingModelName())
 }
 
 // LedgerSharesFromRelayShares 将 relay 层份额（无 model 依赖）转换为账本份额。

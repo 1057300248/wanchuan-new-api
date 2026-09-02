@@ -30,7 +30,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { SHOW_LEGACY_AFFILIATE_QUOTA } from '@/extensions/chuanapi/flags'
+import { extensionFlags } from '@/extensions'
 import { formatQuota, formatTimestamp } from '@/lib/format'
 
 import {
@@ -245,7 +245,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
                 <p className='text-xs'>{t('Number of users invited')}</p>
               </TooltipContent>
             </Tooltip>
-            {SHOW_LEGACY_AFFILIATE_QUOTA && (
+            {extensionFlags.showLegacyAffiliateQuota && (
               <Tooltip>
                 <TooltipTrigger
                   render={

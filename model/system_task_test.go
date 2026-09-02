@@ -350,3 +350,42 @@ func TestSystemTaskUpdatesRequireUnexpiredLock(t *testing.T) {
 	assert.Equal(t, SystemTaskStatusRunning, reloaded.Status)
 	assert.Empty(t, reloaded.State)
 }
+
+func TestUpdateSystemTaskStateIdenticalPayloadDoesNotLoseLock(t *testing.T) {
+	// SQLite reports matched rows for unchanged UPDATEs, so this case passed
+	// even before the fix. The MySQL regression is covered by
+	// TestUpdateSystemTaskStateIdenticalPayloadDoesNotLoseLockConfiguredDatabases.
+	truncateTables(t)
+	runUpdateSystemTaskStateIdenticalPayloadKeepsLock(t, SystemTaskTypeLogCleanup)
+}
+
+func TestUpdateSystemTaskStateIdenticalPayloadKeepsLockForAffiliateMaintenance(t *testing.T) {
+	// Affiliate reward maintenance writes its reconcile progress every poll
+	// tick; a run that makes no progress persists the identical state and must
+	// not be misread as lease loss (the #7135 MySQL no-op UPDATE regression).
+	truncateTables(t)
+	runUpdateSystemTaskStateIdenticalPayloadKeepsLock(t, SystemTaskTypeAffiliateRewardMaintenance)
+}
+
+func runUpdateSystemTaskStateIdenticalPayloadKeepsLock(t *testing.T, taskType string) {
+	t.Helper()
+	// Two persists in the same second so MySQL's unchanged-row UPDATE returns 0.
+
+	task, err := CreateSystemTask(taskType, nil, nil)
+	require.NoError(t, err)
+
+	runnerID := "runner-a"
+	_, claimed, err := ClaimSystemTask(task.ID, taskType, runnerID, common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	state := testSystemTaskState{Total: 10, Processed: 10, Progress: 100, Remaining: 0}
+	require.NoError(t, UpdateSystemTaskState(task.TaskID, runnerID, state))
+	require.NoError(t, UpdateSystemTaskState(task.TaskID, runnerID, state), "identical state persist must not be treated as lock loss")
+
+	require.NoError(t, FinishSystemTask(task.TaskID, runnerID, SystemTaskStatusSucceeded, map[string]int64{"deleted_count": 10}, ""))
+	finished, err := GetSystemTaskByTaskID(task.TaskID)
+	require.NoError(t, err)
+	require.NotNil(t, finished)
+	assert.Equal(t, SystemTaskStatusSucceeded, finished.Status)
+}

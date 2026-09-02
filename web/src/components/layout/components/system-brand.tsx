@@ -23,8 +23,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
-import { extensionPublicHomeUrl } from '@/extensions'
-import { CHUANAPI_BRAND_LOGO } from '@/extensions/chuanapi'
+import { extensionBrandLogo, extensionPublicHomeUrl } from '@/extensions'
 import { useStatus } from '@/hooks/use-status'
 import { cn } from '@/lib/utils'
 
@@ -66,7 +65,7 @@ export function SystemBrand(props: SystemBrandProps) {
       >
         <div className='flex size-5 items-center justify-center overflow-hidden rounded-md'>
           <img
-            src={CHUANAPI_BRAND_LOGO}
+            src={extensionBrandLogo()}
             alt={t('Logo')}
             className='size-full object-contain p-0.5 invert dark:invert-0'
           />
@@ -86,7 +85,7 @@ export function SystemBrand(props: SystemBrandProps) {
         >
           <div className='flex aspect-square size-8 items-center justify-center overflow-hidden rounded-lg'>
             <img
-              src={CHUANAPI_BRAND_LOGO}
+              src={extensionBrandLogo()}
               alt={t('Logo')}
               className='size-full object-contain p-1 invert dark:invert-0'
             />

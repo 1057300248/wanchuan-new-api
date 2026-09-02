@@ -23,7 +23,7 @@ import { toast } from 'sonner'
 
 import { Dialog } from '@/components/dialog'
 import { Label } from '@/components/ui/label'
-import { SHOW_LEGACY_AFFILIATE_QUOTA } from '@/extensions/chuanapi/flags'
+import { extensionFlags } from '@/extensions'
 import { formatQuota, formatCompactNumber } from '@/lib/format'
 
 import { getUserInfo } from '../../api'
@@ -139,7 +139,7 @@ export function UserInfoDialog({
           {/* Invitation Info */}
           {(userInfo.aff_code ||
             userInfo.aff_count !== undefined ||
-            (SHOW_LEGACY_AFFILIATE_QUOTA &&
+            (extensionFlags.showLegacyAffiliateQuota &&
               userInfo.aff_quota !== undefined &&
               userInfo.aff_quota > 0)) && (
             <>
@@ -158,7 +158,7 @@ export function UserInfoDialog({
                 )}
               </div>
 
-              {SHOW_LEGACY_AFFILIATE_QUOTA &&
+              {extensionFlags.showLegacyAffiliateQuota &&
                 userInfo.aff_quota !== undefined &&
                 userInfo.aff_quota > 0 && (
                   <InfoItem

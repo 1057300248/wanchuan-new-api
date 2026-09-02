@@ -16,13 +16,37 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { chuanapiNavigationExtension } from './chuanapi'
+import { setBrandExtension } from './brand'
+import {
+  chuanapiBrandExtension,
+  chuanapiI18nExtension,
+  chuanapiNavigationExtension,
+  SHOW_LEGACY_AFFILIATE_QUOTA,
+} from './chuanapi'
+import { setExtensionFlags } from './flags'
+import { setI18nExtensions } from './i18n'
 import { setNavigationExtensions } from './navigation'
 
+// Composition root for frontend extensions. Core code must consume extension
+// capabilities only through the generic accessors exported below, never by
+// importing a concrete `@/extensions/chuanapi/*` module.
 setNavigationExtensions([chuanapiNavigationExtension])
+setBrandExtension(chuanapiBrandExtension)
+setI18nExtensions([chuanapiI18nExtension])
+setExtensionFlags({ showLegacyAffiliateQuota: SHOW_LEGACY_AFFILIATE_QUOTA })
 
 export { applyNavigationExtensions, extensionPublicHomeUrl } from './navigation'
 export type {
   NavigationExtension,
   NavigationExtensionContext,
 } from './navigation'
+export { extensionBrandLogo } from './brand'
+export type { BrandExtension } from './brand'
+export { extensionFlags, isExtensionFeatureEnabled } from './flags'
+export type { ExtensionFeatureFlag, ExtensionFlags } from './flags'
+export { extensionI18nOverrides } from './i18n'
+export type {
+  ExtensionLocaleBundle,
+  ExtensionLocaleKey,
+  I18nExtension,
+} from './i18n'

@@ -54,6 +54,14 @@ func TestRegisterModelSetRejectsInvalidDescriptors(t *testing.T) {
 			wantErr: "extension: model set chuanapi/core has no models",
 		},
 		{
+			name: "phase the host never migrates",
+			set: ModelSet{
+				Extension: "chuanapi", Name: "core", Phase: PhaseAfterCoreData,
+				Models: []any{&modelA{}},
+			},
+			wantErr: "extension: model set chuanapi/core has phase after_core_data: model sets may only register for after_core_models, the only phase the host executes for AutoMigrate",
+		},
+		{
 			name: "nil model element",
 			set: ModelSet{
 				Extension: "chuanapi", Name: "core", Phase: PhaseAfterCoreModels,
@@ -107,6 +115,11 @@ func TestRegisterDataStepRejectsInvalidDescriptors(t *testing.T) {
 			step:    DataStep{Extension: "chuanapi", Name: "backfill", Phase: PhaseAfterCoreData},
 			wantErr: "extension: data step chuanapi/backfill has a nil Run function",
 		},
+		{
+			name:    "phase the host never executes",
+			step:    DataStep{Extension: "chuanapi", Name: "backfill", Phase: PhaseAfterCoreModels, Run: noopStep},
+			wantErr: "extension: data step chuanapi/backfill has phase after_core_models: data steps may only register for after_core_data, the only phase the host executes for RunStepsFor",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,7 +138,7 @@ func TestDuplicateMigrationIdentityIsRejectedWithoutOverwriting(t *testing.T) {
 		Extension: "chuanapi", Name: "core", Phase: PhaseAfterCoreModels, Models: []any{&modelA{}},
 	}))
 	err := reg.RegisterModelSet(ModelSet{
-		Extension: "chuanapi", Name: "core", Phase: PhaseAfterCoreData, Models: []any{&modelB{}},
+		Extension: "chuanapi", Name: "core", Phase: PhaseAfterCoreModels, Models: []any{&modelB{}},
 	})
 	require.Error(t, err)
 	assert.EqualError(t, err, "extension: duplicate model set chuanapi/core")
@@ -134,7 +147,8 @@ func TestDuplicateMigrationIdentityIsRejectedWithoutOverwriting(t *testing.T) {
 		Extension: "chuanapi", Name: "backfill", Phase: PhaseAfterCoreData, Run: noopStep,
 	}))
 	err = reg.RegisterDataStep(DataStep{
-		Extension: "chuanapi", Name: "backfill", Phase: PhaseAfterCoreModels, Run: noopStep,
+		Extension: "chuanapi", Name: "backfill", Phase: PhaseAfterCoreData,
+		Run: func(*gorm.DB) error { return errBoom },
 	})
 	require.Error(t, err)
 	assert.EqualError(t, err, "extension: duplicate data step chuanapi/backfill")
@@ -154,18 +168,15 @@ func TestDuplicateMigrationIdentityIsRejectedWithoutOverwriting(t *testing.T) {
 	}))
 }
 
-func TestMigrationOrderIsStableAcrossAndWithinPhases(t *testing.T) {
+func TestMigrationOrderIsStableWithinPhase(t *testing.T) {
 	reg := NewRegistry()
-	// Register in an order that does not match phase order, so the accessors
-	// have to sort by phase while preserving registration order inside a phase.
+	// Each descriptor kind is confined to its single host-executed phase, so
+	// ordering degenerates to registration order within that phase.
 	require.NoError(t, reg.RegisterModelSet(ModelSet{
-		Extension: "chuanapi", Name: "late-b", Phase: PhaseAfterCoreData, Models: []any{&modelB{}},
+		Extension: "chuanapi", Name: "late-b", Phase: PhaseAfterCoreModels, Models: []any{&modelB{}},
 	}))
 	require.NoError(t, reg.RegisterModelSet(ModelSet{
 		Extension: "chuanapi", Name: "early-a", Phase: PhaseAfterCoreModels, Models: []any{&modelA{}, &modelB{}},
-	}))
-	require.NoError(t, reg.RegisterModelSet(ModelSet{
-		Extension: "chuanapi", Name: "late-a", Phase: PhaseAfterCoreData, Models: []any{&modelA{}},
 	}))
 	require.NoError(t, reg.RegisterModelSet(ModelSet{
 		Extension: "chuanapi", Name: "early-b", Phase: PhaseAfterCoreModels, Models: []any{&modelB{}},
@@ -176,30 +187,28 @@ func TestMigrationOrderIsStableAcrossAndWithinPhases(t *testing.T) {
 	for _, set := range reg.ModelSets() {
 		names = append(names, set.Name)
 	}
-	assert.Equal(t, []string{"early-a", "early-b", "late-b", "late-a"}, names)
+	assert.Equal(t, []string{"late-b", "early-a", "early-b"}, names)
 
 	// ModelsFor flattens in registration order and preserves within-set order.
-	assert.Equal(t, []any{&modelA{}, &modelB{}, &modelB{}}, reg.ModelsFor(PhaseAfterCoreModels))
-	assert.Equal(t, []any{&modelB{}, &modelA{}}, reg.ModelsFor(PhaseAfterCoreData))
+	assert.Equal(t, []any{&modelB{}, &modelA{}, &modelB{}, &modelB{}}, reg.ModelsFor(PhaseAfterCoreModels))
+	// No model set can ever be registered for the data phase.
+	assert.Nil(t, reg.ModelsFor(PhaseAfterCoreData), "the host never migrates extension models outside after_core_models")
 	assert.Nil(t, reg.ModelsFor(MigrationPhase(0)), "unknown phase yields no models")
 
 	// Repeated reads are identical.
 	assert.Equal(t, reg.ModelsFor(PhaseAfterCoreModels), reg.ModelsFor(PhaseAfterCoreModels))
 }
 
-func TestStepOrderIsStableAcrossAndWithinPhases(t *testing.T) {
+func TestStepOrderIsStableWithinPhase(t *testing.T) {
 	reg := NewRegistry()
 	require.NoError(t, reg.RegisterDataStep(DataStep{
-		Extension: "chuanapi", Name: "data-1", Phase: PhaseAfterCoreData, Run: noopStep,
+		Extension: "chuanapi", Name: "third", Phase: PhaseAfterCoreData, Run: noopStep,
 	}))
 	require.NoError(t, reg.RegisterDataStep(DataStep{
-		Extension: "chuanapi", Name: "models-1", Phase: PhaseAfterCoreModels, Run: noopStep,
+		Extension: "chuanapi", Name: "first", Phase: PhaseAfterCoreData, Run: noopStep,
 	}))
 	require.NoError(t, reg.RegisterDataStep(DataStep{
-		Extension: "chuanapi", Name: "data-2", Phase: PhaseAfterCoreData, Run: noopStep,
-	}))
-	require.NoError(t, reg.RegisterDataStep(DataStep{
-		Extension: "chuanapi", Name: "models-2", Phase: PhaseAfterCoreModels, Run: noopStep,
+		Extension: "chuanapi", Name: "second", Phase: PhaseAfterCoreData, Run: noopStep,
 	}))
 	require.NoError(t, reg.Freeze())
 
@@ -207,13 +216,15 @@ func TestStepOrderIsStableAcrossAndWithinPhases(t *testing.T) {
 	for _, step := range reg.Steps() {
 		all = append(all, step.Name)
 	}
-	assert.Equal(t, []string{"models-1", "models-2", "data-1", "data-2"}, all)
+	assert.Equal(t, []string{"third", "first", "second"}, all)
 
 	var afterData []string
 	for _, step := range reg.StepsFor(PhaseAfterCoreData) {
 		afterData = append(afterData, step.Name)
 	}
-	assert.Equal(t, []string{"data-1", "data-2"}, afterData)
+	assert.Equal(t, []string{"third", "first", "second"}, afterData)
+	// No data step can ever be registered for the models phase.
+	assert.Nil(t, reg.StepsFor(PhaseAfterCoreModels), "the host never runs extension steps outside after_core_data")
 	assert.Nil(t, reg.StepsFor(MigrationPhase(9)), "unknown phase yields no steps")
 }
 
@@ -276,10 +287,6 @@ func TestRunStepsForExecutesInOrderAndWrapsFailures(t *testing.T) {
 		Extension: "chuanapi", Name: "third", Phase: PhaseAfterCoreData,
 		Run: func(*gorm.DB) error { executed = append(executed, "third"); return nil },
 	}))
-	require.NoError(t, reg.RegisterDataStep(DataStep{
-		Extension: "chuanapi", Name: "other-phase", Phase: PhaseAfterCoreModels,
-		Run: func(*gorm.DB) error { executed = append(executed, "other-phase"); return nil },
-	}))
 	require.NoError(t, reg.Freeze())
 
 	db := &gorm.DB{}
@@ -295,14 +302,14 @@ func TestRunStepsForReceivesTheGivenDatabase(t *testing.T) {
 	var got *gorm.DB
 	reg := NewRegistry()
 	require.NoError(t, reg.RegisterDataStep(DataStep{
-		Extension: "chuanapi", Name: "capture", Phase: PhaseAfterCoreModels,
+		Extension: "chuanapi", Name: "capture", Phase: PhaseAfterCoreData,
 		Run: func(tx *gorm.DB) error { got = tx; return nil },
 	}))
 	require.NoError(t, reg.Freeze())
 
-	require.NoError(t, reg.RunStepsFor(db, PhaseAfterCoreModels))
+	require.NoError(t, reg.RunStepsFor(db, PhaseAfterCoreData))
 	assert.Same(t, db, got)
-	require.NoError(t, reg.RunStepsFor(db, PhaseAfterCoreData), "a phase with no steps is a no-op")
+	require.NoError(t, reg.RunStepsFor(db, PhaseAfterCoreModels), "a phase with no steps is a no-op")
 }
 
 func TestRunStepsForRejectsInvalidPhaseAndNilDatabase(t *testing.T) {
@@ -320,7 +327,55 @@ func TestRunStepsForRejectsInvalidPhaseAndNilDatabase(t *testing.T) {
 	require.Error(t, err)
 	assert.EqualError(t, err, "extension: cannot run migration steps with a nil database")
 
-	// With no steps for the phase there is nothing to run, so a nil database is
-	// harmless rather than an error.
+	// Data steps are confined to PhaseAfterCoreData, so the models phase never
+	// has steps and a nil database there is harmless rather than an error.
 	require.NoError(t, reg.RunStepsFor(nil, PhaseAfterCoreModels))
+}
+
+// TestHostExecutesEveryAcceptedPhaseKindPair is the host contract test: the set
+// of (descriptor kind, accepted phase) pairs the registry admits must equal the
+// set the production startup path actually executes. model/main.go wires
+// ModelsFor(PhaseAfterCoreModels) into the core AutoMigrate call and
+// RunStepsFor(DB, PhaseAfterCoreData) at the fixed data-migration point. A
+// descriptor accepted for any other combination would freeze successfully and
+// then never run — "registry says valid, host never executes".
+func TestHostExecutesEveryAcceptedPhaseKindPair(t *testing.T) {
+	reg := NewRegistry()
+
+	// Every phase that is not the host's AutoMigrate phase must reject model sets.
+	for _, phase := range MigrationPhases() {
+		if phase == PhaseAfterCoreModels {
+			continue
+		}
+		err := reg.RegisterModelSet(ModelSet{
+			Extension: "chuanapi", Name: "models-only-host-phase", Phase: phase, Models: []any{&modelA{}},
+		})
+		require.Error(t, err, "model set must be rejected in phase %s", phase)
+	}
+	require.NoError(t, reg.RegisterModelSet(ModelSet{
+		Extension: "chuanapi", Name: "models-only-host-phase", Phase: PhaseAfterCoreModels, Models: []any{&modelA{}},
+	}))
+
+	// Every phase that is not the host's run-steps phase must reject data steps.
+	for _, phase := range MigrationPhases() {
+		if phase == PhaseAfterCoreData {
+			continue
+		}
+		err := reg.RegisterDataStep(DataStep{
+			Extension: "chuanapi", Name: "steps-only-host-phase", Phase: phase, Run: noopStep,
+		})
+		require.Error(t, err, "data step must be rejected in phase %s", phase)
+	}
+	require.NoError(t, reg.RegisterDataStep(DataStep{
+		Extension: "chuanapi", Name: "steps-only-host-phase", Phase: PhaseAfterCoreData, Run: noopStep,
+	}))
+
+	require.NoError(t, reg.Freeze())
+
+	// The host's two execution points see exactly what was registered.
+	require.Len(t, reg.ModelsFor(PhaseAfterCoreModels), 1)
+	require.Len(t, reg.StepsFor(PhaseAfterCoreData), 1)
+	// And the phases without an execution point can never accumulate work.
+	assert.Empty(t, reg.ModelsFor(PhaseAfterCoreData))
+	assert.Empty(t, reg.StepsFor(PhaseAfterCoreModels))
 }

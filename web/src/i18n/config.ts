@@ -20,7 +20,7 @@ import i18n from 'i18next'
 import LanguageDetector from 'i18next-browser-languagedetector'
 import { initReactI18next } from 'react-i18next'
 
-import { chuanapiI18nOverrides } from '@/extensions/chuanapi/i18n'
+import { extensionI18nOverrides } from '@/extensions'
 
 import { convertDetectedLanguage } from './languages'
 import en from './locales/en.json'
@@ -34,24 +34,27 @@ import zhCN from './locales/zh.json'
 type Bundle = { translation: Record<string, string> }
 
 /**
- * ChuanAPI 自有文案由 extension module 提供，在此浅合并。
+ * Extension 自有文案经 generic bridge 注入，在此浅合并。
  * 上游 locales/*.json 保持零改动，升级时不产生冲突。
  */
-function withOverride(base: Bundle, override: Bundle): Bundle {
+function withOverride(base: Bundle, override?: Bundle): Bundle {
+  if (!override) return base
   return {
     ...base,
     translation: { ...base.translation, ...override.translation },
   }
 }
 
+const extensionOverrides = extensionI18nOverrides()
+
 export const resources = {
-  en: withOverride(en, chuanapiI18nOverrides.en),
-  zhCN: withOverride(zhCN, chuanapiI18nOverrides.zhCN),
-  fr: withOverride(fr, chuanapiI18nOverrides.fr),
-  ru: withOverride(ru, chuanapiI18nOverrides.ru),
-  ja: withOverride(ja, chuanapiI18nOverrides.ja),
-  vi: withOverride(vi, chuanapiI18nOverrides.vi),
-  zhTW: withOverride(zhTW, chuanapiI18nOverrides.zhTW),
+  en: withOverride(en, extensionOverrides.en),
+  zhCN: withOverride(zhCN, extensionOverrides.zhCN),
+  fr: withOverride(fr, extensionOverrides.fr),
+  ru: withOverride(ru, extensionOverrides.ru),
+  ja: withOverride(ja, extensionOverrides.ja),
+  vi: withOverride(vi, extensionOverrides.vi),
+  zhTW: withOverride(zhTW, extensionOverrides.zhTW),
 } as const
 
 i18n
