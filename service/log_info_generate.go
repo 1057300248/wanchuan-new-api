@@ -82,6 +82,7 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		if relayInfo.ConversionDiagnosticsTruncated() {
 			other.SetAdmin("conversion_diagnostics_truncated", true)
 		}
+		appendStreamAdminDiagnostics(ctx, relayInfo, other)
 	}
 	if common.GetContextKeyBool(ctx, constant.ContextKeyChannelIsMultiKey) {
 		other.SetAdmin("is_multi_key", true)
@@ -92,6 +93,54 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	}
 
 	AppendChannelAffinityAdminInfo(ctx, other)
+}
+
+func appendStreamAdminDiagnostics(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
+	if relayInfo == nil || other == nil || !relayInfo.IsStream {
+		return
+	}
+
+	diagnostics := map[string]any{
+		"event_count": relayInfo.ReceivedResponseCount,
+	}
+	if relayInfo.HasSendResponse() {
+		diagnostics["first_event_ms"] = relayInfo.FirstResponseTime.Sub(relayInfo.StartTime).Milliseconds()
+	}
+	if ctx != nil {
+		if upstreamRequestID := ctx.GetString(common.UpstreamRequestIdKey); upstreamRequestID != "" {
+			diagnostics["upstream_request_id"] = upstreamRequestID
+		}
+	}
+
+	if relayInfo.StreamStatus != nil {
+		ss := relayInfo.StreamStatus
+		diagnostics["termination"] = string(ss.EndReason)
+		diagnostics["client_disconnected"] = ss.EndReason == relaycommon.StreamEndReasonClientGone
+		diagnostics["upstream_eof"] = ss.EndReason == relaycommon.StreamEndReasonEOF
+		diagnostics["idle_timeout"] = ss.EndReason == relaycommon.StreamEndReasonTimeout
+
+		var errorText strings.Builder
+		if ss.EndError != nil {
+			errorText.WriteString(ss.EndError.Error())
+		}
+		for _, entry := range ss.Errors {
+			if errorText.Len() > 0 {
+				errorText.WriteByte(' ')
+			}
+			errorText.WriteString(entry.Message)
+		}
+		classified := strings.ToLower(errorText.String())
+		if strings.Contains(classified, "output-loop") || strings.Contains(classified, "output loop") {
+			diagnostics["output_loop_error"] = true
+		}
+		if strings.Contains(classified, "reasoning") &&
+			(strings.Contains(classified, "recover") || strings.Contains(classified, "replay") ||
+				strings.Contains(classified, "decrypt") || strings.Contains(classified, "encrypted")) {
+			diagnostics["reasoning_recovery_error"] = true
+		}
+	}
+
+	other.SetAdmin("stream_diagnostics", diagnostics)
 }
 
 func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelRatio, groupRatio, completionRatio float64,

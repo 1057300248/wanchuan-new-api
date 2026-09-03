@@ -81,11 +81,14 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	adaptor.Init(info)
 	var requestBody io.Reader
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
-		storage, err := common.GetBodyStorage(c)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+		var closer io.Closer
+		requestBody, closer, newAPIError = prepareResponsesPassThroughBody(c, info)
+		if newAPIError != nil {
+			return newAPIError
 		}
-		requestBody = common.NewReplayableBodyReader(storage)
+		if closer != nil {
+			defer closer.Close()
+		}
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
 		if err != nil {
@@ -171,4 +174,33 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		service.PostTextConsumeQuota(c, info, usageDto, nil)
 	}
 	return nil
+}
+
+// prepareResponsesPassThroughBody preserves the original Responses payload when
+// a channel has no parameter overrides. If overrides are configured, it applies
+// them to the replayable raw JSON body so pass-through channels behave the same
+// as the Chat Completions and Claude relay paths.
+func prepareResponsesPassThroughBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, io.Closer, *types.NewAPIError) {
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return nil, nil, types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if len(info.ParamOverride) == 0 {
+		return common.NewReplayableBodyReader(storage), nil, nil
+	}
+
+	jsonData, err := storage.Bytes()
+	if err != nil {
+		return nil, nil, types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
+	if err != nil {
+		return nil, nil, newAPIErrorFromParamOverride(err)
+	}
+	logger.LogDebug(c, "responses pass-through request body after param override: %s", jsonData)
+	body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+	if err != nil {
+		return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+	return body, closer, nil
 }
