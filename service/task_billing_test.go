@@ -480,7 +480,7 @@ func TestTaskBillingOtherPreservesH3UsageFactsAndBillingIdentity(t *testing.T) {
 		"input_video_seconds": 15,
 	}
 
-	other := taskBillingOtherMap(t, taskBillingOther(task))
+	other := taskBillingOther(task).Snapshot()
 
 	assert.Equal(t, "MiniMax-H3", taskModelName(task))
 	assert.Equal(t, 5.0, other["seconds"])
