@@ -344,20 +344,21 @@ func TestFillWalletCostLogInfoNetSharesAfterRefund(t *testing.T) {
 	require.NoError(t, funding.PreConsume(100))
 	require.NoError(t, funding.Settle(-40))
 
-	other := make(map[string]interface{})
+	other := model.NewLogOther()
 	paidNet := FillWalletCostLogInfo(other, user, [][2]string{{"relay", "wallet-cost-REQ-1"}})
+	otherValues := other.Snapshot()
 	assert.Equal(t, 18, paidNet)
-	assert.Equal(t, 60, other["wallet_quota_deducted"])
-	walletCost, ok := other["wallet_cost"].(map[string]int)
+	assert.Equal(t, 60, otherValues["wallet_quota_deducted"])
+	walletCost, ok := otherValues["wallet_cost"].(map[string]int)
 	require.True(t, ok)
 	assert.Equal(t, 18, walletCost["paid"])
 	assert.Equal(t, 42, walletCost["bonus"])
 
 	// 订阅/无引用：不写入 wallet_cost，不伪造钱包成本
-	other = make(map[string]interface{})
+	other = model.NewLogOther()
 	paidNet = FillWalletCostLogInfo(other, user, nil)
 	assert.Zero(t, paidNet)
-	_, hasCost := other["wallet_cost"]
+	_, hasCost := other.Snapshot()["wallet_cost"]
 	assert.False(t, hasCost)
 }
 

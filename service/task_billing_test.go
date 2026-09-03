@@ -178,6 +178,13 @@ func makeTask(userId, channelId, quota, tokenId int, billingSource string, subsc
 	}
 }
 
+func taskBillingOtherMap(t *testing.T, other *model.LogOther) map[string]interface{} {
+	t.Helper()
+	var values map[string]interface{}
+	require.NoError(t, common.UnmarshalJsonStr(other.JSONString(), &values))
+	return values
+}
+
 func TestPriceDataOtherRatiosFilterAndSnapshot(t *testing.T) {
 	priceData := types.PriceData{}
 
@@ -242,7 +249,7 @@ func TestTaskBillingOtherFiltersHistoricalOtherRatios(t *testing.T) {
 		"inf":      math.Inf(1),
 	}
 
-	other := taskBillingOther(task)
+	other := taskBillingOtherMap(t, taskBillingOther(task))
 
 	assert.Equal(t, 2.0, other["seconds"])
 	assert.Equal(t, 1.0, other["identity"])
@@ -268,7 +275,7 @@ func TestTaskBillingOtherIncludesTieredSnapshotAndKeepsUsageFactsNested(t *testi
 		},
 	}
 
-	other := taskBillingOther(task)
+	other := taskBillingOtherMap(t, taskBillingOther(task))
 
 	assert.Equal(t, "tiered_expr", other["billing_mode"])
 	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte(expression)), other["expr_b64"])
@@ -277,7 +284,7 @@ func TestTaskBillingOtherIncludesTieredSnapshotAndKeepsUsageFactsNested(t *testi
 	require.True(t, ok)
 	assert.Equal(t, map[string]any{
 		"resolution": "720P",
-		"seconds":    5,
+		"seconds":    float64(5),
 	}, facts)
 	assert.NotContains(t, other, "resolution")
 	assert.NotContains(t, other, "seconds")
@@ -292,7 +299,7 @@ func TestTaskBillingOtherOmitsEmptyUsageFacts(t *testing.T) {
 		UsageFacts:    map[string]any{},
 	}
 
-	other := taskBillingOther(task)
+	other := taskBillingOtherMap(t, taskBillingOther(task))
 
 	assert.Equal(t, "tiered_expr", other["billing_mode"])
 	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte(expression)), other["expr_b64"])
@@ -416,7 +423,7 @@ func TestTaskBillingOtherSeparatesPluginAndRootDiagnostics(t *testing.T) {
 		},
 	}
 
-	other := taskBillingOther(task)
+	other := taskBillingOtherMap(t, taskBillingOther(task))
 
 	assert.Equal(t, "task_public", other["task_id"])
 	adminInfo, ok := other["admin_info"].(map[string]interface{})
@@ -436,7 +443,7 @@ func TestTaskBillingOtherSeparatesPluginAndRootDiagnostics(t *testing.T) {
 	assert.Equal(t, "node-a", rootInfo["node_name"])
 	runtimeInfo, ok := rootInfo["task_plugin"].(map[string]interface{})
 	require.True(t, ok)
-	assert.Equal(t, uint64(42), runtimeInfo["generation"])
+	assert.Equal(t, float64(42), runtimeInfo["generation"])
 	assert.NotContains(t, runtimeInfo, "author")
 }
 
@@ -460,6 +467,37 @@ func TestTaskBillingContextPriceDataFiltersMultiplier(t *testing.T) {
 		"size":     3,
 		"identity": 1,
 	}, priceData.OtherRatios())
+}
+
+// TestTaskBillingOtherPreservesH3UsageFactsAndBillingIdentity guards the
+// MiniMax-H3 merge: the new plugin usage facts (input image count, input
+// video seconds) must survive into the public task log scope, and the
+// persisted BillingModelName must remain the billing identity (with legacy
+// fallback to OriginModelName) so polling/billing never mixes H3 facts into
+// other models' price identity.
+func TestTaskBillingOtherPreservesH3UsageFactsAndBillingIdentity(t *testing.T) {
+	task := makeTask(1, 1, 100, 0, BillingSourceWallet, 0)
+	task.TaskID = "task_h3_public"
+	task.Properties.OriginModelName = "MiniMax-H3"
+	task.PrivateData.BillingContext.OriginModelName = "MiniMax-H3"
+	task.PrivateData.BillingContext.BillingModelName = "MiniMax-H3"
+	task.PrivateData.BillingContext.OtherRatios = map[string]float64{
+		"seconds":             5,
+		"input_images":        9,
+		"input_video_seconds": 15,
+	}
+
+	other := taskBillingOtherMap(t, taskBillingOther(task))
+
+	assert.Equal(t, "MiniMax-H3", taskModelName(task))
+	assert.Equal(t, 5.0, other["seconds"])
+	assert.Equal(t, 9.0, other["input_images"])
+	assert.Equal(t, 15.0, other["input_video_seconds"])
+
+	legacy := makeTask(1, 1, 100, 0, BillingSourceWallet, 0)
+	legacy.PrivateData.BillingContext.BillingModelName = ""
+	legacy.PrivateData.BillingContext.OriginModelName = "MiniMax-Hailuo-02"
+	assert.Equal(t, "MiniMax-Hailuo-02", taskModelName(legacy))
 }
 
 // ---------------------------------------------------------------------------

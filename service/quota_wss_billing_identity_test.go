@@ -144,7 +144,14 @@ func TestPostWssConsumeQuotaUsesBillingModelIdentity(t *testing.T) {
 		BillingModelName: wssBillingModel,
 		IsPlayground:     true,
 		BillingSource:    BillingSourceWallet,
-		StartTime:        time.Now(),
+		UserQuota:        200,
+		UserSetting: dto.UserSetting{
+			// Keep this billing-identity fixture out of the asynchronous quota
+			// notification path so the package race suite cannot leak a
+			// PaymentReturnURL read into the following return-path test.
+			QuotaWarningThreshold: -1,
+		},
+		StartTime: time.Now(),
 		PriceData: types.PriceData{
 			ModelRatio: 1,
 			GroupRatioInfo: types.GroupRatioInfo{

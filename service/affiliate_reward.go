@@ -108,7 +108,7 @@ func MatureAffiliateRewards(userId int) (int, error) {
 // 净份额从 balance_ledger 汇总（预扣/追扣/结算/退款全部计入），退款后即反映
 // 最终净份额。订阅消费调用方不会走到这里，不伪造钱包成本。
 // 返回 paid 净消费额（供调用方生成返利）。
-func FillWalletCostLogInfo(other map[string]interface{}, userId int, refs [][2]string) (paidNet int) {
+func FillWalletCostLogInfo(other *model.LogOther, userId int, refs [][2]string) (paidNet int) {
 	if other == nil || userId <= 0 || len(refs) == 0 {
 		return 0
 	}
@@ -127,7 +127,7 @@ func FillWalletCostLogInfo(other map[string]interface{}, userId int, refs [][2]s
 		bonusNet = 0
 	}
 	total := paidNet + bonusNet
-	other["wallet_quota_deducted"] = total
+	other.SetPublic("wallet_quota_deducted", total)
 	if paidNet > 0 || bonusNet > 0 {
 		walletCost := make(map[string]int)
 		if paidNet > 0 {
@@ -136,7 +136,7 @@ func FillWalletCostLogInfo(other map[string]interface{}, userId int, refs [][2]s
 		if bonusNet > 0 {
 			walletCost["bonus"] = bonusNet
 		}
-		other["wallet_cost"] = walletCost
+		other.SetPublic("wallet_cost", walletCost)
 	}
 	return paidNet
 }
