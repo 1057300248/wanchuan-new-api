@@ -188,13 +188,15 @@ func TestAutoMigrateDeclaresMoneyColumnsAs64Bit(t *testing.T) {
 	}
 
 	for table, expectedColumns := range moneyColumnsByTable {
-		assertColumnsAre64Bit(t, db, tableModels[table], table, expectedColumns)
+		assertColumnsAre64Bit(t, db, tableModels[table], table, expectedColumns,
+			common.DatabaseTypeMySQL, common.DatabaseTypePostgreSQL)
 	}
 }
 
-// assertColumnsAre64Bit 读取真实 schema 的声明类型，并按 MySQL 与 PostgreSQL
-// 两套判定规则断言其为 64 位。
-func assertColumnsAre64Bit(t *testing.T, db *gorm.DB, model any, table string, expectedColumns []string) {
+// assertColumnsAre64Bit 读取真实 schema 的声明类型，并按调用方指定的数据库
+// 方言断言其为 64 位。SQLite scratch schema 声明为 BIGINT，可同时验证两套规则；
+// 真实数据库则只验证自身方言，避免把 PostgreSQL 的 int8 交给 MySQL 规则误判。
+func assertColumnsAre64Bit(t *testing.T, db *gorm.DB, model any, table string, expectedColumns []string, dbTypes ...common.DatabaseType) {
 	t.Helper()
 	columnTypes, err := db.Migrator().ColumnTypes(model)
 	require.NoError(t, err, "inspect %s", table)
@@ -207,10 +209,10 @@ func assertColumnsAre64Bit(t *testing.T, db *gorm.DB, model any, table string, e
 	for _, column := range expectedColumns {
 		dataType, ok := declared[column]
 		require.True(t, ok, "%s.%s must exist after AutoMigrate", table, column)
-		assert.True(t, is64BitIntegerType(common.DatabaseTypeMySQL, dataType),
-			"%s.%s declared as %q is not 64-bit under MySQL", table, column, dataType)
-		assert.True(t, is64BitIntegerType(common.DatabaseTypePostgreSQL, dataType),
-			"%s.%s declared as %q is not 64-bit under PostgreSQL", table, column, dataType)
+		for _, dbType := range dbTypes {
+			assert.True(t, is64BitIntegerType(dbType, dataType),
+				"%s.%s declared as %q is not 64-bit under database type %d", table, column, dataType, dbType)
+		}
 	}
 }
 
@@ -258,7 +260,7 @@ func TestMoneyColumnsAre64BitOnConfiguredDatabases(t *testing.T) {
 				tempTable := "p0_bigint_" + table
 				require.NoError(t, db.Table(tempTable).Migrator().DropTable(tempTable))
 				require.NoError(t, db.Table(tempTable).AutoMigrate(model))
-				assertColumnsAre64Bit(t, db.Table(tempTable), model, tempTable, expectedColumns)
+				assertColumnsAre64Bit(t, db.Table(tempTable), model, tempTable, expectedColumns, dialect.dbType)
 				require.NoError(t, db.Table(tempTable).Migrator().DropTable(tempTable))
 			}
 		})

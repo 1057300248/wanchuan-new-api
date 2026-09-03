@@ -227,6 +227,41 @@ func TestExecuteTaskSubmissionPersistsPinnedPluginProvenance(t *testing.T) {
 	assert.Equal(t, "upstream-private", stored.PrivateData.UpstreamTaskID)
 }
 
+func TestExecuteTaskSubmissionPersistsExecutionOnlyRequestID(t *testing.T) {
+	events := make([]string, 0, 3)
+	database := setupTaskSubmissionDatabase(t, true, &events)
+	previousLogConsumeEnabled := common.LogConsumeEnabled
+	common.LogConsumeEnabled = false
+	t.Cleanup(func() { common.LogConsumeEnabled = previousLogConsumeEnabled })
+
+	c := taskSubmissionTestContext()
+	c.Set(common.RequestIdKey, "request-execution-only")
+	billing := &taskSubmissionTestBilling{events: &events}
+	info := taskSubmissionRelayInfo(billing)
+	info.RequestId = "request-execution-only"
+
+	outcome, taskErr := executeTaskSubmissionWith(c, info, func(*gin.Context, *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		return &relay.TaskSubmitResult{
+			UpstreamTaskID: "upstream-execution-only",
+			Platform:       constant.TaskPlatform("plugin"),
+		}, nil
+	})
+
+	require.Nil(t, taskErr)
+	require.NotNil(t, outcome)
+	require.NotNil(t, outcome.Task.PrivateData.Execution)
+	assert.Equal(t, "request-execution-only", outcome.Task.PrivateData.Execution.RequestID)
+	assert.Empty(t, outcome.Task.PrivateData.RequestId)
+	assert.Equal(t, "request-execution-only", outcome.Task.PrivateData.EffectiveRequestID())
+
+	var stored model.Task
+	require.NoError(t, database.Where("task_id = ?", "task_public").First(&stored).Error)
+	require.NotNil(t, stored.PrivateData.Execution)
+	assert.Equal(t, "request-execution-only", stored.PrivateData.Execution.RequestID)
+	assert.Empty(t, stored.PrivateData.RequestId)
+	assert.Equal(t, "request-execution-only", stored.PrivateData.EffectiveRequestID())
+}
+
 func TestExecuteTaskSubmissionRefundsCancellationBeforeDurableBarrier(t *testing.T) {
 	events := make([]string, 0, 2)
 	setupTaskSubmissionDatabase(t, true, &events)
