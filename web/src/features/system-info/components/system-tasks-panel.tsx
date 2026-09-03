@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { ListChecks, RefreshCw } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ErrorState } from '@/components/error-state'
@@ -44,6 +45,13 @@ import { cn } from '@/lib/utils'
 
 const TASK_LIMIT = 20
 const ACTIVE_POLL_INTERVAL_MS = 8000
+
+const SYSTEM_TASKS_SKELETON_KEYS = [
+  'system-tasks-skeleton-1',
+  'system-tasks-skeleton-2',
+  'system-tasks-skeleton-3',
+  'system-tasks-skeleton-4',
+]
 
 const STATUS_VARIANT: Record<SystemTaskStatus, 'secondary' | 'destructive'> = {
   pending: 'secondary',
@@ -230,6 +238,46 @@ export function SystemTasksPanel() {
   const activeTasks = tasks.filter((task) => isActiveStatus(task.status))
   const historyTasks = tasks.filter((task) => !isActiveStatus(task.status))
 
+  let tasksBody: ReactNode
+  if (loading) {
+    tasksBody = (
+      <div className='space-y-2 p-4 sm:p-5'>
+        {SYSTEM_TASKS_SKELETON_KEYS.map((skeletonKey) => (
+          <Skeleton key={skeletonKey} className='h-9 w-full rounded-md' />
+        ))}
+      </div>
+    )
+  } else if (tasksQuery.isError) {
+    const errorMessage =
+      tasksQuery.error instanceof Error ? tasksQuery.error.message : undefined
+    tasksBody = (
+      <ErrorState
+        title={t('We could not load system tasks.')}
+        description={errorMessage}
+        onRetry={() => {
+          void tasksQuery.refetch()
+        }}
+        className='min-h-[260px]'
+      />
+    )
+  } else if (tasks.length === 0) {
+    tasksBody = (
+      <div className='px-4 py-10 text-center sm:px-5'>
+        <div className='bg-muted mx-auto mb-3 flex size-10 items-center justify-center rounded-lg'>
+          <ListChecks
+            className='text-muted-foreground size-5'
+            aria-hidden='true'
+          />
+        </div>
+        <p className='text-muted-foreground text-sm'>
+          {t('No system tasks yet.')}
+        </p>
+      </div>
+    )
+  } else {
+    tasksBody = null
+  }
+
   return (
     <section className='bg-card overflow-hidden rounded-lg border shadow-xs'>
       <div className='flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5'>
@@ -285,38 +333,7 @@ export function SystemTasksPanel() {
       </div>
 
       <div aria-busy={tasksQuery.isFetching}>
-        {loading ? (
-          <div className='space-y-2 p-4 sm:p-5'>
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className='h-9 w-full rounded-md' />
-            ))}
-          </div>
-        ) : tasksQuery.isError ? (
-          <ErrorState
-            title={t('We could not load system tasks.')}
-            description={
-              tasksQuery.error instanceof Error
-                ? tasksQuery.error.message
-                : undefined
-            }
-            onRetry={() => {
-              void tasksQuery.refetch()
-            }}
-            className='min-h-[260px]'
-          />
-        ) : tasks.length === 0 ? (
-          <div className='px-4 py-10 text-center sm:px-5'>
-            <div className='bg-muted mx-auto mb-3 flex size-10 items-center justify-center rounded-lg'>
-              <ListChecks
-                className='text-muted-foreground size-5'
-                aria-hidden='true'
-              />
-            </div>
-            <p className='text-muted-foreground text-sm'>
-              {t('No system tasks yet.')}
-            </p>
-          </div>
-        ) : (
+        {tasksBody ?? (
           <div className='space-y-4 p-4 sm:p-5'>
             <div>
               <div className='mb-2 flex items-center justify-between gap-3'>

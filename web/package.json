@@ -9,6 +9,7 @@
     "build:check": "tsgo -b && rsbuild build",
     "typecheck": "tsgo -b",
     "lint": "oxlint -c .oxlintrc.json .",
+    "lint:ci": "oxlint -c .oxlintrc.json . --deny-warnings",
     "lint:fix": "oxlint -c .oxlintrc.json . --fix",
     "lint:plugins": "cd ../plugins && oxlint -c .oxlintrc.json .",
     "format:plugins": "cd ../plugins && oxfmt -c .oxfmtrc.json --write .",

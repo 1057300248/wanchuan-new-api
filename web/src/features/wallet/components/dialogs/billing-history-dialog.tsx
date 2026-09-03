@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Search, Copy, Check, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -60,6 +60,14 @@ interface BillingHistoryDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
+const BILLING_HISTORY_SKELETON_KEYS = [
+  'skeleton-1',
+  'skeleton-2',
+  'skeleton-3',
+  'skeleton-4',
+  'skeleton-5',
+] as const
+
 export function BillingHistoryDialog({
   open,
   onOpenChange,
@@ -92,6 +100,43 @@ export function BillingHistoryDialog({
         setConfirmTradeNo(null)
       }
     }
+  }
+
+  let recordsBody: ReactNode
+  if (loading) {
+    recordsBody = (
+      <div className='space-y-3'>
+        {BILLING_HISTORY_SKELETON_KEYS.map((key) => (
+          <div key={key} className='rounded-lg border p-3 sm:p-4'>
+            <div className='flex items-start justify-between'>
+              <div className='flex-1 space-y-2'>
+                <Skeleton className='h-4 w-48' />
+                <Skeleton className='h-3 w-32' />
+              </div>
+              <Skeleton className='h-5 w-16' />
+            </div>
+            <div className='mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4'>
+              <Skeleton className='h-3 w-full' />
+              <Skeleton className='h-3 w-full' />
+              <Skeleton className='h-3 w-full' />
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  } else if (records.length === 0) {
+    recordsBody = (
+      <div className='text-muted-foreground flex min-h-40 flex-col items-center justify-center py-10 text-center'>
+        <p className='text-sm font-medium'>{t('No billing records found')}</p>
+        <p className='mt-1 text-xs'>
+          {keyword
+            ? t('Try adjusting your search')
+            : t('Your transaction history will appear here')}
+        </p>
+      </div>
+    )
+  } else {
+    recordsBody = null
   }
 
   return (
@@ -128,7 +173,7 @@ export function BillingHistoryDialog({
               ]}
               value={pageSize.toString()}
               onValueChange={(value) =>
-                value !== null && handlePageSizeChange(parseInt(value))
+                value !== null && handlePageSizeChange(Number.parseInt(value))
               }
             >
               <SelectTrigger className='h-9 w-[92px] sm:w-32'>
@@ -147,37 +192,7 @@ export function BillingHistoryDialog({
 
           {/* Records List */}
           <div className='max-h-[min(54vh,520px)] overflow-y-auto pr-1'>
-            {loading ? (
-              <div className='space-y-3'>
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className='rounded-lg border p-3 sm:p-4'>
-                    <div className='flex items-start justify-between'>
-                      <div className='flex-1 space-y-2'>
-                        <Skeleton className='h-4 w-48' />
-                        <Skeleton className='h-3 w-32' />
-                      </div>
-                      <Skeleton className='h-5 w-16' />
-                    </div>
-                    <div className='mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4'>
-                      <Skeleton className='h-3 w-full' />
-                      <Skeleton className='h-3 w-full' />
-                      <Skeleton className='h-3 w-full' />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : records.length === 0 ? (
-              <div className='text-muted-foreground flex min-h-40 flex-col items-center justify-center py-10 text-center'>
-                <p className='text-sm font-medium'>
-                  {t('No billing records found')}
-                </p>
-                <p className='mt-1 text-xs'>
-                  {keyword
-                    ? t('Try adjusting your search')
-                    : t('Your transaction history will appear here')}
-                </p>
-              </div>
-            ) : (
+            {recordsBody ?? (
               <div className='space-y-3'>
                 {records.map((record) => {
                   const statusConfig = getStatusConfig(record.status)

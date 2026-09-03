@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -276,6 +276,29 @@ export function SetupWizard() {
     mutation.mutate(payload)
   }
 
+  let setupMainContent: ReactNode
+  if (isLoading) {
+    setupMainContent = <LoadingState message={t('Loading setup status…')} />
+  } else if (isError) {
+    setupMainContent = (
+      <ErrorState
+        title={t('We could not load the setup status.')}
+        onRetry={() => refetch()}
+      />
+    )
+  } else {
+    setupMainContent = (
+      <Form {...form}>
+        <form
+          className='space-y-6'
+          onSubmit={(event) => event.preventDefault()}
+        >
+          {currentStepComponent}
+        </form>
+      </Form>
+    )
+  }
+
   return (
     <div className='bg-muted/40 relative min-h-svh py-10'>
       <div className='absolute top-4 right-4 sm:top-6 sm:right-6'>
@@ -323,27 +346,28 @@ export function SetupWizard() {
               {STEPS.map((step, index) => {
                 const isActive = currentStep === index
                 const isCompleted = currentStep > index
+                let stepCardClass = 'border-muted bg-card'
+                if (isActive) {
+                  stepCardClass = 'border-primary ring-primary/20 ring-2'
+                } else if (isCompleted) {
+                  stepCardClass = 'border-primary/40 bg-primary/5'
+                }
+                let stepBadgeClass =
+                  'border-muted-foreground/40 text-muted-foreground'
+                if (isActive || isCompleted) {
+                  stepBadgeClass =
+                    'border-primary bg-primary text-primary-foreground'
+                }
                 return (
                   <li
                     key={step.titleKey}
-                    className={cn(
-                      'rounded-xl border p-3',
-                      isActive
-                        ? 'border-primary ring-primary/20 ring-2'
-                        : isCompleted
-                          ? 'border-primary/40 bg-primary/5'
-                          : 'border-muted bg-card'
-                    )}
+                    className={cn('rounded-xl border p-3', stepCardClass)}
                   >
                     <div className='flex items-start gap-3'>
                       <span
                         className={cn(
                           'flex size-6 items-center justify-center rounded-md border text-xs font-semibold',
-                          isActive
-                            ? 'border-primary bg-primary text-primary-foreground'
-                            : isCompleted
-                              ? 'border-primary bg-primary text-primary-foreground'
-                              : 'border-muted-foreground/40 text-muted-foreground'
+                          stepBadgeClass
                         )}
                       >
                         {index + 1}
@@ -362,23 +386,7 @@ export function SetupWizard() {
               })}
             </ol>
 
-            {isLoading ? (
-              <LoadingState message={t('Loading setup status…')} />
-            ) : isError ? (
-              <ErrorState
-                title={t('We could not load the setup status.')}
-                onRetry={() => refetch()}
-              />
-            ) : (
-              <Form {...form}>
-                <form
-                  className='space-y-6'
-                  onSubmit={(event) => event.preventDefault()}
-                >
-                  {currentStepComponent}
-                </form>
-              </Form>
-            )}
+            {setupMainContent}
           </CardContent>
 
           {!isLoading && !isError && (

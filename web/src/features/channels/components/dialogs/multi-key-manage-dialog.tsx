@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
 import { Loader2, RefreshCw, Trash2, Power, PowerOff } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -149,7 +149,7 @@ export function MultiKeyManageDialog({
   }
 
   const handleStatusFilterChange = (value: string) => {
-    const newFilter = value === 'all' ? null : parseInt(value)
+    const newFilter = value === 'all' ? null : Number.parseInt(value)
     setStatusFilter(newFilter)
     setCurrentPage(1)
     loadKeyStatus(1, pageSize, newFilter)
@@ -235,6 +235,23 @@ export function MultiKeyManageDialog({
 
   if (!currentRow) return null
 
+  let keyTableBody: ReactNode
+  if (isLoading) {
+    keyTableBody = (
+      <div className='flex items-center justify-center py-12'>
+        <Loader2 className='text-muted-foreground h-8 w-8 animate-spin' />
+      </div>
+    )
+  } else if (keys.length === 0) {
+    keyTableBody = (
+      <div className='text-muted-foreground py-12 text-center'>
+        {t('No keys found')}
+      </div>
+    )
+  } else {
+    keyTableBody = null
+  }
+
   return (
     <>
       <Dialog
@@ -294,12 +311,10 @@ export function MultiKeyManageDialog({
           {/* Toolbar */}
           <div className='flex shrink-0 items-center justify-between'>
             <Select
-              items={[
-                ...MULTI_KEY_FILTER_OPTIONS.map((option) => ({
-                  value: option.value,
-                  label: t(option.label),
-                })),
-              ]}
+              items={MULTI_KEY_FILTER_OPTIONS.map((option) => ({
+                value: option.value,
+                label: t(option.label),
+              }))}
               value={statusFilter === null ? 'all' : statusFilter.toString()}
               onValueChange={(v) => v !== null && handleStatusFilterChange(v)}
             >
@@ -378,15 +393,7 @@ export function MultiKeyManageDialog({
 
           {/* Table */}
           <div className='min-h-0 flex-1 overflow-auto rounded-md border'>
-            {isLoading ? (
-              <div className='flex items-center justify-center py-12'>
-                <Loader2 className='text-muted-foreground h-8 w-8 animate-spin' />
-              </div>
-            ) : keys.length === 0 ? (
-              <div className='text-muted-foreground py-12 text-center'>
-                {t('No keys found')}
-              </div>
-            ) : (
+            {keyTableBody ?? (
               <StaticDataTable
                 className='rounded-none border-0'
                 tableClassName='min-w-[800px]'

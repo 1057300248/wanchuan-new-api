@@ -82,17 +82,21 @@ export function useNotifications() {
   // Fetch Announcements from status
   const { status, loading: statusLoading } = useStatus()
   const announcementsEnabled = status?.announcements_enabled ?? false
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const announcements: Record<string, unknown>[] = announcementsEnabled
-    ? ((status?.announcements || []) as Record<string, unknown>[]).slice(0, 20)
-    : []
+  const rawAnnouncements = status?.announcements
+  const announcements: Record<string, unknown>[] = useMemo(
+    () =>
+      announcementsEnabled
+        ? ((rawAnnouncements || []) as Record<string, unknown>[]).slice(0, 20)
+        : [],
+    [announcementsEnabled, rawAnnouncements]
+  )
 
   // Notification store
   const {
     lastReadNotice,
+    readAnnouncementKeys,
     markNoticeRead,
     markAnnouncementsRead,
-    isAnnouncementRead,
   } = useNotificationStore()
 
   // Extract notice content
@@ -108,7 +112,7 @@ export function useNotifications() {
     const announcementsUnread = announcements.filter(
       (item: Record<string, unknown>) => {
         const key = getAnnouncementKey(item)
-        return !isAnnouncementRead(key)
+        return !readAnnouncementKeys.includes(key)
       }
     ).length
 
@@ -117,7 +121,7 @@ export function useNotifications() {
       announcements: announcementsUnread,
       total: noticeUnread + announcementsUnread,
     }
-  }, [noticeContent, lastReadNotice, announcements, isAnnouncementRead])
+  }, [noticeContent, lastReadNotice, announcements, readAnnouncementKeys])
 
   const markAnnouncementsAsRead = () => {
     if (announcements.length > 0) {

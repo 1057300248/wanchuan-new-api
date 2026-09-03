@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight, Loader2, Plus, Search } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -110,6 +110,26 @@ export function MissingModelsDialog({
     totalItems === 0 ? 0 : Math.min(currentPage * pageSize, totalItems)
   const showPagination = totalItems > pageSize
 
+  let missingModelsBody: ReactNode
+  if (isLoading) {
+    missingModelsBody = (
+      <div className='flex items-center justify-center py-12'>
+        <Loader2 className='h-8 w-8 animate-spin' />
+      </div>
+    )
+  } else if (missingModels.length === 0) {
+    missingModelsBody = (
+      <div className='text-muted-foreground py-12 text-center'>
+        <p>{t('No missing models found.')}</p>
+        <p className='text-sm'>
+          {t('All models in use are properly configured.')}
+        </p>
+      </div>
+    )
+  } else {
+    missingModelsBody = null
+  }
+
   return (
     <Dialog
       open={open}
@@ -124,18 +144,7 @@ export function MissingModelsDialog({
       bodyClassName='space-y-4'
       initialFocus={!isMobile}
     >
-      {isLoading ? (
-        <div className='flex items-center justify-center py-12'>
-          <Loader2 className='h-8 w-8 animate-spin' />
-        </div>
-      ) : missingModels.length === 0 ? (
-        <div className='text-muted-foreground py-12 text-center'>
-          <p>{t('No missing models found.')}</p>
-          <p className='text-sm'>
-            {t('All models in use are properly configured.')}
-          </p>
-        </div>
-      ) : (
+      {missingModelsBody ?? (
         <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto'>
           <div className='flex flex-shrink-0 items-center justify-between gap-3'>
             <div className='text-muted-foreground text-sm whitespace-nowrap'>

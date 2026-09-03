@@ -39,6 +39,12 @@ interface UserQuotaDialogProps {
   onSuccess: () => void
 }
 
+const QUOTA_MODE_LABEL_KEYS = {
+  add: 'Add',
+  subtract: 'Subtract',
+  override: 'Override',
+} as const
+
 export function UserQuotaDialog(props: UserQuotaDialogProps) {
   const { t } = useTranslation()
   const [mode, setMode] = useState<QuotaAdjustMode>('add')
@@ -49,7 +55,7 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
   const currencyLabel = getCurrencyLabel()
   const tokensOnly = currencyMeta.kind === 'tokens'
 
-  const amountValue = parseFloat(amount) || 0
+  const amountValue = Number.parseFloat(amount) || 0
   const quotaValue = parseQuotaFromDollars(Math.abs(amountValue))
 
   const getPreviewText = () => {
@@ -150,11 +156,7 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
                   setAmount('')
                 }}
               >
-                {m === 'add'
-                  ? t('Add')
-                  : m === 'subtract'
-                    ? t('Subtract')
-                    : t('Override')}
+                {t(QUOTA_MODE_LABEL_KEYS[m])}
               </Button>
             ))}
           </div>

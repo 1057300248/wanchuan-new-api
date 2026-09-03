@@ -50,6 +50,32 @@ function formatCompactThroughput(tps: number): string {
   return `${formatCompactNumber(tps)}t`
 }
 
+const STATUS_BAR_SLOTS = [
+  {
+    key: 'status-bar-first',
+    heightClass: 'h-2',
+    emptyClass: 'bg-muted-foreground/10',
+  },
+  {
+    key: 'status-bar-second',
+    heightClass: 'h-2.5',
+    emptyClass: 'bg-muted-foreground/15',
+  },
+  {
+    key: 'status-bar-third',
+    heightClass: 'h-3',
+    emptyClass: 'bg-muted-foreground/15',
+  },
+] as const
+
+function getStatusBarClass(
+  rate: number | null,
+  slot: (typeof STATUS_BAR_SLOTS)[number]
+): string {
+  if (rate == null) return slot.emptyClass
+  return getSuccessRateDotClass(rate)
+}
+
 export const ModelPerfBadge = memo(function ModelPerfBadge(
   props: ModelPerfBadgeProps
 ) {
@@ -102,22 +128,19 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
           {t('Status short')}
         </div>
         <div className='flex h-4 items-center justify-end gap-0.5'>
-          {statusBars.map((rate, index) => (
-            <span
-              key={`${index}-${rate ?? 'empty'}`}
-              className={cn(
-                'w-1 rounded-full',
-                index === 0 && 'h-2',
-                index === 1 && 'h-2.5',
-                index === 2 && 'h-3',
-                rate == null
-                  ? index === 0
-                    ? 'bg-muted-foreground/10'
-                    : 'bg-muted-foreground/15'
-                  : getSuccessRateDotClass(rate)
-              )}
-            />
-          ))}
+          {STATUS_BAR_SLOTS.map((slot, slotIndex) => {
+            const rate = statusBars[slotIndex] ?? null
+            return (
+              <span
+                key={slot.key}
+                className={cn(
+                  'w-1 rounded-full',
+                  slot.heightClass,
+                  getStatusBarClass(rate, slot)
+                )}
+              />
+            )
+          })}
         </div>
       </div>
     </div>

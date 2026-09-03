@@ -196,7 +196,7 @@ export function CreateDeploymentDrawer({
         map.set(key, { label: String(name), value: key })
       }
     })
-    return Array.from(map.values())
+    return [...map.values()]
   }, [replicasData])
 
   const { data: priceData, isLoading: _isLoadingPrice } = useQuery({
@@ -409,26 +409,30 @@ export function CreateDeploymentDrawer({
               <FormField
                 control={form.control}
                 name='resource_private_name'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Container name')}</FormLabel>
-                    <FormControl>
-                      <Input placeholder={t('Enter a name')} {...field} />
-                    </FormControl>
-                    {open && field.value?.trim() ? (
-                      <div className='text-muted-foreground text-xs'>
-                        {isCheckingName
-                          ? t('Checking name...')
-                          : nameAvailable === true
-                            ? t('Name is available')
-                            : nameAvailable === false
-                              ? t('Name is not available')
-                              : ''}
-                      </div>
-                    ) : null}
-                    <FormMessage />
-                  </FormItem>
-                )}
+                render={({ field }) => {
+                  let nameHint = ''
+                  if (isCheckingName) {
+                    nameHint = t('Checking name...')
+                  } else if (nameAvailable === true) {
+                    nameHint = t('Name is available')
+                  } else if (nameAvailable === false) {
+                    nameHint = t('Name is not available')
+                  }
+                  return (
+                    <FormItem>
+                      <FormLabel>{t('Container name')}</FormLabel>
+                      <FormControl>
+                        <Input placeholder={t('Enter a name')} {...field} />
+                      </FormControl>
+                      {open && field.value?.trim() ? (
+                        <div className='text-muted-foreground text-xs'>
+                          {nameHint}
+                        </div>
+                      ) : null}
+                      <FormMessage />
+                    </FormItem>
+                  )
+                }}
               />
 
               <FormField
@@ -460,12 +464,10 @@ export function CreateDeploymentDrawer({
                     <FormItem>
                       <FormLabel>{t('Hardware type')}</FormLabel>
                       <Select
-                        items={[
-                          ...hardwareOptions.map((opt) => ({
-                            value: opt.value,
-                            label: opt.label,
-                          })),
-                        ]}
+                        items={hardwareOptions.map((opt) => ({
+                          value: opt.value,
+                          label: opt.label,
+                        }))}
                         value={field.value}
                         onValueChange={(v) => field.onChange(v)}
                         disabled={isLoadingHardware}
