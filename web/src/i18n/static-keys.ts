@@ -450,8 +450,26 @@ export const STATIC_I18N_KEYS = [
 
   // Sidebar modules
   'Chat Area',
-  'Playground and chat functions',
-  'Playground',
+  'Text Generation and chat functions',
+  'Text Generation',
+
+  // Image generation (variable-passed keys not caught by the t() scanner)
+  'A tranquil lake at sunrise, soft mist, photorealistic',
+  'A cozy robot reading in a library, warm light, illustration',
+  'Minimalist mountain poster, bold shapes, flat design',
+  'A futuristic city street at night, neon reflections',
+  'Low',
+  'Medium',
+  'High',
+  'HD',
+  'Vivid',
+  'Natural',
+  'This model does not support reference images',
+  'Only PNG, JPEG, or WebP images are supported',
+  'Total reference image size must not exceed 15MB',
+  'Too many reference images for this model',
+  '{{count}} of {{max}} images',
+  'No matching history.',
   'AI model testing environment',
   'Chat session management',
   'No content to copy',

@@ -545,7 +545,7 @@ export function OverviewDashboard() {
       },
       {
         title: t('Send a request'),
-        description: t('Verify routing with Playground or your client'),
+        description: t('Verify routing with Text Generation or your client'),
         to: '/playground',
         external: true,
         icon: TerminalSquare,

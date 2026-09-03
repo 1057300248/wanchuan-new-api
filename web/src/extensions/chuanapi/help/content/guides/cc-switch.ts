@@ -49,7 +49,7 @@ export const ccSwitch: GuideDoc = {
 
 ## 验证
 
-切换后先发一条最小请求确认（也可以直接在 [Playground](/playground) 验证账号侧就绪）：
+切换后先发一条最小请求确认（也可以直接在 [文本生成](/playground) 验证账号侧就绪）：
 
 \`\`\`bash
 curl {{BASE_URL}}/v1/messages \\

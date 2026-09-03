@@ -52,7 +52,7 @@ export function PlaygroundEmptyState({
 
         <div className='grid gap-2'>
           <h2 className='text-xl font-semibold tracking-tight text-balance md:text-2xl'>
-            {t('Start a playground chat')}
+            {t('Start a text generation chat')}
           </h2>
           <p className='text-muted-foreground mx-auto max-w-lg text-sm leading-6 text-balance'>
             {t(

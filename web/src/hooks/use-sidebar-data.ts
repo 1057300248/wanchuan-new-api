@@ -22,6 +22,7 @@ import {
   CreditCard,
   FileText,
   FlaskConical,
+  Image as ImageIcon,
   Key,
   LayoutDashboard,
   ListTodo,
@@ -56,9 +57,15 @@ export function useSidebarData(): SidebarData {
         title: t('Chat'),
         items: [
           {
-            title: t('Playground'),
+            title: t('Text Generation'),
             url: '/playground',
             icon: FlaskConical,
+            external: true,
+          },
+          {
+            title: t('Image Generation'),
+            url: '/image',
+            icon: ImageIcon,
             external: true,
           },
           {
