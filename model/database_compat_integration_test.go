@@ -21,6 +21,13 @@ func TestDatabaseCompatibilityReal(t *testing.T) {
 		t.Skip("set TEST_DATABASE_COMPAT=1 to run the real database compatibility test")
 	}
 
+	// InitDB only runs migrations on the master node. Unit tests do not run the
+	// application's bootstrap that normally sets this flag, so make the intended
+	// production role explicit for this integration test.
+	oldIsMasterNode := common.IsMasterNode
+	common.IsMasterNode = true
+	t.Cleanup(func() { common.IsMasterNode = oldIsMasterNode })
+
 	dialect := strings.ToLower(strings.TrimSpace(os.Getenv("TEST_DATABASE_DIALECT")))
 	switch dialect {
 	case "sqlite":
