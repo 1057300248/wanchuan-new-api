@@ -5656,6 +5656,7 @@
     "Zero retention": "零數據保留",
     "Zhipu": "智譜",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放"
+    "Zoom": "縮放",
+    "Models listed here skip automatic -thinking / -nothinking suffix handling. Matched names are also exempt from @-modifier parsing and 400 validation. Prefix an entry with re: to match the full model name as a Go regular expression, for example re:.*@sha256:.*": "此處列出的模型不會自動新增或移除 -thinking / -nothinking 後綴。命中的模型同時豁免 @ 修飾符解析與 400 校驗。以 re: 開頭的條目會以 Go 正規表示式匹配完整模型名稱，例如 re:.*@sha256:.*。"
   }
 }

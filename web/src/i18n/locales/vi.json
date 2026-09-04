@@ -5656,6 +5656,7 @@
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Models listed here skip automatic -thinking / -nothinking suffix handling. Matched names are also exempt from @-modifier parsing and 400 validation. Prefix an entry with re: to match the full model name as a Go regular expression, for example re:.*@sha256:.*": "Các mô hình được liệt kê ở đây sẽ không tự động thêm hoặc xóa hậu tố -thinking / -nothinking. Tên khớp cũng được miễn phân tích và kiểm tra (400) cho bộ sửa đổi @. Mục bắt đầu bằng re: được coi là biểu thức chính quy Go khớp toàn bộ tên mô hình, ví dụ re:.*@sha256:.*"
   }
 }
