@@ -19,19 +19,35 @@ For commercial licensing, please contact support@quantumnous.com
 import type { NavigationExtension } from '../navigation'
 
 export const CHUANAPI_PUBLIC_HOME = 'https://chuanapi.com/'
+export const CHUANAPI_QUICKSTART_DOCS = 'https://chuanapi.com/docs/quickstart/'
+
+const LEGACY_QUICKSTART_URLS = new Set([
+  'https://chuanapi.com/#quickstart',
+  'https://chuanapi.com#quickstart',
+])
 
 export const chuanapiNavigationExtension: NavigationExtension = {
   id: 'chuanapi/navigation',
   publicHomeUrl: CHUANAPI_PUBLIC_HOME,
   apply(links) {
-    return links.map((link) =>
-      link.href === '/'
-        ? {
-            ...link,
-            href: CHUANAPI_PUBLIC_HOME,
-            documentNavigation: true,
-          }
-        : { ...link }
-    )
+    return links.map((link) => {
+      if (link.href === '/') {
+        return {
+          ...link,
+          href: CHUANAPI_PUBLIC_HOME,
+          documentNavigation: true,
+        }
+      }
+
+      if (link.href === '/help' || LEGACY_QUICKSTART_URLS.has(link.href)) {
+        return {
+          ...link,
+          href: CHUANAPI_QUICKSTART_DOCS,
+          documentNavigation: true,
+        }
+      }
+
+      return { ...link }
+    })
   },
 }
