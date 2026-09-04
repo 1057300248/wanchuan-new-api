@@ -1,0 +1,95 @@
+name: Database Compatibility
+
+on:
+  push:
+    branches:
+      - merge/wanchuan-main-customizations-20260904
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: database-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sqlite:
+    name: SQLite real migration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Full unit suite
+        run: go test ./...
+      - name: Real SQLite production migration and CRUD
+        env:
+          TEST_DATABASE_COMPAT: "1"
+          TEST_DATABASE_DIALECT: sqlite
+        run: go test ./model -run '^TestDatabaseCompatibilityReal$' -count=1 -v
+
+  mysql57:
+    name: MySQL 5.7 real migration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: compat
+          MYSQL_DATABASE: newapi_compat
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pcompat --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Real MySQL production migration, CRUD and BIGINT schema
+        env:
+          TEST_DATABASE_COMPAT: "1"
+          TEST_DATABASE_DIALECT: mysql
+          TEST_DATABASE_DSN: root:compat@tcp(127.0.0.1:3306)/newapi_compat?charset=utf8mb4&parseTime=true&loc=UTC
+          TEST_MYSQL_DSN: root:compat@tcp(127.0.0.1:3306)/newapi_compat?charset=utf8mb4&parseTime=true&loc=UTC
+        run: go test ./model -run '^(TestDatabaseCompatibilityReal|TestMoneyColumnsAre64BitOnConfiguredDatabases)$' -count=1 -v
+
+  postgres96:
+    name: PostgreSQL 9.6 real migration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:9.6
+        env:
+          POSTGRES_PASSWORD: compat
+          POSTGRES_DB: newapi_compat
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d newapi_compat"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Real PostgreSQL production migration, CRUD and BIGINT schema
+        env:
+          TEST_DATABASE_COMPAT: "1"
+          TEST_DATABASE_DIALECT: postgres
+          TEST_DATABASE_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat?sslmode=disable
+          TEST_POSTGRES_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat?sslmode=disable
+        run: go test ./model -run '^(TestDatabaseCompatibilityReal|TestMoneyColumnsAre64BitOnConfiguredDatabases)$' -count=1 -v
