@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/extension"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/clickhouse"
@@ -26,6 +27,19 @@ var commonFalseVal string
 
 var logKeyCol string
 var logGroupCol string
+
+// jsonScanBytes 归一化 json 列的驱动返回值:不同驱动/协议模式下同一列可能
+// 以 []byte 或 string 返回,静默丢弃 string 会导致字段被清零而不报错。
+func jsonScanBytes(value interface{}) []byte {
+	switch v := value.(type) {
+	case []byte:
+		return v
+	case string:
+		return []byte(v)
+	default:
+		return nil
+	}
+}
 
 func initCol() {
 	// init common column names
@@ -63,16 +77,30 @@ func createRootAccountIfNeed() error {
 		if err != nil {
 			return err
 		}
-		rootUser := User{
-			Username:    "root",
-			Password:    hashedPassword,
-			Role:        common.RoleRootUser,
-			Status:      common.UserStatusEnabled,
-			DisplayName: "Root User",
-			AccessToken: nil,
-			Quota:       100000000,
-		}
-		DB.Create(&rootUser)
+		return DB.Transaction(func(tx *gorm.DB) error {
+			rootUser := User{
+				Username:    "root",
+				Password:    hashedPassword,
+				Role:        common.RoleRootUser,
+				Status:      common.UserStatusEnabled,
+				DisplayName: "Root User",
+				AccessToken: nil,
+				Quota:       0,
+				QuotaPaid:   0,
+			}
+			if err := tx.Create(&rootUser).Error; err != nil {
+				return err
+			}
+			_, err := CreditQuotaTx(tx, LedgerEntry{
+				UserId:        rootUser.Id,
+				Account:       AccountPaid,
+				Delta:         100000000,
+				Reason:        LedgerReasonSystem,
+				ReferenceType: "root_init",
+				ReferenceId:   fmt.Sprintf("%d", rootUser.Id),
+			})
+			return err
+		})
 	}
 	return nil
 }
@@ -132,27 +160,23 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, common.DatabaseType, error)
 				return nil, "", fmt.Errorf("%s does not support ClickHouse; use SQLite, MySQL, or PostgreSQL for the primary database and LOG_SQL_DSN for ClickHouse logs", envName)
 			}
 			common.SysLog("using ClickHouse as log database")
-			db, err := gorm.Open(clickhouse.Open(normalizeClickHouseDSN(dsn)), &gorm.Config{
-				PrepareStmt: false,
-			})
+			db, err := gorm.Open(clickhouse.Open(normalizeClickHouseDSN(dsn)), newGormConfig(false))
 			return db, common.DatabaseTypeClickHouse, err
 		}
 		if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
 			// Use PostgreSQL
 			common.SysLog("using PostgreSQL as database")
+			// 同时关闭 pgx 隐式与 GORM 显式预处理语句:命名 prepared statement 与
+			// 事务池代理(PgBouncer/Neon/Supabase)不兼容,会触发 FATAL 08P01/42P05。
 			db, err := gorm.Open(postgres.New(postgres.Config{
 				DSN:                  dsn,
-				PreferSimpleProtocol: true, // disables implicit prepared statement usage
-			}), &gorm.Config{
-				PrepareStmt: true, // precompile SQL
-			})
+				PreferSimpleProtocol: true,
+			}), newGormConfig(false))
 			return db, common.DatabaseTypePostgreSQL, err
 		}
 		if strings.HasPrefix(dsn, "local") {
 			common.SysLog("SQL_DSN not set, using SQLite as database")
-			db, err := gorm.Open(sqlite.Open(common.SQLitePath), &gorm.Config{
-				PrepareStmt: true, // precompile SQL
-			})
+			db, err := gorm.Open(sqlite.Open(common.SQLitePath), newGormConfig(true))
 			return db, common.DatabaseTypeSQLite, err
 		}
 		// Use MySQL
@@ -165,16 +189,12 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, common.DatabaseType, error)
 				dsn += "?parseTime=true"
 			}
 		}
-		db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
-			PrepareStmt: true, // precompile SQL
-		})
+		db, err := gorm.Open(mysql.Open(dsn), newGormConfig(true))
 		return db, common.DatabaseTypeMySQL, err
 	}
 	// Use SQLite
 	common.SysLog("SQL_DSN not set, using SQLite as database")
-	db, err := gorm.Open(sqlite.Open(common.SQLitePath), &gorm.Config{
-		PrepareStmt: true, // precompile SQL
-	})
+	db, err := gorm.Open(sqlite.Open(common.SQLitePath), newGormConfig(true))
 	return db, common.DatabaseTypeSQLite, err
 }
 
@@ -195,6 +215,9 @@ func InitDB() (err error) {
 			if err := checkMySQLChineseSupport(DB); err != nil {
 				panic(err)
 			}
+		}
+		if err := ensureUserQuotaColumns(DB, common.MainDatabaseType()); err != nil {
+			return err
 		}
 		sqlDB, err := DB.DB()
 		if err != nil {
@@ -260,7 +283,90 @@ func InitLogDB() (err error) {
 	return err
 }
 
+var userQuotaColumns = []string{"quota", "used_quota", "aff_quota", "aff_history"}
+
+// chuanapiWalletQuotaColumns 是万川钱包的三个子账户余额列。它们是资金真源
+// （users.quota 只是三者合计的兼容镜像），且注册表的 quota 回填 DataStep
+// （chuanapi -> BackfillLegacyQuotaAccountsWithDB）每次启动都会把 64 位
+// users.quota 回填进 quota_paid，32 位列会在非严格模式下静默截断。因此这三列的
+// 检查不受 SKIP_64BIT_QUOTA_SCHEMA_CHECK 影响，不提供任何绕过方式。
+var chuanapiWalletQuotaColumns = []string{"quota_paid", "quota_bonus", "quota_affiliate"}
+
+// ensureUserQuotaColumns rejects a legacy 32-bit wallet schema before any
+// migrations run. The 64-bit-only build intentionally does not auto-upgrade
+// an existing wallet; operators must migrate it explicitly before starting.
+//
+// 官方四列沿用 SKIP_64BIT_QUOTA_SCHEMA_CHECK 的既有语义；万川钱包三列无条件检查。
+//
+// 由此产生一处与官方不同的语义，运维必须知道：SKIP_64BIT_QUOTA_SCHEMA_CHECK=true
+// 不再是「本检查一定不阻断启动」。校验钱包列必须先读到 schema，因此探测失败
+// （ColumnTypes 报错）在 SKIP=true 下也会阻断启动——无法确认钱包列位宽时
+// fail-closed 才是安全默认值。
+//
+// 列缺失视为通过（内层循环不匹配即跳过），这是官方既有行为，且是必要的：
+// rc.26 库升级到 rc.30 时 quota_paid 等列尚不存在，由随后的 AutoMigrate 建出。
+// 建出的列是否为 64 位取决于 model 侧的 GORM tag，因此 tag 必须显式 bigint
+// （见 model/user.go:94-104）——否则本检查放行、AutoMigrate 建出 32 位列，
+// 下一次启动才失败。
+func ensureUserQuotaColumns(db *gorm.DB, dbType common.DatabaseType) error {
+	if db == nil || dbType == common.DatabaseTypeSQLite {
+		return nil
+	}
+	if !db.Migrator().HasTable(&User{}) {
+		return nil
+	}
+	columnTypes, err := db.Migrator().ColumnTypes(&User{})
+	if err != nil {
+		return fmt.Errorf("failed to inspect users schema: %w", err)
+	}
+	if common.GetEnvOrDefaultBool("SKIP_64BIT_QUOTA_SCHEMA_CHECK", false) {
+		common.SysLog("SKIP_64BIT_QUOTA_SCHEMA_CHECK=true; skipping user quota schema check for " +
+			strings.Join(userQuotaColumns, ", ") +
+			"; ChuanAPI wallet columns (" + strings.Join(chuanapiWalletQuotaColumns, ", ") +
+			") are always verified and cannot be skipped")
+	} else if err := assertUserColumns64Bit(columnTypes, dbType, userQuotaColumns, ""); err != nil {
+		return err
+	}
+	return assertUserColumns64Bit(columnTypes, dbType, chuanapiWalletQuotaColumns,
+		"; this is a ChuanAPI wallet balance column and SKIP_64BIT_QUOTA_SCHEMA_CHECK does not apply to it")
+}
+
+// assertUserColumns64Bit 校验 users 表中指定列均为 64 位整型；hint 追加到错误消息，
+// 用于区分官方列与不可跳过的万川钱包列。
+func assertUserColumns64Bit(columnTypes []gorm.ColumnType, dbType common.DatabaseType, expectedColumns []string, hint string) error {
+	for _, expected := range expectedColumns {
+		for _, actual := range columnTypes {
+			if !strings.EqualFold(actual.Name(), expected) {
+				continue
+			}
+			dataType := actual.DatabaseTypeName()
+			if !is64BitIntegerType(dbType, dataType) {
+				return fmt.Errorf("users.%s uses %s; 32-bit is not supported%s", expected, dataType, hint)
+			}
+		}
+	}
+	return nil
+}
+
+func is64BitIntegerType(dbType common.DatabaseType, dataType string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(dataType))
+	switch dbType {
+	case common.DatabaseTypeMySQL:
+		return normalized == "bigint" || normalized == "unsigned bigint" || normalized == "bigint unsigned"
+	case common.DatabaseTypePostgreSQL:
+		return normalized == "bigint" || normalized == "int8"
+	default:
+		return false
+	}
+}
+
 func migrateDB() error {
+	if err := migrateTokenKeyUniqueness(DB); err != nil {
+		return err
+	}
+	if err := migratePrefillGroupUniqueness(DB); err != nil {
+		return err
+	}
 	// Migrate price_amount column from float/double to decimal for existing tables
 	migrateSubscriptionPlanPriceAmount()
 	// Migrate model_limits column from varchar to text for existing tables
@@ -268,12 +374,51 @@ func migrateDB() error {
 		return err
 	}
 
-	err := DB.AutoMigrate(
+	registry := extension.Default()
+	models := mainAutoMigrateModels(registry)
+
+	err := DB.AutoMigrate(models...)
+	if err != nil {
+		return err
+	}
+	if err := InitializeUserAuthVersions(); err != nil {
+		return err
+	}
+	if err := InitializeExternalIdentityClaims(); err != nil {
+		return err
+	}
+	// 扩展数据迁移的执行点：核心模型迁移与外部身份初始化之后、SQLite
+	// SubscriptionPlan 分支之前，与此前 migrateQuotaAccounts() 的位置一致。
+	if err := registry.RunStepsFor(DB, extension.PhaseAfterCoreData); err != nil {
+		return err
+	}
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
+			return err
+		}
+	} else {
+		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mainAutoMigrateModels returns the exact model sequence for migrateDB's single
+// AutoMigrate call. Keeping construction behind this tested boundary prevents
+// a registry refactor from silently moving, dropping, or reordering a core
+// model while still allowing extensions to append models after the core list.
+func mainAutoMigrateModels(registry *extension.Registry) []any {
+	coreModels := []any{
 		&Channel{},
 		&Token{},
 		&User{},
+		&UserSession{},
+		&AuthFlow{},
+		&ExternalIdentityClaim{},
 		&PasskeyCredential{},
 		&Option{},
+		&LoginEncryptionKey{},
 		&Redemption{},
 		&Ability{},
 		&Log{},
@@ -281,6 +426,7 @@ func migrateDB() error {
 		&TopUp{},
 		&QuotaData{},
 		&Task{},
+		&TaskPlugin{},
 		&Model{},
 		&Vendor{},
 		&PrefillGroup{},
@@ -299,93 +445,11 @@ func migrateDB() error {
 		&SystemTaskLock{},
 		&CasbinRule{},
 		&AuthzRole{},
-	)
-	if err != nil {
-		return err
 	}
-	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
-		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
-			return err
-		}
-	} else {
-		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
-			return err
-		}
+	if registry == nil {
+		return coreModels
 	}
-	return nil
-}
-
-func migrateDBFast() error {
-
-	var wg sync.WaitGroup
-
-	migrations := []struct {
-		model interface{}
-		name  string
-	}{
-		{&Channel{}, "Channel"},
-		{&Token{}, "Token"},
-		{&User{}, "User"},
-		{&PasskeyCredential{}, "PasskeyCredential"},
-		{&Option{}, "Option"},
-		{&Redemption{}, "Redemption"},
-		{&Ability{}, "Ability"},
-		{&Log{}, "Log"},
-		{&Midjourney{}, "Midjourney"},
-		{&TopUp{}, "TopUp"},
-		{&QuotaData{}, "QuotaData"},
-		{&Task{}, "Task"},
-		{&Model{}, "Model"},
-		{&Vendor{}, "Vendor"},
-		{&PrefillGroup{}, "PrefillGroup"},
-		{&Setup{}, "Setup"},
-		{&TwoFA{}, "TwoFA"},
-		{&TwoFABackupCode{}, "TwoFABackupCode"},
-		{&Checkin{}, "Checkin"},
-		{&SubscriptionOrder{}, "SubscriptionOrder"},
-		{&UserSubscription{}, "UserSubscription"},
-		{&SubscriptionPreConsumeRecord{}, "SubscriptionPreConsumeRecord"},
-		{&CustomOAuthProvider{}, "CustomOAuthProvider"},
-		{&UserOAuthBinding{}, "UserOAuthBinding"},
-		{&PerfMetric{}, "PerfMetric"},
-		{&SystemInstance{}, "SystemInstance"},
-		{&SystemTask{}, "SystemTask"},
-		{&SystemTaskLock{}, "SystemTaskLock"},
-	}
-	// 动态计算migration数量，确保errChan缓冲区足够大
-	errChan := make(chan error, len(migrations))
-
-	for _, m := range migrations {
-		wg.Add(1)
-		go func(model interface{}, name string) {
-			defer wg.Done()
-			if err := DB.AutoMigrate(model); err != nil {
-				errChan <- fmt.Errorf("failed to migrate %s: %v", name, err)
-			}
-		}(m.model, m.name)
-	}
-
-	// Wait for all migrations to complete
-	wg.Wait()
-	close(errChan)
-
-	// Check for any errors
-	for err := range errChan {
-		if err != nil {
-			return err
-		}
-	}
-	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
-		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
-			return err
-		}
-	} else {
-		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
-			return err
-		}
-	}
-	common.SysLog("database migrated")
-	return nil
+	return append(coreModels, registry.ModelsFor(extension.PhaseAfterCoreModels)...)
 }
 
 func migrateLOGDB() error {

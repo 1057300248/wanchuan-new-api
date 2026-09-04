@@ -2,6 +2,8 @@ package model
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -12,6 +14,11 @@ import (
 )
 
 const (
+	// BatchUpdateTypeUserQuota 保留枚举槽位以兼容上游枚举序号与批量存储结构。
+	// 三账户账本语义下 users.quota 只是 paid+bonus+affiliate 的兼容镜像，
+	// 只能由 CreditQuota*/DebitQuota* 在同一事务内维护，因此 batchUpdate
+	// 不会刷新该类型（见 batchUpdate）；user quota 预扣 API 已 fail-closed
+	// （TryReserveUserQuota），不再向该队列写入增量。
 	BatchUpdateTypeUserQuota = iota
 	BatchUpdateTypeTokenQuota
 	BatchUpdateTypeUsedQuota
@@ -42,11 +49,22 @@ func InitBatchUpdater() {
 func addNewRecord(type_ int, id int, value int) {
 	batchUpdateLocks[type_].Lock()
 	defer batchUpdateLocks[type_].Unlock()
-	if _, ok := batchUpdateStores[type_][id]; !ok {
+	old, ok := batchUpdateStores[type_][id]
+	if !ok {
 		batchUpdateStores[type_][id] = value
-	} else {
-		batchUpdateStores[type_][id] += value
+		return
 	}
+
+	sum := old + value
+	if (value > 0 && sum < old) || (value < 0 && sum > old) {
+		common.SysError(fmt.Sprintf("batch update overflow: type=%d id=%d old=%d value=%d", type_, id, old, value))
+		if value > 0 {
+			sum = math.MaxInt
+		} else {
+			sum = math.MinInt
+		}
+	}
+	batchUpdateStores[type_][id] = sum
 }
 
 func batchUpdate() {
@@ -76,7 +94,7 @@ func batchUpdate() {
 	}
 
 	for i, store := range stores {
-		if i == BatchUpdateTypeUserQuota || i == BatchUpdateTypeUsedQuota || i == BatchUpdateTypeRequestCount {
+		if i == BatchUpdateTypeUsedQuota || i == BatchUpdateTypeRequestCount {
 			continue
 		}
 		for key, value := range store {
@@ -92,14 +110,10 @@ func batchUpdate() {
 		}
 	}
 
-	userQuotaStore := stores[BatchUpdateTypeUserQuota]
 	usedQuotaStore := stores[BatchUpdateTypeUsedQuota]
 	requestCountStore := stores[BatchUpdateTypeRequestCount]
 
-	userIDs := make(map[int]struct{}, len(userQuotaStore)+len(usedQuotaStore)+len(requestCountStore))
-	for key := range userQuotaStore {
-		userIDs[key] = struct{}{}
-	}
+	userIDs := make(map[int]struct{}, len(usedQuotaStore)+len(requestCountStore))
 	for key := range usedQuotaStore {
 		userIDs[key] = struct{}{}
 	}
@@ -107,7 +121,7 @@ func batchUpdate() {
 		userIDs[key] = struct{}{}
 	}
 	for key := range userIDs {
-		updateUserQuotaUsedQuotaAndRequestCount(key, userQuotaStore[key], usedQuotaStore[key], requestCountStore[key])
+		updateUserUsedQuotaAndRequestCount(key, usedQuotaStore[key], requestCountStore[key])
 	}
 	common.SysLog("batch update finished")
 }

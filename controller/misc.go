@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"net/http"
 	"strings"
 
@@ -63,7 +64,7 @@ func GetStatus(c *gin.Context) {
 		"linuxdo_minimum_trust_level": common.LinuxDOMinimumTrustLevel,
 		"telegram_oauth":              common.TelegramOAuthEnabled,
 		"telegram_bot_name":           common.TelegramBotName,
-		"theme":                       system_setting.GetThemeSettings().Frontend,
+		"theme":                       "default",
 		"system_name":                 common.SystemName,
 		"logo":                        common.Logo,
 		"footer_html":                 common.Footer,
@@ -74,6 +75,11 @@ func GetStatus(c *gin.Context) {
 		"turnstile_site_key":          common.TurnstileSiteKey,
 		"docs_link":                   operation_setting.GetGeneralSetting().DocsLink,
 		"quota_per_unit":              common.QuotaPerUnit,
+		"signup_bonus_enabled":        common.SignupBonusEnabled,
+		"signup_bonus_quota":          common.QuotaForSignupBonus,
+		"referral_bonus_enabled":      common.AffiliateRewardEnabled,
+		"referral_bonus_rate":         common.AffiliateRewardRate,
+		"referral_bonus_freeze_days":  common.AffiliateRewardFreezeDays,
 		// 兼容旧前端：保留 display_in_currency，同时提供新的 quota_display_type
 		"display_in_currency":           operation_setting.IsCurrencyDisplay(),
 		"quota_display_type":            operation_setting.GetQuotaDisplayType(),
@@ -94,6 +100,8 @@ func GetStatus(c *gin.Context) {
 		"password_register_enabled":     common.PasswordRegisterEnabled,
 		"default_use_auto_group":        setting.DefaultUseAutoGroup,
 
+		"password_login_encryption_enabled": common.PasswordLoginEncryptionEnabled,
+
 		"usd_exchange_rate": operation_setting.USDExchangeRate,
 		"price":             operation_setting.Price,
 		"stripe_unit_price": setting.StripeUnitPrice,
@@ -111,6 +119,7 @@ func GetStatus(c *gin.Context) {
 		"oidc_enabled":                system_setting.GetOIDCSettings().Enabled,
 		"oidc_client_id":              system_setting.GetOIDCSettings().ClientId,
 		"oidc_authorization_endpoint": system_setting.GetOIDCSettings().AuthorizationEndpoint,
+		"oidc_display_name":           system_setting.GetOIDCSettings().GetEffectiveDisplayName(),
 		"passkey_login":               passkeySetting.Enabled,
 		"passkey_display_name":        passkeySetting.RPDisplayName,
 		"passkey_rp_id":               passkeySetting.RPID,
@@ -173,42 +182,24 @@ func GetStatus(c *gin.Context) {
 
 func GetNotice(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
-	defer common.OptionMapRWMutex.RUnlock()
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    common.OptionMap["Notice"],
-	})
-	return
+	notice := common.OptionMap["Notice"]
+	common.OptionMapRWMutex.RUnlock()
+	serveRevalidatedJSON(c, notice)
 }
 
 func GetAbout(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
-	defer common.OptionMapRWMutex.RUnlock()
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    common.OptionMap["About"],
-	})
-	return
+	about := common.OptionMap["About"]
+	common.OptionMapRWMutex.RUnlock()
+	serveRevalidatedJSON(c, about)
 }
 
 func GetUserAgreement(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    system_setting.GetLegalSettings().UserAgreement,
-	})
-	return
+	serveRevalidatedJSON(c, system_setting.GetLegalSettings().UserAgreement)
 }
 
 func GetPrivacyPolicy(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    system_setting.GetLegalSettings().PrivacyPolicy,
-	})
-	return
+	serveRevalidatedJSON(c, system_setting.GetLegalSettings().PrivacyPolicy)
 }
 
 func GetMidjourney(c *gin.Context) {
@@ -224,13 +215,9 @@ func GetMidjourney(c *gin.Context) {
 
 func GetHomePageContent(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
-	defer common.OptionMapRWMutex.RUnlock()
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    common.OptionMap["HomePageContent"],
-	})
-	return
+	homePageContent := common.OptionMap["HomePageContent"]
+	common.OptionMapRWMutex.RUnlock()
+	serveRevalidatedJSON(c, homePageContent)
 }
 
 func SendEmailVerification(c *gin.Context) {
@@ -282,11 +269,12 @@ func SendEmailVerification(c *gin.Context) {
 	}
 	code := common.GenerateVerificationCode(6)
 	common.RegisterVerificationCodeWithKey(email, code, common.EmailVerificationPurpose)
-	subject := fmt.Sprintf("%s邮箱验证邮件", common.SystemName)
-	content := fmt.Sprintf("<p>您好，你正在进行%s邮箱验证。</p>"+
-		"<p>您的验证码为: <strong>%s</strong></p>"+
-		"<p>验证码 %d 分钟内有效，如果不是本人操作，请忽略。</p>", common.SystemName, code, common.VerificationValidMinutes)
-	err := common.SendEmail(subject, email, content)
+	subject := fmt.Sprintf("【%s】邮箱验证码", common.SystemName)
+	plainText := fmt.Sprintf("您好：\n\n您正在进行%s邮箱验证。\n\n验证码：%s\n\n验证码 %d 分钟内有效。若非本人操作，请忽略本邮件。\n\n%s\nchuanapi.com",
+		common.SystemName, code, common.VerificationValidMinutes, common.SystemName)
+	content := fmt.Sprintf("<!doctype html><html><body style=\"margin:0;padding:24px;background:#f6f8fb;color:#1f2937;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',Arial,sans-serif\"><main style=\"max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px\"><h1 style=\"margin:0 0 20px;font-size:22px\">邮箱验证</h1><p style=\"line-height:1.7\">您好，您正在进行%s邮箱验证。</p><p style=\"margin:24px 0;padding:16px;background:#f3f4f6;border-radius:8px;text-align:center;font-size:30px;font-weight:700;letter-spacing:6px;color:#111827\">%s</p><p style=\"line-height:1.7\">验证码 %d 分钟内有效。若非本人操作，请忽略本邮件。</p><hr style=\"margin:24px 0;border:0;border-top:1px solid #e5e7eb\"><p style=\"margin:0;color:#6b7280;font-size:13px\">%s · chuanapi.com</p></main></body></html>",
+		html.EscapeString(common.SystemName), html.EscapeString(code), common.VerificationValidMinutes, html.EscapeString(common.SystemName))
+	err := common.SendEmailWithPlainText(subject, email, plainText, content)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -308,12 +296,12 @@ func SendPasswordResetEmail(c *gin.Context) {
 		code := common.GenerateVerificationCode(0)
 		common.RegisterVerificationCodeWithKey(email, code, common.PasswordResetPurpose)
 		link := fmt.Sprintf("%s/user/reset?email=%s&token=%s", system_setting.ServerAddress, email, code)
-		subject := fmt.Sprintf("%s密码重置", common.SystemName)
-		content := fmt.Sprintf("<p>您好，你正在进行%s密码重置。</p>"+
-			"<p>点击 <a href='%s'>此处</a> 进行密码重置。</p>"+
-			"<p>如果链接无法点击，请尝试点击下面的链接或将其复制到浏览器中打开：<br> %s </p>"+
-			"<p>重置链接 %d 分钟内有效，如果不是本人操作，请忽略。</p>", common.SystemName, link, link, common.VerificationValidMinutes)
-		err := common.SendEmail(subject, email, content)
+		subject := fmt.Sprintf("【%s】密码重置", common.SystemName)
+		plainText := fmt.Sprintf("您好：\n\n您正在进行%s密码重置。\n\n请在浏览器中打开以下链接：\n%s\n\n重置链接 %d 分钟内有效。若非本人操作，请忽略本邮件。\n\n%s\nchuanapi.com",
+			common.SystemName, link, common.VerificationValidMinutes, common.SystemName)
+		content := fmt.Sprintf("<!doctype html><html><body style=\"margin:0;padding:24px;background:#f6f8fb;color:#1f2937;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',Arial,sans-serif\"><main style=\"max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px\"><h1 style=\"margin:0 0 20px;font-size:22px\">密码重置</h1><p style=\"line-height:1.7\">您好，您正在进行%s密码重置。</p><p style=\"margin:24px 0\"><a href=\"%s\" style=\"display:inline-block;padding:12px 22px;border-radius:8px;background:#111827;color:#ffffff;text-decoration:none;font-weight:600\">重置密码</a></p><p style=\"line-height:1.7\">如果按钮无法打开，请复制以下地址到浏览器：</p><p style=\"padding:12px;background:#f3f4f6;border-radius:8px;word-break:break-all;font-size:13px\">%s</p><p style=\"line-height:1.7\">重置链接 %d 分钟内有效。若非本人操作，请忽略本邮件。</p><hr style=\"margin:24px 0;border:0;border-top:1px solid #e5e7eb\"><p style=\"margin:0;color:#6b7280;font-size:13px\">%s · chuanapi.com</p></main></body></html>",
+			html.EscapeString(common.SystemName), html.EscapeString(link), html.EscapeString(link), common.VerificationValidMinutes, html.EscapeString(common.SystemName))
+		err := common.SendEmailWithPlainText(subject, email, plainText, content)
 		if err != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("failed to send password reset email to %s: %s", email, err.Error()))
 		}

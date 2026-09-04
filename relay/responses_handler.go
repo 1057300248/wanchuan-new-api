@@ -7,32 +7,28 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	appconstant "github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
 
 func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
-	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
-		switch info.ApiType {
-		case appconstant.APITypeOpenAI, appconstant.APITypeCodex:
-		default:
-			return types.NewErrorWithStatusCode(
-				fmt.Errorf("unsupported endpoint %q for api type %d", "/v1/responses/compact", info.ApiType),
-				types.ErrorCodeInvalidRequest,
-				http.StatusBadRequest,
-				types.ErrOptionWithSkipRetry(),
-			)
-		}
+	if info.RelayMode == relayconstant.RelayModeResponsesCompact &&
+		!common.SupportsResponsesCompact(info.ChannelType, info.ApiType) {
+		return types.NewErrorWithStatusCode(
+			fmt.Errorf("unsupported endpoint %q for api type %d", "/v1/responses/compact", info.ApiType),
+			types.ErrorCodeInvalidRequest,
+			http.StatusBadRequest,
+			types.ErrOptionWithSkipRetry(),
+		)
 	}
 
 	var responsesReq *dto.OpenAIResponsesRequest
@@ -74,6 +70,9 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
+	if err = helper.ApplyReasoningModelSuffix(info, request); err != nil {
+		return newConvertRequestFailedError(c, info, err)
+	}
 
 	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {
@@ -82,15 +81,18 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	adaptor.Init(info)
 	var requestBody io.Reader
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
-		storage, err := common.GetBodyStorage(c)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+		var closer io.Closer
+		requestBody, closer, newAPIError = prepareResponsesPassThroughBody(c, info)
+		if newAPIError != nil {
+			return newAPIError
 		}
-		requestBody = common.ReaderOnly(storage)
+		if closer != nil {
+			defer closer.Close()
+		}
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
 		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			return newConvertRequestFailedError(c, info, err)
 		}
 		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
 		jsonData, err := common.Marshal(convertedRequest)
@@ -113,13 +115,12 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		}
 
 		logger.LogDebug(c, "requestBody: %s", jsonData)
-		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 		defer closer.Close()
 		jsonData = nil
-		info.UpstreamRequestBodySize = size
 		requestBody = body
 	}
 
@@ -173,4 +174,33 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		service.PostTextConsumeQuota(c, info, usageDto, nil)
 	}
 	return nil
+}
+
+// prepareResponsesPassThroughBody preserves the original Responses payload when
+// a channel has no parameter overrides. If overrides are configured, it applies
+// them to the replayable raw JSON body so pass-through channels behave the same
+// as the Chat Completions and Claude relay paths.
+func prepareResponsesPassThroughBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, io.Closer, *types.NewAPIError) {
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return nil, nil, types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if len(info.ParamOverride) == 0 {
+		return common.NewReplayableBodyReader(storage), nil, nil
+	}
+
+	jsonData, err := storage.Bytes()
+	if err != nil {
+		return nil, nil, types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
+	if err != nil {
+		return nil, nil, newAPIErrorFromParamOverride(err)
+	}
+	logger.LogDebug(c, "responses pass-through request body after param override: %s", jsonData)
+	body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+	if err != nil {
+		return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+	return body, closer, nil
 }

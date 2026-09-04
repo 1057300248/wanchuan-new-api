@@ -1,0 +1,90 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import { describe, expect, test } from 'vitest'
+
+import { extensionBrandLogo, setBrandExtension } from '../brand'
+import {
+  extensionFlags,
+  isExtensionFeatureEnabled,
+  setExtensionFlags,
+} from '../flags'
+import { extensionI18nOverrides, setI18nExtensions } from '../i18n'
+
+describe('frontend brand extension bridge', () => {
+  test('falls back to the default logo until an extension registers one, then rejects reconfiguration', () => {
+    expect(extensionBrandLogo()).toBe('/logo.png')
+
+    setBrandExtension({ id: 'test/brand', logoUrl: '/brand/test-mark.png' })
+    expect(extensionBrandLogo()).toBe('/brand/test-mark.png')
+
+    expect(() =>
+      setBrandExtension({ id: 'other/brand', logoUrl: '/brand/other.png' })
+    ).toThrow('frontend brand extension is already configured')
+  })
+})
+
+describe('frontend extension feature flag bridge', () => {
+  test('starts disabled, reflects configured values, and rejects reconfiguration', () => {
+    expect(isExtensionFeatureEnabled('showLegacyAffiliateQuota')).toBe(false)
+    expect(extensionFlags.showLegacyAffiliateQuota).toBe(false)
+
+    setExtensionFlags({ showLegacyAffiliateQuota: true })
+    expect(isExtensionFeatureEnabled('showLegacyAffiliateQuota')).toBe(true)
+    expect(extensionFlags.showLegacyAffiliateQuota).toBe(true)
+
+    expect(() =>
+      setExtensionFlags({ showLegacyAffiliateQuota: false })
+    ).toThrow(
+      'frontend extension flag is already configured: showLegacyAffiliateQuota'
+    )
+  })
+})
+
+describe('frontend i18n override bridge', () => {
+  test('merges overrides in registration order with later extensions winning, then rejects reconfiguration', () => {
+    expect(extensionI18nOverrides()).toEqual({})
+
+    setI18nExtensions([
+      {
+        id: 'first/i18n',
+        overrides: {
+          en: { translation: { Greeting: 'Hello', Farewell: 'Bye' } },
+          zhCN: { translation: { Greeting: '你好' } },
+        },
+      },
+      {
+        id: 'second/i18n',
+        overrides: {
+          en: { translation: { Greeting: 'Hey' } },
+        },
+      },
+    ])
+
+    const overrides = extensionI18nOverrides()
+    expect(overrides.en?.translation).toEqual({
+      Greeting: 'Hey',
+      Farewell: 'Bye',
+    })
+    expect(overrides.zhCN?.translation).toEqual({ Greeting: '你好' })
+
+    expect(() => setI18nExtensions([])).toThrow(
+      'frontend i18n extensions are already configured'
+    )
+  })
+})

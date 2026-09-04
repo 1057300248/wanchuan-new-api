@@ -104,10 +104,14 @@ func setupRedeemFixture(t *testing.T, quota int) (userId int, key string) {
 	t.Helper()
 	require.NoError(t, DB.AutoMigrate(&Redemption{}))
 	require.NoError(t, DB.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&Redemption{}).Error)
+	require.NoError(t, DB.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&BalanceLedger{}).Error)
+	require.NoError(t, DB.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&BalanceLedgerOperation{}).Error)
 	t.Cleanup(func() {
 		require.NoError(t, DB.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&Redemption{}).Error)
 		DB.Exec("DELETE FROM users")
 		DB.Exec("DELETE FROM logs")
+		DB.Exec("DELETE FROM balance_ledger")
+		DB.Exec("DELETE FROM balance_ledger_operations")
 	})
 
 	user := &User{Username: "redeem-user", Password: "password", Status: common.UserStatusEnabled, Quota: 0}
@@ -146,6 +150,35 @@ func TestRedeemCreditsQuotaExactlyOnce(t *testing.T) {
 	require.Error(t, err)
 	require.NoError(t, DB.First(&user, "id = ?", userId).Error)
 	assert.Equal(t, 500, user.Quota)
+}
+
+func TestRedeemRejectsWalletOverflow(t *testing.T) {
+	userId, key := setupRedeemFixture(t, 11)
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", userId).Update("quota", common.MaxWalletQuota-10).Error)
+
+	_, err := Redeem(key, userId)
+	require.ErrorIs(t, err, ErrRedeemFailed)
+
+	var user User
+	require.NoError(t, DB.First(&user, "id = ?", userId).Error)
+	assert.Equal(t, common.MaxWalletQuota-10, user.Quota)
+
+	var redemption Redemption
+	require.NoError(t, DB.First(&redemption, "key = ?", key).Error)
+	assert.Equal(t, common.RedemptionCodeStatusEnabled, redemption.Status)
+}
+
+func TestRedemptionQuotaRejectsWalletOverflow(t *testing.T) {
+	setupRedeemFixture(t, 500)
+
+	redemption := &Redemption{
+		Name:        "overflow-redemption",
+		Key:         "10000000000000000000000000000002",
+		Status:      common.RedemptionCodeStatusEnabled,
+		Quota:       common.MaxWalletQuota + 1,
+		CreatedTime: common.GetTimestamp(),
+	}
+	require.Error(t, redemption.Insert())
 }
 
 // Exactly one of several concurrent redeems of the same code may win, and

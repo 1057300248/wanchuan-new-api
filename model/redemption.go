@@ -148,6 +148,8 @@ func Redeem(key string, userId int) (quota int, err error) {
 		keyCol = `"key"`
 	}
 	common.RandomSleep()
+	var replayTotalAfter int
+	ledgerApplied := false
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		err := lockForUpdate(tx).Where(keyCol+" = ?", key).First(redemption).Error
 		if err != nil {
@@ -175,17 +177,45 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if result.RowsAffected == 0 {
 			return errors.New("该兑换码已被使用")
 		}
-		return tx.Model(&User{}).Where("id = ?", userId).Update("quota", gorm.Expr("quota + ?", redemption.Quota)).Error
+
+		// 兑换码入账并写账本（同一事务；幂等键 = redemption id，兑换码一次性，
+		// 数据库状态 CAS 已保证不会被重复兑换）
+		ledgerResult, err := CreditQuotaTx(tx, LedgerEntry{
+			UserId:        userId,
+			Account:       AccountPaid,
+			Delta:         redemption.Quota,
+			Reason:        LedgerReasonRedemption,
+			ReferenceType: "redemption",
+			ReferenceId:   strconv.Itoa(redemption.Id),
+		})
+		if err != nil {
+			return err
+		}
+		replayTotalAfter = ledgerResult.TotalAfter
+		ledgerApplied = true
+		return nil
+
 	})
 	if err != nil {
 		common.SysError("redemption failed: " + err.Error())
 		return 0, ErrRedeemFailed
 	}
+	if ledgerApplied {
+		// 账本提交后失效用户缓存；守卫式增量与失效叠加安全（对已删除哈希跳过）。
+		RefreshUserQuotaCache(userId, replayTotalAfter)
+	}
+	syncCreditUserQuotaCache(userId, redemption.Quota, "redemption")
 	RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(redemption.Quota), redemption.Id))
 	return redemption.Quota, nil
 }
 
 func (redemption *Redemption) Insert() error {
+	if redemption.Quota <= 0 {
+		return errors.New("redemption quota must be positive")
+	}
+	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+		return err
+	}
 	var err error
 	err = DB.Create(redemption).Error
 	return err
@@ -198,6 +228,12 @@ func (redemption *Redemption) SelectUpdate() error {
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
 func (redemption *Redemption) Update() error {
+	if redemption.Quota <= 0 {
+		return errors.New("redemption quota must be positive")
+	}
+	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+		return err
+	}
 	var err error
 	err = DB.Model(redemption).Select("name", "status", "quota", "redeemed_time", "expired_time").Updates(redemption).Error
 	return err
