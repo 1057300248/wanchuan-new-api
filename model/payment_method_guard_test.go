@@ -245,7 +245,7 @@ func TestRechargeEpayKeepsRedisAndDatabaseCreditInSync(t *testing.T) {
 	assert.Equal(t, 17, cached.Quota)
 }
 
-func TestRechargeEpayUpdatesPaymentMethodToActual(t *testing.T) {
+func TestRechargeEpayFillsMissingPaymentMethodFromCallback(t *testing.T) {
 	truncateTables(t)
 
 	oldQuotaPerUnit := common.QuotaPerUnit
@@ -254,6 +254,7 @@ func TestRechargeEpayUpdatesPaymentMethodToActual(t *testing.T) {
 
 	user := insertUserForPaymentGuardTest(t, 503, 0)
 	order := createEpayTestOrder(t, user.Id, "EPAYTESTMETHOD", PaymentProviderEpay, common.TopUpStatusPending)
+	require.NoError(t, DB.Model(&TopUp{}).Where("trade_no = ?", order.TradeNo).Update("payment_method", "").Error)
 
 	alreadyDone, err := RechargeEpay(order.TradeNo, "wxpay", "10.00", "127.0.0.1")
 	require.NoError(t, err)
@@ -263,6 +264,27 @@ func TestRechargeEpayUpdatesPaymentMethodToActual(t *testing.T) {
 	require.NotNil(t, reloaded)
 	assert.Equal(t, "wxpay", reloaded.PaymentMethod)
 	assert.Equal(t, 2*500000, getUserQuotaForPaymentGuardTest(t, user.Id))
+}
+
+func TestRechargeEpayRejectsMismatchedPaymentMethod(t *testing.T) {
+	truncateTables(t)
+
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500000
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	user := insertUserForPaymentGuardTest(t, 507, 7)
+	order := createEpayTestOrder(t, user.Id, "EPAYTESTMETHODMISMATCH", PaymentProviderEpay, common.TopUpStatusPending)
+
+	alreadyDone, err := RechargeEpay(order.TradeNo, "wxpay", "10.00", "127.0.0.1")
+
+	require.ErrorIs(t, err, ErrPaymentMethodMismatch)
+	assert.False(t, alreadyDone)
+	assert.Equal(t, 7, getUserQuotaForPaymentGuardTest(t, user.Id))
+	reloaded := GetTopUpByTradeNo(order.TradeNo)
+	require.NotNil(t, reloaded)
+	assert.Equal(t, "alipay", reloaded.PaymentMethod)
+	assert.Equal(t, common.TopUpStatusPending, reloaded.Status)
 }
 
 func TestRechargeEpayRejectsCallbackAmountMismatch(t *testing.T) {

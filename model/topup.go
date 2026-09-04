@@ -197,8 +197,10 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, actualMoney string
 		if topUp.Status != common.TopUpStatusPending {
 			return ErrTopUpStatusInvalid
 		}
-		if actualPaymentMethod != "" && topUp.PaymentMethod != actualPaymentMethod {
+		if topUp.PaymentMethod == "" {
 			topUp.PaymentMethod = actualPaymentMethod
+		} else if actualPaymentMethod != "" && topUp.PaymentMethod != actualPaymentMethod {
+			return ErrPaymentMethodMismatch
 		}
 		var quotaErr error
 		quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(

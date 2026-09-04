@@ -240,6 +240,47 @@ describe('wallet funding flow', () => {
     })
   })
 
+  test('refreshes balances when the wallet becomes visible again and removes listeners on unmount', async () => {
+    vi.mocked(getTopupInfo).mockResolvedValue({
+      success: true,
+      data: onlineTopupInfo,
+    })
+    const visibilityState = vi.spyOn(document, 'visibilityState', 'get')
+    visibilityState.mockReturnValue('visible')
+
+    const view = render(<Wallet />)
+    await screen.findByLabelText('Custom Amount')
+
+    const initialSelfCalls = vi.mocked(getSelf).mock.calls.length
+    const initialSummaryCalls = vi.mocked(getWalletSummary).mock.calls.length
+    window.dispatchEvent(new Event('focus'))
+
+    await waitFor(() => {
+      expect(vi.mocked(getSelf).mock.calls.length).toBe(initialSelfCalls + 1)
+      expect(vi.mocked(getWalletSummary).mock.calls.length).toBe(
+        initialSummaryCalls + 1
+      )
+    })
+
+    visibilityState.mockReturnValue('hidden')
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(vi.mocked(getSelf).mock.calls.length).toBe(initialSelfCalls + 1)
+
+    visibilityState.mockReturnValue('visible')
+    document.dispatchEvent(new Event('visibilitychange'))
+    await waitFor(() => {
+      expect(vi.mocked(getSelf).mock.calls.length).toBe(initialSelfCalls + 2)
+      expect(vi.mocked(getWalletSummary).mock.calls.length).toBe(
+        initialSummaryCalls + 2
+      )
+    })
+
+    view.unmount()
+    window.dispatchEvent(new Event('focus'))
+    expect(vi.mocked(getSelf).mock.calls.length).toBe(initialSelfCalls + 2)
+    visibilityState.mockRestore()
+  })
+
   test('keeps the redemption input hidden when the backend does not enable redemption', async () => {
     vi.mocked(getTopupInfo).mockResolvedValue({
       success: true,

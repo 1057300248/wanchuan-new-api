@@ -118,6 +118,7 @@ export function Wallet(_props: WalletProps) {
   }, [fetchUser])
 
   const topupAmountInitializedRef = useRef(false)
+  const refreshBalancesPromiseRef = useRef<Promise<void> | null>(null)
   useEffect(() => {
     if (!topupInfo || topupAmountInitializedRef.current) return
 
@@ -128,8 +129,37 @@ export function Wallet(_props: WalletProps) {
   }, [topupInfo, calculatePaymentAmount])
 
   const refreshBalances = useCallback(async () => {
-    await Promise.all([fetchUser(), refetchWallet()])
+    if (refreshBalancesPromiseRef.current) {
+      return refreshBalancesPromiseRef.current
+    }
+
+    const refreshPromise = Promise.all([fetchUser(), refetchWallet()]).then(
+      () => undefined
+    )
+    refreshBalancesPromiseRef.current = refreshPromise
+    try {
+      await refreshPromise
+    } finally {
+      if (refreshBalancesPromiseRef.current === refreshPromise) {
+        refreshBalancesPromiseRef.current = null
+      }
+    }
   }, [fetchUser, refetchWallet])
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshBalances()
+      }
+    }
+
+    window.addEventListener('focus', refreshWhenVisible)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => {
+      window.removeEventListener('focus', refreshWhenVisible)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+    }
+  }, [refreshBalances])
 
   const getCurrentPaymentType = useCallback(
     () => selectedPaymentMethod?.type || getDefaultPaymentType(topupInfo),
