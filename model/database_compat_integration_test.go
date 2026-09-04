@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // TestDatabaseCompatibilityReal exercises the same InitDB/migrateDB path used by
