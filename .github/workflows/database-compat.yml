@@ -24,6 +24,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Create frontend embed placeholder
+        run: |
+          mkdir -p web/dist
+          touch web/dist/index.html
       - name: Full unit suite
         run: go test ./...
       - name: Real SQLite production migration and CRUD
