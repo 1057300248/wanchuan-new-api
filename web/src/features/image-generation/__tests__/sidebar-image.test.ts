@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { isRedirect } from '@tanstack/react-router'
 import { renderHook } from '@testing-library/react'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import {
   SIDEBAR_MODULES_DEFAULT,
@@ -28,10 +28,27 @@ import { useSidebarData } from '@/hooks/use-sidebar-data'
 import { isSidebarModuleEnabled } from '@/lib/nav-modules'
 import { Route as ImageRoute } from '@/routes/_authenticated/image/index'
 
-function callImageBeforeLoad(): unknown {
-  const beforeLoad = ImageRoute.options.beforeLoad as unknown as () => unknown
+vi.mock('@/lib/api', async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import('@/lib/api')>()
+  return {
+    ...original,
+    getStatus: vi.fn(async () => {
+      throw new Error('network unavailable in unit test')
+    }),
+  }
+})
+
+async function callImageBeforeLoad(): Promise<unknown> {
+  const beforeLoad = ImageRoute.options.beforeLoad as unknown as (
+    ...args: never[]
+  ) => unknown
   return beforeLoad()
 }
+
+beforeEach(() => {
+  vi.clearAllMocks()
+})
 
 function setSidebarModulesAdmin(value: unknown) {
   window.localStorage.setItem(
@@ -85,13 +102,13 @@ describe('chat.image route gate honors SidebarModulesAdmin', () => {
     expect(isSidebarModuleEnabled('chat', 'playground')).toBe(true)
   })
 
-  test('disabled image module redirects /image to /dashboard without legacy hops', () => {
+  test('disabled image module redirects /image to /dashboard without legacy hops', async () => {
     setSidebarModulesAdmin({
       chat: { enabled: true, playground: true, image: false },
     })
     let thrown: unknown
     try {
-      callImageBeforeLoad()
+      await callImageBeforeLoad()
     } catch (error) {
       thrown = error
     }
@@ -102,14 +119,24 @@ describe('chat.image route gate honors SidebarModulesAdmin', () => {
     )
   })
 
-  test('enabled image module lets /image beforeLoad pass without redirect', () => {
+  test('enabled image module lets /image beforeLoad pass without redirect', async () => {
     setSidebarModulesAdmin({
       chat: { enabled: true, playground: true, image: true },
     })
-    expect(() => callImageBeforeLoad()).not.toThrow()
+    await expect(callImageBeforeLoad()).resolves.toBeUndefined()
   })
 
-  test('missing sidebar config lets /image beforeLoad pass without redirect', () => {
-    expect(() => callImageBeforeLoad()).not.toThrow()
+  test('missing sidebar config redirects /image when status is unavailable', async () => {
+    let thrown: unknown
+    try {
+      await callImageBeforeLoad()
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(isRedirect(thrown)).toBe(true)
+    expect((thrown as { options?: { to?: string } }).options?.to).toBe(
+      '/dashboard'
+    )
   })
 })

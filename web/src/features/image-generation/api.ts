@@ -22,11 +22,19 @@ import { getPricing } from '@/features/pricing/api'
 import { api } from '@/lib/api'
 
 import {
+  assertSafeImageUrl,
   buildEditsFormData,
   buildGenerationsBody,
+  isSafeImageUrl,
   normalizeImageResponse,
 } from './lib/request-builders'
+import {
+  isBlobSchemeUrl,
+  isDataSchemeUrl,
+} from './lib/managed-object-urls'
 import type { GeneratedImage, ImageApiKeyOption } from './types'
+
+export { isSafeImageUrl }
 
 export function toImageKeyOption(key: ApiKey): ImageApiKeyOption {
   return {
@@ -87,9 +95,15 @@ export async function loadGroupModels(group: string): Promise<string[]> {
   )
 }
 
-export async function loadFullTokenKey(id: number): Promise<string> {
-  const res = await fetchTokenKey(id)
+export async function loadFullTokenKey(
+  id: number,
+  signal?: AbortSignal
+): Promise<string> {
+  const res = await fetchTokenKey(id, signal ? { signal } : undefined)
   const key = res.data?.key
+  if (signal?.aborted) {
+    throw new DOMException('The operation was aborted.', 'AbortError')
+  }
   if (!res.success || !key) {
     throw new Error(res.message || 'Failed to load API key')
   }
@@ -123,6 +137,8 @@ export async function requestImageGeneration(params: {
       headers,
       signal: params.signal,
       skipErrorHandler: true,
+      skipAuthRefresh: true,
+      preserveAuthorization: true,
     })
     return normalizeImageResponse({
       data: res.data,
@@ -143,6 +159,8 @@ export async function requestImageGeneration(params: {
     headers,
     signal: params.signal,
     skipErrorHandler: true,
+    skipAuthRefresh: true,
+    preserveAuthorization: true,
   })
   return normalizeImageResponse({
     data: res.data,
@@ -153,6 +171,7 @@ export async function requestImageGeneration(params: {
 }
 
 export function resolveDownloadUrl(url: string): string {
+  assertSafeImageUrl(url)
   return url
 }
 
@@ -177,7 +196,8 @@ export async function downloadImage(
   url: string,
   filename: string
 ): Promise<void> {
-  if (url.startsWith('data:') || url.startsWith('blob:')) {
+  assertSafeImageUrl(url)
+  if (isDataSchemeUrl(url) || isBlobSchemeUrl(url)) {
     triggerAnchorDownload({ href: url, filename, newTabFallback: false })
     return
   }

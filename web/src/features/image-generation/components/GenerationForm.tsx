@@ -124,7 +124,7 @@ export function GenerationForm(props: GenerationFormProps) {
                 variant='outline'
                 size='xs'
                 disabled={props.isGenerating}
-                onClick={() => props.onChange({ prompt: example })}
+                onClick={() => props.onChange({ prompt: t(example) })}
               >
                 {t(example)}
               </Button>

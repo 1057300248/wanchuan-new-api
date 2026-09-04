@@ -110,9 +110,10 @@ export async function updateApiKeyStatus(
 
 // Fetch the real (unmasked) key for a token by ID
 export async function fetchTokenKey(
-  id: number
+  id: number,
+  config?: { signal?: AbortSignal }
 ): Promise<{ success: boolean; message?: string; data?: { key: string } }> {
-  const res = await api.post(`/api/token/${id}/key`)
+  const res = await api.post(`/api/token/${id}/key`, undefined, config)
   return res.data
 }
 

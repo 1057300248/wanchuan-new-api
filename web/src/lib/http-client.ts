@@ -36,6 +36,7 @@ declare module 'axios' {
     skipAuthRefresh?: boolean
     authRetry?: boolean
     acceptAuthRotation?: boolean
+    preserveAuthorization?: boolean
   }
 }
 
@@ -103,12 +104,17 @@ api.interceptors.response.use(
     const status = error?.response?.status
 
     if (status === 401) {
-      if (config && !config.skipAuthRefresh && !config.authRetry) {
+      if (
+        config &&
+        !config.skipAuthRefresh &&
+        !config.preserveAuthorization &&
+        !config.authRetry
+      ) {
         config.authRetry = true
         const outcome = await refreshAuthentication()
         if (outcome.kind === 'authenticated') {
           const token = useAuthStore.getState().auth.accessToken
-          if (token) {
+          if (token && !config.preserveAuthorization) {
             config.headers = {
               ...config.headers,
               Authorization: `Bearer ${token}`,
@@ -154,6 +160,7 @@ api.interceptors.response.use(
 )
 
 api.interceptors.request.use((config) => {
+  if (config.preserveAuthorization) return config
   const accessToken = useAuthStore.getState().auth.accessToken
   if (accessToken) {
     config.headers.Authorization = `Bearer ${accessToken}`

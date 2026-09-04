@@ -42,7 +42,11 @@ export function ResultGallery(props: ResultGalleryProps) {
   const handleDownload = async (image: GeneratedImage) => {
     try {
       await downloadImage(image.url, `image-${image.id}.png`)
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Image not available') {
+        toast.error(t('Image not available'))
+        return
+      }
       toast.error(t('Download failed'))
     }
   }

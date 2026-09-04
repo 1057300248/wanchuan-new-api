@@ -62,7 +62,11 @@ export function HistoryPanel(props: HistoryPanelProps) {
   const handleDownload = async (url: string, id: string) => {
     try {
       await downloadImage(url, `history-${id}.png`)
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Image not available') {
+        toast.error(t('Image not available'))
+        return
+      }
       toast.error(t('Download failed'))
     }
   }

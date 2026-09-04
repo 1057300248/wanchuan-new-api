@@ -146,7 +146,12 @@ function getCachedStatus(): Record<string, unknown> | null {
   try {
     if (typeof window === 'undefined') return null
     const raw = window.localStorage.getItem('status')
-    return raw ? (JSON.parse(raw) as Record<string, unknown>) : null
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null
+    }
+    return parsed as Record<string, unknown>
   } catch {
     return null
   }
@@ -185,11 +190,11 @@ export async function getFreshModuleAccess(
   }
 }
 
-export function isSidebarModuleEnabled(
+export function isSidebarModuleEnabledInStatus(
+  status: Record<string, unknown> | null,
   section: string,
   module: string
 ): boolean {
-  const status = getCachedStatus()
   if (!status) return true
 
   const raw = status.SidebarModulesAdmin
@@ -207,5 +212,28 @@ export function isSidebarModuleEnabled(
     return true
   } catch {
     return true
+  }
+}
+
+export function isSidebarModuleEnabled(
+  section: string,
+  module: string
+): boolean {
+  return isSidebarModuleEnabledInStatus(getCachedStatus(), section, module)
+}
+
+export async function getFreshSidebarModuleEnabled(
+  section: string,
+  module: string
+): Promise<boolean> {
+  try {
+    const status = (await getStatus()) as Record<string, unknown> | null
+    if (!status) return false
+    cacheStatus(status)
+    return isSidebarModuleEnabledInStatus(status, section, module)
+  } catch {
+    const cachedStatus = getCachedStatus()
+    if (!cachedStatus) return false
+    return isSidebarModuleEnabledInStatus(cachedStatus, section, module)
   }
 }

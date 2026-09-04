@@ -20,11 +20,12 @@ import { createFileRoute, redirect } from '@tanstack/react-router'
 
 import { Main } from '@/components/layout'
 import { ImageGenerationPage } from '@/features/image-generation'
-import { isSidebarModuleEnabled } from '@/lib/nav-modules'
+import { getFreshSidebarModuleEnabled } from '@/lib/nav-modules'
 
 export const Route = createFileRoute('/_authenticated/image/')({
-  beforeLoad: () => {
-    if (!isSidebarModuleEnabled('chat', 'image')) {
+  beforeLoad: async () => {
+    const enabled = await getFreshSidebarModuleEnabled('chat', 'image')
+    if (!enabled) {
       throw redirect({ to: '/dashboard' })
     }
   },

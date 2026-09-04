@@ -17,16 +17,41 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { GeneratedImage } from '../types'
+import {
+  isBlobSchemeUrl,
+  isDataSchemeUrl,
+  isHttpSchemeUrl,
+  isManagedObjectUrl,
+} from './managed-object-urls'
 import { getModelCapability, parseSizeDimensions } from './model-capabilities'
 
 export type GenerationsRequestBody = {
   model: string
   prompt: string
   n: number
-  response_format: 'url'
+  response_format?: 'url'
   size?: string
   quality?: string
   style?: string
+}
+
+const SAFE_HTTP_URL = /^https?:\/\//i
+const SAFE_DATA_IMAGE_URL =
+  /^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/i
+
+export function isSafeImageUrl(url: string): boolean {
+  if (isHttpSchemeUrl(url)) return SAFE_HTTP_URL.test(url.trimStart())
+  if (isBlobSchemeUrl(url)) return isManagedObjectUrl(url)
+  if (isDataSchemeUrl(url)) {
+    return SAFE_DATA_IMAGE_URL.test(url.replaceAll(/\s+/g, ''))
+  }
+  return false
+}
+
+export function assertSafeImageUrl(url: string): void {
+  if (!isSafeImageUrl(url)) {
+    throw new Error('Image not available')
+  }
 }
 
 function normalizeCount(count: number, maxN: number): number {
@@ -50,8 +75,8 @@ export function buildGenerationsBody(params: {
     model: params.model,
     prompt: params.prompt,
     n: count,
-    response_format: 'url',
   }
+  if (capability.supportsResponseFormat) body.response_format = 'url'
   if (capability.sizes.length > 0 && params.size) body.size = params.size
   if (capability.qualities.length > 0 && params.quality) {
     body.quality = params.quality
@@ -85,7 +110,9 @@ export function buildEditsFormData(params: {
   if (capability.sizes.length > 0 && params.size) {
     form.append('size', params.size)
   }
-  form.append('response_format', 'url')
+  if (capability.supportsResponseFormat) {
+    form.append('response_format', 'url')
+  }
   return form
 }
 
@@ -95,7 +122,7 @@ type RawImageItem = {
 }
 
 function normalizeDataUrl(value: string): string {
-  if (value.startsWith('data:')) return value
+  if (isDataSchemeUrl(value)) return value
   return `data:image/png;base64,${value}`
 }
 
@@ -116,13 +143,13 @@ export function normalizeImageResponse(params: {
 
   return items
     .map((item, index): GeneratedImage | null => {
-      if (item.url) {
+      if (typeof item.url === 'string' && item.url.length > 0) {
+        if (!isSafeImageUrl(item.url)) return null
+        const isDataUrl = isDataSchemeUrl(item.url)
         return {
           id: `${now}-${index}`,
           url: item.url,
-          source: item.url.startsWith('data:image/')
-            ? ('b64' as const)
-            : ('url' as const),
+          source: isDataUrl ? ('b64' as const) : ('url' as const),
           prompt: params.prompt,
           model: params.model,
           ...dimensions,
@@ -130,9 +157,11 @@ export function normalizeImageResponse(params: {
         }
       }
       if (item.b64_json) {
+        const normalized = normalizeDataUrl(item.b64_json)
+        if (!isSafeImageUrl(normalized)) return null
         return {
           id: `${now}-${index}`,
-          url: normalizeDataUrl(item.b64_json),
+          url: normalized,
           source: 'b64' as const,
           prompt: params.prompt,
           model: params.model,

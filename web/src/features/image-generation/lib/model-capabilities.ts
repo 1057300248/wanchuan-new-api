@@ -38,6 +38,7 @@ function emptyCapability(
     qualities: [],
     styles: [],
     maxReferenceImages: 0,
+    supportsResponseFormat: false,
     ...overrides,
   }
 }
@@ -51,6 +52,7 @@ export function getModelCapability(model: string): ImageModelCapability {
       styles: [...DALLE3_STYLES],
       maxN: 1,
       maxReferenceImages: 0,
+      supportsResponseFormat: true,
     }
   }
   if (name.includes('dall-e') || name.includes('dalle')) {
@@ -60,6 +62,7 @@ export function getModelCapability(model: string): ImageModelCapability {
       styles: [],
       maxN: 4,
       maxReferenceImages: 1,
+      supportsResponseFormat: true,
     }
   }
   if (name.includes('gpt-image-2-4k')) {
@@ -69,6 +72,7 @@ export function getModelCapability(model: string): ImageModelCapability {
       styles: [],
       maxN: 4,
       maxReferenceImages: 4,
+      supportsResponseFormat: false,
     }
   }
   if (name.includes('gpt-image-2-2k')) {
@@ -78,6 +82,7 @@ export function getModelCapability(model: string): ImageModelCapability {
       styles: [],
       maxN: 4,
       maxReferenceImages: 4,
+      supportsResponseFormat: false,
     }
   }
   if (name.includes('gpt-image-2')) {
@@ -87,6 +92,7 @@ export function getModelCapability(model: string): ImageModelCapability {
       styles: [],
       maxN: 4,
       maxReferenceImages: 4,
+      supportsResponseFormat: false,
     }
   }
   if (name.includes('gpt-image')) {
@@ -96,6 +102,7 @@ export function getModelCapability(model: string): ImageModelCapability {
       styles: [],
       maxN: 4,
       maxReferenceImages: 4,
+      supportsResponseFormat: false,
     }
   }
   if (name.includes('grok')) {
@@ -107,6 +114,7 @@ export function getModelCapability(model: string): ImageModelCapability {
     styles: [],
     maxN: 4,
     maxReferenceImages: 0,
+    supportsResponseFormat: false,
   }
 }
 

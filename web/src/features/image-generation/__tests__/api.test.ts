@@ -78,6 +78,8 @@ describe('requestImageGeneration selects the synchronous image endpoint', () => 
         headers: { Authorization: 'Bearer sk-test' },
         signal,
         skipErrorHandler: true,
+        skipAuthRefresh: true,
+        preserveAuthorization: true,
       }
     )
     expect(images[0]).toMatchObject({
@@ -118,6 +120,8 @@ describe('requestImageGeneration selects the synchronous image endpoint', () => 
     expect(config).toMatchObject({
       headers: { Authorization: 'Bearer sk-test' },
       skipErrorHandler: true,
+      skipAuthRefresh: true,
+      preserveAuthorization: true,
     })
     expect(images[0]).toMatchObject({
       source: 'b64',

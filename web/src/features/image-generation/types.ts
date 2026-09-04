@@ -41,6 +41,7 @@ export type ImageModelCapability = {
   styles: string[]
   maxN: number
   maxReferenceImages: number
+  supportsResponseFormat: boolean
 }
 
 export type GeneratedImage = {

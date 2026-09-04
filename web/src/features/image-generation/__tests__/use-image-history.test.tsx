@@ -26,6 +26,7 @@ import {
   loadImageBlob,
   saveImageBlob,
 } from '../lib/blob-store'
+import { clearManagedObjectUrls } from '../lib/managed-object-urls'
 import type { GeneratedImage } from '../types'
 
 vi.mock('../lib/blob-store', () => ({
@@ -81,6 +82,7 @@ function generatedImage(id: string): GeneratedImage {
 
 beforeEach(() => {
   window.localStorage.clear()
+  clearManagedObjectUrls()
   vi.mocked(deleteImageBlob).mockResolvedValue(undefined)
   vi.mocked(loadImageBlob).mockResolvedValue(null)
   vi.mocked(saveImageBlob).mockResolvedValue(undefined)
@@ -91,6 +93,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  clearManagedObjectUrls()
   vi.unstubAllGlobals()
 })
 

@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { IMAGE_HISTORY_MAX_ENTRIES, IMAGE_HISTORY_TTL_MS } from '../constants'
 import type { ImageHistoryEntry } from '../types'
+import { isBlobSchemeUrl, isHttpSchemeUrl } from './managed-object-urls'
 import { getImageOrientation, parseSizeDimensions } from './model-capabilities'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -33,11 +34,36 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 function isRemoteImageSource(value: string): boolean {
-  return /^https?:\/\//i.test(value)
+  if (!isHttpSchemeUrl(value)) return false
+  return /^https?:\/\//i.test(value.trimStart())
 }
 
 function isBase64ImageSource(value: string): boolean {
   return /^data:image\/(?:png|jpe?g|webp);base64,/i.test(value)
+}
+
+function isTemporaryObjectUrl(value: string): boolean {
+  return isBlobSchemeUrl(value)
+}
+
+export function dataUrlToBlob(dataUrl: string): Blob | null {
+  const match = /^data:(image\/(?:png|jpe?g|webp));base64,(.*)$/is.exec(
+    dataUrl.replaceAll(/\s+/g, '')
+  )
+  if (!match) return null
+  const mime = match[1].toLowerCase()
+  const base64 = match[2]
+  if (!base64) return null
+  try {
+    const binary = atob(base64)
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index)
+    }
+    return new Blob([bytes], { type: mime })
+  } catch {
+    return null
+  }
 }
 
 function isValidResult(value: unknown): boolean {
@@ -67,8 +93,22 @@ function isValidResult(value: unknown): boolean {
     if (value.source !== value.blobKey) return false
   } else {
     if (value.keptLocally) return false
-    if (value.type === 'url' && !isRemoteImageSource(value.source)) return false
-    if (value.type === 'b64' && !isBase64ImageSource(value.source)) return false
+    if (value.type === 'url') {
+      if (
+        !isRemoteImageSource(value.source) &&
+        !isTemporaryObjectUrl(value.source)
+      ) {
+        return false
+      }
+    }
+    if (value.type === 'b64') {
+      if (
+        !isBase64ImageSource(value.source) &&
+        !isTemporaryObjectUrl(value.source)
+      ) {
+        return false
+      }
+    }
   }
   return true
 }

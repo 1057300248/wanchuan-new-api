@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { handleServerError } from '@/lib/handle-server-error'
@@ -42,6 +42,16 @@ export function useImageGeneration() {
   const [error, setError] = useState<string | null>(null)
   const [results, setResults] = useState<GeneratedImage[]>([])
   const abortRef = useRef<AbortController | null>(null)
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      abortRef.current?.abort()
+      abortRef.current = null
+    }
+  }, [])
 
   const cancel = useCallback(() => {
     abortRef.current?.abort()
@@ -49,26 +59,34 @@ export function useImageGeneration() {
 
   const generate = useCallback(
     async (input: GenerateInput): Promise<GeneratedImage[] | null> => {
-      if (abortRef.current) return null
+      if (abortRef.current && !abortRef.current.signal.aborted) return null
       if (input.apiKeyId === null || input.apiKeyId === undefined) {
-        setError(t('Please select an API key'))
+        if (mountedRef.current) setError(t('Please select an API key'))
         return null
       }
       if (!input.model) {
-        setError(t('Please select a model'))
+        if (mountedRef.current) setError(t('Please select a model'))
         return null
       }
       if (!input.prompt.trim()) {
-        setError(t('Please enter a prompt'))
+        if (mountedRef.current) setError(t('Please enter a prompt'))
         return null
       }
 
       const controller = new AbortController()
       abortRef.current = controller
-      setIsGenerating(true)
-      setError(null)
+      if (mountedRef.current) {
+        setIsGenerating(true)
+        setError(null)
+      }
       try {
-        const fullKey = await loadFullTokenKey(input.apiKeyId)
+        const fullKey = await loadFullTokenKey(
+          input.apiKeyId,
+          controller.signal
+        )
+        if (controller.signal.aborted) {
+          throw new DOMException('The operation was aborted.', 'AbortError')
+        }
         const images = await requestImageGeneration({
           fullKey,
           model: input.model,
@@ -80,23 +98,25 @@ export function useImageGeneration() {
           images: input.images,
           signal: controller.signal,
         })
+        if (!mountedRef.current || controller.signal.aborted) return null
         setResults(images)
         return images
       } catch (err) {
         if (isAbortError(err) || controller.signal.aborted) {
-          setError(t('Generation was cancelled'))
+          if (mountedRef.current) setError(t('Generation was cancelled'))
           return null
         }
+        if (!mountedRef.current) return null
         handleServerError(err)
         const message =
           err instanceof Error && err.message
             ? err.message
             : t('Image generation failed')
-        setError(message)
+        if (mountedRef.current) setError(message)
         return null
       } finally {
         if (abortRef.current === controller) abortRef.current = null
-        setIsGenerating(false)
+        if (mountedRef.current) setIsGenerating(false)
       }
     },
     [t]

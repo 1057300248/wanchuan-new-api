@@ -46,7 +46,7 @@ describe('buildGenerationsBody constructs the JSON generations request', () => {
     })
   })
 
-  test('omits quality/style when the model family does not support them', () => {
+  test('omits quality/style/response_format when the model family does not support them', () => {
     const body = buildGenerationsBody({
       model: 'grok-beta',
       prompt: 'a city',
@@ -59,7 +59,6 @@ describe('buildGenerationsBody constructs the JSON generations request', () => {
       model: 'grok-beta',
       prompt: 'a city',
       n: 2,
-      response_format: 'url',
     })
   })
 
