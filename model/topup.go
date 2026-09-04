@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -43,6 +44,7 @@ const (
 
 var (
 	ErrPaymentMethodMismatch    = errors.New("payment method mismatch")
+	ErrPaymentAmountMismatch    = errors.New("payment amount mismatch")
 	ErrTopUpNotFound            = errors.New("topup not found")
 	ErrTopUpStatusInvalid       = errors.New("topup status invalid")
 	ErrInvalidTopUpQuota        = errors.New("invalid top-up quota")
@@ -160,9 +162,13 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 // 在同一个事务内完成，因此同一订单的并发/重复回调（包括多实例部署下）最多充值一次。
 // alreadyDone=true 表示订单此前已完成，本次为幂等重复回调。
 // 进程内的 LockOrder 只是优化，正确性由本函数的数据库行锁保证。
-func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (alreadyDone bool, err error) {
+func RechargeEpay(tradeNo string, actualPaymentMethod string, actualMoney string, callerIp string) (alreadyDone bool, err error) {
 	if tradeNo == "" {
 		return false, errors.New("未提供支付单号")
+	}
+	callbackMoney, err := decimal.NewFromString(strings.TrimSpace(actualMoney))
+	if err != nil || callbackMoney.LessThanOrEqual(decimal.Zero) || !callbackMoney.Equal(callbackMoney.Round(2)) {
+		return false, ErrPaymentAmountMismatch
 	}
 
 	refCol := "`trade_no`"
@@ -179,6 +185,10 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 		}
 		if topUp.PaymentProvider != PaymentProviderEpay {
 			return ErrPaymentMethodMismatch
+		}
+		expectedMoney := decimal.NewFromFloat(topUp.Money).Round(2)
+		if !callbackMoney.Equal(expectedMoney) {
+			return ErrPaymentAmountMismatch
 		}
 		if topUp.Status == common.TopUpStatusSuccess {
 			alreadyDone = true
@@ -219,7 +229,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 		return nil
 	})
 	if err != nil {
-		if !errors.Is(err, ErrTopUpNotFound) && !errors.Is(err, ErrPaymentMethodMismatch) && !errors.Is(err, ErrTopUpStatusInvalid) {
+		if !errors.Is(err, ErrTopUpNotFound) && !errors.Is(err, ErrPaymentMethodMismatch) && !errors.Is(err, ErrPaymentAmountMismatch) && !errors.Is(err, ErrTopUpStatusInvalid) {
 			common.SysError("epay topup failed: " + err.Error())
 		}
 		return false, err

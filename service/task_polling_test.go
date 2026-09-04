@@ -685,6 +685,107 @@ func TestRunTaskPollingOnceDoesNotRefundHistoricalFailedTask(t *testing.T) {
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
+func TestRunTaskPollingOnceRefundsPrechargedTaskWithMissingUpstreamID(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID, channelID = 404, 404, 404
+	const initialQuota, tokenRemain, preConsumedQuota = 10_000, 8_000, 1_200
+	seedUser(t, userID, initialQuota)
+	seedToken(t, tokenID, userID, "sk-missing-upstream", tokenRemain)
+	seedTaskPollingChannel(t, channelID, true)
+	seedChargedAccounting(t, userID, channelID, tokenID, preConsumedQuota, 1)
+
+	task := makeTask(userID, channelID, preConsumedQuota, tokenID, BillingSourceWallet, 0)
+	task.TaskID = ""
+	task.Platform = constant.TaskPlatformSuno
+	task.Progress = "50%"
+	task.SubmitTime = time.Now().Unix()
+	require.NoError(t, model.DB.Create(task).Error)
+
+	previousFactory := GetTaskAdaptorFunc
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return &taskPollingFetchAdaptor{} }
+	t.Cleanup(func() { GetTaskAdaptorFunc = previousFactory })
+	previousQueryLimit := constant.TaskQueryLimit
+	constant.TaskQueryLimit = 100
+	t.Cleanup(func() { constant.TaskQueryLimit = previousQueryLimit })
+
+	summary := RunTaskPollingOnce(context.Background(), nil)
+
+	assert.Equal(t, 1, summary.NullTasksFailed)
+	assert.Equal(t, initialQuota+preConsumedQuota, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain+preConsumedQuota, getTokenRemainQuota(t, tokenID))
+	assert.Zero(t, getTaskQuota(t, task.ID))
+	var persisted model.Task
+	require.NoError(t, model.DB.First(&persisted, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusFailure, persisted.Status)
+	assert.Equal(t, "100%", persisted.Progress)
+	assert.Contains(t, persisted.FailReason, "upstream task ID is missing")
+}
+
+func TestUpdateBatchTasksRefundsPrechargedTaskWhenChannelIsMissing(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID, channelID = 405, 405, 405
+	const initialQuota, tokenRemain, preConsumedQuota = 10_000, 8_000, 1_300
+	seedUser(t, userID, initialQuota)
+	seedToken(t, tokenID, userID, "sk-missing-batch-channel", tokenRemain)
+	seedTaskPollingChannel(t, channelID, true)
+	seedChargedAccounting(t, userID, channelID, tokenID, preConsumedQuota, 1)
+
+	task := makeTask(userID, channelID, preConsumedQuota, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_missing_batch_channel"
+	task.Platform = "batch-plugin"
+	task.PrivateData.UpstreamTaskID = "upstream_missing_batch_channel"
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Delete(&model.Channel{}, channelID).Error)
+
+	upstreamID := task.GetUpstreamTaskID()
+	err := updateBatchTasks(context.Background(), &batchPollingAdaptor{}, channelID, []string{upstreamID}, map[string]*model.Task{upstreamID: task})
+
+	require.Error(t, err)
+	assert.Equal(t, initialQuota+preConsumedQuota, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain+preConsumedQuota, getTokenRemainQuota(t, tokenID))
+	assert.Zero(t, getTaskQuota(t, task.ID))
+	var persisted model.Task
+	require.NoError(t, model.DB.First(&persisted, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusFailure, persisted.Status)
+	assert.Contains(t, persisted.FailReason, "获取渠道信息失败")
+}
+
+func TestUpdateVideoTasksRefundsPrechargedTaskWhenChannelIsMissing(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID, channelID = 406, 406, 406
+	const initialQuota, tokenRemain, preConsumedQuota = 10_000, 8_000, 1_400
+	seedUser(t, userID, initialQuota)
+	seedToken(t, tokenID, userID, "sk-missing-video-channel", tokenRemain)
+	seedTaskPollingChannel(t, channelID, true)
+	seedChargedAccounting(t, userID, channelID, tokenID, preConsumedQuota, 1)
+
+	task := makeTask(userID, channelID, preConsumedQuota, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_missing_video_channel"
+	task.Platform = constant.TaskPlatform("kling")
+	task.PrivateData.UpstreamTaskID = "upstream_missing_video_channel"
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Delete(&model.Channel{}, channelID).Error)
+
+	previousFactory := GetTaskAdaptorFunc
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return &taskPollingFetchAdaptor{} }
+	t.Cleanup(func() { GetTaskAdaptorFunc = previousFactory })
+
+	upstreamID := task.GetUpstreamTaskID()
+	err := updateVideoTasks(context.Background(), task.Platform, channelID, []string{upstreamID}, map[string]*model.Task{upstreamID: task})
+
+	require.Error(t, err)
+	assert.Equal(t, initialQuota+preConsumedQuota, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain+preConsumedQuota, getTokenRemainQuota(t, tokenID))
+	assert.Zero(t, getTaskQuota(t, task.ID))
+	var persisted model.Task
+	require.NoError(t, model.DB.First(&persisted, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusFailure, persisted.Status)
+	assert.Contains(t, persisted.FailReason, "Failed to get channel info")
+}
+
 func TestSweepTimedOutTasksHonorsRefundRolloutBoundary(t *testing.T) {
 	truncate(t)
 
