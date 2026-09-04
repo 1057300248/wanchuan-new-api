@@ -55,6 +55,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Configure production-safe MySQL charset
+        run: >-
+          docker exec "${{ job.services.mysql.id }}"
+          mysql -uroot -pcompat
+          -e "ALTER DATABASE newapi_compat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
       - name: Real MySQL production migration, CRUD and BIGINT schema
         env:
           TEST_DATABASE_COMPAT: "1"
