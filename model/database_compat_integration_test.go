@@ -9,9 +9,43 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/extension"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+// installDatabaseCompatRegistry mirrors the schema/data descriptors installed by
+// chuanapi.Register at the production composition root. This test lives in the
+// model package, so importing chuanapi here would create an import cycle
+// (chuanapi imports model). Keeping the production-owned models and backfill in
+// the test registry makes InitDB exercise the same extension migration phases
+// without changing the package dependency graph.
+func installDatabaseCompatRegistry(t *testing.T) {
+	t.Helper()
+	reg := extension.NewRegistry()
+	require.NoError(t, reg.RegisterModelSet(extension.ModelSet{
+		Extension: "chuanapi",
+		Name:      "wallet_models",
+		Phase:     extension.PhaseAfterCoreModels,
+		Models: []any{
+			&BalanceLedgerOperation{},
+			&BalanceLedger{},
+			&ModelBonusEligibleAudit{},
+			&AffiliateReward{},
+			&AffiliateRewardReconcileState{},
+		},
+	}))
+	require.NoError(t, reg.RegisterDataStep(extension.DataStep{
+		Extension: "chuanapi",
+		Name:      "legacy_quota_backfill",
+		Phase:     extension.PhaseAfterCoreData,
+		Run: func(db *gorm.DB) error {
+			_, err := BackfillLegacyQuotaAccountsWithDB(db)
+			return err
+		},
+	}))
+	require.NoError(t, extension.SetDefault(reg))
+}
 
 // TestDatabaseCompatibilityReal exercises the same InitDB/migrateDB path used by
 // production against a real database selected by TEST_DATABASE_DIALECT.
@@ -20,6 +54,11 @@ func TestDatabaseCompatibilityReal(t *testing.T) {
 	if os.Getenv("TEST_DATABASE_COMPAT") != "1" {
 		t.Skip("set TEST_DATABASE_COMPAT=1 to run the real database compatibility test")
 	}
+
+	// Production installs the ChuanAPI extension registry before InitDB. The
+	// compatibility test must do the same or wallet tables are intentionally not
+	// part of mainAutoMigrateModels and the test becomes a false negative.
+	installDatabaseCompatRegistry(t)
 
 	// InitDB only runs migrations on the master node. Unit tests do not run the
 	// application's bootstrap that normally sets this flag, so make the intended
