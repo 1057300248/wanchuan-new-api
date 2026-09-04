@@ -24,10 +24,7 @@ import {
   createManagedObjectUrl,
   revokeManagedObjectUrl,
 } from '../lib/managed-object-urls'
-import {
-  isSafeImageUrl,
-  normalizeImageResponse,
-} from '../lib/request-builders'
+import { isSafeImageUrl, normalizeImageResponse } from '../lib/request-builders'
 
 const createdAnchors: HTMLAnchorElement[] = []
 const realCreateElement = document.createElement.bind(document)

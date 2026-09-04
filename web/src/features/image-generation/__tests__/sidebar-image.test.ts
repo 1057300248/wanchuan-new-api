@@ -29,8 +29,7 @@ import { isSidebarModuleEnabled } from '@/lib/nav-modules'
 import { Route as ImageRoute } from '@/routes/_authenticated/image/index'
 
 vi.mock('@/lib/api', async (importOriginal) => {
-  const original =
-    await importOriginal<typeof import('@/lib/api')>()
+  const original = await importOriginal<typeof import('@/lib/api')>()
   return {
     ...original,
     getStatus: vi.fn(async () => {

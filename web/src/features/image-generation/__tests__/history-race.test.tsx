@@ -21,7 +21,11 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { IMAGE_HISTORY_STORAGE_KEY } from '../constants'
 import { useImageHistory } from '../hooks/use-image-history'
-import { deleteImageBlob, loadImageBlob, saveImageBlob } from '../lib/blob-store'
+import {
+  deleteImageBlob,
+  loadImageBlob,
+  saveImageBlob,
+} from '../lib/blob-store'
 import { clearManagedObjectUrls } from '../lib/managed-object-urls'
 import { isSafeImageUrl } from '../lib/request-builders'
 
@@ -37,7 +41,12 @@ function seedEntry(id: string) {
     id,
     prompt: `prompt ${id}`,
     model: 'dall-e-3',
-    settings: { size: '1024x1024', quality: 'standard', style: 'vivid', count: 1 },
+    settings: {
+      size: '1024x1024',
+      quality: 'standard',
+      style: 'vivid',
+      count: 1,
+    },
     createdAt: now,
     results: [
       {
@@ -57,7 +66,12 @@ function seedKeptEntry(id: string) {
     id,
     prompt: `prompt ${id}`,
     model: 'dall-e-3',
-    settings: { size: '1024x1024', quality: 'standard', style: 'vivid', count: 1 },
+    settings: {
+      size: '1024x1024',
+      quality: 'standard',
+      style: 'vivid',
+      count: 1,
+    },
     createdAt: now,
     results: [
       {
@@ -240,9 +254,9 @@ describe('keepLocally does not orphan blobs when history changes mid-flight', ()
     const { result } = renderHook(() => useImageHistory())
 
     await act(async () => {
-      await expect(
-        result.current.keepLocally('e1', 'e1-r')
-      ).rejects.toThrow('keep-failed')
+      await expect(result.current.keepLocally('e1', 'e1-r')).rejects.toThrow(
+        'keep-failed'
+      )
     })
 
     expect(result.current.entries).toHaveLength(1)
@@ -288,9 +302,9 @@ describe('keepLocally does not orphan blobs when history changes mid-flight', ()
     const { result } = renderHook(() => useImageHistory())
 
     await act(async () => {
-      await expect(
-        result.current.keepLocally('e1', 'e1-r')
-      ).rejects.toThrow('keep-failed')
+      await expect(result.current.keepLocally('e1', 'e1-r')).rejects.toThrow(
+        'keep-failed'
+      )
     })
 
     await act(async () => {

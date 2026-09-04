@@ -19,7 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { IMAGE_HISTORY_MAX_ENTRIES } from '../constants'
-import { deleteImageBlob, loadImageBlob, saveImageBlob } from '../lib/blob-store'
+import {
+  deleteImageBlob,
+  loadImageBlob,
+  saveImageBlob,
+} from '../lib/blob-store'
 import {
   dataUrlToBlob,
   filterHistoryEntries,

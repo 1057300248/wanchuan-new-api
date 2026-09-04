@@ -108,13 +108,15 @@ describe('cancelling generation aborts both the key read and the image request',
     loadFullTokenKeyMock.mockResolvedValue('sk-test')
     const imageGate = deferred<[]>()
     let imageSignal: AbortSignal | null = null
-    requestImageGenerationMock.mockImplementation((params: { signal?: AbortSignal }) => {
-      imageSignal = params.signal ?? null
-      params.signal?.addEventListener('abort', () => {
-        imageGate.reject(new DOMException('aborted', 'AbortError'))
-      })
-      return imageGate.promise
-    })
+    requestImageGenerationMock.mockImplementation(
+      (params: { signal?: AbortSignal }) => {
+        imageSignal = params.signal ?? null
+        params.signal?.addEventListener('abort', () => {
+          imageGate.reject(new DOMException('aborted', 'AbortError'))
+        })
+        return imageGate.promise
+      }
+    )
 
     const { result } = renderHook(() => useImageGeneration())
     let generatePromise: Promise<unknown> | null = null
@@ -160,7 +162,9 @@ describe('cancelling generation aborts both the key read and the image request',
     )
     requestImageGenerationMock.mockResolvedValue([])
 
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const errorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined)
     const { result, unmount } = renderHook(() => useImageGeneration())
     act(() => {
       void result.current.generate({
@@ -183,9 +187,9 @@ describe('cancelling generation aborts both the key read and the image request',
     })
 
     expect(loadFullTokenKeyMock.mock.calls[0][1]).toBeInstanceOf(AbortSignal)
-    expect(
-      (loadFullTokenKeyMock.mock.calls[0][1] as AbortSignal).aborted
-    ).toBe(true)
+    expect((loadFullTokenKeyMock.mock.calls[0][1] as AbortSignal).aborted).toBe(
+      true
+    )
     errorSpy.mockRestore()
   })
 })

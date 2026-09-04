@@ -21,6 +21,7 @@ import type { ApiKey } from '@/features/keys/types'
 import { getPricing } from '@/features/pricing/api'
 import { api } from '@/lib/api'
 
+import { isBlobSchemeUrl, isDataSchemeUrl } from './lib/managed-object-urls'
 import {
   assertSafeImageUrl,
   buildEditsFormData,
@@ -28,10 +29,6 @@ import {
   isSafeImageUrl,
   normalizeImageResponse,
 } from './lib/request-builders'
-import {
-  isBlobSchemeUrl,
-  isDataSchemeUrl,
-} from './lib/managed-object-urls'
 import type { GeneratedImage, ImageApiKeyOption } from './types'
 
 export { isSafeImageUrl }

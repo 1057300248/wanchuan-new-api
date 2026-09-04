@@ -19,10 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
-import {
-  IMAGE_HISTORY_STORAGE_KEY,
-  IMAGE_HISTORY_TTL_MS,
-} from '../constants'
+import { IMAGE_HISTORY_STORAGE_KEY, IMAGE_HISTORY_TTL_MS } from '../constants'
 import { useImageHistory } from '../hooks/use-image-history'
 import { deleteImageBlob } from '../lib/blob-store'
 import { clearManagedObjectUrls } from '../lib/managed-object-urls'
@@ -39,7 +36,12 @@ function tempEntry(id: string, createdAt: number) {
     id,
     prompt: `prompt ${id}`,
     model: 'dall-e-3',
-    settings: { size: '1024x1024', quality: 'standard', style: 'vivid', count: 1 },
+    settings: {
+      size: '1024x1024',
+      quality: 'standard',
+      style: 'vivid',
+      count: 1,
+    },
     createdAt,
     results: [
       {
@@ -73,7 +75,9 @@ beforeEach(() => {
   window.localStorage.clear()
   clearManagedObjectUrls()
   vi.mocked(deleteImageBlob).mockResolvedValue(undefined)
-  URL.createObjectURL = vi.fn(() => 'blob:temp-url') as typeof URL.createObjectURL
+  URL.createObjectURL = vi.fn(
+    () => 'blob:temp-url'
+  ) as typeof URL.createObjectURL
   URL.revokeObjectURL = vi.fn()
   vi.useFakeTimers()
   vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))

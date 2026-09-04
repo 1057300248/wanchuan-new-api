@@ -21,8 +21,8 @@ import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
-import { IMAGE_PROMPT_EXAMPLE_KEYS } from '../constants'
 import { GenerationForm } from '../components/GenerationForm'
+import { IMAGE_PROMPT_EXAMPLE_KEYS } from '../constants'
 
 const baseValue = {
   prompt: '',
