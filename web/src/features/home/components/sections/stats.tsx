@@ -57,7 +57,7 @@ export function Stats(_props: StatsProps) {
   return (
     <section className='border-border/40 bg-muted/10 relative z-10 border-y'>
       <h2 className='sr-only'>{t('Core Features')}</h2>
-      <div className='mx-auto grid max-w-6xl gap-px bg-border/40 px-6 md:grid-cols-4'>
+      <div className='bg-border/40 mx-auto grid max-w-6xl gap-px px-6 md:grid-cols-4'>
         {capabilities.map((capability) => {
           const Icon = capability.icon
           return (

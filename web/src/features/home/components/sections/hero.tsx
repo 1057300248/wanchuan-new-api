@@ -125,7 +125,8 @@ export function Hero(props: HeroProps) {
             {t(
               'Connect through OpenAI, Claude, Gemini, and other compatible API routes'
             )}
-            . {t('Track usage, costs and performance with real-time analytics')}.
+            . {t('Track usage, costs and performance with real-time analytics')}
+            .
           </p>
 
           <div
@@ -153,9 +154,7 @@ export function Hero(props: HeroProps) {
                     />
                   }
                 >
-                  {props.registrationEnabled
-                    ? t('Get Started')
-                    : t('Sign In')}
+                  {props.registrationEnabled ? t('Get Started') : t('Sign In')}
                   <ArrowRight className='ml-1.5 size-4 transition-transform duration-200 group-hover:translate-x-0.5' />
                 </Button>
                 <Button
@@ -179,9 +178,7 @@ export function Hero(props: HeroProps) {
                 {t('Supported Applications')}
               </span>
               <p className='text-muted-foreground/60 text-xs leading-relaxed'>
-                {t(
-                  'Compatible API routes for common AI application workflows'
-                )}
+                {t('Compatible API routes for common AI application workflows')}
               </p>
             </div>
             <div className='flex flex-wrap items-center gap-3'>

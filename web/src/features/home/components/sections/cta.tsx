@@ -69,9 +69,7 @@ export function CTA(props: CTAProps) {
           <Button
             className='group rounded-lg'
             render={
-              <Link
-                to={props.registrationEnabled ? '/sign-up' : '/sign-in'}
-              />
+              <Link to={props.registrationEnabled ? '/sign-up' : '/sign-in'} />
             }
           >
             {props.registrationEnabled ? t('Get Started') : t('Sign In')}
