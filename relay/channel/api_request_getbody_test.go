@@ -334,6 +334,24 @@ func writeH2TestResponse(framer *http2.Framer, streamID uint32) error {
 	return framer.WriteData(streamID, true, []byte(`{}`))
 }
 
+func finishH2TestConnection(conn net.Conn) {
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		_ = conn.Close()
+		return
+	}
+
+	// Send a FIN after the final HTTP/2 frame, then wait for the client side
+	// to close before releasing the socket. An immediate full close can become
+	// a TCP reset on Windows and discard the GOAWAY/response still in flight.
+	_ = tcpConn.CloseWrite()
+	go func() {
+		defer tcpConn.Close()
+		_ = tcpConn.SetReadDeadline(time.Now().Add(15 * time.Second))
+		_, _ = io.Copy(io.Discard, tcpConn)
+	}()
+}
+
 func awaitH2ServerResult(t *testing.T, resultCh <-chan h2ServerResult) h2ServerResult {
 	t.Helper()
 	select {
@@ -417,16 +435,17 @@ func runGoAwayAfterFirstRequestServer(ln net.Listener) <-chan h2ServerResult {
 
 			if attempt == 0 {
 				err = framer.WriteGoAway(0, http2.ErrCodeNo, nil)
-				conn.Close()
 				if err != nil {
+					conn.Close()
 					res.err = err
 					return
 				}
+				finishH2TestConnection(conn)
 				continue
 			}
 
 			err = writeH2TestResponse(framer, streamID)
-			conn.Close()
+			finishH2TestConnection(conn)
 			if err != nil {
 				res.err = err
 			}
