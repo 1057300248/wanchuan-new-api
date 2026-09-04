@@ -251,6 +251,109 @@ describe('keepLocally does not orphan blobs when history changes mid-flight', ()
     expect(URL.createObjectURL).not.toHaveBeenCalled()
     expect(URL.revokeObjectURL).not.toHaveBeenCalled()
   })
+
+  test('deduplicates concurrent keeps for the same result without deleting the winner', async () => {
+    seedStorage([seedEntry('e1')])
+    const { result } = renderHook(() => useImageHistory())
+
+    let firstKeep: Promise<void> | null = null
+    let secondKeep: Promise<void> | null = null
+    act(() => {
+      firstKeep = result.current.keepLocally('e1', 'e1-r')
+      secondKeep = result.current.keepLocally('e1', 'e1-r')
+    })
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(saveImageBlob)).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveSave?.(undefined)
+      await Promise.all([firstKeep, secondKeep])
+    })
+
+    expect(result.current.entries[0].results[0].keptLocally).toBe(true)
+    expect(vi.mocked(deleteImageBlob)).not.toHaveBeenCalledWith('e1:e1-r')
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
+  })
+
+  test('releases the keep guard after a failed persistence so retry can succeed', async () => {
+    seedStorage([seedEntry('e1')])
+    vi.mocked(saveImageBlob)
+      .mockRejectedValueOnce(new Error('quota exceeded'))
+      .mockResolvedValueOnce(undefined)
+    const { result } = renderHook(() => useImageHistory())
+
+    await act(async () => {
+      await expect(
+        result.current.keepLocally('e1', 'e1-r')
+      ).rejects.toThrow('keep-failed')
+    })
+
+    await act(async () => {
+      await result.current.keepLocally('e1', 'e1-r')
+    })
+
+    expect(vi.mocked(saveImageBlob)).toHaveBeenCalledTimes(2)
+    expect(result.current.entries[0].results[0].keptLocally).toBe(true)
+  })
+
+  test('keeping a temporary base64 result revokes the replaced object URL', async () => {
+    const { result } = renderHook(() => useImageHistory())
+
+    act(() => {
+      result.current.pushEntry({
+        prompt: 'base64 image',
+        model: 'gpt-image-1',
+        size: '1024x1024',
+        quality: 'medium',
+        style: '',
+        count: 1,
+        images: [
+          {
+            id: 'generated-b64',
+            url: 'data:image/png;base64,aW1hZ2UtYnl0ZXM=',
+            source: 'b64',
+            prompt: 'base64 image',
+            model: 'gpt-image-1',
+            createdAt: Date.now(),
+          },
+        ],
+      })
+    })
+
+    const entry = result.current.entries[0]
+    const resultId = entry.results[0].id
+    const temporaryUrl = result.current.resolveResultUrl(
+      resultId,
+      entry.results[0].source
+    )
+    expect(temporaryUrl).toBe('blob:kept-1')
+    expect(isSafeImageUrl(temporaryUrl)).toBe(true)
+
+    let keepPromise: Promise<void> | null = null
+    act(() => {
+      keepPromise = result.current.keepLocally(entry.id, resultId)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      resolveSave?.(undefined)
+      await keepPromise
+    })
+
+    const committedUrl = result.current.resolveResultUrl(resultId, 'fallback')
+    expect(committedUrl).toBe('blob:kept-2')
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(temporaryUrl)
+    expect(isSafeImageUrl(temporaryUrl)).toBe(false)
+    expect(isSafeImageUrl(committedUrl)).toBe(true)
+    expect(result.current.entries[0].results[0].keptLocally).toBe(true)
+  })
 })
 
 describe('restoreBlobUrls does not orphan object URLs when history changes mid-load', () => {
