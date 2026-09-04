@@ -117,9 +117,10 @@ func TestDatabaseCompatibilityReal(t *testing.T) {
 
 	// Values above int32 prove that the wallet mirror and paid account survive
 	// actual round-trips on the target database rather than only looking correct
-	// in GORM metadata.
+	// in GORM metadata. Keep the fixture identifier within User.Username's
+	// max=20 validation contract and users.aff_code's varchar(32) schema limit.
 	const largeQuota = 3_000_000_000
-	unique := fmt.Sprintf("dbcompat-%s-%d", dialect, time.Now().UnixNano())
+	unique := fmt.Sprintf("dc%s%x", dialect[:1], uint64(time.Now().UnixNano()))
 	user := User{
 		Username:    unique,
 		Password:    "compat-test-password-hash",
