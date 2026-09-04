@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { IMAGE_HISTORY_STORAGE_KEY } from '../constants'
-import { isBlobSchemeUrl } from '../lib/managed-object-urls'
 import { isValidHistoryEntry, pruneHistoryEntries } from '../lib/history-utils'
+import { isBlobSchemeUrl } from '../lib/managed-object-urls'
 import type { ImageHistoryEntry } from '../types'
 
 export function loadHistoryEntries(): ImageHistoryEntry[] {
@@ -27,14 +27,12 @@ export function loadHistoryEntries(): ImageHistoryEntry[] {
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    const valid = parsed
-      .filter(isValidHistoryEntry)
-      .map((entry) => ({
-        ...entry,
-        results: entry.results.filter(
-          (result) => !isBlobSchemeUrl(result.source)
-        ),
-      }))
+    const valid = parsed.filter(isValidHistoryEntry).map((entry) => ({
+      ...entry,
+      results: entry.results.filter(
+        (result) => !isBlobSchemeUrl(result.source)
+      ),
+    }))
     return pruneHistoryEntries(valid)
   } catch {
     return []
@@ -47,7 +45,10 @@ export function saveHistoryEntries(entries: ImageHistoryEntry[]): void {
       ...entry,
       results: entry.results.filter((result) => {
         if (result.type === 'b64' && !result.keptLocally) return false
-        if (typeof result.source === 'string' && isBlobSchemeUrl(result.source)) {
+        if (
+          typeof result.source === 'string' &&
+          isBlobSchemeUrl(result.source)
+        ) {
           return false
         }
         return true

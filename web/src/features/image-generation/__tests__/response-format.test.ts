@@ -18,7 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { describe, expect, test } from 'vitest'
 
-import { buildEditsFormData, buildGenerationsBody } from '../lib/request-builders'
+import {
+  buildEditsFormData,
+  buildGenerationsBody,
+} from '../lib/request-builders'
 
 describe('generations omit response_format for GPT Image and keep it for DALL-E', () => {
   test('sends response_format url for dall-e-3 generations', () => {
@@ -100,7 +103,8 @@ describe('edits omit response_format for GPT Image and keep it for DALL-E', () =
 
   test('omits response_format for gpt-image-2 edits with multiple references', () => {
     const files = [0, 1].map(
-      (index) => new File([String(index)], `${index}.png`, { type: 'image/png' })
+      (index) =>
+        new File([String(index)], `${index}.png`, { type: 'image/png' })
     )
     const form = buildEditsFormData({
       model: 'gpt-image-2',

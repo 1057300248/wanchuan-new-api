@@ -19,7 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { IMAGE_HISTORY_MAX_ENTRIES } from '../constants'
-import { deleteImageBlob, loadImageBlob, saveImageBlob } from '../lib/blob-store'
+import {
+  deleteImageBlob,
+  loadImageBlob,
+  saveImageBlob,
+} from '../lib/blob-store'
 import {
   dataUrlToBlob,
   filterHistoryEntries,
@@ -118,6 +122,7 @@ export function useImageHistory() {
   const entriesRef = useRef(entries)
   const blobUrlsRef = useRef(blobUrls)
   const mountedRef = useRef(true)
+  const keepInFlightRef = useRef(new Set<string>())
 
   const commitEntries = useCallback((next: ImageHistoryEntry[]) => {
     entriesRef.current = next
@@ -263,12 +268,17 @@ export function useImageHistory() {
         if (current.result.keptLocally) return false
         return current.result.source === source
       }
+      const operationKey = `${entryId}:${resultId}`
+      if (keepInFlightRef.current.has(operationKey)) return
+
       const initial = findTarget()
       if (!initial.entry || !initial.result || initial.result.keptLocally) {
         return
       }
+
+      keepInFlightRef.current.add(operationKey)
       const sourceAtStart = initial.result.source
-      const blobKey = `${entryId}:${resultId}`
+      const blobKey = operationKey
       let savedBlob = false
       let objectUrl: string | null = null
       try {
@@ -298,6 +308,7 @@ export function useImageHistory() {
           return
         }
         const committedUrl = objectUrl
+        const previousUrl = blobUrlsRef.current[resultId]
         const nextEntries = entriesRef.current.map((item) => {
           if (item.id !== entryId) return item
           return {
@@ -316,6 +327,9 @@ export function useImageHistory() {
         })
         commitBlobUrls({ ...blobUrlsRef.current, [resultId]: committedUrl })
         commitEntries(nextEntries)
+        if (previousUrl && previousUrl !== committedUrl) {
+          revokeManagedObjectUrl(previousUrl)
+        }
         savedBlob = false
         objectUrl = null
       } catch {
@@ -331,6 +345,8 @@ export function useImageHistory() {
           }
         }
         throw new Error('keep-failed')
+      } finally {
+        keepInFlightRef.current.delete(operationKey)
       }
     },
     [commitBlobUrls, commitEntries]
