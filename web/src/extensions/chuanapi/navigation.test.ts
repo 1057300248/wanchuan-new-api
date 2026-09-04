@@ -22,7 +22,13 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, test } from 'vitest'
 
-import { CHUANAPI_PUBLIC_HOME } from './navigation'
+import type { TopNavLink } from '@/components/layout/types'
+
+import {
+  CHUANAPI_PUBLIC_HOME,
+  CHUANAPI_QUICKSTART_DOCS,
+  chuanapiNavigationExtension,
+} from './navigation'
 
 const webSrc = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -33,6 +39,46 @@ function source(path: string) {
 describe('ChuanAPI cross-shell navigation', () => {
   test('uses the canonical public homepage', () => {
     expect(CHUANAPI_PUBLIC_HOME).toBe('https://chuanapi.com/')
+  })
+
+  test('maps built-in docs fallback to the Wanchuan quickstart', () => {
+    const links: TopNavLink[] = [{ title: 'Docs', href: '/help' }]
+    expect(
+      chuanapiNavigationExtension.apply(links, {
+        isAuthenticated: false,
+        status: null,
+      })
+    ).toEqual([
+      {
+        title: 'Docs',
+        href: CHUANAPI_QUICKSTART_DOCS,
+        documentNavigation: true,
+      },
+    ])
+  })
+
+  test('maps the legacy quickstart anchor to the canonical docs URL', () => {
+    const links: TopNavLink[] = [
+      { title: 'Docs', href: 'https://chuanapi.com/#quickstart' },
+    ]
+    expect(
+      chuanapiNavigationExtension.apply(links, {
+        isAuthenticated: false,
+        status: null,
+      })[0]?.href
+    ).toBe(CHUANAPI_QUICKSTART_DOCS)
+  })
+
+  test('leaves custom docs URLs untouched', () => {
+    const links: TopNavLink[] = [
+      { title: 'Docs', href: 'https://docs.example.com/start' },
+    ]
+    expect(
+      chuanapiNavigationExtension.apply(links, {
+        isAuthenticated: false,
+        status: null,
+      })[0]?.href
+    ).toBe('https://docs.example.com/start')
   })
 
   test('marks Home as a same-tab document navigation', () => {
