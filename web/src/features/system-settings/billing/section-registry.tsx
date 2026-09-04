@@ -63,9 +63,6 @@ const BILLING_SECTIONS = [
           PreConsumedQuota: settings.PreConsumedQuota,
           SignupBonusEnabled: settings.SignupBonusEnabled ?? false,
           QuotaForSignupBonus: settings.QuotaForSignupBonus ?? 0,
-          AffiliateRewardEnabled: settings.AffiliateRewardEnabled ?? false,
-          AffiliateRewardRate: settings.AffiliateRewardRate ?? 0.2,
-          AffiliateRewardFreezeDays: settings.AffiliateRewardFreezeDays ?? 7,
           TopUpLink: settings.TopUpLink,
           general_setting: {
             docs_link: settings['general_setting.docs_link'],
@@ -75,10 +72,6 @@ const BILLING_SECTIONS = [
               settings['quota_setting.enable_free_model_pre_consume'],
           },
         }}
-        complianceConfirmed={
-          (settings['payment_setting.compliance_confirmed'] ?? false) &&
-          settings['payment_setting.compliance_terms_version'] === 'v1'
-        }
       />
     ),
   },

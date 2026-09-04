@@ -22,7 +22,6 @@ import type { Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import * as z from 'zod'
 
-import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   Form,
   FormControl,
@@ -55,9 +54,6 @@ const quotaSchema = z.object({
   PreConsumedQuota: z.coerce.number().min(0),
   SignupBonusEnabled: z.boolean(),
   QuotaForSignupBonus: z.coerce.number().min(0),
-  AffiliateRewardEnabled: z.boolean(),
-  AffiliateRewardRate: z.coerce.number().min(0).max(1),
-  AffiliateRewardFreezeDays: z.coerce.number().min(0),
   TopUpLink: z.string(),
   general_setting: z.object({
     docs_link: z.string(),
@@ -76,12 +72,10 @@ function formatQuotaInputValue(value: QuotaInputValue): string {
 
 type QuotaSettingsSectionProps = {
   defaultValues: QuotaFormValues
-  complianceConfirmed?: boolean
 }
 
 export function QuotaSettingsSection({
   defaultValues,
-  complianceConfirmed = true,
 }: QuotaSettingsSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
@@ -113,16 +107,6 @@ export function QuotaSettingsSection({
   return (
     <SettingsSection title={t('Quota Settings')}>
       <FormNavigationGuard when={isDirty} />
-
-      {!complianceConfirmed ? (
-        <Alert variant='destructive'>
-          <AlertDescription>
-            {t(
-              'Non-zero invitation rewards require compliance confirmation in Payment Gateway settings.'
-            )}
-          </AlertDescription>
-        </Alert>
-      ) : null}
 
       <Form {...form}>
         <SettingsForm onSubmit={handleSubmit}>
@@ -228,82 +212,6 @@ export function QuotaSettingsSection({
                     {t(
                       'Bonus quota for new users ({{formattedQuota}}), credited to the bonus account',
                       { formattedQuota: formatQuotaInputValue(field.value) }
-                    )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name='AffiliateRewardEnabled'
-              render={({ field }) => (
-                <SettingsSwitchItem>
-                  <SettingsSwitchContent>
-                    <FormLabel>{t('Referral Rewards')}</FormLabel>
-                    <FormDescription>
-                      {t(
-                        'Reward inviters with a share of referred paid consumption'
-                      )}
-                    </FormDescription>
-                  </SettingsSwitchContent>
-                  <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                    />
-                  </FormControl>
-                </SettingsSwitchItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name='AffiliateRewardRate'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Referral Reward Rate')}</FormLabel>
-                  <FormControl>
-                    <Input
-                      type='number'
-                      step='0.05'
-                      min='0'
-                      max='1'
-                      value={field.value ?? ''}
-                      onChange={handleNumberChange(field.onChange)}
-                      name={field.name}
-                      onBlur={field.onBlur}
-                      ref={field.ref}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    {t('Share of paid consumption given as referral reward')}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name='AffiliateRewardFreezeDays'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Reward Freeze Days')}</FormLabel>
-                  <FormControl>
-                    <Input
-                      type='number'
-                      value={field.value ?? ''}
-                      onChange={handleNumberChange(field.onChange)}
-                      name={field.name}
-                      onBlur={field.onBlur}
-                      ref={field.ref}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    {t(
-                      'Days before pending referral rewards become model bonus'
                     )}
                   </FormDescription>
                   <FormMessage />

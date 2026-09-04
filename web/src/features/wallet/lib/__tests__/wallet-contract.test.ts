@@ -29,20 +29,21 @@ function source(relativePath: string): string {
 }
 
 describe('ChuanAPI wallet surface contract', () => {
-  test('wallet page composes only safe funding surfaces', () => {
+  test('wallet page composes the supported funding surfaces', () => {
     const wallet = source('index.tsx')
-    for (const component of [
-      'WalletStatsCard',
-      'RedemptionCard',
-      'ReferralRewardsCard',
-      'ReferralHistoryCard',
-      'LedgerTable',
-    ]) {
+    const required = ['WalletStatsCard', 'RechargeFormCard', 'LedgerTable']
+    for (const component of required) {
       expect(wallet).toMatch(new RegExp(`<${component}`))
     }
     expect(wallet).not.toMatch(
-      /WalletAccountsCard|RechargeFormCard|SubscriptionPlansCard|AffiliateRewardsCard|BillingHistoryDialog|TransferDialog/
+      /WalletAccountsCard|RedemptionCard|SubscriptionPlansCard|AffiliateRewardsCard|BillingHistoryDialog|TransferDialog|ReferralRewardsCard|ReferralHistoryCard/
     )
+  })
+
+  test('recharge form gates redemption behind explicit backend opt-in', () => {
+    const form = source('components/recharge-form-card.tsx')
+    expect(form).toMatch(/topupInfo\?\.enable_redemption === true/)
+    expect(form).not.toMatch(/enable_redemption !== false/)
   })
 
   test('wallet summary exposes only paid, bonus, usage, and request metrics', () => {
@@ -63,20 +64,5 @@ describe('ChuanAPI wallet surface contract', () => {
     expect(ledger).toMatch(/value: 'paid'/)
     expect(ledger).toMatch(/value: 'bonus'/)
     expect(ledger).not.toMatch(/value: 'affiliate'/)
-  })
-
-  test('referral cards contain no withdrawal, transfer, or manual maturity control', () => {
-    const referral = [
-      source('components/referral-rewards-card.tsx'),
-      source('components/referral-history-card.tsx'),
-    ].join('\n')
-    expect(referral).not.toMatch(/withdraw|transfer|manual mature|mature now/i)
-  })
-
-  test('redemption remains feature-gated and independent from payment UI', () => {
-    const redemption = source('components/redemption-card.tsx')
-    expect(redemption).toMatch(/if \(!props\.enabled\) return null/)
-    expect(redemption).toMatch(/useRedemption\(\)/)
-    expect(redemption).not.toMatch(/payment|checkout|topup order/i)
   })
 })

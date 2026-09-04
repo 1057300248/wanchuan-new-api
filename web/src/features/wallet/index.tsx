@@ -16,24 +16,41 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
+import { useStatus } from '@/hooks/use-status'
+import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
 
+import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
+import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
 import { LedgerTable } from './components/ledger-table'
-import { RedemptionCard } from './components/redemption-card'
-import { ReferralHistoryCard } from './components/referral-history-card'
-import { ReferralRewardsCard } from './components/referral-rewards-card'
+import { RechargeFormCard } from './components/recharge-form-card'
 import { WalletStatsCard } from './components/wallet-stats-card'
+import { DEFAULT_DISCOUNT_RATE, PAYMENT_TYPES } from './constants'
 import {
-  useAffiliate,
-  useReferralOverview,
+  useCreemPayment,
+  usePayment,
+  useRedemption,
   useTopupInfo,
+  useWaffoPancakePayment,
+  useWaffoPayment,
   useWalletSummary,
 } from './hooks'
-import type { UserWalletData } from './types'
+import {
+  dispatchSelectedPayment,
+  getDefaultPaymentType,
+  getMinTopupAmount,
+} from './lib'
+import type {
+  CreemProduct,
+  PaymentMethod,
+  PresetAmount,
+  UserWalletData,
+  WaffoPayMethod,
+} from './types'
 
 interface WalletProps {
   initialShowHistory?: boolean
@@ -43,18 +60,46 @@ export function Wallet(_props: WalletProps) {
   const { t } = useTranslation()
   const [user, setUser] = useState<UserWalletData | null>(null)
   const [userLoading, setUserLoading] = useState(true)
-  const { topupInfo } = useTopupInfo()
-  const { affiliateLink } = useAffiliate()
+  const [topupAmount, setTopupAmount] = useState(0)
+  const [selectedPreset, setSelectedPreset] = useState<number | null>(null)
+  const [selectedPaymentMethod, setSelectedPaymentMethod] =
+    useState<PaymentMethod>()
+  const [selectedWaffoMethodIndex, setSelectedWaffoMethodIndex] = useState<
+    number | null
+  >(null)
+  const [paymentLoading, setPaymentLoading] = useState<string | null>(null)
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
+  const [redemptionCode, setRedemptionCode] = useState('')
+  const [creemDialogOpen, setCreemDialogOpen] = useState(false)
+  const [selectedCreemProduct, setSelectedCreemProduct] =
+    useState<CreemProduct | null>(null)
+
+  const { status } = useStatus()
+  const { currency } = useSystemConfig()
+  const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
   const {
     summary,
     loading: walletLoading,
     refetch: refetchWallet,
   } = useWalletSummary()
   const {
-    overview,
-    loading: referralLoading,
-    refetch: refetchReferral,
-  } = useReferralOverview()
+    amount: paymentAmount,
+    calculating,
+    processing,
+    calculatePaymentAmount,
+    processPayment,
+  } = usePayment()
+  const { redeeming, redeemCode } = useRedemption()
+  const { processing: creemProcessing, processCreemPayment } = useCreemPayment()
+  const { processing: waffoProcessing, processWaffoPayment } = useWaffoPayment()
+  const { processing: pancakeProcessing, processWaffoPancakePayment } =
+    useWaffoPancakePayment()
+
+  const effectiveUsdExchangeRate = useMemo(
+    () =>
+      currency?.quotaDisplayType === 'USD' ? 1 : currency?.usdExchangeRate || 1,
+    [currency?.quotaDisplayType, currency?.usdExchangeRate]
+  )
 
   const fetchUser = useCallback(async () => {
     try {
@@ -69,37 +114,189 @@ export function Wallet(_props: WalletProps) {
   }, [])
 
   useEffect(() => {
-    fetchUser()
+    void fetchUser()
   }, [fetchUser])
 
-  const refreshBalances = () => {
-    void Promise.all([fetchUser(), refetchWallet(), refetchReferral()])
+  const topupAmountInitializedRef = useRef(false)
+  useEffect(() => {
+    if (!topupInfo || topupAmountInitializedRef.current) return
+
+    topupAmountInitializedRef.current = true
+    const minTopup = getMinTopupAmount(topupInfo)
+    setTopupAmount(minTopup)
+    void calculatePaymentAmount(minTopup, getDefaultPaymentType(topupInfo))
+  }, [topupInfo, calculatePaymentAmount])
+
+  const refreshBalances = useCallback(async () => {
+    await Promise.all([fetchUser(), refetchWallet()])
+  }, [fetchUser, refetchWallet])
+
+  const getCurrentPaymentType = useCallback(
+    () => selectedPaymentMethod?.type || getDefaultPaymentType(topupInfo),
+    [selectedPaymentMethod, topupInfo]
+  )
+
+  const handleSelectPreset = (preset: PresetAmount) => {
+    setTopupAmount(preset.value)
+    setSelectedPreset(preset.value)
+    void calculatePaymentAmount(preset.value, getCurrentPaymentType())
   }
 
+  const handleTopupAmountChange = (amount: number) => {
+    setTopupAmount(amount)
+    setSelectedPreset(null)
+    void calculatePaymentAmount(amount, getCurrentPaymentType())
+  }
+
+  const handlePaymentMethodSelect = async (method: PaymentMethod) => {
+    setSelectedPaymentMethod(method)
+    setSelectedWaffoMethodIndex(null)
+    setPaymentLoading(method.type)
+
+    try {
+      if (topupAmount < getMinTopupAmount(topupInfo)) return
+
+      await calculatePaymentAmount(topupAmount, method.type)
+      setConfirmDialogOpen(true)
+    } finally {
+      setPaymentLoading(null)
+    }
+  }
+
+  const handlePaymentConfirm = async () => {
+    if (!selectedPaymentMethod) return
+
+    const success = await dispatchSelectedPayment(
+      selectedPaymentMethod,
+      topupAmount,
+      selectedWaffoMethodIndex,
+      {
+        regular: processPayment,
+        waffo: processWaffoPayment,
+        waffoPancake: processWaffoPancakePayment,
+      }
+    )
+    if (!success) return
+
+    setConfirmDialogOpen(false)
+    await refreshBalances()
+  }
+
+  const handleRedeem = async () => {
+    if (!redemptionCode.trim()) return
+
+    const success = await redeemCode(redemptionCode)
+    if (!success) return
+
+    setRedemptionCode('')
+    await refreshBalances()
+  }
+
+  const handleCreemProductSelect = (product: CreemProduct) => {
+    setSelectedCreemProduct(product)
+    setCreemDialogOpen(true)
+  }
+
+  const handleCreemConfirm = async () => {
+    if (!selectedCreemProduct) return
+
+    const success = await processCreemPayment(selectedCreemProduct.productId)
+    if (!success) return
+
+    setCreemDialogOpen(false)
+    setSelectedCreemProduct(null)
+    await refreshBalances()
+  }
+
+  const handleWaffoMethodSelect = async (
+    method: WaffoPayMethod,
+    index: number
+  ) => {
+    const loadingKey = `waffo-${index}`
+    setSelectedPaymentMethod({
+      name: method.name,
+      type: PAYMENT_TYPES.WAFFO,
+      icon: method.icon,
+    })
+    setSelectedWaffoMethodIndex(index)
+    setPaymentLoading(loadingKey)
+
+    try {
+      await calculatePaymentAmount(topupAmount, PAYMENT_TYPES.WAFFO)
+      setConfirmDialogOpen(true)
+    } finally {
+      setPaymentLoading(null)
+    }
+  }
+
+  const discountRate =
+    topupInfo?.discount?.[topupAmount] || DEFAULT_DISCOUNT_RATE
+
   return (
-    <SectionPageLayout>
-      <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
-      <SectionPageLayout.Content>
-        <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
-          <WalletStatsCard
-            user={user}
-            summary={summary}
-            userLoading={userLoading}
-            summaryLoading={walletLoading}
-          />
-          <RedemptionCard
-            enabled={topupInfo?.enable_redemption === true}
-            onRedeemed={refreshBalances}
-          />
-          <ReferralRewardsCard
-            overview={overview}
-            referralLink={affiliateLink}
-            loading={referralLoading}
-          />
-          <ReferralHistoryCard />
-          <LedgerTable />
-        </div>
-      </SectionPageLayout.Content>
-    </SectionPageLayout>
+    <>
+      <SectionPageLayout>
+        <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
+        <SectionPageLayout.Content>
+          <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
+            <WalletStatsCard
+              user={user}
+              summary={summary}
+              userLoading={userLoading}
+              summaryLoading={walletLoading}
+            />
+            <RechargeFormCard
+              topupInfo={topupInfo}
+              presetAmounts={presetAmounts}
+              selectedPreset={selectedPreset}
+              onSelectPreset={handleSelectPreset}
+              topupAmount={topupAmount}
+              onTopupAmountChange={handleTopupAmountChange}
+              paymentAmount={paymentAmount}
+              calculating={calculating}
+              onPaymentMethodSelect={handlePaymentMethodSelect}
+              paymentLoading={paymentLoading}
+              redemptionCode={redemptionCode}
+              onRedemptionCodeChange={setRedemptionCode}
+              onRedeem={handleRedeem}
+              redeeming={redeeming}
+              topupLink={topupInfo?.topup_link}
+              loading={topupLoading}
+              priceRatio={(status?.price as number) || 1}
+              usdExchangeRate={effectiveUsdExchangeRate}
+              creemProducts={topupInfo?.creem_products}
+              enableCreemTopup={topupInfo?.enable_creem_topup}
+              onCreemProductSelect={handleCreemProductSelect}
+              enableWaffoTopup={topupInfo?.enable_waffo_topup}
+              waffoPayMethods={topupInfo?.waffo_pay_methods}
+              waffoMinTopup={topupInfo?.waffo_min_topup}
+              onWaffoMethodSelect={handleWaffoMethodSelect}
+              enableWaffoPancakeTopup={topupInfo?.enable_waffo_pancake_topup}
+            />
+            <LedgerTable />
+          </div>
+        </SectionPageLayout.Content>
+      </SectionPageLayout>
+
+      <PaymentConfirmDialog
+        open={confirmDialogOpen}
+        onOpenChange={setConfirmDialogOpen}
+        onConfirm={handlePaymentConfirm}
+        topupAmount={topupAmount}
+        paymentAmount={paymentAmount}
+        paymentMethod={selectedPaymentMethod}
+        calculating={calculating}
+        processing={processing || waffoProcessing || pancakeProcessing}
+        discountRate={discountRate}
+        usdExchangeRate={effectiveUsdExchangeRate}
+      />
+
+      <CreemConfirmDialog
+        open={creemDialogOpen}
+        onOpenChange={setCreemDialogOpen}
+        onConfirm={handleCreemConfirm}
+        product={selectedCreemProduct}
+        processing={creemProcessing}
+      />
+    </>
   )
 }

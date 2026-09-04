@@ -135,11 +135,6 @@ func main() {
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
 
-	// Register ledger-driven affiliate reward reconciliation and maturity as a
-	// scheduled system task. The system-task runner provides DB-lease dedup,
-	// run history and durable failure state across multiple master instances.
-	service.RegisterAffiliateRewardMaintenanceSystemTask()
-
 	// Report this process as a system instance so the System Info page can show
 	// all currently alive nodes in multi-instance deployments.
 	service.StartSystemInstanceReporter()
