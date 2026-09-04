@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -85,6 +86,18 @@ func TestDatabaseCompatibilityReal(t *testing.T) {
 
 	require.NoError(t, InitDB(), "production InitDB/migrateDB path must succeed on %s", dialect)
 	require.NoError(t, InitLogDB(), "production InitLogDB path must succeed on %s", dialect)
+	firstMainDB := DB
+	firstLogDB := LOG_DB
+	firstMainSQLDB, err := firstMainDB.DB()
+	require.NoError(t, err)
+	require.NoError(t, firstMainSQLDB.Close())
+	if firstLogDB != firstMainDB {
+		firstLogSQLDB, logErr := firstLogDB.DB()
+		require.NoError(t, logErr)
+		require.NoError(t, firstLogSQLDB.Close())
+	}
+	require.NoError(t, InitDB(), "production InitDB/migrateDB path must be idempotent on %s", dialect)
+	require.NoError(t, InitLogDB(), "production InitLogDB path must be idempotent on %s", dialect)
 	require.NotNil(t, DB)
 	require.NotNil(t, LOG_DB)
 
@@ -173,4 +186,131 @@ func TestDatabaseCompatibilityReal(t *testing.T) {
 	var updatedPaid int
 	require.NoError(t, DB.Model(&User{}).Select("quota_paid").Where("id = ?", user.Id).Scan(&updatedPaid).Error)
 	require.Equal(t, largeQuota+1, updatedPaid)
+
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 5
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	paymentUsername := fmt.Sprintf("e%x", uint64(time.Now().UnixNano()))
+	paymentUser := User{
+		Username:    paymentUsername,
+		Password:    "compat-payment-password-hash",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+		AuthVersion: 1,
+		AffCode:     paymentUsername,
+	}
+	require.NoError(t, DB.Create(&paymentUser).Error)
+
+	legacyTradeNo := fmt.Sprintf("DBLEGACY%x", uint64(time.Now().UnixNano()))
+	legacyOrder := TopUp{
+		UserId:          paymentUser.Id,
+		Amount:          2,
+		Money:           10,
+		TradeNo:         legacyTradeNo,
+		PaymentMethod:   "",
+		PaymentProvider: PaymentProviderEpay,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      common.GetTimestamp(),
+	}
+	require.NoError(t, legacyOrder.Insert())
+
+	alreadyDone, err := RechargeEpay(legacyTradeNo, "wxpay", "10.00", "127.0.0.1")
+	require.NoError(t, err)
+	require.False(t, alreadyDone)
+
+	var storedLegacy TopUp
+	require.NoError(t, DB.Where("trade_no = ?", legacyTradeNo).First(&storedLegacy).Error)
+	require.Equal(t, common.TopUpStatusSuccess, storedLegacy.Status)
+	require.Equal(t, "wxpay", storedLegacy.PaymentMethod)
+
+	var paymentQuota int
+	require.NoError(t, DB.Model(&User{}).Select("quota").Where("id = ?", paymentUser.Id).Scan(&paymentQuota).Error)
+	require.Equal(t, 10, paymentQuota)
+
+	alreadyDone, err = RechargeEpay(legacyTradeNo, "wxpay", "10.00", "127.0.0.1")
+	require.NoError(t, err)
+	require.True(t, alreadyDone)
+	require.NoError(t, DB.Model(&User{}).Select("quota").Where("id = ?", paymentUser.Id).Scan(&paymentQuota).Error)
+	require.Equal(t, 10, paymentQuota)
+
+	mismatchTradeNo := fmt.Sprintf("DBMISMATCH%x", uint64(time.Now().UnixNano()))
+	mismatchOrder := TopUp{
+		UserId:          paymentUser.Id,
+		Amount:          2,
+		Money:           10,
+		TradeNo:         mismatchTradeNo,
+		PaymentMethod:   "alipay",
+		PaymentProvider: PaymentProviderEpay,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      common.GetTimestamp(),
+	}
+	require.NoError(t, mismatchOrder.Insert())
+	_, err = RechargeEpay(mismatchTradeNo, "wxpay", "10.00", "127.0.0.1")
+	require.ErrorIs(t, err, ErrPaymentMethodMismatch)
+	require.NoError(t, DB.Where("trade_no = ?", mismatchTradeNo).First(&mismatchOrder).Error)
+	require.Equal(t, common.TopUpStatusPending, mismatchOrder.Status)
+	require.Equal(t, "alipay", mismatchOrder.PaymentMethod)
+
+	concurrentUsername := fmt.Sprintf("c%x", uint64(time.Now().UnixNano()))
+	concurrentUser := User{
+		Username:    concurrentUsername,
+		Password:    "compat-concurrent-password-hash",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+		AuthVersion: 1,
+		AffCode:     concurrentUsername,
+	}
+	require.NoError(t, DB.Create(&concurrentUser).Error)
+	concurrentTradeNo := fmt.Sprintf("DBCONCURRENT%x", uint64(time.Now().UnixNano()))
+	concurrentOrder := TopUp{
+		UserId:          concurrentUser.Id,
+		Amount:          2,
+		Money:           10,
+		TradeNo:         concurrentTradeNo,
+		PaymentMethod:   "wxpay",
+		PaymentProvider: PaymentProviderEpay,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      common.GetTimestamp(),
+	}
+	require.NoError(t, concurrentOrder.Insert())
+
+	type callbackResult struct {
+		alreadyDone bool
+		err         error
+	}
+	start := make(chan struct{})
+	results := make(chan callbackResult, 2)
+	var waitGroup sync.WaitGroup
+	for range 2 {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			<-start
+			done, callbackErr := RechargeEpay(concurrentTradeNo, "wxpay", "10.00", "127.0.0.1")
+			results <- callbackResult{alreadyDone: done, err: callbackErr}
+		}()
+	}
+	close(start)
+	waitGroup.Wait()
+	close(results)
+
+	completedCallbacks := 0
+	idempotentCallbacks := 0
+	for result := range results {
+		require.NoError(t, result.err)
+		if result.alreadyDone {
+			idempotentCallbacks++
+		} else {
+			completedCallbacks++
+		}
+	}
+	require.Equal(t, 1, completedCallbacks)
+	require.Equal(t, 1, idempotentCallbacks)
+
+	var concurrentQuota int
+	require.NoError(t, DB.Model(&User{}).Select("quota").Where("id = ?", concurrentUser.Id).Scan(&concurrentQuota).Error)
+	require.Equal(t, 10, concurrentQuota)
 }
