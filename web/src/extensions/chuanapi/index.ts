@@ -19,13 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 import type { BrandExtension } from '../brand'
 import type { I18nExtension } from '../i18n'
 import { CHUANAPI_BRAND_LOGO } from './brand'
-import { chuanapiI18nOverrides } from './i18n'
+import { loadChuanapiI18nOverride } from './i18n'
 
 export { CHUANAPI_PUBLIC_HOME, chuanapiNavigationExtension } from './navigation'
 
 export { SHOW_LEGACY_AFFILIATE_QUOTA } from './flags'
 export { CHUANAPI_BRAND_LOGO } from './brand'
-export { chuanapiI18nOverrides } from './i18n'
+export { loadChuanapiI18nOverride } from './i18n'
 export const chuanapiBrandExtension: BrandExtension = {
   id: 'chuanapi/brand',
   logoUrl: CHUANAPI_BRAND_LOGO,
@@ -33,5 +33,5 @@ export const chuanapiBrandExtension: BrandExtension = {
 
 export const chuanapiI18nExtension: I18nExtension = {
   id: 'chuanapi/i18n',
-  overrides: chuanapiI18nOverrides,
+  loadOverride: loadChuanapiI18nOverride,
 }

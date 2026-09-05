@@ -180,6 +180,10 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
 	streamErr := (*types.NewAPIError)(nil)
+	var estimator *service.StreamingEstimateByModel
+	if info.RelayFormat == types.RelayFormatOpenAI {
+		estimator = service.NewStreamingEstimateByModel(info.UpstreamModelName)
+	}
 
 	if info.RelayFormat == types.RelayFormatClaude && info.ClaudeConvertInfo == nil {
 		info.ClaudeConvertInfo = &relaycommon.ClaudeConvertInfo{LastMessagesType: relaycommon.LastMessageTypeNone}
@@ -199,12 +203,37 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		return true
 	}
 
+	feedChatChoices := func(choices []dto.ChatCompletionsStreamResponseChoice) {
+		if estimator == nil {
+			return
+		}
+		for i := range choices {
+			delta := &choices[i].Delta
+			if content := delta.GetContentString(); content != "" {
+				estimator.WriteString(content)
+			}
+			if reasoning := delta.GetReasoningContent(); reasoning != "" {
+				estimator.WriteString(reasoning)
+			}
+			for j := range delta.ToolCalls {
+				function := &delta.ToolCalls[j].Function
+				if function.Arguments != "" {
+					estimator.WriteString(function.Arguments)
+				}
+				if function.Name != "" {
+					estimator.WriteString(function.Name)
+				}
+			}
+		}
+	}
+
 	sendStreamResult := func(result relayconvert.ResponseResult) bool {
 		switch value := result.Value.(type) {
 		case dto.ChatCompletionsStreamResponse:
 			if len(value.Choices) == 0 && value.Usage == nil {
 				return true
 			}
+			feedChatChoices(value.Choices)
 			if err := helper.ObjectData(c, &value); err != nil {
 				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 				return false
@@ -214,6 +243,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			if value == nil || (len(value.Choices) == 0 && value.Usage == nil) {
 				return true
 			}
+			feedChatChoices(value.Choices)
 			if err := helper.ObjectData(c, value); err != nil {
 				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 				return false
@@ -290,7 +320,11 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 
 	usage := state.Usage()
 	if usage == nil || usage.TotalTokens == 0 {
-		usage = service.ResponseText2Usage(c, state.UsageText(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+		if info.RelayFormat == types.RelayFormatOpenAI {
+			usage = service.StreamingEstimate2Usage(c, estimator, info.UpstreamModelName, info.GetEstimatePromptTokens())
+		} else {
+			usage = service.ResponseText2Usage(c, state.UsageText(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+		}
 		state.SetUsage(usage)
 	}
 

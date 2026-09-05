@@ -16,10 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
 
 import { api } from '@/lib/api'
+import { STATUS_QUERY_KEY } from '@/lib/status-query'
 
 import { UserBindingDialog } from '../user-binding-dialog'
 
@@ -94,20 +96,6 @@ describe('UserBindingDialog built-in bindings', () => {
           return { data: { success: true, data: user } }
         case '/api/user/7/oauth/bindings':
           return { data: { success: true, data: [] } }
-        case '/api/status':
-          return {
-            data: {
-              success: true,
-              data: {
-                github_oauth: true,
-                discord_oauth: true,
-                wechat_login: true,
-                oidc_enabled: true,
-                telegram_oauth: true,
-                linuxdo_oauth: true,
-              },
-            },
-          }
         default:
           throw new Error(`Unexpected GET ${url}`)
       }
@@ -117,7 +105,22 @@ describe('UserBindingDialog built-in bindings', () => {
       return { data: { success: true, message: 'success' } }
     }
 
-    render(<UserBindingDialog open userId={7} onOpenChange={() => undefined} />)
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    queryClient.setQueryData(STATUS_QUERY_KEY, {
+      github_oauth: true,
+      discord_oauth: true,
+      wechat_login: true,
+      oidc_enabled: true,
+      telegram_oauth: true,
+      linuxdo_oauth: true,
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <UserBindingDialog open userId={7} onOpenChange={() => undefined} />
+      </QueryClientProvider>
+    )
 
     const expectedBindings = [
       ['Email', 'email'],

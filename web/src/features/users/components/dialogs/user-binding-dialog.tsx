@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQueryClient } from '@tanstack/react-query'
 import {
   Mail,
   Globe,
@@ -44,8 +45,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { api } from '@/lib/api'
 import { indexCustomOAuthBindings, type CustomOAuthBinding } from '@/lib/oauth'
+import { ensureSharedStatus } from '@/lib/status-query'
 
 import {
   getUser,
@@ -161,6 +162,7 @@ function CustomProviderIcon(props: { iconUrl?: string }) {
 
 export function UserBindingDialog(props: Props) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const [user, setUser] = useState<User | null>(null)
   const [oauthBindings, setOauthBindings] = useState<CustomOAuthBinding[]>([])
   const [statusInfo, setStatusInfo] = useState<StatusInfo>({})
@@ -179,13 +181,7 @@ export function UserBindingDialog(props: Props) {
           success: false,
           data: [],
         })),
-        api
-          .get('/api/status')
-          .then((r) => r.data)
-          .catch(() => ({
-            success: false,
-            data: {},
-          })),
+        ensureSharedStatus(queryClient),
       ])
       if (userRes.success && userRes.data) {
         setUser(userRes.data)
@@ -193,15 +189,15 @@ export function UserBindingDialog(props: Props) {
       if (oauthRes.success && oauthRes.data) {
         setOauthBindings(oauthRes.data)
       }
-      if (statusRes.success && statusRes.data) {
-        setStatusInfo(statusRes.data as StatusInfo)
+      if (statusRes) {
+        setStatusInfo(statusRes as StatusInfo)
       }
     } catch {
       toast.error(t('Failed to load'))
     } finally {
       setLoading(false)
     }
-  }, [props.userId, t])
+  }, [props.userId, queryClient, t])
 
   useEffect(() => {
     if (props.open && props.userId) {

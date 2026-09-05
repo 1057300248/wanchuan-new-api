@@ -44,7 +44,7 @@ export { extensionBrandLogo } from './brand'
 export type { BrandExtension } from './brand'
 export { extensionFlags, isExtensionFeatureEnabled } from './flags'
 export type { ExtensionFeatureFlag, ExtensionFlags } from './flags'
-export { extensionI18nOverrides } from './i18n'
+export { extensionI18nOverrides, loadExtensionI18nOverride } from './i18n'
 export type {
   ExtensionLocaleBundle,
   ExtensionLocaleKey,

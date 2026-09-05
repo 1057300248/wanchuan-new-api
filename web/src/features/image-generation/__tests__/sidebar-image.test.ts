@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient } from '@tanstack/react-query'
 import { isRedirect } from '@tanstack/react-router'
 import { renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -39,10 +40,17 @@ vi.mock('@/lib/api', async (importOriginal) => {
 })
 
 async function callImageBeforeLoad(): Promise<unknown> {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
   const beforeLoad = ImageRoute.options.beforeLoad as unknown as (
-    ...args: never[]
+    args: unknown
   ) => unknown
-  return beforeLoad()
+  try {
+    return await beforeLoad({ context: { queryClient } })
+  } finally {
+    queryClient.clear()
+  }
 }
 
 beforeEach(() => {

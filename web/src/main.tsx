@@ -28,17 +28,17 @@ import { StrictMode } from 'react'
 import ReactDOM from 'react-dom/client'
 import { toast } from 'sonner'
 
-import { getStatus } from '@/lib/api'
 import { installBuildMetadata } from '@/lib/build-metadata'
 import { applyFaviconToDom } from '@/lib/dom-utils'
 import '@/lib/dayjs'
 import { initializeFrontendCache } from '@/lib/frontend-cache'
 import { handleServerError } from '@/lib/handle-server-error'
+import { prefetchStatusAtStartup, readCachedStatus } from '@/lib/status-query'
 
 import { DirectionProvider } from './context/direction-provider'
 import { FontProvider } from './context/font-provider'
 import { ThemeProvider } from './context/theme-provider'
-import './i18n/config'
+import { initI18n } from './i18n/config'
 // Generated Routes
 import { routeTree } from './routeTree.gen'
 
@@ -108,66 +108,68 @@ declare module '@tanstack/react-router' {
   }
 }
 
-// Render the app
-const rootElement = document.querySelector<HTMLElement>('#root')
-if (!rootElement) {
-  throw new Error('Root element not found')
-}
-// Set document.title and favicon from cached status, then refresh from network
-;(function initSystemBranding() {
+// Render the app only after i18n is ready so the first paint already uses the
+// detected language with fallback semantics unchanged.
+async function boot() {
+  const rootElement = document.querySelector<HTMLElement>('#root')
+  if (!rootElement) {
+    throw new Error('Root element not found')
+  }
+  // Fetch status in parallel with the async locale chunk. Every later status
+  // consumer joins this same React Query promise.
+  const statusRefresh = prefetchStatusAtStartup(queryClient)
   try {
-    if (typeof window === 'undefined' || typeof document === 'undefined') return
-    const apply = (name: string) => {
-      document.title = name
-      const metaTitle = document.querySelector(
-        'meta[name="title"]'
-      ) as HTMLMetaElement | null
-      if (metaTitle) metaTitle.setAttribute('content', name)
-    }
-    // Cache-first
-    try {
-      const saved = localStorage.getItem('status')
-      if (saved) {
-        const s = JSON.parse(saved)
-        if (s?.system_name) apply(s.system_name)
-        if (s?.logo) applyFaviconToDom(s.logo)
-      }
-    } catch {
-      /* empty */
-    }
-    // Background refresh
-    getStatus()
-      .then((s) => {
-        if (s?.system_name) {
-          apply(s.system_name as string)
-          try {
-            localStorage.setItem('status', JSON.stringify(s))
-          } catch {
-            /* empty */
-          }
-        }
-        if (s?.logo) applyFaviconToDom(s.logo as string)
-      })
-      .catch(() => {
-        /* empty */
-      })
+    await initI18n()
   } catch {
     /* empty */
   }
-})()
-if (!rootElement.innerHTML) {
-  const root = ReactDOM.createRoot(rootElement)
-  root.render(
-    <StrictMode>
-      <QueryClientProvider client={queryClient}>
-        <ThemeProvider>
-          <FontProvider>
-            <DirectionProvider>
-              <RouterProvider router={router} />
-            </DirectionProvider>
-          </FontProvider>
-        </ThemeProvider>
-      </QueryClientProvider>
-    </StrictMode>
-  )
+  // Set document.title and favicon from cached status, then refresh once
+  // through the shared status query (fresh cache is reused without a fetch;
+  // failures keep the last cached value).
+  try {
+    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+      const apply = (name: string) => {
+        document.title = name
+        const metaTitle = document.querySelector(
+          'meta[name="title"]'
+        ) as HTMLMetaElement | null
+        if (metaTitle) metaTitle.setAttribute('content', name)
+      }
+      const applyStatus = (s: Record<string, unknown> | null | undefined) => {
+        if (!s) return
+        if (typeof s.system_name === 'string' && s.system_name) {
+          apply(s.system_name)
+        }
+        if (typeof s.logo === 'string' && s.logo) {
+          applyFaviconToDom(s.logo)
+        }
+      }
+      // Cache-first for instant first paint.
+      applyStatus(readCachedStatus())
+      // Single background refresh via the shared query.
+      void statusRefresh.then(applyStatus).catch(() => {
+        /* empty */
+      })
+    }
+  } catch {
+    /* empty */
+  }
+  if (!rootElement.innerHTML) {
+    const root = ReactDOM.createRoot(rootElement)
+    root.render(
+      <StrictMode>
+        <QueryClientProvider client={queryClient}>
+          <ThemeProvider>
+            <FontProvider>
+              <DirectionProvider>
+                <RouterProvider router={router} />
+              </DirectionProvider>
+            </FontProvider>
+          </ThemeProvider>
+        </QueryClientProvider>
+      </StrictMode>
+    )
+  }
 }
+
+void boot()

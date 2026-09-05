@@ -516,6 +516,7 @@ func TestConvertStreamResponseStatefulDirectConverters(t *testing.T) {
 	assert.Equal(t, ConverterOpenAIResponsesToOpenAIChat, responsesResults[0].Converter)
 	assert.Equal(t, []ResponseStep{{Converter: ConverterOpenAIResponsesToOpenAIChat, From: types.RelayFormatOpenAIResponses, To: types.RelayFormatOpenAI}}, responsesResults[0].Steps)
 	require.IsType(t, dto.ChatCompletionsStreamResponse{}, responsesResults[len(responsesResults)-1].Value)
+	assert.Empty(t, responsesState.UsageText())
 }
 
 func TestConvertStreamResponseStatefulDirectResponsesToClaude(t *testing.T) {

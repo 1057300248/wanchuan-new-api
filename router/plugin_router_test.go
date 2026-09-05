@@ -218,7 +218,7 @@ func TestWebCacheHeadersDoNotLeakOntoPluginRoutes(t *testing.T) {
 	assert.Empty(t, pluginResponse.Header().Get("Cache-Version"))
 
 	fallbackResponse := performPluginRequest(outer, http.MethodGet, "/unknown")
-	assert.Equal(t, "max-age=604800", fallbackResponse.Header().Get("Cache-Control"))
+	assert.Equal(t, "public,max-age=604800", fallbackResponse.Header().Get("Cache-Control"))
 	assert.NotEmpty(t, fallbackResponse.Header().Get("Cache-Version"))
 }
 

@@ -60,13 +60,11 @@ export function useSidebarData(): SidebarData {
             title: t('Text Generation'),
             url: '/playground',
             icon: FlaskConical,
-            external: true,
           },
           {
             title: t('Image Generation'),
             url: '/image',
             icon: ImageIcon,
-            external: true,
           },
           {
             title: t('Chat'),

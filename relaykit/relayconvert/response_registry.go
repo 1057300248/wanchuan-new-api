@@ -964,7 +964,7 @@ func finalizeOAIChatStreamResponseToOAIResponses(_ context.Context, _ convmeta.M
 }
 
 func newOAIResponsesToOAIChatStreamState(options ResponseStreamOptions) any {
-	state := NewResponsesToChatStreamState(strings.TrimSpace(options.Model), options.IncludeUsage)
+	state := oairesponses.NewResponsesToChatStreamStateWithoutUsageText(strings.TrimSpace(options.Model), options.IncludeUsage)
 	state.ID = strings.TrimSpace(options.ID)
 	if options.Created != 0 {
 		state.Created = options.Created

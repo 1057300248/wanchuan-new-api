@@ -16,7 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { getStatus } from '@/lib/api'
+import type { QueryClient } from '@tanstack/react-query'
+
+import {
+  ensureSharedStatus,
+  readCachedStatus,
+  type StatusRecord,
+} from '@/lib/status-query'
 
 export type ModuleAccess = { enabled: boolean; requireAuth: boolean }
 
@@ -142,29 +148,8 @@ export function parseHeaderNavModulesFromStatus(
   return parseHeaderNavModules(status?.HeaderNavModules)
 }
 
-function getCachedStatus(): Record<string, unknown> | null {
-  try {
-    if (typeof window === 'undefined') return null
-    const raw = window.localStorage.getItem('status')
-    if (!raw) return null
-    const parsed: unknown = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return null
-    }
-    return parsed as Record<string, unknown>
-  } catch {
-    return null
-  }
-}
-
-function cacheStatus(status: Record<string, unknown> | null): void {
-  try {
-    if (typeof window !== 'undefined' && status) {
-      window.localStorage.setItem('status', JSON.stringify(status))
-    }
-  } catch {
-    /* empty */
-  }
+function getCachedStatus(): StatusRecord | null {
+  return readCachedStatus()
 }
 
 export function getModuleAccessFromStatus(
@@ -179,11 +164,12 @@ export function getModuleAccess(module: HeaderNavModule): ModuleAccess {
 }
 
 export async function getFreshModuleAccess(
+  queryClient: QueryClient,
   module: HeaderNavModule
 ): Promise<ModuleAccess> {
   try {
-    const status = (await getStatus()) as Record<string, unknown> | null
-    cacheStatus(status)
+    const status = await ensureSharedStatus(queryClient)
+    if (!status) return { enabled: false, requireAuth: true }
     return getModuleAccessFromStatus(status, module)
   } catch {
     return { enabled: false, requireAuth: true }
@@ -223,17 +209,11 @@ export function isSidebarModuleEnabled(
 }
 
 export async function getFreshSidebarModuleEnabled(
+  queryClient: QueryClient,
   section: string,
   module: string
 ): Promise<boolean> {
-  try {
-    const status = (await getStatus()) as Record<string, unknown> | null
-    if (!status) return false
-    cacheStatus(status)
-    return isSidebarModuleEnabledInStatus(status, section, module)
-  } catch {
-    const cachedStatus = getCachedStatus()
-    if (!cachedStatus) return false
-    return isSidebarModuleEnabledInStatus(cachedStatus, section, module)
-  }
+  const status = await ensureSharedStatus(queryClient)
+  if (!status) return false
+  return isSidebarModuleEnabledInStatus(status, section, module)
 }

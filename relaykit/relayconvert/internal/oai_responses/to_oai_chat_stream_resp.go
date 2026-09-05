@@ -32,6 +32,7 @@ type ResponsesToChatStreamState struct {
 	callIDToKey                map[string]string
 	pendingArgsByOutputIndex   map[int]string
 	pendingArgsByItemID        map[string]string
+	captureUsageText           bool
 	usageText                  strings.Builder
 }
 
@@ -48,17 +49,35 @@ type responsesStreamTool struct {
 }
 
 func NewResponsesToChatStreamState(model string, includeUsage bool) *ResponsesToChatStreamState {
+	return newResponsesToChatStreamState(model, includeUsage, true)
+}
+
+// NewResponsesToChatStreamStateWithoutUsageText is used by the response
+// registry when the caller incrementally accounts for emitted chat deltas.
+// The public compatibility constructor keeps the historical capture behavior.
+func NewResponsesToChatStreamStateWithoutUsageText(model string, includeUsage bool) *ResponsesToChatStreamState {
+	return newResponsesToChatStreamState(model, includeUsage, false)
+}
+
+func newResponsesToChatStreamState(model string, includeUsage bool, captureUsageText bool) *ResponsesToChatStreamState {
 	return &ResponsesToChatStreamState{
 		Model:                    model,
 		Created:                  time.Now().Unix(),
 		IncludeUsage:             includeUsage,
 		Usage:                    &dto.Usage{},
+		captureUsageText:         captureUsageText,
 		toolByKey:                make(map[string]*responsesStreamTool),
 		outputIndexToKey:         make(map[int]string),
 		itemIDToKey:              make(map[string]string),
 		callIDToKey:              make(map[string]string),
 		pendingArgsByOutputIndex: make(map[int]string),
 		pendingArgsByItemID:      make(map[string]string),
+	}
+}
+
+func (s *ResponsesToChatStreamState) appendUsageText(text string) {
+	if s.captureUsageText {
+		s.usageText.WriteString(text)
 	}
 }
 
@@ -170,7 +189,7 @@ func (s *ResponsesToChatStreamState) textDelta(delta string) []dto.ChatCompletio
 	if delta == "" {
 		return nil
 	}
-	s.usageText.WriteString(delta)
+	s.appendUsageText(delta)
 	s.hasSentText = true
 	chunks := s.ensureStart()
 	chunks = append(chunks, s.makeChunk(dto.ChatCompletionsStreamResponseChoiceDelta{
@@ -298,7 +317,7 @@ func (s *ResponsesToChatStreamState) reasoningDelta(delta string) []dto.ChatComp
 			s.needsReasoningSummaryBreak = false
 		}
 	}
-	s.usageText.WriteString(delta)
+	s.appendUsageText(delta)
 	chunks := s.ensureStart()
 	chunks = append(chunks, s.makeChunk(dto.ChatCompletionsStreamResponseChoiceDelta{
 		ReasoningContent: &delta,
@@ -509,10 +528,10 @@ func (s *ResponsesToChatStreamState) toolDelta(tool *responsesStreamTool, explic
 	}
 	if argsDelta != "" {
 		tool.ArgsSentAt += len(argsDelta)
-		s.usageText.WriteString(argsDelta)
+		s.appendUsageText(argsDelta)
 	}
 	if responseTool.Function.Name != "" {
-		s.usageText.WriteString(responseTool.Function.Name)
+		s.appendUsageText(responseTool.Function.Name)
 	}
 
 	chunks = append(chunks, s.makeChunk(dto.ChatCompletionsStreamResponseChoiceDelta{
