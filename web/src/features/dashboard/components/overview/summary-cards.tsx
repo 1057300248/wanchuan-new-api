@@ -24,16 +24,12 @@ import { useTranslation } from 'react-i18next'
 
 import { StaggerContainer, StaggerItem } from '@/components/page-transition'
 import { Button } from '@/components/ui/button'
-import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { getUserQuotaDates } from '@/features/dashboard/api'
 import { useSummaryCardsConfig } from '@/features/dashboard/hooks/use-dashboard-config'
-import { useWorkspaceUsage } from '@/features/dashboard/hooks/use-workspace-usage'
 import type { QuotaDataItem } from '@/features/dashboard/types'
-import { useAccountSelf } from '@/hooks/use-account-self'
 import { useStatus } from '@/hooks/use-status'
 import { getCurrencyLabel, isCurrencyDisplayEnabled } from '@/lib/currency'
 import { formatNumber, formatQuota } from '@/lib/format'
-import { ROLE } from '@/lib/roles'
 import { computeTimeRange } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
@@ -141,79 +137,6 @@ const HEALTH_CONFIG: Record<
 }
 
 export function SummaryCards() {
-  const { customization } = useThemeCustomization()
-  const role = useAuthStore((state) => state.auth.user?.role ?? ROLE.GUEST)
-  if (customization.preset === 'wanchuan' && role < ROLE.ADMIN) {
-    return <WorkspaceSummary />
-  }
-  return <LegacySummaryCards />
-}
-
-function WorkspaceSummary() {
-  const { t } = useTranslation()
-  const account = useAccountSelf()
-  const { query, buckets } = useWorkspaceUsage()
-  const today = buckets.at(-1) ?? { quota: 0, count: 0, tokens: 0 }
-  let usagePlaceholder: string | undefined
-  if (query.isPending) usagePlaceholder = t('Loading')
-  if (query.isError) usagePlaceholder = '-'
-  let balance = formatQuota(account.data?.quota ?? 0)
-  if (account.isPending) balance = t('Loading')
-  if (account.isError) balance = '-'
-  const cards = [
-    { title: t('Credit remaining'), value: balance },
-    {
-      title: t('Consumption'),
-      value: usagePlaceholder ?? formatQuota(today.quota),
-    },
-    {
-      title: t('Requests'),
-      value: usagePlaceholder ?? formatNumber(today.count),
-    },
-    {
-      title: t('Tokens'),
-      value: usagePlaceholder ?? formatNumber(today.tokens),
-    },
-  ]
-  return (
-    <section
-      aria-label={t('Usage at a glance')}
-      className='grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4'
-    >
-      {cards.map((card, index) => (
-        <div key={card.title} className='bg-card min-w-0 rounded-lg border p-5'>
-          <div className='text-muted-foreground mb-3 text-sm'>{card.title}</div>
-          <div className='min-h-8 text-2xl font-semibold break-all tabular-nums'>
-            {card.value}
-          </div>
-          {index === 0 ? (
-            <Button
-              size='sm'
-              variant='ghost'
-              className='mt-2'
-              render={<Link to='/wallet' />}
-            >
-              <ArrowRight data-icon='inline-start' />
-              {t('Wallet')}
-            </Button>
-          ) : (
-            <p className='text-muted-foreground mt-2 text-xs'>{t('Today')}</p>
-          )}
-        </div>
-      ))}
-      {query.isError && (
-        <div role='alert' className='sm:col-span-2 xl:col-span-4'>
-          {t('Failed to load data')}{' '}
-          <Button variant='outline' onClick={() => void query.refetch()}>
-            {t('Retry')}
-          </Button>
-        </div>
-      )}
-    </section>
-  )
-}
-
-function LegacySummaryCards() {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
   const { status, loading } = useStatus()
@@ -228,20 +151,15 @@ function LegacySummaryCards() {
       'dashboard',
       'overview',
       'summary-sparklines',
-      user?.id,
       summaryTimeRange.start_timestamp,
       summaryTimeRange.end_timestamp,
     ],
-    queryFn: async () => {
-      const result = await getUserQuotaDates({
+    queryFn: async () =>
+      getUserQuotaDates({
         start_timestamp: summaryTimeRange.start_timestamp,
         end_timestamp: summaryTimeRange.end_timestamp,
         default_time: 'hour',
-      })
-      if (!result.success) throw new Error('Usage request failed')
-      return result
-    },
-    enabled: Boolean(user?.id),
+      }),
     staleTime: 60 * 1000,
   })
 
@@ -349,7 +267,7 @@ function LegacySummaryCards() {
             {items.map((it) => (
               <StaggerItem
                 key={it.key}
-                className='bg-background/60 rounded-lg border px-2 py-1.5 sm:rounded-lg sm:p-3'
+                className='bg-background/60 rounded-lg border px-2 py-1.5 sm:rounded-xl sm:p-3'
               >
                 <StatCard
                   title={it.title}

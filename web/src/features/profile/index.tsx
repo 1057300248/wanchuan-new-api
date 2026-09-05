@@ -16,14 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useTranslation } from 'react-i18next'
-
 import { Main } from '@/components/layout'
 import {
   CardStaggerContainer,
   CardStaggerItem,
 } from '@/components/page-transition'
-import { Button } from '@/components/ui/button'
 import { useStatus } from '@/hooks/use-status'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -39,8 +36,7 @@ import { TwoFACard } from './components/two-fa-card'
 import { useProfile } from './hooks'
 
 export function Profile() {
-  const { t } = useTranslation()
-  const { profile, loading, error, refreshProfile } = useProfile()
+  const { profile, loading, refreshProfile } = useProfile()
   const { status } = useStatus()
   const permissions = useAuthStore((s) => s.auth.user?.permissions)
 
@@ -49,16 +45,8 @@ export function Profile() {
 
   return (
     <Main>
-      <div className='min-h-0 flex-1 overflow-auto px-3 py-3 sm:px-6 sm:py-6'>
+      <div className='min-h-0 flex-1 overflow-auto px-3 py-3 sm:px-4 sm:py-6'>
         <CardStaggerContainer className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-6'>
-          {error && (
-            <div role='alert' className='bg-card rounded-lg border p-4'>
-              {t('Failed to load profile')}{' '}
-              <Button variant='outline' onClick={() => void refreshProfile()}>
-                {t('Retry')}
-              </Button>
-            </div>
-          )}
           <CardStaggerItem>
             <ProfileHeader profile={profile} loading={loading} />
           </CardStaggerItem>
@@ -66,29 +54,26 @@ export function Profile() {
           <CardStaggerItem>
             <div className='grid gap-4 sm:gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.46fr)] xl:items-start'>
               <div className='space-y-4 sm:space-y-6'>
-                <h2 className='font-semibold'>{t('Profile')}</h2>
                 <ProfileSettingsCard
                   profile={profile}
                   loading={loading}
                   onProfileUpdate={refreshProfile}
                 />
-                <h2 className='font-semibold'>{t('Security')}</h2>
-                <ProfileSecurityCard profile={profile} loading={loading} />
-                <LoginSessionsCard />
-                <PasskeyCard loading={loading} />
-                <TwoFACard loading={loading} />
-              </div>
-
-              <div className='space-y-4 sm:space-y-6 xl:sticky xl:top-6'>
-                <h2 className='font-semibold'>{t('Preferences')}</h2>
                 <LanguagePreferencesCard
                   profile={profile}
                   onProfileUpdate={refreshProfile}
                 />
+                <ProfileSecurityCard profile={profile} loading={loading} />
+                <LoginSessionsCard />
+              </div>
+
+              <div className='space-y-4 sm:space-y-6 xl:sticky xl:top-6'>
                 {checkinEnabled && (
                   <CheckinCalendarCard checkinEnabled={checkinEnabled} />
                 )}
                 {canConfigureSidebar && <SidebarModulesCard />}
+                <PasskeyCard loading={loading} />
+                <TwoFACard loading={loading} />
               </div>
             </div>
           </CardStaggerItem>

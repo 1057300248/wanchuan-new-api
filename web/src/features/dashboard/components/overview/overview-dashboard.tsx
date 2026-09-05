@@ -47,19 +47,11 @@ import {
 } from '@/components/page-transition'
 import { Button } from '@/components/ui/button'
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
 import type { ApiKey } from '@/features/keys/types'
-import { useAccountSelf } from '@/hooks/use-account-self'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { getUserModels } from '@/lib/api'
 import { MOTION_TRANSITION } from '@/lib/motion'
-import { MARKETING_HOME_URL, QUICKSTART_DOCS_URL } from '@/lib/public-site'
 import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
@@ -74,17 +66,27 @@ import { FAQPanel } from './faq-panel'
 import { PerformanceHealthPanel } from './performance-health-panel'
 import { SummaryCards } from './summary-cards'
 import { UptimePanel } from './uptime-panel'
-import { WorkspaceActivity } from './workspace-activity'
 
 const SETUP_GUIDE_VISIBILITY_STORAGE_KEY =
   'dashboard_overview_setup_guide_expanded'
+
+const SETUP_GUIDE_CODE_PATTERN = [
+  'const request = await client.responses.create({',
+  "  model: 'gpt-4.1-mini',",
+  "  input: 'Start routing traffic',",
+  '})',
+  '',
+  'if (request.output_text) {',
+  '  console.log(request.output_text)',
+  '}',
+].join('\n')
 
 type InternalDashboardActionPath =
   | '/keys'
   | '/wallet'
   | '/channels'
   | '/usage-logs'
-type ExternalDashboardActionPath = '/playground' | '/model-pricing/'
+type ExternalDashboardActionPath = '/playground' | '/pricing'
 
 type DashboardActionTarget =
   | { to: InternalDashboardActionPath; external?: false }
@@ -105,15 +107,12 @@ type QuickAction = DashboardActionTarget & {
 }
 
 interface RequestExample {
-  baseUrl: string
   endpoint: string
   model: string
   keyName: string
   keyId?: number
   displayKey: string
   ready: boolean
-  loading: boolean
-  unavailable: boolean
 }
 
 interface HeroSignal {
@@ -159,26 +158,14 @@ function normalizeEndpoint(sourceUrl?: string): string {
   return `${withoutTrailingSlash}/v1/chat/completions`
 }
 
-function getPreferredKey(keys: ApiKey[], models: string[]): ApiKey | null {
-  return (
-    keys.find((key) => {
-      if (key.status !== 1 || (!key.unlimited_quota && key.remain_quota <= 0)) {
-        return false
-      }
-      if (key.expired_time !== -1 && key.expired_time <= Date.now() / 1000) {
-        return false
-      }
-      if (!key.model_limits_enabled || models.length === 0) return true
-      const allowed = new Set(
-        (key.model_limits ?? '').split(',').map((model) => model.trim())
-      )
-      return models.some((model) => allowed.has(model))
-    }) ?? null
-  )
+function getPreferredKey(keys: ApiKey[]): ApiKey | null {
+  return keys.find((item) => item.status === 1) ?? keys[0] ?? null
 }
 
-function quoteShellArgument(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`
+function formatDisplayKey(key?: string): string {
+  if (!key) return 'sk-...'
+  if (key.length <= 14) return key
+  return `${key.slice(0, 7)}...${key.slice(-4)}`
 }
 
 function buildCurlCommand(args: {
@@ -187,11 +174,49 @@ function buildCurlCommand(args: {
   model: string
 }): string {
   return [
-    `curl ${quoteShellArgument(args.endpoint)} \\`,
+    `curl ${args.endpoint} \\`,
     '  -H "Content-Type: application/json" \\',
-    `  -H ${quoteShellArgument(`Authorization: Bearer ${args.apiKey}`)} \\`,
-    `  -d ${quoteShellArgument(JSON.stringify({ model: args.model, messages: [{ role: 'user', content: 'Say hello in one sentence.' }] }))}`,
+    `  -H "Authorization: Bearer ${args.apiKey}" \\`,
+    `  -d '{"model":"${args.model}","messages":[{"role":"user","content":"Say hello in one sentence."}]}'`,
   ].join('\n')
+}
+
+function SetupGuideBackdrop(props: { compact?: boolean }) {
+  return (
+    <>
+      <div
+        className={cn(
+          'pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_48%_120%_at_78%_0%,color-mix(in_oklch,var(--overview-accent-1)_14%,transparent)_0%,transparent_62%),linear-gradient(112deg,color-mix(in_oklch,var(--card)_94%,var(--overview-accent-2)_6%)_0%,color-mix(in_oklch,var(--card)_94%,var(--overview-accent-3)_6%)_48%,color-mix(in_oklch,var(--background)_90%,var(--overview-accent-1)_10%)_100%)] dark:opacity-60',
+          props.compact
+            ? '[mask-image:linear-gradient(90deg,black_0%,black_48%,transparent_74%)] opacity-55'
+            : 'opacity-85'
+        )}
+        aria-hidden='true'
+      />
+      <div
+        className={cn(
+          'text-foreground/5 dark:text-foreground/8 pointer-events-none absolute inset-y-0 right-0 hidden overflow-hidden font-mono sm:block',
+          props.compact ? 'w-1/2 opacity-45' : 'w-[58%] opacity-75'
+        )}
+        aria-hidden='true'
+      >
+        <pre
+          className={cn(
+            'absolute right-3 [mask-image:linear-gradient(90deg,transparent_0%,black_30%,black_82%,transparent_100%)] text-right tracking-[0.38em] whitespace-pre',
+            props.compact
+              ? '-top-6 text-[9px] leading-4'
+              : 'top-1 text-[11px] leading-5'
+          )}
+        >
+          {SETUP_GUIDE_CODE_PATTERN}
+        </pre>
+      </div>
+      <div
+        className='from-background/35 to-background/70 dark:from-background/20 dark:to-background/80 pointer-events-none absolute inset-0 bg-linear-to-b via-transparent'
+        aria-hidden='true'
+      />
+    </>
+  )
 }
 
 function StartStepItem(props: {
@@ -211,7 +236,7 @@ function StartStepItem(props: {
       )}
       <span
         className={cn(
-          'bg-background relative z-10 flex size-8 shrink-0 items-center justify-center rounded-lg border ',
+          'bg-background relative z-10 flex size-8 shrink-0 items-center justify-center rounded-lg border shadow-xs',
           props.step.completed && 'border-success/30 bg-success/10'
         )}
       >
@@ -223,15 +248,15 @@ function StartStepItem(props: {
 
       {props.step.external ? (
         <a
-          href={`${MARKETING_HOME_URL}${props.step.to}`}
-          className='bg-background/70 hover:bg-muted/50 focus-visible:ring-ring flex min-w-0 flex-1 items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors outline-none focus-visible:ring-2'
+          href={props.step.to}
+          className='bg-background/70 hover:bg-muted/50 focus-visible:ring-ring flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left shadow-xs transition-colors outline-none focus-visible:ring-2'
         >
           <StartStepContent step={props.step} index={props.index} />
         </a>
       ) : (
         <Link
           to={props.step.to}
-          className='bg-background/70 hover:bg-muted/50 focus-visible:ring-ring flex min-w-0 flex-1 items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors outline-none focus-visible:ring-2'
+          className='bg-background/70 hover:bg-muted/50 focus-visible:ring-ring flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left shadow-xs transition-colors outline-none focus-visible:ring-2'
         >
           <StartStepContent step={props.step} index={props.index} />
         </Link>
@@ -273,10 +298,7 @@ function RequestPreview(props: {
   signals: HeroSignal[]
 }) {
   const { t } = useTranslation()
-  const reducedMotion = useReducedMotion()
-  const { customization } = useThemeCustomization()
-  const shouldReduceMotion =
-    reducedMotion || customization.preset === 'wanchuan'
+  const shouldReduceMotion = useReducedMotion()
   const [isCopying, setIsCopying] = useState(false)
   const { copyToClipboard } = useCopyToClipboard({ notify: false })
   const previewCurl = buildCurlCommand({
@@ -286,7 +308,7 @@ function RequestPreview(props: {
   })
   const previewLines = previewCurl.split('\n')
   const handleCopyRequest = async () => {
-    if (!props.example.ready || !props.example.keyId || isCopying) return
+    if (!props.example.keyId || isCopying) return
 
     setIsCopying(true)
     try {
@@ -308,8 +330,6 @@ function RequestPreview(props: {
       } else {
         toast.error(t('Failed to copy to clipboard'))
       }
-    } catch {
-      toast.error(t('Failed to copy to clipboard'))
     } finally {
       setIsCopying(false)
     }
@@ -320,7 +340,7 @@ function RequestPreview(props: {
       initial={shouldReduceMotion ? false : { opacity: 0, y: 10, scale: 0.98 }}
       animate={shouldReduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
       transition={MOTION_TRANSITION.slow}
-      className='bg-card relative h-full min-w-0 overflow-hidden rounded-lg border p-4 sm:p-6'
+      className='bg-background/75 relative overflow-hidden rounded-2xl border p-3 shadow-sm backdrop-blur'
     >
       {!shouldReduceMotion && (
         <motion.div
@@ -333,21 +353,21 @@ function RequestPreview(props: {
 
       <div className='flex items-center justify-between gap-3 border-b pb-3'>
         <div className='flex min-w-0 items-center gap-2'>
-          <IconBadge
-            tone={customization.preset === 'wanchuan' ? 'neutral' : 'info'}
-          >
+          <IconBadge tone='info'>
             <TerminalSquare />
           </IconBadge>
           <div className='min-w-0'>
             <div className='truncate text-sm font-medium'>
               {t('First API request')}
             </div>
-            <div className='text-muted-foreground text-xs break-words'>
-              {props.example.keyName}
+            <div className='text-muted-foreground truncate text-xs'>
+              {props.example.ready
+                ? props.example.keyName
+                : t('Create an API key to unlock the real request')}
             </div>
           </div>
         </div>
-        {props.example.ready && (
+        {props.example.ready ? (
           <Button
             variant='outline'
             size='sm'
@@ -359,69 +379,31 @@ function RequestPreview(props: {
             <Copy data-icon='inline-start' />
             {isCopying ? t('Loading') : t('Copy')}
           </Button>
+        ) : (
+          <Button size='sm' variant='outline' render={<Link to='/keys' />}>
+            {t('Create API Key')}
+          </Button>
         )}
-        {!props.example.ready &&
-          !props.example.keyId &&
-          !props.example.loading &&
-          !props.example.unavailable && (
-            <Button size='sm' variant='outline' render={<Link to='/keys' />}>
-              {t('Create API Key')}
-            </Button>
-          )}
       </div>
 
-      <div className='my-4 flex min-w-0 items-center justify-between gap-3'>
-        <div className='min-w-0'>
-          <p className='text-muted-foreground mb-1 text-xs'>{t('Base URL')}</p>
-          <code className='text-xs break-all'>{props.example.baseUrl}</code>
+      <div className='bg-foreground/[0.035] my-3 rounded-xl p-3 font-mono text-xs'>
+        <div className='mb-2 flex items-center gap-1.5'>
+          <span className='bg-destructive size-2 rounded-full' />
+          <span className='bg-warning size-2 rounded-full' />
+          <span className='bg-success size-2 rounded-full' />
         </div>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant='ghost'
-                size='icon-sm'
-                aria-label={t('Copy Base URL')}
-                onClick={async () => {
-                  const copied = await copyToClipboard(props.example.baseUrl)
-                  if (copied) toast.success(t('Copied to clipboard'))
-                  else toast.error(t('Failed to copy to clipboard'))
-                }}
-              />
-            }
-          >
-            <Copy />
-          </TooltipTrigger>
-          <TooltipContent>{t('Copy Base URL')}</TooltipContent>
-        </Tooltip>
+        <div className='flex flex-col gap-1 overflow-hidden'>
+          {previewLines.map((line) => (
+            <code
+              key={line}
+              className='text-muted-foreground truncate'
+              title={line}
+            >
+              {line}
+            </code>
+          ))}
+        </div>
       </div>
-
-      {props.example.loading && (
-        <p role='status' className='py-4 text-sm'>
-          {t('Loading')}
-        </p>
-      )}
-      {!props.example.loading && props.example.unavailable && (
-        <p className='text-muted-foreground py-4 text-sm'>
-          {t('Failed to load data')}
-        </p>
-      )}
-      {!props.example.loading &&
-        !props.example.unavailable &&
-        !props.example.model && (
-          <p className='text-muted-foreground py-4 text-sm'>
-            {t('No models available')}
-          </p>
-        )}
-      {!!props.example.model && !props.example.unavailable && (
-        <pre
-          tabIndex={0}
-          className='bg-muted/50 mb-4 max-h-48 overflow-auto rounded-md p-3 font-mono text-xs leading-relaxed'
-          aria-label={t('First API request')}
-        >
-          <code>{previewLines.join('\n')}</code>
-        </pre>
-      )}
 
       <div className='grid gap-2'>
         {props.signals.map((signal) => {
@@ -430,37 +412,23 @@ function RequestPreview(props: {
           return (
             <div
               key={signal.label}
-              className='flex min-w-0 items-start justify-between gap-3 border-t py-2'
+              className='bg-muted/40 flex items-center justify-between gap-3 rounded-xl px-3 py-2'
             >
               <span className='flex min-w-0 items-center gap-2'>
-                <IconBadge
-                  tone={
-                    customization.preset === 'wanchuan'
-                      ? 'neutral'
-                      : signal.tone
-                  }
-                  size='xs'
-                >
+                <IconBadge tone={signal.tone} size='xs'>
                   <Icon />
                 </IconBadge>
                 <span className='truncate text-xs font-medium'>
                   {signal.label}
                 </span>
               </span>
-              <span className='text-muted-foreground max-w-[55%] min-w-0 text-right text-xs break-all'>
+              <span className='text-muted-foreground shrink-0 text-xs'>
                 {signal.value}
               </span>
             </div>
           )
         })}
       </div>
-      <a
-        href={QUICKSTART_DOCS_URL}
-        className='mt-4 inline-flex items-center gap-2 text-sm underline underline-offset-4'
-      >
-        <BookOpen className='size-4' />
-        {t('Documentation')}
-      </a>
     </motion.div>
   )
 }
@@ -471,10 +439,10 @@ function QuickActionItem(props: { action: QuickAction }) {
   return (
     <Button
       variant='outline'
-      className='h-auto justify-start rounded-lg px-3 py-3 text-left'
+      className='h-auto justify-start rounded-xl px-3 py-3 text-left'
       render={
         props.action.external ? (
-          <a href={`${MARKETING_HOME_URL}${props.action.to}`} />
+          <a href={props.action.to} />
         ) : (
           <Link to={props.action.to} />
         )
@@ -505,7 +473,7 @@ function CompactQuickAction(props: { action: QuickAction }) {
       className='bg-background/70 h-8 min-w-24 gap-1.5 px-2.5'
       render={
         props.action.external ? (
-          <a href={`${MARKETING_HOME_URL}${props.action.to}`} />
+          <a href={props.action.to} />
         ) : (
           <Link to={props.action.to} />
         )
@@ -518,8 +486,6 @@ function CompactQuickAction(props: { action: QuickAction }) {
 }
 
 export function OverviewDashboard() {
-  const account = useAccountSelf()
-  const { customization } = useThemeCustomization()
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
   const { items: apiInfoItems } = useApiInfo()
@@ -539,30 +505,26 @@ export function OverviewDashboard() {
   const isAdmin = Boolean(user?.role && user.role >= ROLE.ADMIN)
 
   const apiKeysQuery = useQuery({
-    queryKey: ['dashboard', user?.id, 'overview', 'api-keys'],
-    enabled: Boolean(user?.id),
+    queryKey: ['dashboard', 'overview', 'api-keys'],
     queryFn: async () => {
       const result = await getApiKeys({ p: 1, size: 10 })
-      if (!result.success) throw new Error('API keys request failed')
-      return result.data?.items ?? []
+      return result.success ? (result.data?.items ?? []) : []
     },
     staleTime: 60 * 1000,
   })
 
   const modelsQuery = useQuery({
-    queryKey: ['dashboard', user?.id, 'overview', 'user-models'],
-    enabled: Boolean(user?.id),
+    queryKey: ['dashboard', 'overview', 'user-models'],
     queryFn: async () => {
       const result = await getUserModels()
-      if (!result.success) throw new Error('Models request failed')
-      return result.data ?? []
+      return result.success ? (result.data ?? []) : []
     },
     staleTime: 5 * 60 * 1000,
   })
 
   const preferredKey = useMemo(
-    () => getPreferredKey(apiKeysQuery.data ?? [], modelsQuery.data ?? []),
-    [apiKeysQuery.data, modelsQuery.data]
+    () => getPreferredKey(apiKeysQuery.data ?? []),
+    [apiKeysQuery.data]
   )
 
   const startSteps = useMemo<StartStep[]>(
@@ -617,7 +579,7 @@ export function OverviewDashboard() {
       {
         title: t('Pricing'),
         description: t('Review model rates before scaling traffic'),
-        to: '/model-pricing/',
+        to: '/pricing',
         external: true,
         icon: BookOpen,
       },
@@ -630,74 +592,51 @@ export function OverviewDashboard() {
     [isAdmin, quickActions]
   )
 
-  const selectedModel = useMemo(() => {
-    const models = modelsQuery.data ?? []
-    if (!preferredKey?.model_limits_enabled) return models[0] ?? ''
-    const allowed = new Set(
-      (preferredKey.model_limits ?? '').split(',').map((value) => value.trim())
-    )
-    return models.find((model) => allowed.has(model)) ?? ''
-  }, [modelsQuery.data, preferredKey])
-  let modelStatus = selectedModel || t('No models available')
-  if (modelsQuery.isPending) modelStatus = t('Loading')
-  if (modelsQuery.isError) modelStatus = t('Failed to load data')
-
   const heroSignals = useMemo<HeroSignal[]>(
     () => [
       {
-        label: t('API Keys'),
-        value: preferredKey?.name || t('No API key yet'),
+        label: t('Route active'),
+        value: apiInfoItems.length > 0 ? t('Online') : t('Current domain'),
+        icon: RadioTower,
+        tone: 'info',
+      },
+      {
+        label: t('Auth configured'),
+        value: preferredKey ? t('Secured') : t('Needs API key'),
         icon: ShieldCheck,
         tone: 'success',
       },
       {
         label: t('Model selected'),
-        value: modelStatus,
+        value: modelsQuery.data?.[0] ?? t('Loading'),
         icon: Timer,
         tone: 'chart-4',
       },
     ],
-    [modelStatus, preferredKey, t]
+    [apiInfoItems.length, modelsQuery.data, preferredKey, t]
   )
 
   const requestExample = useMemo<RequestExample>(() => {
     const endpoint = normalizeEndpoint(apiInfoItems[0]?.url)
-    const model = selectedModel
+    const model = modelsQuery.data?.[0] ?? 'gpt-4o-mini'
     const keyName = preferredKey?.name ?? t('No API key yet')
-    const ready = Boolean(
-      preferredKey?.id &&
-      model &&
-      apiKeysQuery.isSuccess &&
-      modelsQuery.isSuccess
-    )
+    const ready = Boolean(preferredKey?.id && model)
 
     return {
       endpoint,
-      baseUrl: endpoint.replace(/\/chat\/completions$/, ''),
       model,
       keyName,
       keyId: preferredKey?.id,
-      displayKey: 'sk-...',
+      displayKey: preferredKey
+        ? formatDisplayKey(`sk-${preferredKey.key}`)
+        : 'sk-...',
       ready,
-      loading: apiKeysQuery.isPending || modelsQuery.isPending,
-      unavailable: apiKeysQuery.isError || modelsQuery.isError,
     }
-  }, [
-    apiInfoItems,
-    selectedModel,
-    preferredKey,
-    apiKeysQuery.isSuccess,
-    modelsQuery.isSuccess,
-    apiKeysQuery.isPending,
-    modelsQuery.isPending,
-    apiKeysQuery.isError,
-    modelsQuery.isError,
-    t,
-  ])
+  }, [apiInfoItems, modelsQuery.data, preferredKey, t])
 
   const completedStepCount = startSteps.filter((step) => step.completed).length
   const setupComplete = completedStepCount === startSteps.length
-  const setupStatusReady = apiKeysQuery.isSuccess && account.isSuccess
+  const setupStatusReady = apiKeysQuery.isFetched && Boolean(user)
   const setupGuideExpanded =
     manualSetupGuideExpanded ?? (setupStatusReady && !setupComplete)
   const showLeftContentPanels =
@@ -710,104 +649,13 @@ export function OverviewDashboard() {
     saveSetupGuideExpanded(nextExpanded)
   }
 
-  if (customization.preset === 'wanchuan' && !isAdmin) {
-    return (
-      <div className='flex flex-col gap-6'>
-        <div className='flex flex-wrap items-center justify-between gap-3'>
-          <p className='text-muted-foreground min-w-0 text-sm break-all'>
-            {user?.display_name || user?.username}
-          </p>
-          <Button size='sm' render={<Link to='/keys' />}>
-            <KeyRound data-icon='inline-start' />
-            {t('Create API Key')}
-          </Button>
-        </div>
-        {(account.isError || apiKeysQuery.isError || modelsQuery.isError) && (
-          <div
-            role='alert'
-            className='bg-card flex flex-wrap items-center gap-3 rounded-lg border p-4'
-          >
-            <span>{t('Failed to load data')}</span>
-            <Button
-              variant='outline'
-              onClick={() => {
-                void account.refetch()
-                void apiKeysQuery.refetch()
-                void modelsQuery.refetch()
-              }}
-            >
-              {t('Retry')}
-            </Button>
-          </div>
-        )}
-        <SummaryCards />
-        <section className='border-y py-4' aria-label={t('Setup guide')}>
-          <div className='flex flex-wrap items-center justify-between gap-3'>
-            <h3 className='text-sm font-semibold'>{t('Setup guide')}</h3>
-            <Button
-              variant='ghost'
-              size='sm'
-              aria-expanded={setupGuideExpanded}
-              aria-controls='workspace-setup-steps'
-              onClick={handleSetupGuideToggle}
-            >
-              {setupGuideExpanded
-                ? t('Hide setup guide')
-                : t('Show setup guide')}
-            </Button>
-          </div>
-          <ol
-            id='workspace-setup-steps'
-            hidden={!setupGuideExpanded}
-            className='hidden:hidden mt-4 grid gap-3 lg:grid-cols-3'
-          >
-            {startSteps.map((step, index) => (
-              <StartStepItem
-                key={step.title}
-                step={step}
-                index={index}
-                isLast
-              />
-            ))}
-          </ol>
-        </section>
-        <WorkspaceActivity
-          quickstart={
-            <RequestPreview example={requestExample} signals={heroSignals} />
-          }
-        />
-        {showApiInfoPanel && <ApiInfoPanel />}
-        {showAnnouncementsPanel && <AnnouncementsPanel />}
-        {showFAQPanel && <FAQPanel />}
-        {showUptimePanel && <UptimePanel />}
-      </div>
-    )
-  }
-
   return (
-    <div className='flex flex-col gap-6'>
-      {(account.isError || apiKeysQuery.isError || modelsQuery.isError) && (
-        <div
-          role='alert'
-          className='bg-card flex flex-wrap items-center gap-3 rounded-lg border p-4'
-        >
-          <span>{t('Failed to load data')}</span>
-          <Button
-            variant='outline'
-            onClick={() => {
-              void account.refetch()
-              void apiKeysQuery.refetch()
-              void modelsQuery.refetch()
-            }}
-          >
-            {t('Retry')}
-          </Button>
-        </div>
-      )}
+    <div className='flex flex-col gap-4'>
       {setupGuideExpanded ? (
         <CardStaggerContainer className='grid items-stretch gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]'>
-          <CardStaggerItem className='bg-card h-full overflow-hidden rounded-lg border'>
+          <CardStaggerItem className='bg-card h-full overflow-hidden rounded-2xl border shadow-xs'>
             <div className='relative h-full overflow-hidden p-4 sm:p-5'>
+              <SetupGuideBackdrop />
               <div className='relative grid gap-5 lg:grid-cols-[minmax(0,1fr)_21rem]'>
                 <div className='flex min-w-0 flex-col gap-5'>
                   <div className='flex flex-wrap items-start justify-between gap-3'>
@@ -829,7 +677,6 @@ export function OverviewDashboard() {
                       <Button
                         variant='outline'
                         size='sm'
-                        aria-expanded={setupGuideExpanded}
                         onClick={handleSetupGuideToggle}
                       >
                         <ChevronUp data-icon='inline-start' />
@@ -842,7 +689,7 @@ export function OverviewDashboard() {
                     </div>
                   </div>
 
-                  <ol className='bg-background/45 rounded-lg border p-2'>
+                  <ol className='bg-background/45 rounded-2xl border p-2 backdrop-blur'>
                     {startSteps.map((step, index) => (
                       <StartStepItem
                         key={step.title}
@@ -862,7 +709,7 @@ export function OverviewDashboard() {
             </div>
           </CardStaggerItem>
 
-          <CardStaggerItem className='bg-card h-full rounded-lg border p-4 sm:p-5'>
+          <CardStaggerItem className='bg-card h-full rounded-2xl border p-4 shadow-xs sm:p-5'>
             <div className='flex h-full flex-col gap-4'>
               <div className='flex flex-col gap-1'>
                 <div className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
@@ -882,11 +729,12 @@ export function OverviewDashboard() {
         </CardStaggerContainer>
       ) : (
         <CardStaggerContainer>
-          <CardStaggerItem className='bg-card overflow-hidden rounded-lg border'>
+          <CardStaggerItem className='bg-card overflow-hidden rounded-2xl border shadow-xs'>
             <div className='relative overflow-hidden px-4 py-3 sm:px-5'>
+              <SetupGuideBackdrop compact />
               <div className='relative flex flex-wrap items-center justify-between gap-3'>
                 <div className='flex min-w-0 items-center gap-3'>
-                  <span className='bg-background/70 flex size-9 shrink-0 items-center justify-center rounded-lg border'>
+                  <span className='bg-background/70 flex size-9 shrink-0 items-center justify-center rounded-xl border shadow-xs'>
                     <Check className='text-success size-4' aria-hidden='true' />
                   </span>
                   <div className='min-w-0'>
@@ -921,7 +769,6 @@ export function OverviewDashboard() {
                     variant='outline'
                     size='sm'
                     className='bg-background/70 h-8 min-w-28'
-                    aria-expanded={setupGuideExpanded}
                     onClick={handleSetupGuideToggle}
                   >
                     <ChevronDown data-icon='inline-start' />

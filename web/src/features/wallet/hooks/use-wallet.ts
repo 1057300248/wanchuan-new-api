@@ -28,20 +28,16 @@ import type { ReferralOverview, WalletSummary } from '../types'
 export function useWalletSummary() {
   const [summary, setSummary] = useState<WalletSummary | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(false)
 
   const refetch = useCallback(async () => {
     try {
       setLoading(true)
-      setError(false)
       const response = await getWalletSummary()
       if (response.success && response.data) {
         setSummary(response.data)
-      } else {
-        setError(true)
       }
     } catch {
-      setError(true)
+      // keep previous data; wallet page shows a fallback state
     } finally {
       setLoading(false)
     }
@@ -51,7 +47,7 @@ export function useWalletSummary() {
     refetch()
   }, [refetch])
 
-  return { summary, loading, error, refetch }
+  return { summary, loading, refetch }
 }
 
 export function useReferralOverview() {

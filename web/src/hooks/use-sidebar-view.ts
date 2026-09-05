@@ -17,14 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useLocation } from '@tanstack/react-router'
-import { BookOpen, Tags } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { resolveSidebarView } from '@/components/layout/lib/sidebar-view-registry'
 import type { NavGroup, ResolvedSidebarView } from '@/components/layout/types'
-import { useThemeCustomization } from '@/context/theme-customization-provider'
-import { MARKETING_HOME_URL, QUICKSTART_DOCS_URL } from '@/lib/public-site'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -51,14 +48,13 @@ export function useSidebarView(): ResolvedSidebarView {
   const { t } = useTranslation()
   const pathname = useLocation({ select: (l) => l.pathname })
   const userRole = useAuthStore((s) => s.auth.user?.role)
-  const { customization } = useThemeCustomization()
   const rootSidebarData = useSidebarData()
   const configFilteredRoot = useSidebarConfig(rootSidebarData.navGroups)
 
   const rootNavGroups = useMemo<NavGroup[]>(() => {
     const role = userRole ?? ROLE.GUEST
     const isAdmin = role >= ROLE.ADMIN
-    const groups = configFilteredRoot
+    return configFilteredRoot
       .filter((group) => (group.id === 'admin' ? isAdmin : true))
       .map((group) => {
         const items = group.items.filter(
@@ -66,73 +62,7 @@ export function useSidebarView(): ResolvedSidebarView {
         )
         return items.length === group.items.length ? group : { ...group, items }
       })
-    if (customization.preset !== 'wanchuan' || isAdmin) return groups
-
-    // Reorder only after permission and module filters; hidden links stay hidden.
-    const general = groups.find((group) => group.id === 'general')
-    const personal = groups.find((group) => group.id === 'personal')
-    const wallet = personal?.items.find((item) => item.url === '/wallet')
-    const primaryOrder = [
-      '/dashboard/overview',
-      '/keys',
-      '/usage-logs/common',
-      '/wallet',
-      '/dashboard/models',
-      '/usage-logs/task',
-    ]
-    const workspace: NavGroup = {
-      id: 'general',
-      title: t('Console'),
-      items: [...(general?.items ?? []), ...(wallet ? [wallet] : [])].sort(
-        (left, right) =>
-          primaryOrder.indexOf(String(left.url)) -
-          primaryOrder.indexOf(String(right.url))
-      ),
-    }
-    return [
-      workspace,
-      ...groups
-        .filter((group) => group.id !== 'general' && group.id !== 'personal')
-        .map((group) => ({
-          ...group,
-          items: group.items.map((item) =>
-            item.url === '/playground'
-              ? {
-                  ...item,
-                  url: `${MARKETING_HOME_URL}/playground/`,
-                  external: true,
-                }
-              : item
-          ),
-        })),
-      {
-        id: 'resources',
-        title: t('Resources'),
-        items: [
-          {
-            title: t('Pricing'),
-            url: `${MARKETING_HOME_URL}/model-pricing/`,
-            external: true,
-            icon: Tags,
-          },
-          {
-            title: t('Documentation'),
-            url: QUICKSTART_DOCS_URL,
-            external: true,
-            icon: BookOpen,
-          },
-        ],
-      },
-      ...(personal
-        ? [
-            {
-              ...personal,
-              items: personal.items.filter((item) => item.url !== '/wallet'),
-            },
-          ]
-        : []),
-    ].filter((group) => group.items.length > 0)
-  }, [configFilteredRoot, userRole, customization.preset, t])
+  }, [configFilteredRoot, userRole])
 
   const view = resolveSidebarView(pathname)
 

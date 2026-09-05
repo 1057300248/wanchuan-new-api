@@ -34,7 +34,6 @@ import type {
 export function useProfile() {
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(false)
   const [updating, setUpdating] = useState(false)
 
   // Fetch user profile (with optional silent mode)
@@ -43,16 +42,12 @@ export function useProfile() {
       if (!silent) {
         setLoading(true)
       }
-      setError(false)
       const response = await getUserProfile()
 
       if (response.success && response.data) {
         setProfile(response.data)
-      } else {
-        setError(true)
       }
     } catch (error) {
-      setError(true)
       // eslint-disable-next-line no-console
       console.error('Failed to fetch profile:', error)
       if (!silent) {
@@ -131,7 +126,6 @@ export function useProfile() {
 
   return {
     profile,
-    error,
     loading,
     updating,
     fetchProfile,

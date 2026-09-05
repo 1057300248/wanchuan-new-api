@@ -21,7 +21,6 @@ import { useTranslation } from 'react-i18next'
 
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 
@@ -45,7 +44,6 @@ function formatWalletQuota(quota: number): string {
 
 export function WalletStatsCard(props: WalletStatsCardProps) {
   const { t } = useTranslation()
-  const { customization } = useThemeCustomization()
 
   const stats: {
     key: 'paid' | 'bonus' | 'usage' | 'requests'
@@ -59,7 +57,7 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
     {
       key: 'paid',
       label: t('Paid Balance'),
-      value: props.summary ? formatWalletQuota(props.summary.paid) : '-',
+      value: formatWalletQuota(props.summary?.paid ?? 0),
       description: t('Purchased and redeemed quota'),
       icon: CircleDollarSign,
       tone: 'info',
@@ -68,7 +66,7 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
     {
       key: 'bonus',
       label: t('Bonus Balance'),
-      value: props.summary ? formatWalletQuota(props.summary.bonus) : '-',
+      value: formatWalletQuota(props.summary?.bonus ?? 0),
       description: t('Signup and referral bonuses'),
       icon: Gift,
       tone: 'chart-2',
@@ -77,7 +75,7 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
     {
       key: 'usage',
       label: t('Total Usage'),
-      value: props.user ? formatWalletQuota(props.user.used_quota ?? 0) : '-',
+      value: formatWalletQuota(props.user?.used_quota ?? 0),
       description: t('Total consumed quota'),
       icon: BarChart3,
       tone: 'info',
@@ -86,9 +84,7 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
     {
       key: 'requests',
       label: t('API Requests'),
-      value: props.user
-        ? (props.user.request_count ?? 0).toLocaleString()
-        : '-',
+      value: (props.user?.request_count ?? 0).toLocaleString(),
       description: t('Total requests made'),
       icon: Activity,
       tone: 'chart-4',
@@ -121,22 +117,17 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
           ) : (
             <>
               <div className='flex items-center gap-1.5 sm:gap-2.5'>
-                <IconBadge
-                  tone={
-                    customization.preset === 'wanchuan' ? 'neutral' : item.tone
-                  }
-                  size='stat'
-                >
+                <IconBadge tone={item.tone} size='stat'>
                   <item.icon />
                 </IconBadge>
-                <div className='text-muted-foreground text-[11px] font-medium break-words sm:text-xs'>
+                <div className='text-muted-foreground truncate text-[11px] font-medium tracking-wider uppercase sm:text-xs'>
                   {item.label}
                 </div>
               </div>
 
               <div
                 data-wallet-stat-value
-                className='text-foreground mt-1.5 font-mono text-sm font-bold break-all tabular-nums sm:mt-2.5 sm:text-2xl'
+                className='text-foreground mt-1.5 font-mono text-sm font-bold tracking-tight break-all tabular-nums sm:mt-2.5 sm:text-2xl'
               >
                 {item.value}
               </div>

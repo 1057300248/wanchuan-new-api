@@ -40,7 +40,7 @@ import type { ApiKey } from '../types'
 import { ApiKeyGroupCell } from './api-key-group-cell'
 import { ApiKeyTimestampCell } from './api-key-timestamp-cell'
 import {
-  ApiKeyColumnCell,
+  ApiKeyCell,
   IpRestrictionsCell,
   ModelLimitsCell,
   UnlimitedQuotaBadge,
@@ -136,7 +136,7 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
       id: 'key',
       accessorKey: 'key',
       header: t('API Key'),
-      cell: ApiKeyColumnCell,
+      cell: ({ row }) => <ApiKeyCell apiKey={row.original} />,
       enableSorting: false,
       size: 260,
     },
@@ -296,7 +296,7 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
     {
       id: 'actions',
       header: () => t('Actions'),
-      cell: DataTableRowActions,
+      cell: ({ row }) => <DataTableRowActions row={row} />,
       meta: { pinned: 'right' as const },
     },
   ]
