@@ -25,6 +25,11 @@ For commercial licensing, please contact support@quantumnous.com
 
 export const THEME_PRESETS = [
   {
+    value: 'wanchuan',
+    name: 'WanChuan',
+    swatches: ['#171717', '#fafafa'],
+  },
+  {
     value: 'default',
     name: 'Default',
     swatches: ['oklch(0.72 0.18 250)', 'oklch(0.7 0.12 280)'],
@@ -116,7 +121,7 @@ export type ThemeCustomization = {
 }
 
 export const DEFAULT_THEME_CUSTOMIZATION: ThemeCustomization = {
-  preset: 'default',
+  preset: 'wanchuan',
   font: 'default',
   radius: 'default',
   scale: 'default',

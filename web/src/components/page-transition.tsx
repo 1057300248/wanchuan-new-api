@@ -1,3 +1,7 @@
+import { Outlet, useRouterState } from '@tanstack/react-router'
+import { motion, useReducedMotion, type Variants } from 'motion/react'
+import type { ReactNode } from 'react'
+
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -16,10 +20,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Outlet, useRouterState } from '@tanstack/react-router'
-import { motion, useReducedMotion, type Variants } from 'motion/react'
-import type { ReactNode } from 'react'
-
+import { useThemeCustomization } from '@/context/theme-customization-provider'
 import {
   CARD_ITEM_VARIANTS,
   CARD_STAGGER_VARIANTS,
@@ -37,7 +38,9 @@ interface PageTransitionProps {
 }
 
 export function PageTransition(props: PageTransitionProps) {
-  const shouldReduce = useReducedMotion()
+  const reducedMotion = useReducedMotion()
+  const { customization } = useThemeCustomization()
+  const shouldReduce = reducedMotion || customization.preset === 'wanchuan'
 
   if (shouldReduce) {
     return <div className={props.className}>{props.children}</div>
@@ -56,7 +59,9 @@ export function PageTransition(props: PageTransitionProps) {
 }
 
 export function AnimatedOutlet() {
-  const shouldReduce = useReducedMotion()
+  const reducedMotion = useReducedMotion()
+  const { customization } = useThemeCustomization()
+  const shouldReduce = reducedMotion || customization.preset === 'wanchuan'
   // Key the page transition by the matched route id, not the resolved pathname.
   // Navigating between params of the same route (e.g. dashboard tabs served by
   // /dashboard/$section) then re-renders in place instead of remounting the
@@ -93,7 +98,9 @@ interface StaggerContainerProps {
 }
 
 export function StaggerContainer(props: StaggerContainerProps) {
-  const shouldReduce = useReducedMotion()
+  const reducedMotion = useReducedMotion()
+  const { customization } = useThemeCustomization()
+  const shouldReduce = reducedMotion || customization.preset === 'wanchuan'
 
   if (shouldReduce) {
     return <div className={props.className}>{props.children}</div>
@@ -129,7 +136,9 @@ export function StaggerItem(props: StaggerItemProps) {
 }
 
 export function TableStaggerContainer(props: StaggerContainerProps) {
-  const shouldReduce = useReducedMotion()
+  const reducedMotion = useReducedMotion()
+  const { customization } = useThemeCustomization()
+  const shouldReduce = reducedMotion || customization.preset === 'wanchuan'
 
   if (shouldReduce) {
     return props.children
@@ -156,7 +165,9 @@ export function TableStaggerRow(props: StaggerItemProps) {
 }
 
 export function CardStaggerContainer(props: StaggerContainerProps) {
-  const shouldReduce = useReducedMotion()
+  const reducedMotion = useReducedMotion()
+  const { customization } = useThemeCustomization()
+  const shouldReduce = reducedMotion || customization.preset === 'wanchuan'
 
   if (shouldReduce) {
     return <div className={props.className}>{props.children}</div>
@@ -189,7 +200,9 @@ interface FadeInProps {
 }
 
 export function FadeIn(props: FadeInProps) {
-  const shouldReduce = useReducedMotion()
+  const reducedMotion = useReducedMotion()
+  const { customization } = useThemeCustomization()
+  const shouldReduce = reducedMotion || customization.preset === 'wanchuan'
 
   if (shouldReduce) {
     return <div className={props.className}>{props.children}</div>

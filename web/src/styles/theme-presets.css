@@ -32,6 +32,75 @@ For commercial licensing, please contact support@quantumnous.com
  *   blocks so an explicit user choice overrides the preset's default radius.
  */
 
+/* WanChuan: neutral developer workspace. Explicit radius/density overrides below win. */
+[data-theme-preset='wanchuan'] {
+  color: var(--foreground);
+  --background: #fafafa;
+  --foreground: #171717;
+  --card: #ffffff;
+  --card-foreground: #171717;
+  --popover: #ffffff;
+  --popover-foreground: #171717;
+  --primary: #171717;
+  --primary-foreground: #fafafa;
+  --secondary: #f5f5f5;
+  --secondary-foreground: #262626;
+  --muted: #f5f5f5;
+  --muted-foreground: #666666;
+  --accent: #f0f0f0;
+  --accent-foreground: #171717;
+  --border: #e5e5e5;
+  --input: #d4d4d4;
+  --ring: #737373;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #404040;
+  --sidebar-primary: #171717;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f0f0f0;
+  --sidebar-accent-foreground: #171717;
+  --sidebar-border: #e5e5e5;
+  --sidebar-ring: #737373;
+  --overview-accent-1: #525252;
+  --overview-accent-2: #737373;
+  --overview-accent-3: #404040;
+  --radius: 0.75rem;
+  --console-sidebar-width: 14rem;
+}
+.dark [data-theme-preset='wanchuan'] {
+  --background: #171717;
+  --foreground: #fafafa;
+  --card: #202020;
+  --card-foreground: #fafafa;
+  --popover: #202020;
+  --popover-foreground: #fafafa;
+  --primary: #fafafa;
+  --primary-foreground: #171717;
+  --secondary: #292929;
+  --secondary-foreground: #fafafa;
+  --muted: #292929;
+  --muted-foreground: #a3a3a3;
+  --accent: #303030;
+  --accent-foreground: #fafafa;
+  --border: #383838;
+  --input: #525252;
+  --ring: #a3a3a3;
+  --sidebar: #202020;
+  --sidebar-foreground: #e5e5e5;
+  --sidebar-primary: #fafafa;
+  --sidebar-primary-foreground: #171717;
+  --sidebar-accent: #303030;
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: #383838;
+  --sidebar-ring: #a3a3a3;
+  --overview-accent-1: #d4d4d4;
+  --overview-accent-2: #a3a3a3;
+  --overview-accent-3: #e5e5e5;
+}
+[data-theme-preset='wanchuan'] [data-slot='card'] {
+  border-radius: var(--radius);
+  box-shadow: none;
+}
+
 /* ── Underground ──────────────────────────────────────────────────────── */
 [data-theme-preset='underground'] {
   --primary: oklch(0.5315 0.0694 156.19);
@@ -406,7 +475,9 @@ For commercial licensing, please contact support@quantumnous.com
 /* Overview accents mirror the public blue/cyan/violet palette by default.
  * Named presets map those slots to their own chart palette so the overview
  * stays coherent with the user's selected theme. */
-[data-theme-preset]:not([data-theme-preset='default']) {
+[data-theme-preset]:not([data-theme-preset='default']):not(
+  [data-theme-preset='wanchuan']
+) {
   --overview-accent-1: var(--chart-1);
   --overview-accent-2: var(--chart-2);
   --overview-accent-3: var(--chart-3);
@@ -429,7 +500,7 @@ For commercial licensing, please contact support@quantumnous.com
  *   - `simple-large`: keeps intentionally neutral, high-contrast surfaces. */
 [data-theme-preset]:not([data-theme-preset='default']):not(
   [data-theme-preset='anthropic']
-):not([data-theme-preset='simple-large']) {
+):not([data-theme-preset='simple-large']):not([data-theme-preset='wanchuan']) {
   --card: color-mix(in oklch, var(--primary) 3%, var(--background));
   --popover: color-mix(in oklch, var(--primary) 5%, var(--background));
   --muted: color-mix(in oklch, var(--primary) 7%, var(--background));
@@ -454,7 +525,9 @@ For commercial licensing, please contact support@quantumnous.com
 .dark
   [data-theme-preset]:not([data-theme-preset='default']):not(
     [data-theme-preset='anthropic']
-  ):not([data-theme-preset='simple-large']) {
+  ):not([data-theme-preset='simple-large']):not(
+    [data-theme-preset='wanchuan']
+  ) {
   --card: color-mix(in oklch, var(--primary) 8%, var(--background));
   --popover: color-mix(in oklch, var(--primary) 12%, var(--background));
   --muted: color-mix(in oklch, var(--primary) 12%, var(--background));

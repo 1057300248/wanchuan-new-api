@@ -20,13 +20,13 @@ import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import type { ColumnDef } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 
 import {
   DataTablePage,
   DataTableRow,
   useDataTable,
 } from '@/components/data-table'
+import { Button } from '@/components/ui/button'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { cn } from '@/lib/utils'
@@ -125,7 +125,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     ],
   })
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: [
       'logs',
       logCategory,
@@ -147,8 +147,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       })
 
       if (!result?.success) {
-        toast.error(result?.message || t('Failed to load logs'))
-        return DEFAULT_LOGS_DATA
+        throw new Error(result?.message || t('Failed to load logs'))
       }
 
       return result.data || DEFAULT_LOGS_DATA
@@ -187,6 +186,17 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   })
 
   const isCommon = logCategory === 'common'
+
+  if (isError) {
+    return (
+      <div role='alert' className='bg-card rounded-lg border p-4'>
+        {t('Failed to load logs')}{' '}
+        <Button variant='outline' onClick={() => void refetch()}>
+          {t('Retry')}
+        </Button>
+      </div>
+    )
+  }
 
   return (
     <DataTablePage

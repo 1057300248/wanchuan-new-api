@@ -20,9 +20,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
+import { Button } from '@/components/ui/button'
+import { useAccountSelf } from '@/hooks/use-account-self'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
-import { getSelf } from '@/lib/api'
 
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
@@ -58,8 +59,10 @@ interface WalletProps {
 
 export function Wallet(_props: WalletProps) {
   const { t } = useTranslation()
-  const [user, setUser] = useState<UserWalletData | null>(null)
-  const [userLoading, setUserLoading] = useState(true)
+  const account = useAccountSelf()
+  const user = (account.data as UserWalletData | undefined) ?? null
+  const userLoading = account.isPending
+  const fetchUser = account.refetch
   const [topupAmount, setTopupAmount] = useState(0)
   const [selectedPreset, setSelectedPreset] = useState<number | null>(null)
   const [selectedPaymentMethod, setSelectedPaymentMethod] =
@@ -80,6 +83,7 @@ export function Wallet(_props: WalletProps) {
   const {
     summary,
     loading: walletLoading,
+    error: walletError,
     refetch: refetchWallet,
   } = useWalletSummary()
   const {
@@ -100,22 +104,6 @@ export function Wallet(_props: WalletProps) {
       currency?.quotaDisplayType === 'USD' ? 1 : currency?.usdExchangeRate || 1,
     [currency?.quotaDisplayType, currency?.usdExchangeRate]
   )
-
-  const fetchUser = useCallback(async () => {
-    try {
-      setUserLoading(true)
-      const response = await getSelf()
-      if (response.success && response.data) {
-        setUser(response.data as UserWalletData)
-      }
-    } finally {
-      setUserLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void fetchUser()
-  }, [fetchUser])
 
   const topupAmountInitializedRef = useRef(false)
   const refreshBalancesPromiseRef = useRef<Promise<void> | null>(null)
@@ -267,7 +255,18 @@ export function Wallet(_props: WalletProps) {
       <SectionPageLayout>
         <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
         <SectionPageLayout.Content>
-          <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
+          <div className='mx-auto flex w-full max-w-7xl flex-col gap-6'>
+            {(account.isError || walletError) && (
+              <div role='alert' className='rounded-xl border p-4'>
+                {t('Failed to load data')}{' '}
+                <Button
+                  variant='outline'
+                  onClick={() => void refreshBalances()}
+                >
+                  {t('Retry')}
+                </Button>
+              </div>
+            )}
             <WalletStatsCard
               user={user}
               summary={summary}

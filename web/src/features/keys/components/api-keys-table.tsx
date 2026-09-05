@@ -22,7 +22,6 @@ import type { Table as TanstackTable } from '@tanstack/react-table'
 import { Database } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 
 import {
   DISABLED_ROW_DESKTOP,
@@ -32,6 +31,7 @@ import {
   useDataTable,
 } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
+import { Button } from '@/components/ui/button'
 import {
   Empty,
   EmptyDescription,
@@ -232,7 +232,7 @@ export function ApiKeysTable() {
 
   // Fetch data with React Query
   // eslint-disable-next-line @tanstack/query/exhaustive-deps
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: [
       'keys',
       pagination.pageIndex + 1,
@@ -255,15 +255,7 @@ export function ApiKeysTable() {
           })
 
       if (!result.success) {
-        toast.error(
-          result.message ||
-            t(
-              shouldSearch
-                ? ERROR_MESSAGES.SEARCH_FAILED
-                : ERROR_MESSAGES.LOAD_FAILED
-            )
-        )
-        return { items: [], total: 0 }
+        throw new Error(result.message || t(ERROR_MESSAGES.LOAD_FAILED))
       }
 
       return {
@@ -293,8 +285,20 @@ export function ApiKeysTable() {
     ensurePageInRange,
   })
 
+  if (isError) {
+    return (
+      <div role='alert' className='bg-card rounded-xl border p-4'>
+        {t('Failed to load data')}{' '}
+        <Button variant='outline' onClick={() => void refetch()}>
+          {t('Retry')}
+        </Button>
+      </div>
+    )
+  }
+
   return (
     <DataTablePage
+      tableClassName='[&_td]:py-2'
       table={table}
       columns={columns}
       isLoading={isLoading}

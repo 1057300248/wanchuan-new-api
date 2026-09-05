@@ -119,6 +119,40 @@ describe('wallet stats card', () => {
     ).toHaveLength(3)
   })
 
+  test('shows dash instead of zero when the user snapshot is missing', () => {
+    const { container } = render(
+      <WalletStatsCard user={null} summary={summary} />
+    )
+
+    const usageValue = getStat(container, 'usage').querySelector(
+      '[data-wallet-stat-value]'
+    )
+    const requestsValue = getStat(container, 'requests').querySelector(
+      '[data-wallet-stat-value]'
+    )
+    expect(usageValue?.textContent).toBe('-')
+    expect(requestsValue?.textContent).toBe('-')
+    expect(getStat(container, 'usage')).not.toHaveTextContent('$0.00')
+    expect(getStat(container, 'paid')).toHaveTextContent('$2.00')
+    expect(getStat(container, 'bonus')).toHaveTextContent('$1.00')
+  })
+
+  test('shows dash instead of zero when the wallet summary is missing', () => {
+    const { container } = render(<WalletStatsCard user={user} summary={null} />)
+
+    const paidValue = getStat(container, 'paid').querySelector(
+      '[data-wallet-stat-value]'
+    )
+    const bonusValue = getStat(container, 'bonus').querySelector(
+      '[data-wallet-stat-value]'
+    )
+    expect(paidValue?.textContent).toBe('-')
+    expect(bonusValue?.textContent).toBe('-')
+    expect(getStat(container, 'paid')).not.toHaveTextContent('$0.00')
+    expect(getStat(container, 'usage')).toHaveTextContent('$3.00')
+    expect(getStat(container, 'requests')).toHaveTextContent('12,345')
+  })
+
   test('uses a two-column mobile grid and a four-column desktop grid with internal dividers', () => {
     const { container } = render(
       <WalletStatsCard user={user} summary={summary} />

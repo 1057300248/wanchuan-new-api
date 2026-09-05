@@ -47,7 +47,7 @@ import { cn } from '@/lib/utils'
 
 const SIDEBAR_COOKIE_NAME = 'sidebar_state'
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
-const SIDEBAR_WIDTH = '13rem'
+const SIDEBAR_WIDTH = 'var(--console-sidebar-width, 13rem)'
 const SIDEBAR_WIDTH_MOBILE = '17rem'
 const SIDEBAR_WIDTH_ICON = '2.75rem'
 const SIDEBAR_KEYBOARD_SHORTCUT = 'b'
@@ -302,6 +302,7 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
 
   return (
     <button
+      type='button'
       data-sidebar='rail'
       data-slot='sidebar-rail'
       aria-label='Toggle Sidebar'
