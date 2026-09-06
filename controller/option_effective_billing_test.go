@@ -42,11 +42,13 @@ func TestOptionsExposeEffectiveBillingWithoutChangingPrices(t *testing.T) {
 	var exprs map[string]string
 	require.NoError(t, common.UnmarshalJsonStr(values["billing_setting.billing_expr"], &exprs))
 	assert.Equal(t, billing_setting.GetBillingExprCopy(), exprs)
-	assert.Equal(t, map[string]string{"custom": "p * 3 + c * 9"}, exprs)
+	assert.Equal(t, "p * 3 + c * 9", exprs["custom"])
+	assert.NotEmpty(t, exprs["gpt-6-astra"])
 	var modes map[string]string
 	require.NoError(t, common.UnmarshalJsonStr(values["billing_setting.billing_mode"], &modes))
 	assert.Equal(t, billing_setting.GetBillingModeCopy(), modes)
-	assert.Equal(t, map[string]string{"custom": "tiered_expr"}, modes)
+	assert.Equal(t, "tiered_expr", modes["custom"])
+	assert.Equal(t, "tiered_expr", modes["gpt-6-astra"])
 	assert.Equal(t, `{"stale":"p * 100"}`, common.OptionMap["billing_setting.billing_expr"])
 	assert.Equal(t, `{}`, common.OptionMap["billing_setting.billing_mode"])
 	assert.Equal(t, map[string]string{"custom": "tiered_expr"}, settings.BillingMode)
@@ -81,7 +83,13 @@ func TestOptionsExposeEmptyBillingMapsAsEmptyObject(t *testing.T) {
 	}
 	require.Contains(t, values, "billing_setting.billing_mode")
 	require.Contains(t, values, "billing_setting.billing_expr")
-	assert.Equal(t, `{}`, values["billing_setting.billing_mode"])
-	assert.Equal(t, `{}`, values["billing_setting.billing_expr"])
+	var modes map[string]string
+	var expressions map[string]string
+	require.NoError(t, common.UnmarshalJsonStr(values["billing_setting.billing_mode"], &modes))
+	require.NoError(t, common.UnmarshalJsonStr(values["billing_setting.billing_expr"], &expressions))
+	assert.Equal(t, billing_setting.GetBillingModeCopy(), modes)
+	assert.Equal(t, billing_setting.GetBillingExprCopy(), expressions)
+	assert.Equal(t, "tiered_expr", modes["gpt-6-astra"])
+	assert.NotEmpty(t, expressions["gpt-6-astra"])
 	assert.Empty(t, common.OptionMap)
 }

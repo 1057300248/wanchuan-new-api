@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -90,11 +91,8 @@ func GetOptions(c *gin.Context) {
 			Key:   k,
 			Value: value,
 		})
-		for _, optionKey := range completionRatioMetaOptionKeys {
-			if optionKey == k {
-				optionValues[k] = value
-				break
-			}
+		if slices.Contains(completionRatioMetaOptionKeys, k) {
+			optionValues[k] = value
 		}
 	}
 	effectiveModes := billing_setting.GetBillingModeCopy()
@@ -113,7 +111,6 @@ func GetOptions(c *gin.Context) {
 		}
 		options = append(options, &model.Option{Key: key, Value: string(encoded)})
 	}
-
 	options = append(options, &model.Option{
 		Key:   "CompletionRatioMeta",
 		Value: buildCompletionRatioMetaValue(optionValues),
