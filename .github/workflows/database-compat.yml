@@ -3,8 +3,14 @@ name: Database Compatibility
 on:
   push:
     branches:
+      - main
+      - 'codex/**'
       - merge/wanchuan-main-customizations-20260904
+  pull_request:
   workflow_dispatch:
+
+env:
+  GOWORK: 'off'
 
 permissions:
   contents: read

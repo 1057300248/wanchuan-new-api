@@ -98,8 +98,7 @@ func GetOptions(c *gin.Context) {
 	effectiveModes := billing_setting.GetBillingModeCopy()
 	effectiveExpressions := billing_setting.GetBillingExprCopy()
 	common.OptionMapRWMutex.Unlock()
-	// Surface runtime configuration, not a potentially stale persisted snapshot.
-	// Do not introduce provider defaults or change administrator pricing.
+	// Snapshot effective defaults and administrator overrides under the same lock.
 	for key, values := range map[string]map[string]string{
 		"billing_setting.billing_mode": effectiveModes,
 		"billing_setting.billing_expr": effectiveExpressions,

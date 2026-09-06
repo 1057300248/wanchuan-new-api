@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/gin-gonic/gin"
@@ -26,6 +27,14 @@ func SetUpLogger(server *gin.Engine) {
 		tag, _ := param.Keys[RouteTagKey].(string)
 		if tag == "" {
 			tag = "web"
+		}
+		path, _, _ := strings.Cut(param.Path, "?")
+		switch {
+		case path == "/api/stripe/webhook", path == "/api/creem/webhook", path == "/api/waffo/webhook",
+			strings.HasPrefix(path, "/api/waffo-pancake/webhook/"), path == "/api/user/epay/notify",
+			path == "/api/subscription/epay/notify", path == "/api/subscription/epay/return":
+			// Signatures in GET callbacks remain intact for verification, not logging.
+			param.Path = path
 		}
 		return fmt.Sprintf("[GIN] %s | %s | %s | %3d | %13v | %15s | %7s %s\n",
 			param.TimeStamp.Format("2006/01/02 - 15:04:05"),

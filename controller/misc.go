@@ -193,8 +193,8 @@ func GetHealthz(c *gin.Context) {
 // traffic. The response deliberately omits connection details and component
 // error text because this endpoint is reachable through the public API router.
 func GetReadyz(c *gin.Context) {
-	if model.DB == nil {
-		writeReadinessFailure(c, "database is not initialized")
+	if model.DB == nil || model.LOG_DB == nil {
+		writeReadinessFailure(c)
 		return
 	}
 
@@ -203,17 +203,24 @@ func GetReadyz(c *gin.Context) {
 
 	sqlDB, err := model.DB.DB()
 	if err != nil {
-		writeReadinessFailure(c, "database handle unavailable")
+		writeReadinessFailure(c)
 		return
 	}
 	if err := sqlDB.PingContext(ctx); err != nil {
-		writeReadinessFailure(c, "database ping failed")
+		writeReadinessFailure(c)
 		return
+	}
+	if model.LOG_DB != model.DB {
+		logDB, err := model.LOG_DB.DB()
+		if err != nil || logDB.PingContext(ctx) != nil {
+			writeReadinessFailure(c)
+			return
+		}
 	}
 
 	if common.RedisEnabled {
 		if common.RDB == nil || common.RDB.Ping(ctx).Err() != nil {
-			writeReadinessFailure(c, "redis ping failed")
+			writeReadinessFailure(c)
 			return
 		}
 	}
@@ -221,8 +228,7 @@ func GetReadyz(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
-func writeReadinessFailure(c *gin.Context, reason string) {
-	common.SysError("readiness check failed: " + reason)
+func writeReadinessFailure(c *gin.Context) {
 	c.JSON(http.StatusServiceUnavailable, gin.H{"success": false})
 }
 

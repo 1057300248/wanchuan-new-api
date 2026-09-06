@@ -13,6 +13,11 @@ import (
 )
 
 func SetApiRouter(router *gin.Engine) {
+	// Probes must stay independent of the Redis-backed API limiter and caches.
+	for _, method := range []string{"GET", "HEAD"} {
+		router.Handle(method, "/api/healthz", middleware.DisableCache(), controller.GetHealthz)
+		router.Handle(method, "/api/readyz", middleware.DisableCache(), controller.GetReadyz)
+	}
 	// The marketing catalogue has one explicit anonymous endpoint. Keep it
 	// separate from the authenticated dashboard pricing API so Caddy can expose
 	// /public-api/pricing without weakening /api/pricing.
@@ -33,8 +38,6 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/setup", controller.GetSetup)
 		apiRouter.POST("/setup", anonymousRequestBodyLimit, controller.PostSetup)
 		apiRouter.GET("/status", controller.GetStatus)
-		apiRouter.GET("/healthz", controller.GetHealthz)
-		apiRouter.GET("/readyz", controller.GetReadyz)
 		apiRouter.GET("/uptime/status", controller.GetUptimeKumaStatus)
 		apiRouter.GET("/models", middleware.UserAuth(), controller.DashboardListModels)
 		apiRouter.GET("/status/test", middleware.AdminAuth(), controller.TestStatus)

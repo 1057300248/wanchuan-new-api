@@ -41,6 +41,10 @@ http://:8081 {
 	import common_headers
 
 	route {
+		# Dependency probes are origin-local; public callers use /api/status.
+		@private_probes path /api/healthz /api/readyz
+		respond @private_probes 404
+
 		@public_status {
 			method GET HEAD
 			path /public-api/status

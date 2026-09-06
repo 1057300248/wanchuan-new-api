@@ -1,112 +1,122 @@
-# new-api rc.33 生产发布手册
+# new-api rc.33 发布与验收手册
 
-## 目标与基线
+## 状态与边界
 
-- 目标版本：官方 `v1.0.0-rc.33`，commit `eb99ab1b40343c3317bb47981cccdbb2b159a5fa`。
-- 当前代码提交：`df20673ab5acdb6fd0c52c2d24aa90eba51508bd`。
-- 当前生产应用回滚基线：`wanchuan/new-api:responses-8eee45fd2-20260906`。
-- 本次只替换 `new-api` 应用镜像；PostgreSQL、Redis、Grok2API、Sub2API 不重启。
-- 官方 rc.33 仍将插件系统标记为实验性；OpenRouter 旧的任意 `-thinking` 别名行为已移除，发布前必须检查现有模型映射。
+目标固定为官方 v1.0.0-rc.33 / eb99ab1b40343c3317bb47981cccdbb2b159a5fa。
+本轮交付本地候选代码、测试及证据门禁；未推送镜像、启动线上 canary 或发布生产。
+官方仍将插件系统标为实验性，发布版不等于生产就绪：[发布说明](https://github.com/QuantumNous/new-api/releases/tag/v1.0.0-rc.33)。
 
-## 发布前门禁
+2026-09-06 12:38 UTC 只读访问公开状态，线上仍为 rc.31 Responses 定制版。
+历史回滚基线为 8eee45fd2865d53cb9a384573a73e2fa238ee783；生产镜像记录：
+wanchuan/new-api:responses-8eee45fd2-20260906。
+执行升级前需重新读取实际 image ID/digest、Compose、运行参数和数据库版本，保留当前会话密钥及业务数据。
 
-1. 使用干净提交构建源码，不从脏工作区打包：
+## 冻结与构建
 
-   ```sh
-   git archive --format=tar.gz --output=source.tar.gz df20673ab5acdb6fd0c52c2d24aa90eba51508bd
-   sha256sum source.tar.gz
-   ```
+1. 固定最终通过检查的提交，使用干净 checkout/worktree，勿打包本地归档或凭据：
+~~~sh
+CANDIDATE_COMMIT="$(git rev-parse HEAD)"
+git archive --format=tar.gz --output=source.tar.gz "$CANDIDATE_COMMIT"
+sha256sum source.tar.gz
+~~~
+生成的源归档没有 web/dist，先构建前端，再运行需要 embed 的 Go 检查。
+不要在现有脏工作区执行 reset、clean 或覆盖脚本。
 
-2. 在与生产一致的 Docker builder 中执行：
+2. 按 Dockerfile 固定的 Bun 1.4.0 / Go 1.26.1 Linux 工具链验证；race 单独使用带 C 编译器的构建容器：
+~~~sh
+(cd web && bun install --frozen-lockfile && bun run typecheck && bun run test \
+  && bun run lint:ci && bun run format:check && bun run copyright:check && bun run build)
+GOWORK=off go vet ./...
+GOWORK=off go test -count=1 ./...
+GOWORK=off CGO_ENABLED=1 go test -race ./...
+(cd relaykit && GOWORK=off go test -count=1 ./... && GOWORK=off go vet ./... && GOWORK=off go build ./...)
+python3 -m unittest discover -s ops/server/tests -p test_release_gate.py -v
+~~~
+保留每条命令的退出码、工具版本、完整日志及 SHA256；子步骤失败即停止，禁止用最后一条命令的退出码覆盖前面的失败。
 
-   ```sh
-   GOWORK=off go vet ./...
-   GOWORK=off go test ./...
-   (cd relaykit && GOWORK=off go vet ./... && GOWORK=off go test ./... && GOWORK=off go build ./...)
-   ```
+3. 构建候选时设置 SOURCE_REVISION 和 RELEASE_VERSION 两个 build args。使用现有 Buildx SBOM/provenance 与 cosign 流程发布到自己的镜像仓库，保存：
+源码校验值、构建日志、架构、镜像 digest、SBOM、provenance、签名验证输出。
+验证签名时明确 certificate identity、OIDC issuer 或已信任公钥；不得使用任意 identity 匹配。
+本轮没有执行镜像发布或签名，示例 digest 不是已发布产物。
 
-3. 前端执行：
+## 数据与业务验证
 
-   ```sh
-   cd web
-   bun install --frozen-lockfile
-   bun run typecheck
-   bun run test
-   bun run lint:ci
-   bun run format:check
-   VITE_REACT_APP_VERSION=v1.0.0-rc.33+main.eb99ab1.chuanapi.20260906 bun run build
-   ```
+- 三数据库必须是真实 SQLite、MySQL 5.7 和 PostgreSQL 9.6，以及实际生产使用的 PostgreSQL 版本。
+  仓库 database-compat 工作流已覆盖普通 PR 和主线/候选分支；启动两次和支付并发测试可通过下面入口执行：
+~~~sh
+TEST_DATABASE_COMPAT=1 TEST_DATABASE_DIALECT=sqlite GOWORK=off \
+  go test ./model -run '^TestDatabaseCompatibilityReal$' -count=1 -v
+~~~
+MySQL/PostgreSQL 使用同一入口，设置 TEST_DATABASE_DIALECT 和测试专用 TEST_DATABASE_DSN；
+只对一次性测试数据库执行。该入口不替代旧库恢复/升级/回滚演练。
 
-4. 构建并签名 immutable 镜像。将实际 digest 填入生产 `.env`，禁止使用 `latest`：
+- 对每个数据库，先用 rc.31 定制基线创建有代表性数据，再备份并恢复到隔离实例；候选启动两次。
+  对账用户各子账户、兼容总额、账本幂等记录、订单、Token、渠道、任务、价格、索引及唯一约束。
+  单独配置日志库的路径也需覆盖。演练使用旧应用回退已升级库，证明兼容之后才允许应用级回滚。
+- 生产 PostgreSQL dump、Redis RDB、Compose、环境和密钥备份保持在 root 受限目录，不下载到源码仓库。
+  Redis 快照使用已验证的非阻塞备份流程，避免同步 SAVE 阻塞线上。
+- 核对显式模型 modifier、OpenRouter 真实 -thinking 模型及旧别名映射、管理员定价优先级、Responses 成功/失败/缺终态/重试、任务失败退款和支付重复回调。
+  认证覆盖登录、2FA、OAuth、刷新/撤销和 Token 归属。注入失败与支付回放只在隔离环境进行。
+- ops/server/new-api-rc30-* 是历史 rc.26 -> rc.30 演练资产，本轮对其版本替换已撤回。
+  它们的旧 PASS 值、数据库版本、rc26 回滚和目录命名不能用于证明 rc.33 验收通过。
 
-   ```dotenv
-   NEW_API_IMAGE=wanchuan/new-api@sha256:REPLACE_NEW_API_DIGEST
-   POSTGRES_IMAGE=postgres@sha256:REPLACE_POSTGRES_DIGEST
-   REDIS_IMAGE=redis@sha256:REPLACE_REDIS_DIGEST
-   SQL_DSN=postgresql://root:REPLACE_POSTGRES_PASSWORD@postgres:5432/new-api
-   REDIS_CONN_STRING=redis://:REPLACE_REDIS_PASSWORD@redis:6379
-   POSTGRES_PASSWORD=REPLACE_POSTGRES_PASSWORD
-   REDIS_PASSWORD=REPLACE_REDIS_PASSWORD
-   SESSION_SECRET=REPLACE_HIGH_ENTROPY_SESSION_SECRET
-   SESSION_COOKIE_SECURE=true
-   SESSION_COOKIE_TRUSTED_URL=https://your-console.example.com
-   TRUSTED_PROXIES=172.20.0.0/16
-   ```
+## 证据门禁
 
-   使用 `cosign verify` 校验签名，并保存 SBOM、镜像 digest、源码 SHA256 和构建日志。
+正式入口为 ops/server/new-api-release-gate.py，模板为 new-api-rc33-gates.example.json。
+模板所有检查都是 PENDING；它只验证证据，不执行 Docker、迁移、部署或修改控制面。
 
-5. 在隔离数据库执行恢复、双次迁移和回滚演练：
+候选必须包含完整 commit、rc.33 版本、不可变 repository@sha256 镜像与源码归档。
+每项 PASS 记录结构如下；证据只能指向 manifest 目录内的非空文件：
+~~~json
+{
+  "status": "PASS",
+  "commit": "CANDIDATE_COMMIT",
+  "image": "wanchuan/new-api@sha256:CANDIDATE_IMAGE_DIGEST",
+  "completed_at": "COMPLETION_TIME_WITH_TIMEZONE",
+  "evidence": [{"file": "logs/check.log", "sha256": "CHECK_LOG_SHA256"}]
+}
+~~~
+填写 PASS 表示已人工核对该日志的命令、结果和候选身份。哈希校验不能替代语义审查或 cosign 验签。
 
-   ```sh
-   bash ops/server/new-api-rc30-migration-drill.sh /path/to/rc33-drill
-   bash ops/server/new-api-rc30-db-matrix.sh /path/to/rc33-matrix
-   ```
+Canary 使用独立数据库/Redis和内部网络，不挂生产卷、不发送真实客户流量。
+禁止邮件、付款请求和生产上游访问；先完成隔离业务回放，再开始空载稳定性观察。
+每五分钟采集一条 JSONL，读取实际容器、探针、日志及数据库，记录：
+~~~json
+{
+  "at": "OBSERVED_AT_WITH_TIMEZONE",
+  "commit": "CANDIDATE_COMMIT",
+  "image": "wanchuan/new-api@sha256:CANDIDATE_IMAGE_DIGEST",
+  "version": "CANDIDATE_VERSION",
+  "running": true, "liveness": true, "ready": true, "oom": false,
+  "restarts": 0, "critical_count": 0, "funds_mismatch_count": 0,
+  "funds_snapshot_sha256": "FUNDS_SNAPSHOT_SHA256"
+}
+~~~
+该格式示例不是观测证据。门禁要求不少于 800 条、首尾跨度至少 72 小时、相邻间隔不超过 10 分钟、
+最后一次不旧于 10 分钟、无重复/倒序/未来时间、身份一致、故障计数为零，空载资金快照不变。
+空载稳定性不代表负载能力，发布前仍需在隔离环境完成容量和端到端测试。
 
-   两个脚本文件名为历史兼容名称，默认目标已切换为 rc.33。必须核对资金四列、账本、任务、渠道、价格选项、索引和插件表前后不变。
+~~~sh
+python3 ops/server/new-api-release-gate.py /path/to/evidence/manifest.json \
+  --commit "$CANDIDATE_COMMIT" --image "$CANDIDATE_IMAGE"
+~~~
+SOURCE、Go/race/relaykit、前端、三数据库、独立日志库、rc31 回滚、资金、协议、插件、上游复核、
+签名和 SBOM 缺少任何一项，命令以非零退出。更换候选、镜像或新增补丁后重新收集证据。
 
-6. 更新 `/etc/wanchuan/new-api-production-gates.env`。以下项目必须全部为 `PASS`：
+## 生产配置与回滚
 
-   `GO_TEST`、`GO_RACE`、`RELAYKIT_BUILD`、`WEB_TYPECHECK`、`WEB_TEST`、`WEB_BUILD`、`WEB_LINT`、`WEB_FORMAT`、`PG_RESTORE_TWICE`、`MYSQL_MIGRATION_TWICE`、`SQLITE_MIGRATION_TWICE`、`RC26_APP_ROLLBACK`、`FUNDS_INVARIANTS`、`PLUGIN_REGISTRY`、`TASK_PRICING`、`CONTRACTS`、`UPSTREAM_REGRESSION_CHECK`。
+- 根 docker-compose.yml 为新部署模板，不得覆盖现有生产 Compose 或 .env。
+  生产原有 PostgreSQL/Redis 用户、DSN、密钥、网络与卷名全部保留，不用模板的 root/postgres/redis 替换。
+- 新部署需显式配置 NEW_API_IMAGE、POSTGRES_IMAGE、REDIS_IMAGE 的经验证 digest，以及数据库/Redis口令。
+  会话需要稳定高熵 SESSION_SECRET、Secure Cookie、精确 HTTPS Origin；
+  TRUSTED_PROXIES 必须是实际代理地址或网段，不照抄示例网段。端口只发布到 loopback。
+- 内部 GET/HEAD /api/healthz 不依赖 Redis；/api/readyz 检查主库、日志库及启用的 Redis，返回 200 或 503 且 no-store。
+  Caddy 阻止公网访问这两个内部探针；公开可用性检查使用 /api/status、/public-api/status 和未登录 /v1/models 的 JSON 401。
+- 备份记录明确一个 BACKUP_DIR、原 image ID 和已核对的 Compose 路径；不使用 backup-* 通配符选择回滚点。
+  候选出现计费/数据不变量错误、依赖故障、持续 5xx 或流式终态回归即停止发布。
+  当前候选没有模型/迁移/ORM依赖变更，但仍需恢复演练证明应用级回退可行。
+- 后续经确认发布时，仅替换 new-api 镜像及经审核的探针配置，使用 --no-deps --pull never；
+  给旧请求排空至少 150 秒，不重启数据库/Redis/Grok2API/Sub2API。
+  回滚使用记录的精确旧配置和旧镜像，不把生产数据库覆盖成演练副本。
 
-## Canary 与切换
-
-1. 使用 `ops/server/new-api-rc30-canary-start.sh` 启动 rc.33 canary，并确认 `/api/healthz` 与 `/api/readyz` 均返回 `{"success":true}`。
-2. 启用现有 5 分钟 monitor，连续观察至少 72 小时和 800 次记录；每次记录必须为 running、healthy、restart=0、OOM=false、critical log=0，资金快照只能有一个版本。
-3. 发布前检查：OpenAI Chat、Responses、Claude、Gemini、图片、音频、任务插件、登录/2FA/OAuth、Token、支付 webhook 重放和 Caddy 路由。
-4. 运行生产门禁：
-
-   ```sh
-   bash ops/server/new-api-rc30-production-gate.sh /etc/wanchuan/new-api-production-gates.env
-   ```
-
-5. 仅在门禁通过后，用生产发布脚本更新 `/opt/middle/new-api/docker-compose.yml` 的 `new-api` 镜像字段。更新前保存 PostgreSQL custom dump、globals、Redis RDB、Compose、环境文件、依赖容器指纹和价格指纹。
-
-## 发布后验收
-
-```sh
-curl -fsS https://chuanapi.com/api/healthz
-curl -fsS https://chuanapi.com/api/readyz
-curl -fsS https://chuanapi.com/api/status
-curl -sS -o /dev/null -w '%{http_code}\n' https://chuanapi.com/public-api/status
-curl -sS -o /dev/null -w '%{http_code}\n' https://chuanapi.com/dashboard/overview
-curl -sS -o /dev/null -w '%{http_code}\n' https://chuanapi.com/v1/models
-```
-
-期望：healthz/readyz/status 为成功 JSON，public status 和 dashboard 为 200，未认证 `/v1/models` 为应用层 401 而不是边缘 HTML 错误页。记录版本、request id、响应类型、容器状态、重启次数和错误日志摘要。
-
-## 回滚
-
-只回滚应用镜像，不恢复数据库：
-
-```sh
-cp -a /opt/middle/state/new-api-deploy/rc33-eb99ab1/backup-*/docker-compose.yml /opt/middle/new-api/docker-compose.yml
-docker compose --project-directory /opt/middle/new-api config -q
-docker compose --project-directory /opt/middle/new-api up -d --no-deps --pull never --timeout 150 new-api
-curl -fsS http://127.0.0.1:3000/api/status
-```
-
-若迁移已改变 schema 或资金对账不一致，停止切换并使用对应恢复演练产物；不得直接在生产执行破坏性回滚 SQL。
-
-## 当前本地验证限制
-
-当前 Windows 工作区已通过 Go/relaykit、前端 typecheck/test/lint/format/build、Compose YAML 和 Shell 静态检查；未在本机执行 Docker、真实 MySQL/PostgreSQL、cosign 或 72 小时 canary。上述门禁必须在生产构建主机或隔离 CI 完成后，才允许切换公网流量。
+实际完成的检查和剩余风险见同目录 new-api-rc33-review.md；不得从此手册推断生产已升级。

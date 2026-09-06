@@ -55,7 +55,7 @@ func TestOptionsExposeEffectiveBillingWithoutChangingPrices(t *testing.T) {
 	assert.Equal(t, map[string]string{"custom": "p * 3 + c * 9"}, settings.BillingExpr)
 }
 
-func TestOptionsExposeEmptyBillingMapsAsEmptyObject(t *testing.T) {
+func TestOptionsExposeBuiltinBillingWithoutPersistingDefaults(t *testing.T) {
 	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
 	saved := *settings
 	savedOptions := common.OptionMap

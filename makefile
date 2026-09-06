@@ -43,7 +43,7 @@ dev: dev-api dev-web
 test:
 	@echo "Testing root Go module..."
 	@root_module=$$(GOWORK=off go list -m); \
-		root_packages=$$(GOWORK=off go list -e ./... | grep -vxF "$$root_module" | grep -vE '/local(/|$$)'); \
+		root_packages=$$(GOWORK=off go list -e ./... | grep -vxF "$$root_module"); \
 		GOWORK=off go test $$root_packages
 	@echo "Testing relaykit Go module..."
 	@cd relaykit && GOWORK=off go test ./...

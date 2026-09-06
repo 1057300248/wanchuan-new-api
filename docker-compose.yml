@@ -27,7 +27,7 @@ services:
     image: ${NEW_API_IMAGE:?NEW_API_IMAGE must be pinned to a digest}
     container_name: new-api
     restart: always
-    stop_grace_period: 2m
+    stop_grace_period: 150s
     init: true
     logging: *default-logging
     command: --log-dir /app/logs
