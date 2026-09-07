@@ -31,6 +31,7 @@ func findPricingByName(t *testing.T, pricings []Pricing, modelName string) Prici
 
 func TestModelMetadataInsertPersistsAndUpdateClears(t *testing.T) {
 	resetPricingEndpointTestTables(t)
+	require.NoError(t, DB.AutoMigrate(&Option{}))
 
 	mi := &Model{
 		ModelName:       "metadata-store-model",
@@ -95,6 +96,31 @@ func TestModelMetadataInsertPersistsAndUpdateClears(t *testing.T) {
 	assert.Equal(t, 0, *zeroed.ContextLength)
 	require.NotNil(t, zeroed.BonusEligible)
 	assert.False(t, *zeroed.BonusEligible)
+}
+
+func TestMetadataSyncRetainsAbsentFieldsAndAppliesExplicitZeroValues(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	require.NoError(t, DB.AutoMigrate(&Option{}))
+	local := Model{ModelName: "metadata-sync-optional", Status: 1, SyncOfficial: 1,
+		ContextLength: intPtr(128000), Capabilities: `["vision"]`, BonusEligible: boolPtr(true)}
+	require.NoError(t, local.Insert())
+	fields := []string{"context_length", "capabilities", "bonus_eligible"}
+	selection := MetadataSyncSelection{ModelName: local.ModelName, RecordVersion: MetadataRecordVersion(&local, nil, nil), Fields: fields}
+	_, err := ApplyMetadataSync([]MetadataSyncUpdate{{MetadataSyncSelection: selection, Values: MetadataValues{Status: 1}}}, nil)
+	require.NoError(t, err)
+	require.NoError(t, DB.First(&local, local.Id).Error)
+	assert.Equal(t, intPtr(128000), local.ContextLength)
+	assert.Equal(t, `["vision"]`, local.Capabilities)
+	assert.Equal(t, boolPtr(true), local.BonusEligible)
+	selection.RecordVersion = MetadataRecordVersion(&local, nil, nil)
+	_, err = ApplyMetadataSync([]MetadataSyncUpdate{{MetadataSyncSelection: selection, Values: MetadataValues{
+		Status: 1, ContextLength: intPtr(0), Capabilities: []string{}, BonusEligible: boolPtr(false),
+	}}}, nil)
+	require.NoError(t, err)
+	require.NoError(t, DB.First(&local, local.Id).Error)
+	assert.Equal(t, intPtr(0), local.ContextLength)
+	assert.Equal(t, `[]`, local.Capabilities)
+	assert.Equal(t, boolPtr(false), local.BonusEligible)
 }
 
 func TestPricingPropagatesModelMetadata(t *testing.T) {

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"html"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -17,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/console_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -65,6 +65,7 @@ func GetStatus(c *gin.Context) {
 		"linuxdo_client_id":           common.LinuxDOClientId,
 		"linuxdo_minimum_trust_level": common.LinuxDOMinimumTrustLevel,
 		"telegram_oauth":              common.TelegramOAuthEnabled,
+		"telegram_oauth_configured":   oauth.TelegramConfigurationError() == nil,
 		"telegram_bot_name":           common.TelegramBotName,
 		"theme":                       "default",
 		"system_name":                 common.SystemName,
@@ -273,46 +274,10 @@ func GetHomePageContent(c *gin.Context) {
 }
 
 func SendEmailVerification(c *gin.Context) {
-	email := model.NormalizeEmail(c.Query("email"))
-	if err := common.Validate.Var(email, "required,email"); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+	email, err := service.ValidateAccountEmail(c.Query("email"))
+	if err != nil {
+		writeSecurityOperationError(c, err)
 		return
-	}
-	parts := strings.Split(email, "@")
-	if len(parts) != 2 {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "无效的邮箱地址",
-		})
-		return
-	}
-	localPart := parts[0]
-	domainPart := parts[1]
-	if common.EmailDomainRestrictionEnabled {
-		allowed := false
-		for _, domain := range common.EmailDomainWhitelist {
-			if domainPart == domain {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "The administrator has enabled the email domain name whitelist, and your email address is not allowed due to special symbols or it's not in the whitelist.",
-			})
-			return
-		}
-	}
-	if common.EmailAliasRestrictionEnabled {
-		containsSpecialSymbols := strings.Contains(localPart, "+") || strings.Contains(localPart, ".")
-		if containsSpecialSymbols {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "管理员已启用邮箱地址别名限制，您的邮箱地址由于包含特殊符号而被拒绝。",
-			})
-			return
-		}
 	}
 
 	if model.IsEmailAlreadyTaken(email) {
@@ -326,7 +291,7 @@ func SendEmailVerification(c *gin.Context) {
 		common.SystemName, code, common.VerificationValidMinutes, common.SystemName)
 	content := fmt.Sprintf("<!doctype html><html><body style=\"margin:0;padding:24px;background:#f6f8fb;color:#1f2937;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',Arial,sans-serif\"><main style=\"max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px\"><h1 style=\"margin:0 0 20px;font-size:22px\">邮箱验证</h1><p style=\"line-height:1.7\">您好，您正在进行%s邮箱验证。</p><p style=\"margin:24px 0;padding:16px;background:#f3f4f6;border-radius:8px;text-align:center;font-size:30px;font-weight:700;letter-spacing:6px;color:#111827\">%s</p><p style=\"line-height:1.7\">验证码 %d 分钟内有效。若非本人操作，请忽略本邮件。</p><hr style=\"margin:24px 0;border:0;border-top:1px solid #e5e7eb\"><p style=\"margin:0;color:#6b7280;font-size:13px\">%s · chuanapi.com</p></main></body></html>",
 		html.EscapeString(common.SystemName), html.EscapeString(code), common.VerificationValidMinutes, html.EscapeString(common.SystemName))
-	err := common.SendEmailWithPlainText(subject, email, plainText, content)
+	err = common.SendEmailWithPlainText(subject, email, plainText, content)
 	if err != nil {
 		common.ApiError(c, err)
 		return

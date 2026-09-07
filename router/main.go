@@ -43,6 +43,7 @@ func setRouterWithRegistry(router *gin.Engine, assets WebAssets, registry *exten
 		router.NoRoute(
 			pluginDispatcher,
 			middleware.RouteTag("web"),
+			middleware.AccessTokenAudit(),
 			func(c *gin.Context) {
 				c.Redirect(http.StatusMovedPermanently, fmt.Sprintf("%s%s", frontendBaseUrl, c.Request.RequestURI))
 			},

@@ -34,6 +34,7 @@ import {
 import { JsonCodeEditor } from '@/components/json-code-editor'
 import { MultiSelect } from '@/components/multi-select'
 import { Button } from '@/components/ui/button'
+import { Combobox } from '@/components/ui/combobox'
 import {
   Form,
   FormControl,
@@ -463,30 +464,19 @@ export function CreateDeploymentDrawer({
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>{t('Hardware type')}</FormLabel>
-                      <Select
-                        items={hardwareOptions.map((opt) => ({
-                          value: opt.value,
-                          label: opt.label,
-                        }))}
-                        value={field.value}
-                        onValueChange={(v) => field.onChange(v)}
-                        disabled={isLoadingHardware}
-                      >
-                        <FormControl>
-                          <SelectTrigger className='w-full'>
-                            <SelectValue placeholder={t('Select')} />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent alignItemWithTrigger={false}>
-                          <SelectGroup>
-                            {hardwareOptions.map((opt) => (
-                              <SelectItem key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
+                      <FormControl>
+                        <Combobox
+                          options={hardwareOptions.map((opt) => ({
+                            value: opt.value,
+                            label: opt.label,
+                          }))}
+                          value={field.value}
+                          onValueChange={(v) => field.onChange(v)}
+                          disabled={isLoadingHardware}
+                          className='w-full'
+                          placeholder={t('Select')}
+                        />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}

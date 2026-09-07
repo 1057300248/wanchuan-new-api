@@ -28,13 +28,15 @@ func SetUpLogger(server *gin.Engine) {
 		if tag == "" {
 			tag = "web"
 		}
-		path, _, _ := strings.Cut(param.Path, "?")
+		path := param.Path
+		cleanPath, _, _ := strings.Cut(path, "?")
 		switch {
-		case path == "/api/stripe/webhook", path == "/api/creem/webhook", path == "/api/waffo/webhook",
-			strings.HasPrefix(path, "/api/waffo-pancake/webhook/"), path == "/api/user/epay/notify",
-			path == "/api/subscription/epay/notify", path == "/api/subscription/epay/return":
-			// Signatures in GET callbacks remain intact for verification, not logging.
-			param.Path = path
+		case strings.HasPrefix(cleanPath, "/api/oauth/"), strings.HasPrefix(cleanPath, "/oauth/"),
+			cleanPath == "/api/stripe/webhook", cleanPath == "/api/creem/webhook", cleanPath == "/api/waffo/webhook",
+			strings.HasPrefix(cleanPath, "/api/waffo-pancake/webhook/"), cleanPath == "/api/user/epay/notify",
+			cleanPath == "/api/subscription/epay/notify", cleanPath == "/api/subscription/epay/return":
+			// Strip credentials from logs only, retaining the request for verification.
+			path = cleanPath
 		}
 		return fmt.Sprintf("[GIN] %s | %s | %s | %3d | %13v | %15s | %7s %s\n",
 			param.TimeStamp.Format("2006/01/02 - 15:04:05"),
@@ -44,7 +46,7 @@ func SetUpLogger(server *gin.Engine) {
 			param.Latency,
 			param.ClientIP,
 			param.Method,
-			param.Path,
+			path,
 		)
 	}))
 }

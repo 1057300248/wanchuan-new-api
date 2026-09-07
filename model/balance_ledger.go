@@ -636,7 +636,9 @@ func ledgerOperationSignature(entry LedgerEntry, op ledgerOpKind) string {
 
 func loadLedgerOperation(tx *gorm.DB, key string) (*BalanceLedgerOperation, []BalanceLedger, error) {
 	var operation BalanceLedgerOperation
-	result := tx.Where("idempotency_key = ?", key).Limit(1).Find(&operation)
+	// The caller may pass a locking query. Clone its statement for each table
+	// while keeping the same transaction and locking clause.
+	result := tx.Session(&gorm.Session{}).Where("idempotency_key = ?", key).Limit(1).Find(&operation)
 	if result.Error != nil {
 		return nil, nil, result.Error
 	}
@@ -644,7 +646,7 @@ func loadLedgerOperation(tx *gorm.DB, key string) (*BalanceLedgerOperation, []Ba
 		return nil, nil, gorm.ErrRecordNotFound
 	}
 	var rows []BalanceLedger
-	if err := tx.Where("operation_id = ?", operation.Id).Order("id asc").Find(&rows).Error; err != nil {
+	if err := tx.Session(&gorm.Session{}).Where("operation_id = ?", operation.Id).Order("id asc").Find(&rows).Error; err != nil {
 		return nil, nil, err
 	}
 	return &operation, rows, nil
