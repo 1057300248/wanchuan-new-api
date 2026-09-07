@@ -42,7 +42,7 @@ export const Route = createFileRoute('/_authenticated/image/')({
 
 function ImagePage() {
   return (
-    <Main>
+    <Main className='overflow-y-auto p-4 sm:p-6'>
       <ImageGenerationPage />
     </Main>
   )

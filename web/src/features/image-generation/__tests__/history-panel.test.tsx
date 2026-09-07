@@ -1,3 +1,4 @@
+import { render, screen, within } from '@testing-library/react'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -16,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 
 import { HistoryPanel } from '../components/HistoryPanel'
@@ -89,4 +90,57 @@ describe('history panel separates empty history from empty filters', () => {
     expect(screen.queryByText('No matching history.')).not.toBeInTheDocument()
     expect(screen.getByText('prompt e1')).toBeInTheDocument()
   })
+})
+
+test('keeps previous artwork visible alongside one placeholder per requested image', () => {
+  renderPanel({
+    entries: [makeEntry('old')],
+    totalCount: 1,
+    isGenerating: true,
+    pendingCount: 3,
+  })
+  expect(screen.getAllByRole('status')).toHaveLength(3)
+  expect(screen.getByAltText('prompt old')).toBeInTheDocument()
+})
+test('requires confirmation to clear all history and cancellation preserves it', async () => {
+  const props = renderPanel({ entries: [makeEntry('old')], totalCount: 1 })
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Clear history' }))
+  expect(props.onClear).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(props.onClear).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: 'Clear history' }))
+  await user.click(
+    within(screen.getByRole('alertdialog')).getByRole('button', {
+      name: 'Delete',
+    })
+  )
+  expect(props.onClear).toHaveBeenCalledTimes(1)
+})
+test('previews complete prompt and returns the complete batch for reuse', async () => {
+  const entry = makeEntry('old')
+  const onReuse = vi.fn()
+  renderPanel({ entries: [entry], totalCount: 1, onReuse })
+  const user = userEvent.setup()
+  await user.click(
+    screen.getByRole('button', { name: 'Preview image for prompt old' })
+  )
+  const dialog = screen.getByRole('dialog')
+  expect(within(dialog).getByText(entry.prompt)).toBeInTheDocument()
+  await user.click(within(dialog).getByRole('button', { name: 'Reuse' }))
+  expect(onReuse).toHaveBeenCalledWith(entry)
+})
+test('deleting one image confirms removal of its entire batch', async () => {
+  const props = renderPanel({ entries: [makeEntry('old')], totalCount: 1 })
+  const user = userEvent.setup()
+  await user.click(
+    screen.getByRole('button', { name: 'Delete history prompt old' })
+  )
+  expect(props.onRemove).not.toHaveBeenCalled()
+  await user.click(
+    within(screen.getByRole('alertdialog')).getByRole('button', {
+      name: 'Delete',
+    })
+  )
+  expect(props.onRemove).toHaveBeenCalledWith('old')
 })

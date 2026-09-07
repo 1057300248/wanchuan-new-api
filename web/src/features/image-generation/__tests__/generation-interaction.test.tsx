@@ -70,9 +70,16 @@ function renderForm(
 }
 
 describe('generation form protects key interactions', () => {
-  test('empty prompt disables Generate and marks the field invalid', () => {
+  test('empty prompt disables Generate and shows validation only after leaving the input', async () => {
     renderForm({ value: { ...baseValue, prompt: '   ' } })
     expect(screen.getByRole('button', { name: 'Generate' })).toBeDisabled()
+    expect(screen.getByLabelText('Prompt')).toHaveAttribute(
+      'aria-invalid',
+      'false'
+    )
+    const user = userEvent.setup()
+    await user.click(screen.getByLabelText('Prompt'))
+    await user.tab()
     expect(screen.getByLabelText('Prompt')).toHaveAttribute(
       'aria-invalid',
       'true'
@@ -89,7 +96,7 @@ describe('generation form protects key interactions', () => {
     const onCancel = vi.fn()
     const onGenerate = vi.fn()
     renderForm({ isGenerating: true, onCancel, onGenerate })
-    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await user.click(screen.getByRole('button', { name: 'Stop waiting' }))
     expect(onCancel).toHaveBeenCalledTimes(1)
     expect(onGenerate).not.toHaveBeenCalled()
   })
@@ -116,9 +123,77 @@ describe('generation form protects key interactions', () => {
     expect(screen.queryByRole('option', { name: '2' })).not.toBeInTheDocument()
   })
 
-  test('keeps API key selection available while group models load', () => {
+  test('keeps API key selection visible in the toolbar while group models load', async () => {
     renderForm({ isInitializing: true })
-    expect(screen.getByLabelText('API key')).toBeEnabled()
+    expect(screen.getByLabelText('Token')).toBeEnabled()
     expect(screen.getByLabelText('Model')).toBeDisabled()
   })
+})
+
+test('hides examples after input and submits with Control Enter', async () => {
+  const onGenerate = vi.fn()
+  renderForm({ onGenerate })
+  expect(
+    screen.queryByRole('button', {
+      name: 'A tranquil lake at sunrise, soft mist, photorealistic',
+    })
+  ).not.toBeInTheDocument()
+  const user = userEvent.setup()
+  await user.click(screen.getByLabelText('Prompt'))
+  await user.keyboard('{Control>}{Enter}{/Control}')
+  expect(onGenerate).toHaveBeenCalledTimes(1)
+})
+test('does not generate with keyboard when no key or model is selected', async () => {
+  const onGenerate = vi.fn()
+  renderForm({ value: { ...baseValue, apiKeyId: null, model: '' }, onGenerate })
+  const user = userEvent.setup()
+  await user.click(screen.getByLabelText('Prompt'))
+  await user.keyboard('{Control>}{Enter}{/Control}')
+  expect(onGenerate).not.toHaveBeenCalled()
+})
+
+test('size and quality open option panels and apply selected values', async () => {
+  const onChange = vi.fn()
+  renderForm({ onChange })
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Size' }))
+  expect(screen.getByRole('button', { name: '1024x1024' })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await user.keyboard('{Escape}')
+  await user.click(screen.getByRole('button', { name: 'Quality' }))
+  await user.click(screen.getByRole('button', { name: 'HD' }))
+  expect(onChange).toHaveBeenCalledWith({ quality: 'hd' })
+})
+
+test('long token and model labels stay clipped within non-shrinking toolbar controls', () => {
+  renderForm({
+    keys: [
+      {
+        id: 1,
+        name: 'A very long token name for a shared image generation workspace',
+        group: 'default',
+        status: 1,
+        model_limits_enabled: false,
+        model_limits: '',
+      },
+    ],
+    value: {
+      ...baseValue,
+      model: 'gpt-image-very-long-model-name-for-layout-regression',
+    },
+    models: ['gpt-image-very-long-model-name-for-layout-regression'],
+  })
+  for (const label of ['Token', 'Model']) {
+    const trigger = screen.getByLabelText(label)
+    expect(trigger).toHaveClass('min-w-0')
+    expect(trigger.parentElement).toHaveClass('shrink-0')
+    expect(trigger.querySelector('[data-slot="select-value"]')).toHaveClass(
+      'min-w-0'
+    )
+    expect(
+      trigger.querySelector('[data-slot="select-value"] > span')
+    ).toHaveClass('truncate')
+  }
 })
