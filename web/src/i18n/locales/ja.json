@@ -5327,6 +5327,7 @@
     "This model is not available in any group, or no group pricing information is configured.": "このモデルはどのグループでも利用できないか、グループの料金情報が設定されていません。",
     "This month": "今月",
     "This page has not been created yet.": "このページはまだ作成されていません。",
+    "This password is too common. Choose a different password.": "このパスワードは一般的すぎます。別のパスワードを選んでください。",
     "This plan does not allow balance redemption": "このプランでは残高での交換は許可されていません",
     "This plugin has no factory fallback. Deleting or disabling it makes this platform unavailable.": "このプラグインには組み込みのフォールバックがありません。削除または無効化するとプラットフォームが利用できなくなります。",
     "This plugin path does not resolve within the source repository.": "このプラグインのパスはソースリポジトリ内を指していません。",

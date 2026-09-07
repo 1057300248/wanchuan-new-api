@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only rc.33 release evidence validator. This command never deploys."""
+"""Read-only release evidence validator. This command never deploys."""
 
 import argparse
 from datetime import datetime, timezone
@@ -11,6 +11,10 @@ import sys
 
 
 UPSTREAM_COMMIT = "eb99ab1b40343c3317bb47981cccdbb2b159a5fa"
+UPSTREAM_VERSIONS = {
+    UPSTREAM_COMMIT: "v1.0.0-rc.33+",
+    "0c76e4dae77a279e015329b7478e6f02d6b62edd": "v1.0.0-rc.34+",
+}
 REQUIRED_CHECKS = (
     "SOURCE", "GO_TEST", "GO_VET", "GO_RACE", "RELAYKIT_BUILD", "RELAYKIT_TEST",
     "WEB_TYPECHECK", "WEB_TEST", "WEB_BUILD", "WEB_LINT", "WEB_FORMAT", "WEB_AUDIT",
@@ -73,14 +77,14 @@ def validate_release(document, root, commit, image, now):
         raise ValueError("candidate commit must be a full Git SHA")
     if not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", image):
         raise ValueError("candidate image must be an immutable repository digest")
-    if type(document["schema_version"]) is not int or document["schema_version"] != 1 or document["upstream_commit"] != UPSTREAM_COMMIT:
+    if type(document["schema_version"]) is not int or document["schema_version"] != 1 or document["upstream_commit"] not in UPSTREAM_VERSIONS:
         raise ValueError("unexpected schema or upstream target")
     candidate = document["candidate"]
     if candidate["commit"] != commit or candidate["image"] != image:
         raise ValueError("candidate identity does not match the requested release")
     version = candidate["version"]
-    if not version.startswith("v1.0.0-rc.33+"):
-        raise ValueError("candidate version must identify rc.33")
+    if not version.startswith(UPSTREAM_VERSIONS[document["upstream_commit"]]):
+        raise ValueError("candidate version must identify the selected upstream release")
     evidence_file(root, candidate["source_archive"])
     for name in REQUIRED_CHECKS:
         check = document["checks"].get(name, {})

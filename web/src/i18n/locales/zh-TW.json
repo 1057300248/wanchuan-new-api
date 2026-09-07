@@ -5327,6 +5327,7 @@
     "This model is not available in any group, or no group pricing information is configured.": "此模型在任何分組中均不可用，或未設定分組定價資訊。",
     "This month": "本月獲得",
     "This page has not been created yet.": "此頁面尚未建立。",
+    "This password is too common. Choose a different password.": "此密碼過於常見，請選擇其他密碼。",
     "This plan does not allow balance redemption": "該套餐不允許使用餘額兌換",
     "This plugin has no factory fallback. Deleting or disabling it makes this platform unavailable.": "此外掛没有內建回落版本，刪除或禁用后该平台将不可用。",
     "This plugin path does not resolve within the source repository.": "該外掛路徑並未指向來源儲存庫內的位置。",

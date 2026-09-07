@@ -5327,6 +5327,7 @@
     "This model is not available in any group, or no group pricing information is configured.": "Эта модель недоступна ни в одной группе, или информация о ценах для групп не настроена.",
     "This month": "В этом месяце",
     "This page has not been created yet.": "Эта страница еще не создана.",
+    "This password is too common. Choose a different password.": "Этот пароль слишком распространён. Выберите другой пароль.",
     "This plan does not allow balance redemption": "Этот план не разрешает оплату балансом",
     "This plugin has no factory fallback. Deleting or disabling it makes this platform unavailable.": "У этого плагина нет встроенной резервной версии. Его удаление или отключение сделает платформу недоступной.",
     "This plugin path does not resolve within the source repository.": "Этот путь плагина не ведёт внутрь репозитория источника.",

@@ -5327,6 +5327,7 @@
     "This model is not available in any group, or no group pricing information is configured.": "Mô hình này không khả dụng trong bất kỳ nhóm nào, hoặc thông tin giá nhóm chưa được cấu hình.",
     "This month": "Tháng này",
     "This page has not been created yet.": "Trang này chưa được tạo.",
+    "This password is too common. Choose a different password.": "Mật khẩu này quá phổ biến. Vui lòng chọn mật khẩu khác.",
     "This plan does not allow balance redemption": "Gói này không cho phép thanh toán bằng số dư",
     "This plugin has no factory fallback. Deleting or disabling it makes this platform unavailable.": "Plugin này không có bản tích hợp dự phòng. Xóa hoặc tắt plugin sẽ khiến nền tảng không khả dụng.",
     "This plugin path does not resolve within the source repository.": "Đường dẫn plugin này không nằm trong kho của nguồn.",

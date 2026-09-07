@@ -61,6 +61,19 @@ class ReleaseGateTest(unittest.TestCase):
         self.assertEqual(self.validate()["status"], "PASS")
         self.assertEqual(before, {p.name: p.read_bytes() for p in self.root.iterdir()})
 
+    def test_rc34_requires_matching_version_and_full_observation_window(self):
+        self.document["upstream_commit"] = "0c76e4dae77a279e015329b7478e6f02d6b62edd"
+        with self.assertRaisesRegex(ValueError, "version"):
+            self.validate()
+        self.document["candidate"]["version"] = "v1.0.0-rc.34+fixture"
+        for row in self.rows:
+            row["version"] = "v1.0.0-rc.34+fixture"
+        self.observations(self.rows)
+        self.assertEqual(self.validate()["status"], "PASS")
+        self.observations(self.rows[1:])
+        with self.assertRaises(ValueError):
+            self.validate()
+
     def test_missing_pending_and_wrong_candidate_checks_fail(self):
         original = copy.deepcopy(self.document)
         for name in GATE.REQUIRED_CHECKS:

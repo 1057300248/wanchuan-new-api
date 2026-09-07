@@ -424,7 +424,7 @@ func TestInsertWithTxNewUserGiftCreditsExactlyOnce(t *testing.T) {
 		common.QuotaForSignupBonus = previousQuota
 	})
 
-	user := &User{Username: "ledger-new-user", Password: "password", Status: common.UserStatusEnabled}
+	user := &User{Username: "ledger-new-user", Password: "Cedar-river-782!quiet", Status: common.UserStatusEnabled}
 	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
 		return user.InsertWithTx(tx, 0)
 	}))
@@ -454,7 +454,7 @@ func TestInsertSignupBonusDisabledGrantsNothing(t *testing.T) {
 		common.QuotaForSignupBonus = previousQuota
 	})
 
-	user := &User{Username: "ledger-new-user-disabled", Password: "password", Status: common.UserStatusEnabled}
+	user := &User{Username: "ledger-new-user-disabled", Password: "Cedar-river-782!quiet", Status: common.UserStatusEnabled}
 	require.NoError(t, user.Insert(0))
 
 	// 功能开关关闭：不发放任何注册赠金。
