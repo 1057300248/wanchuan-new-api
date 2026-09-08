@@ -226,7 +226,7 @@ export function ImageGenerationPage() {
     const groupLoading = data.isLoadingGroupModels
     let modelsTitle = t('No image models available')
     let modelsDescription = t(
-      'This API key has no image models. Try another key or refresh.'
+      'No image models match this API key. Check the model image-generation endpoint configuration, the key group, and its model restrictions, then refresh.'
     )
     if (groupLoading) {
       modelsTitle = t('Loading models...')
@@ -266,9 +266,14 @@ export function ImageGenerationPage() {
                 type='button'
                 variant='outline'
                 size='sm'
-                onClick={() => void data.refetchGroupModels()}
+                onClick={() =>
+                  void Promise.all([
+                    data.refetchBootstrap(),
+                    data.refetchGroupModels(),
+                  ])
+                }
               >
-                {t('Retry')}
+                {t('Refresh')}
               </Button>
             ) : null}
           </AlertDescription>
@@ -311,6 +316,13 @@ export function ImageGenerationPage() {
           onGenerate={() => void handleGenerate()}
           onCancel={generation.cancel}
         />
+        {capability.requestFormat === 'grok-console' ? (
+          <p className='text-muted-foreground text-sm'>
+            {t(
+              'Console supports up to 3 reference images and low/medium quality. Size sets the aspect ratio; resolution is 1K.'
+            )}
+          </p>
+        ) : null}
         <div ref={artworkRef} className='min-w-0 scroll-mt-4'>
           <HistoryPanel
             isGenerating={generation.isGenerating}

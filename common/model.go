@@ -14,6 +14,7 @@ var (
 		"dall-e-2",
 		"gpt-image-1",
 		"prefix:imagen-",
+		"prefix:grok-imagine-image",
 		"flux-",
 		"flux.1-",
 	}

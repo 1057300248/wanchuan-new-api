@@ -45,6 +45,19 @@ function emptyCapability(
 
 export function getModelCapability(model: string): ImageModelCapability {
   const name = model.trim().toLowerCase()
+  // Dedicated Console route: do not apply these capabilities to the Web model.
+  if (name === 'grok-imagine-image-2.0-console') {
+    return {
+      sizes: ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3'],
+      qualities: ['low', 'medium'],
+      styles: [],
+      maxN: 4,
+      maxReferenceImages: 3,
+      supportsResponseFormat: true,
+      requestFormat: 'grok-console',
+      responseFormat: 'b64_json',
+    }
+  }
   if (name.includes('dall-e-3') || name.includes('dalle-3')) {
     return {
       sizes: [...DALLE3_SIZES],
@@ -104,6 +117,13 @@ export function getModelCapability(model: string): ImageModelCapability {
       maxReferenceImages: 4,
       supportsResponseFormat: false,
     }
+  }
+  if (name.startsWith('grok-imagine-image')) {
+    return emptyCapability({
+      maxN: 4,
+      supportsResponseFormat: true,
+      responseFormat: 'b64_json',
+    })
   }
   if (name.includes('grok')) {
     return emptyCapability({ maxN: 4, maxReferenceImages: 0 })

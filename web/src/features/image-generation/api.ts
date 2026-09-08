@@ -16,12 +16,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { t } from 'i18next'
+
 import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
 import type { ApiKey } from '@/features/keys/types'
 import { getPricing } from '@/features/pricing/api'
 import { api } from '@/lib/api'
 
-import { isBlobSchemeUrl, isDataSchemeUrl } from './lib/managed-object-urls'
+import {
+  getManagedObjectUrlMimeType,
+  isBlobSchemeUrl,
+  isDataSchemeUrl,
+} from './lib/managed-object-urls'
+import { getModelCapability } from './lib/model-capabilities'
+import { readReferenceImageDataUrl } from './lib/reference-data-url'
+import { validateReferenceFiles } from './lib/reference-validation'
 import {
   assertSafeImageUrl,
   buildEditsFormData,
@@ -121,44 +130,46 @@ export async function requestImageGeneration(params: {
   const hasReference = params.images.length > 0
   const headers = { Authorization: `Bearer ${params.fullKey}` }
 
+  params.signal?.throwIfAborted()
+  let body:
+    | (ReturnType<typeof buildGenerationsBody> & { images?: { url: string }[] })
+    | FormData
   if (!hasReference) {
-    const body = buildGenerationsBody({
+    body = buildGenerationsBody(params)
+  } else if (
+    getModelCapability(params.model).requestFormat === 'grok-console'
+  ) {
+    const validation = validateReferenceFiles({
+      files: params.images,
+      existingCount: 0,
+      existingTotalBytes: 0,
       model: params.model,
-      prompt: params.prompt,
-      count: params.count,
-      size: params.size,
-      quality: params.quality,
-      style: params.style,
     })
-    const res = await api.post('/v1/images/generations', body, {
+    if (validation) throw new Error(t(validation.messageKey))
+    const urls = await Promise.all(
+      params.images.map((file) =>
+        readReferenceImageDataUrl(file, params.signal)
+      )
+    )
+    params.signal?.throwIfAborted()
+    body = {
+      ...buildGenerationsBody(params),
+      images: urls.map((url) => ({ url })),
+    }
+  } else {
+    body = buildEditsFormData(params)
+  }
+  const res = await api.post(
+    hasReference ? '/v1/images/edits' : '/v1/images/generations',
+    body,
+    {
       headers,
       signal: params.signal,
       skipErrorHandler: true,
       skipAuthRefresh: true,
       preserveAuthorization: true,
-    })
-    return normalizeImageResponse({
-      data: res.data,
-      prompt: params.prompt,
-      model: params.model,
-      size: params.size,
-    })
-  }
-
-  const form = buildEditsFormData({
-    model: params.model,
-    prompt: params.prompt,
-    count: params.count,
-    size: params.size,
-    images: params.images,
-  })
-  const res = await api.post('/v1/images/edits', form, {
-    headers,
-    signal: params.signal,
-    skipErrorHandler: true,
-    skipAuthRefresh: true,
-    preserveAuthorization: true,
-  })
+    }
+  )
   return normalizeImageResponse({
     data: res.data,
     prompt: params.prompt,
@@ -172,47 +183,45 @@ export function resolveDownloadUrl(url: string): string {
   return url
 }
 
-function triggerAnchorDownload(params: {
-  href: string
-  filename: string
-  newTabFallback: boolean
-}): void {
-  const anchor = document.createElement('a')
-  anchor.href = params.href
-  anchor.download = params.filename
-  if (params.newTabFallback) {
-    anchor.target = '_blank'
-    anchor.rel = 'noopener'
-  }
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-}
-
 export async function downloadImage(
   url: string,
   filename: string
 ): Promise<void> {
   assertSafeImageUrl(url)
-  if (isDataSchemeUrl(url) || isBlobSchemeUrl(url)) {
-    triggerAnchorDownload({ href: url, filename, newTabFallback: false })
-    return
+  let href = url
+  let mimeType = ''
+  let temporaryUrl: string | null = null
+  const extensions: Record<string, string> = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/webp': 'webp',
   }
-  try {
+  if (isDataSchemeUrl(url)) {
+    mimeType = /^data:([^;]+);/i.exec(url)?.[1].toLowerCase() ?? ''
+  } else if (isBlobSchemeUrl(url)) {
+    mimeType = getManagedObjectUrlMimeType(url)
+  } else {
     const response = await fetch(url)
     if (!response.ok) throw new Error(`Download failed: ${response.status}`)
     const blob = await response.blob()
-    const objectUrl = URL.createObjectURL(blob)
-    try {
-      triggerAnchorDownload({
-        href: objectUrl,
-        filename,
-        newTabFallback: false,
-      })
-    } finally {
-      URL.revokeObjectURL(objectUrl)
-    }
-  } catch {
-    triggerAnchorDownload({ href: url, filename, newTabFallback: true })
+    mimeType = blob.type.toLowerCase()
+    if (!extensions[mimeType]) throw new Error(t('Download failed'))
+    temporaryUrl = URL.createObjectURL(blob)
+    href = temporaryUrl
+  }
+  const extension = extensions[mimeType]
+  const downloadName = extension
+    ? `${filename.replace(/\.(?:png|jpe?g|webp)$/i, '')}.${extension}`
+    : filename
+  const anchor = document.createElement('a')
+  try {
+    anchor.href = href
+    anchor.download = downloadName
+    document.body.appendChild(anchor)
+    anchor.click()
+  } finally {
+    anchor.remove()
+    if (temporaryUrl) URL.revokeObjectURL(temporaryUrl)
   }
 }
