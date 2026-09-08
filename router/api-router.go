@@ -18,6 +18,11 @@ func SetApiRouter(router *gin.Engine) {
 		router.Handle(method, "/api/healthz", middleware.DisableCache(), controller.GetHealthz)
 		router.Handle(method, "/api/readyz", middleware.DisableCache(), controller.GetReadyz)
 	}
+	// Keep the read-only browser identity probe inside the refresh cookie path.
+	// Cache protection precedes every rejecting middleware, including the limiter.
+	router.GET("/api/user/auth/session", middleware.DisableCache(), middleware.RouteTag("api"),
+		middleware.GlobalAPIRateLimit(), middleware.SessionCookieOriginGuard(),
+		middleware.SessionAuth(), controller.GetAuthSession)
 	// The marketing catalogue has one explicit anonymous endpoint. Keep it
 	// separate from the authenticated dashboard pricing API so Caddy can expose
 	// /public-api/pricing without weakening /api/pricing.

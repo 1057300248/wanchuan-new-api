@@ -248,7 +248,7 @@ func writeDashboardAuthError(c *gin.Context, err error) {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "code": "AUTH_SESSION_REVOKED", "message": common.TranslateMessage(c, i18n.MsgAuthNotLoggedIn)})
 		return
 	}
-	if errors.Is(err, service.ErrAuthTokenInvalid) {
+	if errors.Is(err, service.ErrAuthTokenInvalid) || errors.Is(err, service.ErrRefreshTokenInvalid) {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "code": "AUTH_UNAUTHORIZED", "message": common.TranslateMessage(c, i18n.MsgAuthAccessTokenInvalid)})
 		return
 	}
