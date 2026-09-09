@@ -21,30 +21,28 @@ import { useEffect, useCallback } from 'react'
 
 import { DEFAULT_LOGO } from '@/lib/constants'
 import { applyFaviconToDom } from '@/lib/dom-utils'
-import { mapStatusDataToConfig, statusQueryOptions } from '@/lib/status-query'
+import { ensureStatus } from '@/lib/status-query'
 import { useSystemConfigStore } from '@/stores/system-config-store'
-
-export { mapStatusDataToConfig }
 
 interface UseSystemConfigOptions {
   /** Automatically fetch config from backend (use only in root component) */
   autoLoad?: boolean
 }
 
-// Preload image and return cleanup function
+/** Preload an image, returning a cleanup that detaches the pending handlers. */
 function preloadImage(
   src: string,
   onLoad: () => void,
   onError: () => void
 ): () => void {
   const img = new Image()
-  img.addEventListener('load', onLoad)
-  img.addEventListener('error', onError)
+  img.onload = onLoad
+  img.onerror = onError
   img.src = src
 
   return () => {
-    img.removeEventListener('load', onLoad)
-    img.removeEventListener('error', onError)
+    img.onload = null
+    img.onerror = null
   }
 }
 
@@ -65,12 +63,13 @@ export function useSystemConfig(options: UseSystemConfigOptions = {}) {
   const { config, loading, loadedLogoUrl, setLoadedLogoUrl, setLoading } =
     useSystemConfigStore()
 
-  // Load config from backend through the shared status query so the SPA
-  // issues a single `/api/status` request per stale window.
+  // Load config from backend via the shared `/api/status` cache.
+  // `ensureStatus` writes the mapped config into this store itself, so there is
+  // no second request and no second mapping path here.
   const loadConfig = useCallback(async () => {
     try {
       setLoading(true)
-      await queryClient.fetchQuery(statusQueryOptions())
+      await ensureStatus(queryClient)
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Failed to load system config:', error)
