@@ -14,17 +14,9 @@ import (
 // FundingSource — 资金来源接口（钱包 or 订阅）
 // ---------------------------------------------------------------------------
 
-// FundingSource 抽象了预扣费的资金来源。
-type FundingSource interface {
-	// Source 返回资金来源标识："wallet" 或 "subscription"
-	Source() string
-	// PreConsume 从该资金来源预扣 amount 额度
-	PreConsume(amount int) error
-	// Settle 根据差额调整资金来源（正数补扣，负数退还）
-	Settle(delta int) error
-	// Refund 退还所有预扣费
-	Refund() error
-}
+// FundingSource is retained as a service compatibility alias while ownership
+// of the runtime contract lives in the stdlib-only moneyport package.
+type FundingSource = moneyport.FundingSource
 
 // 编译期能力断言。BillingSession 按 moneyport 能力而非实现类型分派，
 // 这里锁定各资金来源的能力集：
@@ -109,13 +101,13 @@ func (w *WalletFunding) Settle(delta int) error {
 	if delta == 0 {
 		return nil
 	}
-	var result *model.LedgerResult
+	var result moneyport.SettlementResult
 	var err error
 	for attempt := 0; attempt < 2; attempt++ {
-		result = nil
+		result = moneyport.SettlementResult{}
 		err = model.DB.Transaction(func(tx *gorm.DB) error {
 			var settleErr error
-			result, settleErr = w.settleTx(tx, delta)
+			result, settleErr = w.SettleInTx(tx, delta)
 			return settleErr
 		})
 		if !errors.Is(err, model.ErrLedgerDuplicate) {
@@ -125,19 +117,20 @@ func (w *WalletFunding) Settle(delta int) error {
 	if err != nil {
 		return err
 	}
-	w.applySettleResult(delta, result)
+	w.ApplySettlementResult(delta, result)
 	return nil
 }
 
-// settleTx applies only the wallet side of settlement inside a caller-owned
-// transaction. It deliberately does not mutate in-memory receipt state or cache;
-// callers must invoke applySettleResult only after the transaction commits.
-func (w *WalletFunding) settleTx(tx *gorm.DB, delta int) (*model.LedgerResult, error) {
+// SettleInTx applies only the wallet side of settlement inside a caller-owned
+// transaction and returns a host-independent result. It deliberately does not
+// mutate in-memory receipt state or cache; callers invoke ApplySettlementResult
+// only after the transaction commits.
+func (w *WalletFunding) SettleInTx(tx *gorm.DB, delta int) (moneyport.SettlementResult, error) {
 	if tx == nil {
-		return nil, errors.New("wallet settlement transaction is nil")
+		return moneyport.SettlementResult{}, errors.New("wallet settlement transaction is nil")
 	}
 	if delta == 0 {
-		return &model.LedgerResult{}, nil
+		return moneyport.SettlementResult{}, nil
 	}
 	// 补扣与退款方向使用不同幂等键；同一 request 同方向可能按不同差额多次结算。
 	entry := model.LedgerEntry{
@@ -151,26 +144,53 @@ func (w *WalletFunding) settleTx(tx *gorm.DB, delta int) (*model.LedgerResult, e
 	if delta > 0 {
 		entry.Delta = delta
 		entry.IdempotencyKey = fmt.Sprintf("billing:settle:%s:%d", w.requestId, delta)
-		return model.DebitQuotaTx(tx, entry, w.debitOrder...)
+		result, err := model.DebitQuotaTx(tx, entry, w.debitOrder...)
+		return settlementResultFromLedger(result), err
 	}
 
 	refund := -delta
 	entry.IdempotencyKey = fmt.Sprintf("billing:settle_refund:%s:%d", w.requestId, refund)
 	if shares := w.refundShares(refund); len(shares) > 0 {
-		return model.CreditQuotaSharesTx(tx, entry, shares)
+		result, err := model.CreditQuotaSharesTx(tx, entry, shares)
+		return settlementResultFromLedger(result), err
 	}
 	// 兼容旧路径：无份额记录时退回 paid 账户。
 	entry.Delta = refund
-	return model.CreditQuotaTx(tx, entry)
+	result, err := model.CreditQuotaTx(tx, entry)
+	return settlementResultFromLedger(result), err
 }
 
-func (w *WalletFunding) applySettleResult(delta int, result *model.LedgerResult) {
+func settlementResultFromLedger(result *model.LedgerResult) moneyport.SettlementResult {
 	if result == nil {
-		return
+		return moneyport.SettlementResult{}
 	}
+	out := moneyport.SettlementResult{Replayed: result.Replayed, TotalAfter: result.TotalAfter}
+	for _, row := range result.Rows {
+		if row.Delta < 0 {
+			out.DebitShares = append(out.DebitShares, moneyport.AccountShare{Account: row.Account, Amount: -row.Delta})
+		}
+	}
+	return out
+}
+
+func (w *WalletFunding) ApplySettlementResult(delta int, result moneyport.SettlementResult) {
 	model.RefreshUserQuotaCache(w.userId, result.TotalAfter)
 	if delta > 0 && !result.Replayed {
-		w.addSharesFromResult(result)
+		w.addMoneyportShares(result.DebitShares)
+	}
+}
+
+func (w *WalletFunding) addMoneyportShares(shares []moneyport.AccountShare) {
+	if len(shares) == 0 {
+		return
+	}
+	if w.debitShares == nil {
+		w.debitShares = make(map[model.LedgerAccount]int)
+	}
+	for _, share := range shares {
+		if share.Amount > 0 {
+			w.debitShares[model.LedgerAccount(share.Account)] += share.Amount
+		}
 	}
 }
 

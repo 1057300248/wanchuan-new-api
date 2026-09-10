@@ -31,6 +31,11 @@ orchestration responsibility unless a later contract deliberately changes that.
 The exact DTO is frozen only after call-site inventory in Phase 3. Adding the
 factory is not permission to copy all of `RelayInfo` into a new struct.
 
+Phase 4 implementation freezes the DTO to `UserID`, `RequestID`, `BillingModel`,
+`Amount`, and an ordered list of account identifiers. The registry is explicit,
+write-once at the host boundary, and frozen before request handling. `NewBillingSession`
+no longer constructs a concrete Wallet or Subscription funding struct directly.
+
 ## Base funding capability
 
 The base runtime port will own `Source`, `PreConsume`, `Settle` and `Refund`, with
@@ -69,6 +74,18 @@ A practical target is an exported service-side structural interface referencing
 typing means the Wallet module need not import the service package to implement
 that interface. An equivalent adapter design is acceptable if it preserves the
 same dependency direction and atomicity tests.
+
+Implemented Phase 4 shape:
+
+```text
+SettleInTx(*gorm.DB, delta) -> moneyport.SettlementResult
+ApplySettlementResult(delta, moneyport.SettlementResult)
+```
+
+`SettlementResult` contains only replay state, post-commit total balance, and
+account-share DTOs. It has no root `model` dependency. The structural interface
+itself remains service-side because it references GORM; the concrete module can
+satisfy it without importing `service`.
 
 ## Composition ownership
 

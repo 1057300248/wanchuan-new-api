@@ -16,6 +16,20 @@ type AccountShare struct {
 	Amount  int    `json:"amount"`
 }
 
+// SettlementResult is the host-independent result returned by a funding
+// implementation when it participates in a caller-owned database transaction.
+// It contains only facts BillingSession needs after commit.
+type SettlementResult struct {
+	Replayed    bool
+	TotalAfter  int
+	DebitShares []AccountShare
+}
+
+func (r SettlementResult) Clone() SettlementResult {
+	r.DebitShares = append([]AccountShare(nil), r.DebitShares...)
+	return r
+}
+
 // ReservableFunding 资金来源可把预扣额度抬升到目标值。
 //
 // 调用点：BillingSession.Reserve —— 上游重估用量后逐级补充预扣。

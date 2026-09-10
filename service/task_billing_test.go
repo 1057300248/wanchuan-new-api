@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/moneyport"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -64,6 +65,14 @@ func TestMain(m *testing.M) {
 		&model.AffiliateRewardReconcileState{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
+	}
+
+	fundingFactories := moneyport.NewFactoryRegistry()
+	if err := RegisterCoreFundingFactories(fundingFactories); err != nil {
+		panic("failed to register funding factories: " + err.Error())
+	}
+	if err := ConfigureFundingFactoryRegistry(fundingFactories); err != nil {
+		panic("failed to configure funding factories: " + err.Error())
 	}
 
 	os.Exit(m.Run())

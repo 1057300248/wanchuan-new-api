@@ -26,6 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/moneyport"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
@@ -319,6 +320,18 @@ func InitResources() error {
 	service.InitHttpClient()
 
 	service.InitTokenEncoders()
+
+	// Runtime funding implementations are composed explicitly and frozen before
+	// any request can create a BillingSession.
+	fundingFactories := moneyport.NewFactoryRegistry()
+	if err := service.RegisterCoreFundingFactories(fundingFactories); err != nil {
+		common.FatalLog("failed to register core funding factories: " + err.Error())
+		return err
+	}
+	if err := service.ConfigureFundingFactoryRegistry(fundingFactories); err != nil {
+		common.FatalLog("failed to configure funding factory registry: " + err.Error())
+		return err
+	}
 
 	// Compose the extension registry before any migration runs: model.InitDB
 	// reads extension.Default() to append extension models to the core

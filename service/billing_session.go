@@ -50,9 +50,9 @@ var (
 // Wallet sources must implement it; otherwise settlement fails closed instead
 // of silently falling back to the old funding-then-token sequence.
 type transactionalSettlementFunding interface {
-	FundingSource
-	settleTx(tx *gorm.DB, delta int) (*model.LedgerResult, error)
-	applySettleResult(delta int, result *model.LedgerResult)
+	moneyport.FundingSource
+	SettleInTx(tx *gorm.DB, delta int) (moneyport.SettlementResult, error)
+	ApplySettlementResult(delta int, result moneyport.SettlementResult)
 }
 
 // Settle 根据实际消耗额度进行结算。
@@ -111,19 +111,19 @@ func (s *BillingSession) Settle(actualQuota int) error {
 }
 
 func (s *BillingSession) settleWalletAndToken(funding transactionalSettlementFunding, delta int) error {
-	var result *model.LedgerResult
+	var result moneyport.SettlementResult
 	var err error
 	for attempt := 0; attempt < 2; attempt++ {
-		result = nil
+		result = moneyport.SettlementResult{}
 		err = model.DB.Transaction(func(tx *gorm.DB) error {
 			var settleErr error
-			result, settleErr = funding.settleTx(tx, delta)
+			result, settleErr = funding.SettleInTx(tx, delta)
 			if settleErr != nil {
 				return settleErr
 			}
 			// A replay means the original atomic transaction already applied both
 			// wallet and token changes. Do not charge the token twice.
-			if result == nil || result.Replayed || s.relayInfo.IsPlayground {
+			if result.Replayed || s.relayInfo.IsPlayground {
 				return nil
 			}
 			return model.ApplyTokenQuotaDeltaTx(tx, s.relayInfo.TokenId, s.relayInfo.TokenKey, -delta)
@@ -135,7 +135,7 @@ func (s *BillingSession) settleWalletAndToken(funding transactionalSettlementFun
 	if err != nil {
 		return err
 	}
-	funding.applySettleResult(delta, result)
+	funding.ApplySettlementResult(delta, result)
 	return nil
 }
 
@@ -500,14 +500,18 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
 
-		session := &BillingSession{
-			relayInfo: relayInfo,
-			funding: &WalletFunding{
-				userId:     relayInfo.UserId,
-				requestId:  relayInfo.RequestId,
-				debitOrder: debitOrder,
-			},
+		accountOrder := make([]string, 0, len(debitOrder))
+		for _, account := range debitOrder {
+			accountOrder = append(accountOrder, string(account))
 		}
+		funding, factoryErr := createFundingSource(moneyport.SourceWallet, moneyport.FactoryRequest{
+			UserID: relayInfo.UserId, RequestID: relayInfo.RequestId, BillingModel: relayInfo.GetBillingModelName(),
+			Amount: preConsumedQuota, AccountOrder: accountOrder,
+		})
+		if factoryErr != nil {
+			return nil, types.NewError(factoryErr, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
+		}
+		session := &BillingSession{relayInfo: relayInfo, funding: funding}
 		if apiErr := session.preConsume(c, preConsumedQuota); apiErr != nil {
 			return nil, apiErr
 		}
@@ -519,15 +523,13 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 		if subConsume <= 0 {
 			subConsume = 1
 		}
-		session := &BillingSession{
-			relayInfo: relayInfo,
-			funding: &SubscriptionFunding{
-				requestId: relayInfo.RequestId,
-				userId:    relayInfo.UserId,
-				modelName: relayInfo.GetBillingModelName(),
-				amount:    subConsume,
-			},
+		funding, factoryErr := createFundingSource(moneyport.SourceSubscription, moneyport.FactoryRequest{
+			UserID: relayInfo.UserId, RequestID: relayInfo.RequestId, BillingModel: relayInfo.GetBillingModelName(), Amount: int(subConsume),
+		})
+		if factoryErr != nil {
+			return nil, types.NewError(factoryErr, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
 		}
+		session := &BillingSession{relayInfo: relayInfo, funding: funding}
 		// 必须传 subConsume 而非 preConsumedQuota，保证 SubscriptionFunding.amount、
 		// preConsume 参数和 FinalPreConsumedQuota 三者一致，避免订阅多扣费。
 		if apiErr := session.preConsume(c, int(subConsume)); apiErr != nil {

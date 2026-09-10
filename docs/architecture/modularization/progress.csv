@@ -2,4 +2,5 @@ phase,commit,status,runtime_scope,frontend_concrete_imports,core_brand_literal_f
 0-0.5,d69bce9fd,PASS,contracts-and-guards-only,3,3,"Batch A baseline and architecture contracts"
 1,8c0b9863a,PASS,brand-domain-decoupling,3,0,"ServerAddress is trusted backend hostname source; frontend URLs come from extension navigation"
 2,c87829008,PASS,frontend-help-route-contribution,0,0,"Help file routes resolve pages through generic extensionHelpPages; concrete ChuanAPI imports eliminated from frontend core"
-3,THIS_COMMIT,PASS,module-ownership-and-lifecycle,0,0,"chuanapi/register is composition-only; console owns llms handlers/routes; wallet owns migration wiring; lifecycle hook added with no new callbacks registered"
+3,719253a25,PASS,module-ownership-and-lifecycle,0,0,"chuanapi/register is composition-only; console owns llms handlers/routes; wallet owns migration wiring; lifecycle hook added with no new callbacks registered"
+4,THIS_COMMIT,PASS,billing-runtime-ports,0,0,"moneyport owns FundingSource/Factory/SettlementResult; BillingSession uses explicit frozen registry and public structural transaction capability"
