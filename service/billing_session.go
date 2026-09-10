@@ -16,6 +16,7 @@ import (
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // ---------------------------------------------------------------------------
@@ -31,7 +32,7 @@ type BillingSession struct {
 	tokenConsumed    int  // 令牌额度实际扣减量
 	extraReserved    int  // 发送前补充预扣的额度（订阅退款时需要单独回滚）
 	trusted          bool // 是否命中信任额度旁路
-	fundingSettled   bool // funding.Settle 已成功，资金来源已提交
+	fundingSettled   bool // 资金结算已成功提交（钱包可能经事务能力而非 FundingSource.Settle）
 	settled          bool // Settle 全部完成（资金 + 令牌）
 	refunded         bool // Refund 已调用
 	mu               sync.Mutex
@@ -44,9 +45,20 @@ var (
 	_ moneyport.FundingReceipt   = (*BillingSession)(nil)
 )
 
+// transactionalSettlementFunding is an internal capability for funding sources
+// whose settlement can participate in BillingSession's database transaction.
+// Wallet sources must implement it; otherwise settlement fails closed instead
+// of silently falling back to the old funding-then-token sequence.
+type transactionalSettlementFunding interface {
+	FundingSource
+	settleTx(tx *gorm.DB, delta int) (*model.LedgerResult, error)
+	applySettleResult(delta int, result *model.LedgerResult)
+}
+
 // Settle 根据实际消耗额度进行结算。
-// 资金来源和令牌额度分两步提交：若资金来源已提交但令牌调整失败，
-// 会标记 fundingSettled 防止 Refund 对已提交的资金来源执行退款。
+// 钱包资金与 token quota 在同一数据库事务中提交；任一侧失败整体回滚。
+// 订阅资金仍由订阅模型自身事务结算，随后调整 token quota，因此这里不宣称
+// subscription + token 具备跨表原子性。
 func (s *BillingSession) Settle(actualQuota int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -58,14 +70,27 @@ func (s *BillingSession) Settle(actualQuota int) error {
 		s.settled = true
 		return nil
 	}
-	// 1) 调整资金来源（仅在尚未提交时执行，防止重复调用）
+
+	if s.funding.Source() == BillingSourceWallet {
+		transactional, ok := s.funding.(transactionalSettlementFunding)
+		if !ok {
+			return fmt.Errorf("wallet funding source %T does not support transactional settlement", s.funding)
+		}
+		if err := s.settleWalletAndToken(transactional, delta); err != nil {
+			return err
+		}
+		s.fundingSettled = true
+		s.settled = true
+		return nil
+	}
+
+	// 非钱包资金来源保留原有顺序；目前主要是订阅。
 	if !s.fundingSettled {
 		if err := s.funding.Settle(delta); err != nil {
 			return err
 		}
 		s.fundingSettled = true
 	}
-	// 2) 调整令牌额度
 	var tokenErr error
 	if !s.relayInfo.IsPlayground {
 		if delta > 0 {
@@ -74,17 +99,44 @@ func (s *BillingSession) Settle(actualQuota int) error {
 			tokenErr = model.IncreaseTokenQuota(s.relayInfo.TokenId, s.relayInfo.TokenKey, -delta)
 		}
 		if tokenErr != nil {
-			// 资金来源已提交，令牌调整失败只能记录日志；标记 settled 防止 Refund 误退资金
-			common.SysLog(fmt.Sprintf("error adjusting token quota after funding settled (userId=%d, tokenId=%d, delta=%d): %s",
+			common.SysLog(fmt.Sprintf("error adjusting token quota after non-wallet funding settled (userId=%d, tokenId=%d, delta=%d): %s",
 				s.relayInfo.UserId, s.relayInfo.TokenId, delta, tokenErr.Error()))
 		}
 	}
-	// 3) 更新 relayInfo 上的订阅 PostDelta（用于日志）
 	if s.funding.Source() == BillingSourceSubscription {
 		s.relayInfo.SubscriptionPostDelta += int64(delta)
 	}
 	s.settled = true
 	return tokenErr
+}
+
+func (s *BillingSession) settleWalletAndToken(funding transactionalSettlementFunding, delta int) error {
+	var result *model.LedgerResult
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		result = nil
+		err = model.DB.Transaction(func(tx *gorm.DB) error {
+			var settleErr error
+			result, settleErr = funding.settleTx(tx, delta)
+			if settleErr != nil {
+				return settleErr
+			}
+			// A replay means the original atomic transaction already applied both
+			// wallet and token changes. Do not charge the token twice.
+			if result == nil || result.Replayed || s.relayInfo.IsPlayground {
+				return nil
+			}
+			return model.ApplyTokenQuotaDeltaTx(tx, s.relayInfo.TokenId, s.relayInfo.TokenKey, -delta)
+		})
+		if !errors.Is(err, model.ErrLedgerDuplicate) {
+			break
+		}
+	}
+	if err != nil {
+		return err
+	}
+	funding.applySettleResult(delta, result)
+	return nil
 }
 
 // Refund 退还所有预扣费，幂等安全，异步执行。

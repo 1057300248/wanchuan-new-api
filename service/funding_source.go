@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
+	"gorm.io/gorm"
 )
 
 // ---------------------------------------------------------------------------
@@ -33,6 +34,7 @@ type FundingSource interface {
 //     故必须报告待退预扣。
 var (
 	_ FundingSource                        = (*WalletFunding)(nil)
+	_ transactionalSettlementFunding       = (*WalletFunding)(nil)
 	_ moneyport.ReservableFunding          = (*WalletFunding)(nil)
 	_ moneyport.FundingReceipt             = (*WalletFunding)(nil)
 	_ FundingSource                        = (*SubscriptionFunding)(nil)
@@ -107,8 +109,37 @@ func (w *WalletFunding) Settle(delta int) error {
 	if delta == 0 {
 		return nil
 	}
-	// 补扣与退款方向使用不同幂等键；同一 request 同方向可能按不同差额多次结算
-	// （WSS 分段计费、测试场景），幂等键包含目标差额，避免同键不同参数冲突。
+	var result *model.LedgerResult
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		result = nil
+		err = model.DB.Transaction(func(tx *gorm.DB) error {
+			var settleErr error
+			result, settleErr = w.settleTx(tx, delta)
+			return settleErr
+		})
+		if !errors.Is(err, model.ErrLedgerDuplicate) {
+			break
+		}
+	}
+	if err != nil {
+		return err
+	}
+	w.applySettleResult(delta, result)
+	return nil
+}
+
+// settleTx applies only the wallet side of settlement inside a caller-owned
+// transaction. It deliberately does not mutate in-memory receipt state or cache;
+// callers must invoke applySettleResult only after the transaction commits.
+func (w *WalletFunding) settleTx(tx *gorm.DB, delta int) (*model.LedgerResult, error) {
+	if tx == nil {
+		return nil, errors.New("wallet settlement transaction is nil")
+	}
+	if delta == 0 {
+		return &model.LedgerResult{}, nil
+	}
+	// 补扣与退款方向使用不同幂等键；同一 request 同方向可能按不同差额多次结算。
 	entry := model.LedgerEntry{
 		UserId:        w.userId,
 		Account:       model.AccountPaid,
@@ -117,29 +148,30 @@ func (w *WalletFunding) Settle(delta int) error {
 		ReferenceId:   w.requestId,
 		RequestId:     w.requestId,
 	}
-	var err error
 	if delta > 0 {
-		// 补扣与预扣同一顺序；份额计入累计，保证后续（如有）退款精确
 		entry.Delta = delta
 		entry.IdempotencyKey = fmt.Sprintf("billing:settle:%s:%d", w.requestId, delta)
-		var result *model.LedgerResult
-		result, err = model.DebitQuota(entry, w.debitOrder...)
-		if err == nil && !result.Replayed {
-			w.addSharesFromResult(result)
-		}
-	} else {
-		refund := -delta
-		if shares := w.refundShares(refund); len(shares) > 0 {
-			entry.IdempotencyKey = fmt.Sprintf("billing:settle_refund:%s:%d", w.requestId, refund)
-			_, err = model.CreditQuotaShares(entry, shares)
-		} else {
-			// 兼容旧路径：无份额记录时退回 paid 账户
-			entry.Delta = refund
-			entry.IdempotencyKey = fmt.Sprintf("billing:settle_refund:%s:%d", w.requestId, refund)
-			_, err = model.CreditQuota(entry)
-		}
+		return model.DebitQuotaTx(tx, entry, w.debitOrder...)
 	}
-	return err
+
+	refund := -delta
+	entry.IdempotencyKey = fmt.Sprintf("billing:settle_refund:%s:%d", w.requestId, refund)
+	if shares := w.refundShares(refund); len(shares) > 0 {
+		return model.CreditQuotaSharesTx(tx, entry, shares)
+	}
+	// 兼容旧路径：无份额记录时退回 paid 账户。
+	entry.Delta = refund
+	return model.CreditQuotaTx(tx, entry)
+}
+
+func (w *WalletFunding) applySettleResult(delta int, result *model.LedgerResult) {
+	if result == nil {
+		return
+	}
+	model.RefreshUserQuotaCache(w.userId, result.TotalAfter)
+	if delta > 0 && !result.Replayed {
+		w.addSharesFromResult(result)
+	}
 }
 
 func (w *WalletFunding) Refund() error {

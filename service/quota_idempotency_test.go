@@ -91,3 +91,147 @@ func TestPostConsumeQuotaRollsBackWalletWhenTokenUpdateFails(t *testing.T) {
 	assertUserBalances(t, userID, 0, 10_000, 0)
 	assert.Empty(t, ledgerRowsFor(t, userID))
 }
+
+func TestBillingSessionWalletSettleRollsBackFundingWhenTokenUpdateFails(t *testing.T) {
+	truncate(t)
+	const (
+		userID      = 9460
+		tokenID     = 9461
+		tokenKey    = "billing-session-atomic-token"
+		requestID   = "billing-session-atomic-request"
+		preConsumed = 2_000
+		actualQuota = 3_000
+	)
+	seedBonusUser(t, userID, 0, 10_000)
+	seedToken(t, tokenID, userID, tokenKey, 10_000)
+
+	funding := &WalletFunding{
+		userId:     userID,
+		requestId:  requestID,
+		debitOrder: []model.LedgerAccount{model.AccountPaid},
+	}
+	require.NoError(t, funding.PreConsume(preConsumed))
+	require.NoError(t, model.DecreaseTokenQuota(tokenID, tokenKey, preConsumed))
+
+	session := &BillingSession{
+		relayInfo: &relaycommon.RelayInfo{
+			UserId:        userID,
+			TokenId:       tokenID,
+			TokenKey:      tokenKey,
+			RequestId:     requestID,
+			BillingSource: BillingSourceWallet,
+		},
+		funding:          funding,
+		preConsumedQuota: preConsumed,
+		tokenConsumed:    preConsumed,
+	}
+
+	const trigger = "fail_billing_session_token_update"
+	require.NoError(t, model.DB.Exec(`
+		CREATE TRIGGER `+trigger+`
+		BEFORE UPDATE ON tokens
+		WHEN OLD.id = 9461
+		BEGIN
+			SELECT RAISE(ABORT, 'forced billing session token failure');
+		END;
+	`).Error)
+	t.Cleanup(func() { model.DB.Exec("DROP TRIGGER IF EXISTS " + trigger) })
+
+	err := session.Settle(actualQuota)
+	require.Error(t, err)
+	assertUserBalances(t, userID, 0, 8_000, 0)
+	assert.Equal(t, 8_000, getTokenRemainQuota(t, tokenID))
+	assert.False(t, session.fundingSettled)
+	assert.False(t, session.settled)
+	assert.True(t, session.NeedsRefund())
+	assert.Equal(t, []ledgerRow{{
+		Account:        "paid",
+		Delta:          -preConsumed,
+		Reason:         model.LedgerReasonBillingPreConsume,
+		IdempotencyKey: "billing:preconsume:" + requestID,
+	}}, ledgerRowsFor(t, userID), "failed atomic settlement must not leave a settle ledger row")
+
+	require.NoError(t, model.DB.Exec("DROP TRIGGER IF EXISTS "+trigger).Error)
+	require.NoError(t, session.Settle(actualQuota))
+	assertUserBalances(t, userID, 0, 7_000, 0)
+	assert.Equal(t, 7_000, getTokenRemainQuota(t, tokenID))
+	assert.True(t, session.fundingSettled)
+	assert.True(t, session.settled)
+	assert.False(t, session.NeedsRefund())
+	assert.Equal(t, []ledgerRow{
+		{Account: "paid", Delta: -preConsumed, Reason: model.LedgerReasonBillingPreConsume, IdempotencyKey: "billing:preconsume:" + requestID},
+		{Account: "paid", Delta: -(actualQuota - preConsumed), Reason: model.LedgerReasonBillingSettle, IdempotencyKey: "billing:settle:" + requestID + ":1000"},
+	}, ledgerRowsFor(t, userID))
+}
+
+func TestBillingSessionWalletRefundSettleRollsBackFundingWhenTokenUpdateFails(t *testing.T) {
+	truncate(t)
+	const (
+		userID      = 9470
+		tokenID     = 9471
+		tokenKey    = "billing-session-refund-atomic-token"
+		requestID   = "billing-session-refund-atomic-request"
+		preConsumed = 3_000
+		actualQuota = 1_000
+	)
+	seedBonusUser(t, userID, 0, 10_000)
+	seedToken(t, tokenID, userID, tokenKey, 10_000)
+
+	funding := &WalletFunding{
+		userId:     userID,
+		requestId:  requestID,
+		debitOrder: []model.LedgerAccount{model.AccountPaid},
+	}
+	require.NoError(t, funding.PreConsume(preConsumed))
+	require.NoError(t, model.DecreaseTokenQuota(tokenID, tokenKey, preConsumed))
+
+	session := &BillingSession{
+		relayInfo: &relaycommon.RelayInfo{
+			UserId:        userID,
+			TokenId:       tokenID,
+			TokenKey:      tokenKey,
+			RequestId:     requestID,
+			BillingSource: BillingSourceWallet,
+		},
+		funding:          funding,
+		preConsumedQuota: preConsumed,
+		tokenConsumed:    preConsumed,
+	}
+
+	const trigger = "fail_billing_session_refund_token_update"
+	require.NoError(t, model.DB.Exec(`
+		CREATE TRIGGER `+trigger+`
+		BEFORE UPDATE ON tokens
+		WHEN OLD.id = 9471
+		BEGIN
+			SELECT RAISE(ABORT, 'forced billing session refund token failure');
+		END;
+	`).Error)
+	t.Cleanup(func() { model.DB.Exec("DROP TRIGGER IF EXISTS " + trigger) })
+
+	err := session.Settle(actualQuota)
+	require.Error(t, err)
+	assertUserBalances(t, userID, 0, 7_000, 0)
+	assert.Equal(t, 7_000, getTokenRemainQuota(t, tokenID))
+	assert.False(t, session.fundingSettled)
+	assert.False(t, session.settled)
+	assert.True(t, session.NeedsRefund())
+	assert.Equal(t, []ledgerRow{{
+		Account:        "paid",
+		Delta:          -preConsumed,
+		Reason:         model.LedgerReasonBillingPreConsume,
+		IdempotencyKey: "billing:preconsume:" + requestID,
+	}}, ledgerRowsFor(t, userID), "failed atomic refund settlement must not leave a refund ledger row")
+
+	require.NoError(t, model.DB.Exec("DROP TRIGGER IF EXISTS "+trigger).Error)
+	require.NoError(t, session.Settle(actualQuota))
+	assertUserBalances(t, userID, 0, 9_000, 0)
+	assert.Equal(t, 9_000, getTokenRemainQuota(t, tokenID))
+	assert.True(t, session.fundingSettled)
+	assert.True(t, session.settled)
+	assert.False(t, session.NeedsRefund())
+	assert.Equal(t, []ledgerRow{
+		{Account: "paid", Delta: -preConsumed, Reason: model.LedgerReasonBillingPreConsume, IdempotencyKey: "billing:preconsume:" + requestID},
+		{Account: "paid", Delta: preConsumed - actualQuota, Reason: model.LedgerReasonBillingSettle, IdempotencyKey: "billing:settle_refund:" + requestID + ":2000"},
+	}, ledgerRowsFor(t, userID))
+}

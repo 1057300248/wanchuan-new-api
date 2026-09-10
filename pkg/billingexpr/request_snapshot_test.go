@@ -1,6 +1,7 @@
 package billingexpr
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -44,6 +45,71 @@ func TestFreezeRequestInputRejectsSensitiveReferencedHeader(t *testing.T) {
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sensitive")
+}
+
+func TestFreezeRequestInputRejectsSensitiveOrContentParamPaths(t *testing.T) {
+	for _, path := range []string{
+		"api_key",
+		"auth.token",
+		"messages.0.content",
+		"metadata",
+	} {
+		t.Run(path, func(t *testing.T) {
+			_, err := FreezeRequestInput(
+				fmt.Sprintf(`tier("guard", param(%q) == nil ? 1 : 2)`, path),
+				RequestInput{Body: []byte(`{}`)},
+			)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "cannot be persisted")
+		})
+	}
+}
+
+func TestFreezeRequestInputRejectsComplexOrCredentialLikeParamValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		expr  string
+		input RequestInput
+	}{
+		{
+			name:  "object value",
+			expr:  `tier("guard", param("options") == nil ? 1 : 2)`,
+			input: RequestInput{Body: []byte(`{"options":{"quality":"hd"}}`)},
+		},
+		{
+			name:  "advanced selector",
+			expr:  `tier("guard", param("items.#") == nil ? 1 : 2)`,
+			input: RequestInput{Body: []byte(`{"items":[1,2]}`)},
+		},
+		{
+			name:  "credential shaped string",
+			expr:  `tier("guard", param("mode") == nil ? 1 : 2)`,
+			input: RequestInput{Body: []byte(`{"mode":"Bearer abc123"}`)},
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := FreezeRequestInput(testCase.expr, testCase.input)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "cannot be persisted")
+		})
+	}
+}
+
+func TestFreezeRequestInputAllowsSafeNestedScalarParam(t *testing.T) {
+	exprStr := `tier("safe", param("stream_options.fast_mode") == true ? 2.0 : 1.0)`
+	frozen, err := FreezeRequestInput(exprStr, RequestInput{
+		Body: []byte(`{"stream_options":{"fast_mode":true},"prompt":"never persisted"}`),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"stream_options.fast_mode": true}, frozen.Params)
+
+	encoded, err := common.Marshal(frozen)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "never persisted")
+	cost, _, err := RunExprWithRequest(exprStr, TokenParams{}, frozen)
+	require.NoError(t, err)
+	assert.Equal(t, 2.0, cost)
 }
 
 func TestFrozenRequestTimestampKeepsTimeRuleStable(t *testing.T) {
