@@ -15,7 +15,16 @@ func TestRegisterContributesExpectedPaymentRoutes(t *testing.T) {
 	require.NoError(t, Register(reg))
 	require.NoError(t, reg.Freeze())
 	engine := gin.New()
-	require.NoError(t, reg.ApplyRoutes(engine, extension.PriorityBeforePlugin))
+	api := engine.Group("/api")
+	scopes := extension.RouteScopes{
+		Engine:                    engine,
+		API:                       api,
+		UserSelf:                  api.Group("/user"),
+		SubscriptionUser:          api.Group("/subscription"),
+		RootOptions:               api.Group("/option"),
+		AnonymousRequestBodyLimit: func(c *gin.Context) { c.Next() },
+	}
+	require.NoError(t, reg.ApplyRoutesWithScopes(scopes, extension.PriorityBeforePlugin))
 
 	got := map[string]bool{}
 	for _, route := range engine.Routes() {

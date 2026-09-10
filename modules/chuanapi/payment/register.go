@@ -5,8 +5,6 @@ import (
 
 	"github.com/QuantumNous/new-api/extension"
 	"github.com/QuantumNous/new-api/middleware"
-	"github.com/gin-contrib/gzip"
-	"github.com/gin-gonic/gin"
 )
 
 const (
@@ -22,42 +20,32 @@ func Register(reg *extension.Registry) error {
 		return fmt.Errorf("chuanapi payment: registry must not be nil")
 	}
 	return reg.RegisterRouteSet(extension.RouteSet{
-		Extension: ExtensionName,
-		Name:      RoutesName,
-		Priority:  extension.PriorityBeforePlugin,
-		Register:  registerRoutes,
+		Extension:      ExtensionName,
+		Name:           RoutesName,
+		Priority:       extension.PriorityBeforePlugin,
+		RegisterScoped: registerRoutes,
 	})
 }
 
-func registerRoutes(engine *gin.Engine) error {
-	api := engine.Group("/api")
-	api.Use(middleware.RouteTag("api"))
-	api.Use(gzip.Gzip(gzip.DefaultCompression))
-	api.Use(middleware.AccessTokenAudit())
-	api.Use(middleware.BodyStorageCleanup())
-	api.Use(middleware.GlobalAPIRateLimit())
+func registerRoutes(scopes extension.RouteScopes) error {
+	if scopes.API == nil || scopes.UserSelf == nil || scopes.SubscriptionUser == nil || scopes.RootOptions == nil || scopes.AnonymousRequestBodyLimit == nil {
+		return fmt.Errorf("chuanapi payment: required host API route scopes are unavailable")
+	}
 
-	anonymousBodyLimit := middleware.AnonymousRequestBodyLimit()
-	api.POST("/waffo/webhook", anonymousBodyLimit, WaffoWebhook)
-	api.POST("/waffo-pancake/webhook/:env", anonymousBodyLimit, WaffoPancakeWebhook)
+	scopes.API.POST("/waffo/webhook", scopes.AnonymousRequestBodyLimit, WaffoWebhook)
+	scopes.API.POST("/waffo-pancake/webhook/:env", scopes.AnonymousRequestBodyLimit, WaffoPancakeWebhook)
 
-	user := api.Group("/user")
-	user.Use(middleware.DisableCache(), middleware.UserAuth())
-	user.POST("/waffo/amount", RequestWaffoAmount)
-	user.POST("/waffo/pay", middleware.CriticalRateLimit(), RequestWaffoPay)
-	user.POST("/waffo-pancake/amount", RequestWaffoPancakeAmount)
-	user.POST("/waffo-pancake/pay", middleware.CriticalRateLimit(), RequestWaffoPancakePay)
+	scopes.UserSelf.POST("/waffo/amount", RequestWaffoAmount)
+	scopes.UserSelf.POST("/waffo/pay", middleware.CriticalRateLimit(), RequestWaffoPay)
+	scopes.UserSelf.POST("/waffo-pancake/amount", RequestWaffoPancakeAmount)
+	scopes.UserSelf.POST("/waffo-pancake/pay", middleware.CriticalRateLimit(), RequestWaffoPancakePay)
 
-	subscription := api.Group("/subscription")
-	subscription.Use(middleware.UserAuth())
-	subscription.POST("/waffo-pancake/pay", middleware.CriticalRateLimit(), SubscriptionRequestWaffoPancakePay)
+	scopes.SubscriptionUser.POST("/waffo-pancake/pay", middleware.CriticalRateLimit(), SubscriptionRequestWaffoPancakePay)
 
-	option := api.Group("/option")
-	option.Use(middleware.RootAuth())
-	option.GET("/waffo-pancake/catalog", ListWaffoPancakeCatalog)
-	option.POST("/waffo-pancake/pair", CreateWaffoPancakePair)
-	option.POST("/waffo-pancake/save", SaveWaffoPancake)
-	option.POST("/waffo-pancake/subscription-product", CreateWaffoPancakeSubscriptionProduct)
-	option.GET("/waffo-pancake/subscription-product-options", ListWaffoPancakeSubscriptionProductOptions)
+	scopes.RootOptions.GET("/waffo-pancake/catalog", ListWaffoPancakeCatalog)
+	scopes.RootOptions.POST("/waffo-pancake/pair", CreateWaffoPancakePair)
+	scopes.RootOptions.POST("/waffo-pancake/save", SaveWaffoPancake)
+	scopes.RootOptions.POST("/waffo-pancake/subscription-product", CreateWaffoPancakeSubscriptionProduct)
+	scopes.RootOptions.GET("/waffo-pancake/subscription-product-options", ListWaffoPancakeSubscriptionProductOptions)
 	return nil
 }

@@ -51,7 +51,15 @@ func TestRegisterRouteSetRejectsInvalidDescriptors(t *testing.T) {
 		{
 			name:    "nil register",
 			set:     RouteSet{Extension: "chuanapi", Name: "api", Priority: PriorityAfterPlugin},
-			wantErr: "extension: route set chuanapi/api has a nil Register function",
+			wantErr: "extension: route set chuanapi/api must define exactly one route registrar",
+		},
+		{
+			name: "both registrars",
+			set: RouteSet{
+				Extension: "chuanapi", Name: "api", Priority: PriorityAfterPlugin,
+				Register: noopRoutes, RegisterScoped: func(RouteScopes) error { return nil },
+			},
+			wantErr: "extension: route set chuanapi/api must define exactly one route registrar",
 		},
 	}
 	for _, tc := range cases {
@@ -167,6 +175,30 @@ func TestApplyRoutesAttachesHandlersLikeLlmsRoutes(t *testing.T) {
 		}
 	}
 	assert.ElementsMatch(t, []string{http.MethodGet, http.MethodHead}, methods)
+}
+
+func TestApplyRoutesWithScopesPassesHostMountPoints(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	reg := NewRegistry()
+	engine := gin.New()
+	api := engine.Group("/api")
+	user := api.Group("/user")
+	require.NoError(t, reg.RegisterRouteSet(RouteSet{
+		Extension: "chuanapi", Name: "scoped", Priority: PriorityBeforePlugin,
+		RegisterScoped: func(scopes RouteScopes) error {
+			require.Same(t, engine, scopes.Engine)
+			require.Same(t, api, scopes.API)
+			require.Same(t, user, scopes.UserSelf)
+			scopes.UserSelf.GET("/scoped", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+			return nil
+		},
+	}))
+	require.NoError(t, reg.Freeze())
+	require.NoError(t, reg.ApplyRoutesWithScopes(RouteScopes{Engine: engine, API: api, UserSelf: user}, PriorityBeforePlugin))
+
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/user/scoped", nil))
+	assert.Equal(t, http.StatusNoContent, recorder.Code)
 }
 
 func TestApplyRoutesExecutesInOrderAndWrapsFailures(t *testing.T) {

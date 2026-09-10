@@ -12,6 +12,16 @@ and module packages while the migration is in progress, but its final state must
 only compose independently owned modules. Root `model`, `service`, `controller`,
 `router` and `relay` packages must never import it.
 
+### Host-owned HTTP scopes
+
+Existing host API surfaces are exposed to route contributions through
+`extension.RouteScopes`. `router.SetApiRouter` creates the `/api` base group and
+its authenticated/admin child groups, applies host middleware once, then passes
+those exact group handles to extension registration. ChuanAPI modules attach
+endpoint-specific routes to these handles; they must not reconstruct the global
+gzip, audit, body-cleanup, or API rate-limit chain themselves. This keeps future
+host middleware changes automatically inherited by module routes.
+
 ## Extension kernel versus runtime ports
 
 These are deliberately separate mechanisms:

@@ -4,10 +4,7 @@ import (
 	"fmt"
 
 	"github.com/QuantumNous/new-api/extension"
-	"github.com/QuantumNous/new-api/middleware"
 	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
-	"github.com/gin-contrib/gzip"
-	"github.com/gin-gonic/gin"
 )
 
 const (
@@ -24,34 +21,23 @@ func Register(reg *extension.Registry) error {
 		return fmt.Errorf("chuanapi wallet routes: registry must not be nil")
 	}
 	return reg.RegisterRouteSet(extension.RouteSet{
-		Extension: ExtensionName,
-		Name:      RoutesName,
-		Priority:  extension.PriorityBeforePlugin,
-		Register:  registerRoutes,
+		Extension:      ExtensionName,
+		Name:           RoutesName,
+		Priority:       extension.PriorityBeforePlugin,
+		RegisterScoped: registerRoutes,
 	})
 }
 
-func registerRoutes(engine *gin.Engine) error {
-	if engine == nil {
-		return fmt.Errorf("chuanapi wallet routes: engine must not be nil")
+func registerRoutes(scopes extension.RouteScopes) error {
+	if scopes.UserSelf == nil || scopes.AdminModels == nil {
+		return fmt.Errorf("chuanapi wallet routes: required host API route scopes are unavailable")
 	}
-	api := engine.Group("/api")
-	api.Use(middleware.RouteTag("api"))
-	api.Use(gzip.Gzip(gzip.DefaultCompression))
-	api.Use(middleware.AccessTokenAudit())
-	api.Use(middleware.BodyStorageCleanup())
-	api.Use(middleware.GlobalAPIRateLimit())
+	scopes.UserSelf.GET("/wallet", walletmodule.GetWalletSummary)
+	scopes.UserSelf.GET("/wallet/ledger", walletmodule.GetWalletLedger)
+	scopes.UserSelf.GET("/referral/overview", walletmodule.GetReferralOverview)
+	scopes.UserSelf.GET("/referral/rewards", walletmodule.GetReferralRewards)
 
-	user := api.Group("/user")
-	user.Use(middleware.DisableCache(), middleware.UserAuth())
-	user.GET("/wallet", walletmodule.GetWalletSummary)
-	user.GET("/wallet/ledger", walletmodule.GetWalletLedger)
-	user.GET("/referral/overview", walletmodule.GetReferralOverview)
-	user.GET("/referral/rewards", walletmodule.GetReferralRewards)
-
-	models := api.Group("/models")
-	models.Use(middleware.AdminAuth())
-	models.GET("/bonus_eligible/audits", walletmodule.GetModelBonusEligibleAudits)
-	models.POST("/bonus_eligible/batch", walletmodule.BatchUpdateModelBonusEligible)
+	scopes.AdminModels.GET("/bonus_eligible/audits", walletmodule.GetModelBonusEligibleAudits)
+	scopes.AdminModels.POST("/bonus_eligible/batch", walletmodule.BatchUpdateModelBonusEligible)
 	return nil
 }

@@ -86,7 +86,8 @@ func TestLlmsRoutesAreIncludedInPluginStaticSnapshot(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	reg := newChuanRouteRegistry(t)
-	require.NoError(t, reg.ApplyRoutes(engine, extension.PriorityBeforePlugin))
+	scopes := SetApiRouter(engine)
+	require.NoError(t, reg.ApplyRoutesWithScopes(scopes, extension.PriorityBeforePlugin))
 
 	plugin := compileRouterPlugin(t, "llms-shadow-equivalence", "1.0.0", `[
 		{method: "GET", path: "/llms.txt", type: "dynamic"}

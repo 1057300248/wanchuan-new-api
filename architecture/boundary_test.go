@@ -186,6 +186,29 @@ func TestPaymentProviderOwnershipStaysInModule(t *testing.T) {
 	assert.Empty(t, offenders, "ChuanAPI payment module must own provider handlers/services without importing root controller/service")
 }
 
+func TestChuanAPIRouteModulesUseHostOwnedAPIScopes(t *testing.T) {
+	root := repoRoot(t)
+	for _, rel := range []string{
+		"modules/chuanapi/payment/register.go",
+		"modules/chuanapi/wallet/routes/register.go",
+	} {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		require.NoError(t, err)
+		source := string(data)
+		assert.Contains(t, source, "RegisterScoped:", "%s must consume host route scopes", rel)
+		for _, forbidden := range []string{
+			`Group("/api")`,
+			"gzip.Gzip(",
+			"AccessTokenAudit()",
+			"BodyStorageCleanup()",
+			"GlobalAPIRateLimit()",
+		} {
+			assert.NotContains(t, source, forbidden,
+				"%s must not reconstruct host API middleware policy (%s)", rel, forbidden)
+		}
+	}
+}
+
 func TestWalletAndAffiliateRuntimeOwnershipStaysInModules(t *testing.T) {
 	root := repoRoot(t)
 	for _, legacy := range []string{

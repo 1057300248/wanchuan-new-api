@@ -19,7 +19,17 @@ func TestLlmsRouteSetPreservesLegacyRouteTableAndHandlers(t *testing.T) {
 	require.NoError(t, reg.Freeze())
 
 	engine := gin.New()
-	require.NoError(t, reg.ApplyRoutes(engine, extension.PriorityBeforePlugin))
+	api := engine.Group("/api")
+	scopes := extension.RouteScopes{
+		Engine:                    engine,
+		API:                       api,
+		UserSelf:                  api.Group("/user"),
+		SubscriptionUser:          api.Group("/subscription"),
+		RootOptions:               api.Group("/option"),
+		AdminModels:               api.Group("/models"),
+		AnonymousRequestBodyLimit: func(c *gin.Context) { c.Next() },
+	}
+	require.NoError(t, reg.ApplyRoutesWithScopes(scopes, extension.PriorityBeforePlugin))
 
 	handlers := make(map[string]string)
 	for _, route := range engine.Routes() {

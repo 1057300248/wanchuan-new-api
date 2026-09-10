@@ -21,13 +21,13 @@ func SetRouter(router *gin.Engine, assets WebAssets) error {
 // contract tests without mutating the process-wide write-once registry.
 func setRouterWithRegistry(router *gin.Engine, assets WebAssets, registry *extension.Registry) error {
 	router.Use(middleware.CORS())
-	SetApiRouter(router)
+	routeScopes := SetApiRouter(router)
 	SetDashboardRouter(router)
 	SetRelayRouter(router)
 	SetTaskPluginProtocolRouter(router)
 	SetVideoRouter(router)
 	SetTaskRouter(router)
-	pluginDispatcher, err := setPluginAndExtensionRoutes(router, registry)
+	pluginDispatcher, err := setPluginAndExtensionRoutes(routeScopes, registry)
 	if err != nil {
 		return err
 	}
@@ -56,15 +56,18 @@ func setRouterWithRegistry(router *gin.Engine, assets WebAssets, registry *exten
 // SetPluginRouter's static-route snapshot. BeforePlugin routes are visible to
 // plugin conflict detection; AfterPlugin routes preserve the historical
 // /llms.txt behavior and remain outside that snapshot.
-func setPluginAndExtensionRoutes(router *gin.Engine, registry *extension.Registry) (gin.HandlerFunc, error) {
+func setPluginAndExtensionRoutes(scopes extension.RouteScopes, registry *extension.Registry) (gin.HandlerFunc, error) {
 	if registry == nil {
 		return nil, fmt.Errorf("router: extension registry must not be nil")
 	}
-	if err := registry.ApplyRoutes(router, extension.PriorityBeforePlugin); err != nil {
+	if scopes.Engine == nil {
+		return nil, fmt.Errorf("router: extension route engine must not be nil")
+	}
+	if err := registry.ApplyRoutesWithScopes(scopes, extension.PriorityBeforePlugin); err != nil {
 		return nil, err
 	}
-	pluginDispatcher := SetPluginRouter(router)
-	if err := registry.ApplyRoutes(router, extension.PriorityAfterPlugin); err != nil {
+	pluginDispatcher := SetPluginRouter(scopes.Engine)
+	if err := registry.ApplyRoutesWithScopes(scopes, extension.PriorityAfterPlugin); err != nil {
 		return nil, err
 	}
 	return pluginDispatcher, nil

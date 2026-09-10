@@ -31,11 +31,12 @@ func TestTokenMixP1RoutesRegistered(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	// 路由注册本身不 panic 即代表无冲突（重复注册相同路径会 panic）。
-	require.NotPanics(t, func() { SetApiRouter(engine) })
+	var scopes extension.RouteScopes
+	require.NotPanics(t, func() { scopes = SetApiRouter(engine) })
 	registry := extension.NewRegistry()
 	require.NoError(t, walletroutes.Register(registry))
 	require.NoError(t, registry.Freeze())
-	require.NoError(t, registry.ApplyRoutes(engine, extension.PriorityBeforePlugin))
+	require.NoError(t, registry.ApplyRoutesWithScopes(scopes, extension.PriorityBeforePlugin))
 
 	routes := engine.Routes()
 	paths := make(map[string]bool)
@@ -66,4 +67,18 @@ func TestTokenMixP1RoutesRegistered(t *testing.T) {
 	for _, path := range removed {
 		require.False(t, paths[path], "removed route still registered: %s", path)
 	}
+}
+
+func TestSetApiRouterExposesHostOwnedExtensionScopes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	scopes := SetApiRouter(engine)
+
+	require.Same(t, engine, scopes.Engine)
+	require.NotNil(t, scopes.API)
+	require.NotNil(t, scopes.UserSelf)
+	require.NotNil(t, scopes.SubscriptionUser)
+	require.NotNil(t, scopes.RootOptions)
+	require.NotNil(t, scopes.AdminModels)
+	require.NotNil(t, scopes.AnonymousRequestBodyLimit)
 }
