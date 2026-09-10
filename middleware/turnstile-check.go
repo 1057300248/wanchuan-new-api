@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 )
 
 const (
-	turnstileExpectedHostname = "chuanapi.com"
 	turnstileMaxTokenLength   = 2048
 	turnstileMaxResponseBytes = 64 * 1024
 )
@@ -41,6 +41,12 @@ func TurnstileCheck(expectedAction string) gin.HandlerFunc {
 		}
 		if strings.TrimSpace(common.TurnstileSecretKey) == "" || expectedAction == "" {
 			common.SysLog("Turnstile verification rejected: incomplete server configuration")
+			turnstileReject(c)
+			return
+		}
+		expectedHostname, hostnameErr := system_setting.PublicSiteHostname()
+		if hostnameErr != nil {
+			common.SysLog("Turnstile verification rejected: public hostname is not configured")
 			turnstileReject(c)
 			return
 		}
@@ -83,7 +89,7 @@ func TurnstileCheck(expectedAction string) gin.HandlerFunc {
 			turnstileReject(c)
 			return
 		}
-		if !result.Success || result.Action != expectedAction || result.Hostname != turnstileExpectedHostname {
+		if !result.Success || result.Action != expectedAction || !strings.EqualFold(result.Hostname, expectedHostname) {
 			common.SysLog(fmt.Sprintf(
 				"Turnstile verification rejected: success=%t action=%q hostname=%q errors=%v",
 				result.Success,

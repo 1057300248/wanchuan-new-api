@@ -26,6 +26,7 @@ export type NavigationExtensionContext = {
 export type NavigationExtension = {
   id: string
   publicHomeUrl?: string
+  quickstartDocsUrl?: string
   apply: (
     links: readonly TopNavLink[],
     context: NavigationExtensionContext
@@ -59,6 +60,13 @@ export function applyNavigationExtensions(
 export function extensionPublicHomeUrl(fallback = '/') {
   for (const extension of navigationExtensions) {
     if (extension.publicHomeUrl) return extension.publicHomeUrl
+  }
+  return fallback
+}
+
+export function extensionQuickstartDocsUrl(fallback = '/help') {
+  for (const extension of navigationExtensions) {
+    if (extension.quickstartDocsUrl) return extension.quickstartDocsUrl
   }
   return fallback
 }

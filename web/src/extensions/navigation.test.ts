@@ -18,7 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { describe, expect, test } from 'vitest'
 
-import { applyNavigationExtensions, extensionPublicHomeUrl } from '@/extensions'
+import {
+  applyNavigationExtensions,
+  extensionPublicHomeUrl,
+  extensionQuickstartDocsUrl,
+} from '@/extensions'
 
 describe('frontend extension navigation contract', () => {
   test('applies ChuanAPI cross-shell home navigation without mutating input', () => {
@@ -46,7 +50,10 @@ describe('frontend extension navigation contract', () => {
     ])
   })
 
-  test('publishes the extension-owned public home URL', () => {
+  test('publishes extension-owned public URLs', () => {
     expect(extensionPublicHomeUrl()).toBe('https://chuanapi.com/')
+    expect(extensionQuickstartDocsUrl()).toBe(
+      'https://chuanapi.com/docs/quickstart/'
+    )
   })
 })

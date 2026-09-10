@@ -23,11 +23,7 @@ var frontendConcreteChuanAPIBaseline = map[string]struct{}{
 	"web/src/routes/help/api/index.tsx":    {},
 }
 
-var coreBrandLiteralBaseline = map[string]struct{}{
-	"controller/misc.go":            {},
-	"middleware/turnstile-check.go": {},
-	"web/src/lib/public-site.ts":    {},
-}
+var coreBrandLiteralBaseline = map[string]struct{}{}
 
 func TestGoCoreDoesNotImportConcreteChuanAPI(t *testing.T) {
 	root := repoRoot(t)
@@ -150,7 +146,7 @@ func TestCoreChuanAPIDomainStringLiteralsDoNotGrow(t *testing.T) {
 		return nil
 	}))
 
-	assert.Empty(t, offenders, "Batch A freezes current production chuanapi.com literals; Phase 1 will drive the allowlist to zero")
+	assert.Empty(t, offenders, "Phase 1 removed production core chuanapi.com literals; concrete brand domains must stay in configuration or ChuanAPI modules")
 }
 
 func hasChuanAPIDomainLiteral(path string) (bool, error) {

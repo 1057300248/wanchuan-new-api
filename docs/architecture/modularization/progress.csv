@@ -1,0 +1,3 @@
+phase,commit,status,runtime_scope,frontend_concrete_imports,core_brand_literal_files,notes
+0-0.5,d69bce9fd,PASS,contracts-and-guards-only,3,3,"Batch A baseline and architecture contracts"
+1,THIS_COMMIT,PASS,brand-domain-decoupling,3,0,"ServerAddress is trusted backend hostname source; frontend URLs come from extension navigation"

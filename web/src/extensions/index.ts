@@ -35,7 +35,11 @@ setBrandExtension(chuanapiBrandExtension)
 setI18nExtensions([chuanapiI18nExtension])
 setExtensionFlags({ showLegacyAffiliateQuota: SHOW_LEGACY_AFFILIATE_QUOTA })
 
-export { applyNavigationExtensions, extensionPublicHomeUrl } from './navigation'
+export {
+  applyNavigationExtensions,
+  extensionPublicHomeUrl,
+  extensionQuickstartDocsUrl,
+} from './navigation'
 export type {
   NavigationExtension,
   NavigationExtensionContext,
