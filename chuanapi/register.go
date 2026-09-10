@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/extension"
 	consolemodule "github.com/QuantumNous/new-api/modules/chuanapi/console"
 	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
+	"github.com/QuantumNous/new-api/pkg/moneyport"
 )
 
 const ExtensionName = "chuanapi"
@@ -33,6 +34,14 @@ const (
 // WalletModels remains as a compatibility accessor for migration tests and any
 // out-of-tree build-time tooling. Concrete model enumeration is module-owned.
 func WalletModels() []any { return walletmodule.Models() }
+
+// RegisterFundingFactories composes ChuanAPI runtime funding implementations.
+func RegisterFundingFactories(reg *moneyport.FactoryRegistry) error {
+	if reg == nil {
+		return fmt.Errorf("chuanapi: funding factory registry must not be nil")
+	}
+	return walletmodule.RegisterFundingFactory(reg)
+}
 
 // Register is the ChuanAPI composition root. It owns no handlers, migrations,
 // or GORM model lists; individual modules contribute those capabilities.

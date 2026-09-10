@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -68,8 +69,11 @@ func TestMain(m *testing.M) {
 	}
 
 	fundingFactories := moneyport.NewFactoryRegistry()
-	if err := RegisterCoreFundingFactories(fundingFactories); err != nil {
-		panic("failed to register funding factories: " + err.Error())
+	if err := RegisterHostFundingFactories(fundingFactories); err != nil {
+		panic("failed to register host funding factories: " + err.Error())
+	}
+	if err := walletmodule.RegisterFundingFactory(fundingFactories); err != nil {
+		panic("failed to register wallet funding factory: " + err.Error())
 	}
 	if err := ConfigureFundingFactoryRegistry(fundingFactories); err != nil {
 		panic("failed to configure funding factories: " + err.Error())

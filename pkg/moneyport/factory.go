@@ -54,6 +54,13 @@ var (
 	ErrFactoryNotRegistered  = errors.New("moneyport: funding factory is not registered")
 )
 
+// Stable funding errors live in the generic port so billing orchestration can
+// map them without importing a concrete wallet implementation.
+var (
+	ErrWalletInsufficientBalance = errors.New("wallet quota insufficient")
+	ErrBonusFundingNotSupported  = errors.New("该模型不支持赠金支付，付费余额不足")
+)
+
 // FactoryRegistry is configured at application composition time and frozen
 // before request handling. It has no process-global singleton; the host owns the
 // active registry reference.

@@ -324,8 +324,12 @@ func InitResources() error {
 	// Runtime funding implementations are composed explicitly and frozen before
 	// any request can create a BillingSession.
 	fundingFactories := moneyport.NewFactoryRegistry()
-	if err := service.RegisterCoreFundingFactories(fundingFactories); err != nil {
-		common.FatalLog("failed to register core funding factories: " + err.Error())
+	if err := service.RegisterHostFundingFactories(fundingFactories); err != nil {
+		common.FatalLog("failed to register host funding factories: " + err.Error())
+		return err
+	}
+	if err := chuanapi.RegisterFundingFactories(fundingFactories); err != nil {
+		common.FatalLog("failed to register chuanapi funding factories: " + err.Error())
 		return err
 	}
 	if err := service.ConfigureFundingFactoryRegistry(fundingFactories); err != nil {

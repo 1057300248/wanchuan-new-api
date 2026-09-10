@@ -1,10 +1,10 @@
 package service
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/moneyport"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
@@ -19,7 +19,7 @@ import (
 
 // ErrModelBonusNotSupported 表示请求模型不支持赠金支付且付费余额不足。
 // 不得静默扣减赠金；错误信息面向用户且可在测试中断言。
-var ErrModelBonusNotSupported = errors.New("该模型不支持赠金支付，付费余额不足")
+var ErrModelBonusNotSupported = moneyport.ErrBonusFundingNotSupported
 
 // WalletDebitOrder 返回请求钱包计费使用的账户扣减顺序。
 // 资金身份必须使用 GetBillingModelName()（价格/倍率身份），禁止直接使用

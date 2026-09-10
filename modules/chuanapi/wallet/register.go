@@ -15,9 +15,10 @@ const (
 	LegacyQuotaBackfillName = "legacy_quota_backfill"
 )
 
-// Models is the current compatibility wiring for ChuanAPI-owned wallet schema.
-// Phase 5 moves the concrete types themselves into this module; until then this
-// adapter is the only module location allowed to enumerate the root-model types.
+// Models is the compatibility wiring for ChuanAPI-owned wallet schema. Phase 5
+// moves runtime funding ownership into this module, while the ledger engine and
+// table structs remain a root-model compatibility/data-ownership boundary. That
+// later split is deliberately separate from the runtime extraction.
 func Models() []any {
 	return []any{
 		&model.BalanceLedgerOperation{},

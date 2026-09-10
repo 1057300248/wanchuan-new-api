@@ -23,6 +23,14 @@ through a `UserBalanceStore`-style port/adapter. A later, independent migration
 may evaluate dedicated wallet-account tables after SQLite/MySQL/PostgreSQL
 compatibility is proven.
 
+Phase 5 completes **runtime funding ownership**, not the later physical data
+ownership split. `modules/chuanapi/wallet` owns the concrete Funding implementation
+and factory registration, while `model/balance_ledger.go` and the ledger GORM
+structs remain a compatibility boundary because they still atomically update the
+root-owned `users.quota*` columns. Moving that engine is deferred until a dedicated
+ledger-store/UserBalanceStore boundary can be proven across all three databases;
+this transitional state must not be reported as full DB-model extraction.
+
 ## Migration ownership
 
 Each module owns the implementation of its schema/data migrations. The host owns

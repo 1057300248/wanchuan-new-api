@@ -1,6 +1,7 @@
 package architecture
 
 import (
+	"go/ast"
 	"go/parser"
 	goscanner "go/scanner"
 	"go/token"
@@ -65,6 +66,36 @@ func TestGoCoreDoesNotImportConcreteChuanAPI(t *testing.T) {
 	assert.Empty(t, offenders, "core production Go code must not import concrete ChuanAPI modules; main.go is the composition-root exception")
 }
 
+func TestServiceProductionDoesNotOwnWalletFunding(t *testing.T) {
+	root := repoRoot(t)
+	serviceRoot := filepath.Join(root, "service")
+	fset := token.NewFileSet()
+	var offenders []string
+
+	require.NoError(t, filepath.WalkDir(serviceRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, parseErr := parser.ParseFile(fset, path, nil, 0)
+		if parseErr != nil {
+			return parseErr
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			typeSpec, ok := node.(*ast.TypeSpec)
+			if ok && typeSpec.Name != nil && typeSpec.Name.Name == "WalletFunding" {
+				offenders = append(offenders, slashRel(t, root, path))
+			}
+			return true
+		})
+		return nil
+	}))
+
+	assert.Empty(t, offenders, "production service must depend on moneyport funding capabilities, not own WalletFunding")
+}
+
 func TestChuanAPICompositionRootStaysThin(t *testing.T) {
 	root := repoRoot(t)
 	path := filepath.Join(root, "chuanapi", "register.go")
@@ -76,7 +107,7 @@ func TestChuanAPICompositionRootStaysThin(t *testing.T) {
 	for _, imp := range file.Imports {
 		importPath, unquoteErr := strconv.Unquote(imp.Path.Value)
 		require.NoError(t, unquoteErr)
-		if importPath == "fmt" || importPath == modulePath+"/extension" || strings.HasPrefix(importPath, modulePath+"/modules/chuanapi/") {
+		if importPath == "fmt" || importPath == modulePath+"/extension" || importPath == modulePath+"/pkg/moneyport" || strings.HasPrefix(importPath, modulePath+"/modules/chuanapi/") {
 			continue
 		}
 		offenders = append(offenders, importPath)
