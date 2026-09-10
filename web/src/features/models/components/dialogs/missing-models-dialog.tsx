@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight, Plus, Search } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { createServerError } from '@/lib/server-error-message'
 
 import { getMissingModels } from '../../api'
 import { DEFAULT_PAGE_SIZE } from '../../constants'
@@ -62,7 +63,7 @@ export function MissingModelsDialog({
     queryFn: async () => {
       const response = await getMissingModels()
       if (!response.success) {
-        throw new Error(response.message || t('Operation failed'))
+        throw createServerError(response, t('Operation failed'))
       }
       return response
     },
@@ -118,26 +119,6 @@ export function MissingModelsDialog({
     totalItems === 0 ? 0 : Math.min(currentPage * pageSize, totalItems)
   const showPagination = totalItems > pageSize
 
-  let missingModelsBody: ReactNode
-  if (isLoading) {
-    missingModelsBody = <LoadingState />
-  } else if (isError) {
-    missingModelsBody = (
-      <ErrorState description={error.message} onRetry={() => void refetch()} />
-    )
-  } else if (missingModels.length === 0) {
-    missingModelsBody = (
-      <div className='text-muted-foreground py-12 text-center'>
-        <p>{t('No missing models found.')}</p>
-        <p className='text-sm'>
-          {t('All models in use are properly configured.')}
-        </p>
-      </div>
-    )
-  } else {
-    missingModelsBody = null
-  }
-
   return (
     <Dialog
       open={open}
@@ -157,7 +138,22 @@ export function MissingModelsDialog({
         </Button>
       }
     >
-      {missingModelsBody ?? (
+      {isLoading && <LoadingState />}
+      {isError && (
+        <ErrorState
+          description={error.message}
+          onRetry={() => void refetch()}
+        />
+      )}
+      {!isLoading && !isError && missingModels.length === 0 && (
+        <div className='text-muted-foreground py-12 text-center'>
+          <p>{t('No missing models found.')}</p>
+          <p className='text-sm'>
+            {t('All models in use are properly configured.')}
+          </p>
+        </div>
+      )}
+      {!isLoading && !isError && missingModels.length > 0 && (
         <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto'>
           <div className='flex flex-shrink-0 items-center justify-between gap-3'>
             <div className='text-muted-foreground text-sm whitespace-nowrap'>

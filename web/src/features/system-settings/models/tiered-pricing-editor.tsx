@@ -16,18 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { ChevronDown, Copy, Plus, Trash2 } from 'lucide-react'
+import { Copy, Plus, Trash2 } from 'lucide-react'
 import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
-  type ChangeEvent,
-  type FocusEvent,
-  type InputHTMLAttributes,
-  type MouseEvent as ReactMouseEvent,
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -40,7 +37,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import { Combobox } from '@/components/ui/combobox'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -52,11 +48,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import {
+  formatPricingAmount,
+  USD_PRICING_CURRENCY,
+  type PricingCurrency,
+} from '@/features/model-pricing/currency'
+import { useBillingTime } from '@/features/pricing/hooks/use-billing-time'
+import {
   BILLING_EXTRA_VARS,
-  COMMON_TIMEZONES,
   MATCH_CONTAINS,
   MATCH_EQ,
   MATCH_EXISTS,
@@ -68,7 +68,6 @@ import {
   SOURCE_HEADER,
   SOURCE_PARAM,
   SOURCE_TIME,
-  TIME_FUNCS,
   buildRequestRuleExpr,
   combineBillingExpr,
   createEmptyCondition,
@@ -83,16 +82,21 @@ import {
   type TimeCondition,
   type TimeFunc,
 } from '@/features/pricing/lib/billing-expr'
+import { compileBillingExpression } from '@/features/pricing/lib/billing-expression/parser'
 import {
-  CACHE_MODE_GENERIC,
+  parseVisualBillingDocument,
+  serializeVisualBillingDocument,
+  type VisualBillingDocument,
+} from '@/features/pricing/lib/billing-expression/visual'
+import {
   CACHE_MODE_TIMED,
-  type CacheMode,
   type ExtraTokenValues,
   type TierConditionInput,
   type VisualConfig,
   type VisualTier,
   createDefaultVisualConfig,
   evalExprLocally,
+  buildEstimatorTokens,
   exprUsesExtraVars,
   generateExprFromVisualConfig,
   getTierCacheMode,
@@ -100,19 +104,17 @@ import {
   normalizeVisualTier,
   tryParseVisualConfig,
 } from '@/features/pricing/lib/tier-expr'
-import {
-  carryStableUiKey,
-  getStableUiKey,
-} from '@/features/system-settings/models/tiered-pricing-ui-key'
+import { carryStableUiKey, getStableUiKey } from './tiered-pricing-ui-key'
 import { cn } from '@/lib/utils'
 
-const PRICE_SUFFIX = '$/1M tokens'
-const CACHE_PRICE_VARS = BILLING_EXTRA_VARS.filter(
-  (variable) => variable.group === 'cache'
-)
-const MEDIA_PRICE_VARS = BILLING_EXTRA_VARS.filter(
-  (variable) => variable.group === 'media'
-)
+import {
+  BillingTimeProbeFields,
+  BillingTimeRangeFields,
+} from './billing-time-fields'
+import { DraftNumberInput } from './draft-number-input'
+import { RequestSimulation } from './request-simulation'
+import { TierPriceFields } from './tier-price-fields'
+import { VisualBillingDocumentEditor } from './visual-billing-document-editor'
 
 const CONDITION_INPUT_OPTIONS: {
   value: TierConditionInput['var']
@@ -318,14 +320,6 @@ const PRESET_GROUPS: PresetGroup[] = [
   },
 ]
 
-function unitCostToPrice(uc: number | string): number {
-  return Number(uc) || 0
-}
-
-function priceToUnitCost(price: number | string): number {
-  return Number(price) || 0
-}
-
 function formatTokenHint(n: number | string | null | undefined): string {
   if (n == null || n === '' || Number.isNaN(Number(n))) return ''
   const v = Number(n)
@@ -333,94 +327,6 @@ function formatTokenHint(n: number | string | null | undefined): string {
   if (v >= 1_000_000) return `= ${(v / 1_000_000).toLocaleString()}M tokens`
   if (v >= 1_000) return `= ${(v / 1_000).toLocaleString()}K tokens`
   return `= ${v.toLocaleString()} tokens`
-}
-
-function formatNumberDraft(value: number | string): string {
-  if (value === '') return ''
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? String(value) : '0'
-  }
-  return value
-}
-
-function parseNumberDraft(value: string): number {
-  if (value.trim() === '') return 0
-  const next = Number(value)
-  return Number.isFinite(next) ? next : 0
-}
-
-function isZeroDraft(value: string): boolean {
-  return value.trim() !== '' && parseNumberDraft(value) === 0
-}
-
-type DraftNumberInputProps = Omit<
-  InputHTMLAttributes<HTMLInputElement>,
-  'type' | 'value' | 'onChange'
-> & {
-  value: number | string
-  onValueChange: (next: number) => void
-  selectZeroOnFocus?: boolean
-}
-
-function DraftNumberInput({
-  value,
-  onValueChange,
-  selectZeroOnFocus = true,
-  onBlur,
-  onFocus,
-  onMouseUp,
-  ...props
-}: DraftNumberInputProps) {
-  const [draft, setDraft] = useState(() => formatNumberDraft(value))
-  const [focused, setFocused] = useState(false)
-
-  useEffect(() => {
-    if (!focused) {
-      setDraft(formatNumberDraft(value))
-    }
-  }, [focused, value])
-
-  const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const nextDraft = event.target.value
-    setDraft(nextDraft)
-    onValueChange(parseNumberDraft(nextDraft))
-  }
-
-  const handleFocus = (event: FocusEvent<HTMLInputElement>) => {
-    setFocused(true)
-    onFocus?.(event)
-    if (selectZeroOnFocus && isZeroDraft(event.currentTarget.value)) {
-      event.currentTarget.select()
-    }
-  }
-
-  const handleMouseUp = (event: ReactMouseEvent<HTMLInputElement>) => {
-    onMouseUp?.(event)
-    if (selectZeroOnFocus && isZeroDraft(event.currentTarget.value)) {
-      event.preventDefault()
-      event.currentTarget.select()
-    }
-  }
-
-  const handleBlur = (event: FocusEvent<HTMLInputElement>) => {
-    const normalized = parseNumberDraft(event.currentTarget.value)
-    setFocused(false)
-    setDraft(String(normalized))
-    onValueChange(normalized)
-    onBlur?.(event)
-  }
-
-  return (
-    <Input
-      {...props}
-      type='number'
-      value={draft}
-      onChange={handleChange}
-      onFocus={handleFocus}
-      onMouseUp={handleMouseUp}
-      onBlur={handleBlur}
-    />
-  )
 }
 
 // ---------------------------------------------------------------------------
@@ -512,37 +418,11 @@ function ConditionRow({ condition, onChange, onRemove }: ConditionRowProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Price input field
-// ---------------------------------------------------------------------------
-
-type PriceFieldProps = {
-  label: string
-  hint?: string
-  value: number
-  onChange: (next: number) => void
-}
-
-function PriceField({ label, hint, value, onChange }: PriceFieldProps) {
-  return (
-    <div className='w-36 space-y-0.5'>
-      <Label className='text-muted-foreground text-xs'>{label}</Label>
-      <DraftNumberInput
-        min={0}
-        step={0.000001}
-        value={Number.isFinite(value) ? value : 0}
-        onValueChange={onChange}
-        className='h-8 w-full'
-      />
-      {hint && <p className='text-muted-foreground text-xs'>{hint}</p>}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // Single tier card (visual editor)
 // ---------------------------------------------------------------------------
 
 type VisualTierCardProps = {
+  currency: PricingCurrency
   tier: VisualTier
   index: number
   total: number
@@ -552,6 +432,7 @@ type VisualTierCardProps = {
 }
 
 function VisualTierCard({
+  currency,
   tier,
   index,
   total,
@@ -561,20 +442,14 @@ function VisualTierCard({
 }: VisualTierCardProps) {
   const { t } = useTranslation()
   const cacheMode = getTierCacheMode(tier)
-
-  const emitTierChange = (next: VisualTier) => {
-    onChange(carryStableUiKey(tier, next))
-  }
+  const emitTierChange = (next: VisualTier) => onChange(carryStableUiKey(tier, next))
 
   const handleConditionChange = (
     conditionIndex: number,
     next: TierConditionInput
   ) => {
     const conditions = [...tier.conditions]
-    conditions[conditionIndex] = carryStableUiKey(
-      conditions[conditionIndex],
-      next
-    )
+    conditions[conditionIndex] = carryStableUiKey(conditions[conditionIndex], next)
     emitTierChange({ ...tier, conditions })
   }
 
@@ -583,55 +458,6 @@ function VisualTierCard({
       ...tier,
       conditions: tier.conditions.filter((_, i) => i !== conditionIndex),
     })
-  }
-
-  const handlePriceChange = (field: keyof VisualTier, value: number) => {
-    emitTierChange({ ...tier, [field]: value })
-  }
-
-  const handleCacheModeChange = (mode: CacheMode) => {
-    emitTierChange({
-      ...tier,
-      cache_mode: mode,
-      cache_create_1h_unit_cost:
-        mode === CACHE_MODE_TIMED ? (tier.cache_create_1h_unit_cost ?? 0) : 0,
-    })
-  }
-
-  const keyedConditions = useMemo(() => {
-    return tier.conditions.map((condition, position) => ({
-      condition,
-      position,
-      key: getStableUiKey(condition),
-    }))
-  }, [tier.conditions])
-
-  const inputUnitPrice = unitCostToPrice(tier.input_unit_cost)
-  const outputUnitPrice = unitCostToPrice(tier.output_unit_cost)
-  const hasMediaPricing = MEDIA_PRICE_VARS.some((variable) => {
-    const fieldKey = variable.tierField as keyof VisualTier
-    return unitCostToPrice((tier[fieldKey] as number | undefined) ?? 0) > 0
-  })
-  const [mediaOpen, setMediaOpen] = useState(hasMediaPricing)
-
-  useEffect(() => {
-    if (hasMediaPricing) setMediaOpen(true)
-  }, [hasMediaPricing])
-
-  const renderPriceVariable = (
-    variable: (typeof BILLING_EXTRA_VARS)[number]
-  ) => {
-    const fieldKey = variable.tierField as keyof VisualTier
-    const value = unitCostToPrice((tier[fieldKey] as number | undefined) ?? 0)
-
-    return (
-      <PriceField
-        key={variable.key}
-        label={t(variable.label)}
-        value={value}
-        onChange={(next) => handlePriceChange(fieldKey, priceToUnitCost(next))}
-      />
-    )
   }
 
   return (
@@ -684,102 +510,53 @@ function VisualTierCard({
             {t('Always matches (default tier).')}
           </p>
         ) : (
-          keyedConditions.map((item) => (
+          tier.conditions.map((condition, conditionIndex) => (
             <ConditionRow
-              key={item.key}
-              condition={item.condition}
-              onChange={(next) => handleConditionChange(item.position, next)}
-              onRemove={() => handleConditionRemove(item.position)}
+              key={getStableUiKey(condition)}
+              condition={condition}
+              onChange={(next) => handleConditionChange(conditionIndex, next)}
+              onRemove={() => handleConditionRemove(conditionIndex)}
             />
           ))
         )}
       </div>
 
-      <div className='space-y-2'>
-        <div className='flex items-center justify-between gap-3'>
-          <Label className='text-sm font-semibold'>{t('Token prices')}</Label>
-          <span className='bg-muted text-muted-foreground rounded-md px-2 py-1 text-xs'>
-            {PRICE_SUFFIX}
-          </span>
-        </div>
-
-        <div className='space-y-3'>
-          <div className='flex flex-wrap gap-x-4 gap-y-2'>
-            <PriceField
-              label={t('Input price')}
-              value={inputUnitPrice}
-              onChange={(value) =>
-                handlePriceChange('input_unit_cost', priceToUnitCost(value))
-              }
-            />
-            <PriceField
-              label={t('Output price')}
-              value={outputUnitPrice}
-              onChange={(value) =>
-                handlePriceChange('output_unit_cost', priceToUnitCost(value))
-              }
-            />
-          </div>
-
-          <div className='space-y-2'>
-            <div className='flex h-7 items-center'>
-              <Tabs
-                value={cacheMode}
-                onValueChange={(value) =>
-                  value !== null && handleCacheModeChange(value as CacheMode)
-                }
-              >
-                <TabsList className='h-8'>
-                  <TabsTrigger
-                    value={CACHE_MODE_GENERIC}
-                    className='px-2 text-xs'
-                  >
-                    {t('Generic cache')}
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value={CACHE_MODE_TIMED}
-                    className='px-2 text-xs'
-                  >
-                    {t('Time-sliced cache (Claude)')}
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
-            </div>
-            <div className='flex flex-wrap gap-x-4 gap-y-2'>
-              {CACHE_PRICE_VARS.map((variable) => {
-                if (variable.key === 'cc1h' && cacheMode !== CACHE_MODE_TIMED) {
-                  return null
-                }
-                return renderPriceVariable(variable)
-              })}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Media prices */}
-      <div className='space-y-1.5'>
-        <Button
-          type='button'
-          variant='ghost'
-          size='sm'
-          className='h-7 px-2 text-xs'
-          onClick={() => setMediaOpen((prev) => !prev)}
-        >
-          <ChevronDown
-            className={cn(
-              'mr-1 h-3 w-3 transition-transform',
-              mediaOpen && 'rotate-180'
-            )}
-          />
-          {t('Media pricing')}
-        </Button>
-        {mediaOpen && (
-          <div className='flex flex-wrap gap-x-4 gap-y-2'>
-            {MEDIA_PRICE_VARS.map(renderPriceVariable)}
-          </div>
-        )}
-      </div>
+      <TierPriceFields
+        currency={currency}
+        billingUnit={tier.billing_unit}
+        fixedPrice={tier.fixed_price}
+        onBillingUnitChange={(billing_unit) =>
+          emitTierChange({ ...tier, billing_unit })
+        }
+        onFixedPriceChange={(fixed_price) => emitTierChange({ ...tier, fixed_price })}
+        prices={{
+          p: tier.input_unit_cost,
+          c: tier.output_unit_cost,
+          ...Object.fromEntries(
+            BILLING_EXTRA_VARS.map((variable) => [
+              variable.key,
+              tier[variable.tierField as keyof VisualTier] ?? 0,
+            ])
+          ),
+        }}
+        cacheMode={cacheMode}
+        onCacheModeChange={(mode) =>
+          emitTierChange({
+            ...tier,
+            cache_mode: mode,
+            cache_create_1h_unit_cost:
+              mode === CACHE_MODE_TIMED
+                ? (tier.cache_create_1h_unit_cost ?? 0)
+                : 0,
+          })
+        }
+        onChange={(variable, value) => {
+          const field =
+            variable === 'p' ? 'input_unit_cost' : 'output_unit_cost'
+          const extra = BILLING_EXTRA_VARS.find((item) => item.key === variable)
+          emitTierChange({ ...tier, [extra?.tierField ?? field]: Number(value) })
+        }}
+      />
     </div>
   )
 }
@@ -789,60 +566,54 @@ function VisualTierCard({
 // ---------------------------------------------------------------------------
 
 type VisualEditorProps = {
+  currency: PricingCurrency
   visualConfig: VisualConfig | null
   onChange: (next: VisualConfig) => void
 }
 
-function VisualEditor({ visualConfig, onChange }: VisualEditorProps) {
+function VisualEditor({ visualConfig, onChange, currency }: VisualEditorProps) {
   const { t } = useTranslation()
   const config = useMemo(() => {
     const normalized = normalizeVisualConfig(visualConfig)
     visualConfig?.tiers.forEach((tier, index) => {
-      const normalizedTier = normalized.tiers[index]
-      if (normalizedTier) carryStableUiKey(tier, normalizedTier)
+      const replacement = normalized.tiers[index]
+      if (!replacement) return
+      carryStableUiKey(tier, replacement)
+      tier.conditions.forEach((condition, position) => {
+        if (replacement.conditions[position]) {
+          carryStableUiKey(condition, replacement.conditions[position])
+        }
+      })
     })
     return normalized
   }, [visualConfig])
 
-  const keyedTiers = useMemo(() => {
-    return config.tiers.map((tier, position) => ({
-      tier,
-      position,
-      key: getStableUiKey(tier),
-    }))
-  }, [config.tiers])
-
   const handleTierChange = (index: number, next: VisualTier) => {
     const tiers = [...config.tiers]
-    const normalized = normalizeVisualTier(next)
-    tiers[index] = carryStableUiKey(next, normalized)
+    tiers[index] = carryStableUiKey(config.tiers[index], normalizeVisualTier(next))
     onChange({ ...config, tiers })
   }
 
   const handleAddTier = () => {
     const tiers = [...config.tiers]
     const lastIndex = tiers.length - 1
+    // When adding a new fallback, give the previous catch-all tier a default
+    // upper-bound condition so the expression compiles into a sane two-tier
+    // shape with an immediately useful fallback.
     if (lastIndex >= 0 && tiers[lastIndex].conditions.length === 0) {
-      const lastTier = tiers[lastIndex]
-      const newCondition: TierConditionInput = {
-        var: 'len',
-        op: '<',
-        value: 200000,
-      }
-      const normalized = normalizeVisualTier({
+      tiers[lastIndex] = carryStableUiKey(tiers[lastIndex], normalizeVisualTier({
         ...tiers[lastIndex],
-        conditions: [newCondition],
-      })
-      tiers[lastIndex] = carryStableUiKey(lastTier, normalized)
+        conditions: [{ var: 'len', op: '<', value: 200000 }],
+      }))
     }
-    const newTier = normalizeVisualTier({
-      label: `tier_${tiers.length + 1}`,
-      conditions: [],
-      input_unit_cost: 0,
-      output_unit_cost: 0,
-    })
-    getStableUiKey(newTier)
-    tiers.push(newTier)
+    tiers.push(
+      normalizeVisualTier({
+        label: `tier_${tiers.length + 1}`,
+        conditions: [],
+        input_unit_cost: 0,
+        output_unit_cost: 0,
+      })
+    )
     onChange({ ...config, tiers })
   }
 
@@ -854,24 +625,25 @@ function VisualEditor({ visualConfig, onChange }: VisualEditorProps) {
   const handleAddCondition = (index: number) => {
     const tier = config.tiers[index]
     if (tier.conditions.length >= 2) return
+    // Prefer `len` (input length) over `p`/`c` for tier conditions because
+    // `p` is subject to auto-exclusion when sub-categories like `cr` are
+    // priced separately, which can misroute long-input requests into shorter
+    // tiers when cache-hits reduce the effective `p`.
     const usedVars = new Set(tier.conditions.map((c) => c.var))
     const nextVar: TierConditionInput['var'] = usedVars.has('len') ? 'c' : 'len'
-    const newCondition: TierConditionInput = {
-      var: nextVar,
-      op: '<',
-      value: 200000,
-    }
-    getStableUiKey(newCondition)
     onChange({
       ...config,
-      tiers: config.tiers.map((current, i) => {
-        if (i !== index) return current
-        const updated: VisualTier = {
-          ...current,
-          conditions: [...tier.conditions, newCondition],
-        }
-        return carryStableUiKey(current, updated)
-      }),
+      tiers: config.tiers.map((current, i) =>
+        i === index
+          ? carryStableUiKey(current, {
+              ...current,
+              conditions: [
+                ...tier.conditions,
+                { var: nextVar, op: '<', value: 200000 },
+              ],
+            })
+          : current
+      ),
     })
   }
 
@@ -882,15 +654,16 @@ function VisualEditor({ visualConfig, onChange }: VisualEditorProps) {
           'Each tier supports up to 2 conditions. The last tier without conditions is the fallback.'
         )}
       </p>
-      {keyedTiers.map((item) => (
+      {config.tiers.map((tier, index) => (
         <VisualTierCard
-          key={item.key}
-          tier={item.tier}
-          index={item.position}
+          currency={currency}
+          key={getStableUiKey(tier)}
+          tier={tier}
+          index={index}
           total={config.tiers.length}
-          onChange={(next) => handleTierChange(item.position, next)}
-          onRemove={() => handleRemoveTier(item.position)}
-          onAddCondition={() => handleAddCondition(item.position)}
+          onChange={(next) => handleTierChange(index, next)}
+          onRemove={() => handleRemoveTier(index)}
+          onAddCondition={() => handleAddCondition(index)}
         />
       ))}
       <Button
@@ -928,14 +701,21 @@ function RawExprEditor({ exprString, onChange }: RawExprEditorProps) {
             <code>ao</code>
           </div>
           <div>
-            {t('Functions')}: <code>tier(name, value)</code>, <code>max</code>,{' '}
-            <code>min</code>, <code>ceil</code>, <code>floor</code>,{' '}
-            <code>abs</code>, <code>header(name)</code>,{' '}
-            <code>param(path)</code>, <code>has(source, text)</code>
+            {t('Functions')}: <code>tier(name, value)</code>,{' '}
+            <code>fixed(amount)</code>, <code>max</code>, <code>min</code>,{' '}
+            <code>ceil</code>, <code>floor</code>, <code>abs</code>,{' '}
+            <code>header(name)</code>, <code>param(path)</code>,{' '}
+            <code>has(source, text)</code>
+          </div>
+          <div>
+            {t(
+              'Use tier(name, fixed(amount)) for a USD price per request. Group and request multipliers still apply.'
+            )}
           </div>
         </AlertDescription>
       </Alert>
       <Textarea
+        aria-label={t('Billing expression')}
         value={exprString}
         onChange={(event) => onChange(event.target.value)}
         placeholder='tier("base", p * 3 + c * 15)'
@@ -986,28 +766,9 @@ function RuleConditionRow({
         return mode
     }
   }
-  const getTimeFuncLabel = (timeFunc: TimeFunc) => {
-    switch (timeFunc) {
-      case 'hour':
-        return t('Hour of day')
-      case 'minute':
-        return t('Minute')
-      case 'weekday':
-        return t('Weekday')
-      case 'month':
-        return t('Month number')
-      case 'day':
-        return t('Day of month')
-      default:
-        return timeFunc
-    }
-  }
   let sourceLabel = t('Time')
-  if (condition.source === SOURCE_PARAM) {
-    sourceLabel = t('Body param')
-  } else if (condition.source === SOURCE_HEADER) {
-    sourceLabel = t('Header')
-  }
+  if (condition.source === SOURCE_PARAM) sourceLabel = t('Body param')
+  else if (condition.source === SOURCE_HEADER) sourceLabel = t('Header')
 
   const handleSourceChange = (source: string) => {
     if (source === SOURCE_TIME) {
@@ -1026,39 +787,12 @@ function RuleConditionRow({
 
   const renderTimeCondition = (timeCond: TimeCondition) => (
     <>
-      <Select
-        items={TIME_FUNCS.map((fn) => ({
-          value: fn,
-          label: getTimeFuncLabel(fn),
-        }))}
-        value={timeCond.timeFunc}
-        onValueChange={(value) =>
-          onChange({ ...timeCond, timeFunc: value as TimeFunc })
+      <BillingTimeProbeFields
+        probe={timeCond.timeFunc}
+        timezone={timeCond.timezone}
+        onChange={(timeFunc, timezone) =>
+          onChange({ ...timeCond, timeFunc: timeFunc as TimeFunc, timezone })
         }
-      >
-        <SelectTrigger className='w-32' size='sm'>
-          <SelectValue>{getTimeFuncLabel(timeCond.timeFunc)}</SelectValue>
-        </SelectTrigger>
-        <SelectContent alignItemWithTrigger={false}>
-          <SelectGroup>
-            {TIME_FUNCS.map((fn) => (
-              <SelectItem key={fn} value={fn}>
-                {getTimeFuncLabel(fn)}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
-      <Combobox
-        options={COMMON_TIMEZONES.map((tz) => ({
-          value: tz.value,
-          label: tz.label,
-        }))}
-        value={timeCond.timezone}
-        onValueChange={(value) =>
-          value !== null && onChange({ ...timeCond, timezone: value })
-        }
-        className='w-56'
       />
       <Select
         items={matchOptions.map((option) => ({
@@ -1082,25 +816,14 @@ function RuleConditionRow({
         </SelectContent>
       </Select>
       {timeCond.mode === MATCH_RANGE ? (
-        <>
-          <DraftNumberInput
-            value={timeCond.rangeStart}
-            onValueChange={(value) =>
-              onChange({ ...timeCond, rangeStart: String(value) })
-            }
-            placeholder={t('Start')}
-            className='w-20'
-          />
-          <span className='text-muted-foreground text-xs'>~</span>
-          <DraftNumberInput
-            value={timeCond.rangeEnd}
-            onValueChange={(value) =>
-              onChange({ ...timeCond, rangeEnd: String(value) })
-            }
-            placeholder={t('End')}
-            className='w-20'
-          />
-        </>
+        <BillingTimeRangeFields
+          normalizeNumberDrafts
+          start={timeCond.rangeStart}
+          end={timeCond.rangeEnd}
+          onChange={(rangeStart, rangeEnd) =>
+            onChange({ ...timeCond, rangeStart, rangeEnd })
+          }
+        />
       ) : (
         <DraftNumberInput
           value={timeCond.value}
@@ -1219,39 +942,24 @@ function RuleGroupCard({
   onRemove,
 }: RuleGroupCardProps) {
   const { t } = useTranslation()
-
-  const emitGroupChange = (next: RequestRuleGroup) => {
-    onChange(carryStableUiKey(group, next))
-  }
-
-  const keyedRuleConditions = useMemo(() => {
-    return group.conditions.map((condition, position) => ({
-      condition,
-      position,
-      key: getStableUiKey(condition),
-    }))
-  }, [group.conditions])
+  const emitGroupChange = (next: RequestRuleGroup) => onChange(carryStableUiKey(group, next))
 
   const handleConditionChange = (
     conditionIndex: number,
     next: RequestCondition
   ) => {
     const conditions = [...group.conditions]
-    conditions[conditionIndex] = carryStableUiKey(
-      conditions[conditionIndex],
-      next
-    )
+    conditions[conditionIndex] = carryStableUiKey(conditions[conditionIndex], next)
     emitGroupChange({ ...group, conditions })
   }
 
   const handleAddCondition = (timeMode: boolean) => {
-    const newCondition = timeMode
-      ? createEmptyTimeCondition()
-      : createEmptyCondition()
-    getStableUiKey(newCondition)
     emitGroupChange({
       ...group,
-      conditions: [...group.conditions, newCondition],
+      conditions: [
+        ...group.conditions,
+        timeMode ? createEmptyTimeCondition() : createEmptyCondition(),
+      ],
     })
   }
 
@@ -1272,16 +980,16 @@ function RuleGroupCard({
       </div>
 
       <div className='space-y-2'>
-        {keyedRuleConditions.map((item) => (
+        {group.conditions.map((condition, conditionIndex) => (
           <RuleConditionRow
-            key={item.key}
-            condition={item.condition}
-            onChange={(next) => handleConditionChange(item.position, next)}
+            key={getStableUiKey(condition)}
+            condition={condition}
+            onChange={(next) => handleConditionChange(conditionIndex, next)}
             onRemove={() =>
               emitGroupChange({
                 ...group,
                 conditions: group.conditions.filter(
-                  (_, i) => i !== item.position
+                  (_, i) => i !== conditionIndex
                 ),
               })
             }
@@ -1388,11 +1096,18 @@ function PresetSection({ applyPreset }: PresetSectionProps) {
 // ---------------------------------------------------------------------------
 
 type EstimatorProps = {
+  currency: PricingCurrency
   effectiveExpr: string
+  fullExpr: string
 }
 
-function CostEstimator({ effectiveExpr }: EstimatorProps) {
+function CostEstimator({ effectiveExpr, fullExpr, currency }: EstimatorProps) {
   const { t } = useTranslation()
+  const inputId = useId()
+  const outputId = useId()
+  const lengthId = useId()
+  const [lengthOverride, setLengthOverride] = useState('')
+  const billingTime = useBillingTime(effectiveExpr)
   const [promptTokens, setPromptTokens] = useState(0)
   const [completionTokens, setCompletionTokens] = useState(0)
   const [extras, setExtras] = useState<ExtraTokenValues>({
@@ -1410,10 +1125,19 @@ function CostEstimator({ effectiveExpr }: EstimatorProps) {
     [effectiveExpr]
   )
 
+  const tokens = useMemo(() => {
+    const values = buildEstimatorTokens(promptTokens, completionTokens, extras)
+    if (lengthOverride.trim()) values.len = Number(lengthOverride)
+    return values
+  }, [promptTokens, completionTokens, extras, lengthOverride])
+
   const result = useMemo(
     () =>
-      evalExprLocally(effectiveExpr, promptTokens, completionTokens, extras),
-    [effectiveExpr, promptTokens, completionTokens, extras]
+      evalExprLocally(effectiveExpr, promptTokens, completionTokens, extras, {
+        tokens,
+        now: billingTime === undefined ? undefined : new Date(billingTime),
+      }),
+    [effectiveExpr, promptTokens, completionTokens, extras, tokens, billingTime]
   )
 
   return (
@@ -1428,22 +1152,41 @@ function CostEstimator({ effectiveExpr }: EstimatorProps) {
       </div>
       <div className='grid grid-cols-2 gap-3'>
         <div className='space-y-1'>
-          <Label className='text-xs'>{t('Input tokens')}</Label>
+          <Label htmlFor={inputId} className='text-xs'>
+            {t('Input tokens')}
+          </Label>
           <DraftNumberInput
+            id={inputId}
             min={0}
             value={promptTokens}
             onValueChange={setPromptTokens}
           />
         </div>
         <div className='space-y-1'>
-          <Label className='text-xs'>{t('Output tokens')}</Label>
+          <Label htmlFor={outputId} className='text-xs'>
+            {t('Output tokens')}
+          </Label>
           <DraftNumberInput
+            id={outputId}
             min={0}
             value={completionTokens}
             onValueChange={setCompletionTokens}
           />
         </div>
       </div>
+      <Field>
+        <FieldLabel htmlFor={lengthId}>
+          {t('Full input length override')}
+        </FieldLabel>
+        <Input
+          id={lengthId}
+          type='number'
+          min={0}
+          value={lengthOverride}
+          onChange={(event) => setLengthOverride(event.target.value)}
+          placeholder={t('Use the existing token total')}
+        />
+      </Field>
       {usesExtras && (
         <div className='grid grid-cols-2 gap-3'>
           {BILLING_EXTRA_VARS.map((variable) => {
@@ -1488,7 +1231,9 @@ function CostEstimator({ effectiveExpr }: EstimatorProps) {
         ) : (
           <div className='flex items-center gap-2'>
             <span className='font-medium'>
-              {t('Estimated quota cost')}: {result.cost.toLocaleString()}
+              {t('Estimated cost')}:{' '}
+              {formatPricingAmount(result.cost / 1_000_000, currency)}
+              {result.billingUnit === 'request' && `/${t('request')}`}
             </span>
             {result.matchedTier && (
               <Badge variant='outline' className='text-xs'>
@@ -1498,6 +1243,12 @@ function CostEstimator({ effectiveExpr }: EstimatorProps) {
           </div>
         )}
       </div>
+      <RequestSimulation
+        expression={fullExpr}
+        tokens={tokens}
+        currency={currency}
+        mode='token'
+      />
     </div>
   )
 }
@@ -1537,6 +1288,7 @@ Important: len is NOT affected by auto-exclusion. Tier conditions should use len
 ### Built-in Functions
 
 - tier(name, value) — labels the billing tier; must wrap the cost expression
+- fixed(amount) — a finite non-negative USD price per request, used only as tier("name", fixed(0.01)); replaces token charges in that leaf. Other leaves may still use token prices. Group/request multipliers and existing tool surcharges still apply. Unsupported for task usage expressions and Realtime.
 - max(a, b), min(a, b) — maximum/minimum
 - ceil(x), floor(x), abs(x) — ceiling, floor, absolute value
 - header(name) — reads a request header
@@ -1655,6 +1407,7 @@ function LlmPromptHelper({ modelName }: LlmPromptHelperProps) {
 // ---------------------------------------------------------------------------
 
 export type TieredPricingEditorProps = {
+  currency?: PricingCurrency
   modelName?: string
   billingExpr: string
   requestRuleExpr: string
@@ -1664,7 +1417,29 @@ export type TieredPricingEditorProps = {
 
 type EditorMode = 'visual' | 'raw'
 
+// The legacy form omits zero-valued extra variables when generating prices.
+// Keep that API unchanged for synchronization callers; route explicit zero to the document form.
+function parseTierEditorConfig(source: string): VisualConfig | null {
+  const config = tryParseVisualConfig(source)
+  if (!config) return null
+  const document = parseVisualBillingDocument(source)
+  if (!document) return null
+  if (
+    document.root.kind === 'tier' &&
+    document.root.prices.some(
+      (price) =>
+        price.variable !== 'p' &&
+        price.variable !== 'c' &&
+        Number(price.value) === 0
+    )
+  ) {
+    return null
+  }
+  return config
+}
+
 export const TieredPricingEditor = memo(function TieredPricingEditor({
+  currency = USD_PRICING_CURRENCY,
   modelName,
   billingExpr: currentExpr,
   requestRuleExpr: currentRequestRuleExpr,
@@ -1672,146 +1447,165 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
   onRequestRuleExprChange,
 }: TieredPricingEditorProps) {
   const { t } = useTranslation()
-  const [editorMode, setEditorMode] = useState<EditorMode>('visual')
-  const [visualConfig, setVisualConfig] = useState<VisualConfig | null>(() =>
-    tryParseVisualConfig(currentExpr)
+  const [editorMode, setEditorMode] = useState<EditorMode>(() =>
+    currentExpr &&
+    !parseTierEditorConfig(currentExpr) &&
+    !parseVisualBillingDocument(currentExpr)
+      ? 'raw'
+      : 'visual'
   )
+  const [visualConfig, setVisualConfig] = useState<VisualConfig | null>(
+    () =>
+      parseTierEditorConfig(currentExpr) ??
+      (!currentExpr ? createDefaultVisualConfig() : null)
+  )
+  const [visualDocument, setVisualDocument] =
+    useState<VisualBillingDocument | null>(() =>
+      parseTierEditorConfig(currentExpr)
+        ? null
+        : parseVisualBillingDocument(currentExpr)
+    )
+  const [baseExpr, setBaseExpr] = useState(currentExpr)
+  const [ruleExpr, setRuleExpr] = useState(currentRequestRuleExpr)
   const [rawExpr, setRawExpr] = useState(() =>
-    combineBillingExpr(currentExpr || '', currentRequestRuleExpr || '')
+    combineBillingExpr(currentExpr, currentRequestRuleExpr)
   )
   const [requestRuleGroups, setRequestRuleGroups] = useState<
     RequestRuleGroup[]
   >(() => tryParseRequestRuleExpr(currentRequestRuleExpr) || [])
-
-  const keyedRequestRuleGroups = useMemo(() => {
-    return requestRuleGroups.map((group, position) => ({
-      group,
-      position,
-      key: getStableUiKey(group),
-    }))
-  }, [requestRuleGroups])
-  const initRef = useRef(false)
-
+  const loadedModel = useRef(modelName)
   useEffect(() => {
-    if (initRef.current) return
-    initRef.current = true
-    const parsedConfig = tryParseVisualConfig(currentExpr)
-    if (parsedConfig) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- a model change must atomically resync all editor representations
-      setVisualConfig(parsedConfig)
-      setEditorMode('visual')
-    } else if (currentExpr) {
-      setVisualConfig(null)
-      setEditorMode('raw')
-    } else {
-      setVisualConfig(createDefaultVisualConfig())
-    }
-    setRawExpr(
-      combineBillingExpr(currentExpr || '', currentRequestRuleExpr || '')
+    if (loadedModel.current === modelName) return
+    loadedModel.current = modelName
+    const config = parseTierEditorConfig(currentExpr)
+    const document = config ? null : parseVisualBillingDocument(currentExpr)
+    setVisualConfig(
+      config ?? (!currentExpr ? createDefaultVisualConfig() : null)
     )
+    setVisualDocument(document)
+    setEditorMode(config || document || !currentExpr ? 'visual' : 'raw')
+    setBaseExpr(currentExpr)
+    setRuleExpr(currentRequestRuleExpr)
+    setRawExpr(combineBillingExpr(currentExpr, currentRequestRuleExpr))
     setRequestRuleGroups(tryParseRequestRuleExpr(currentRequestRuleExpr) || [])
-  }, [currentExpr, currentRequestRuleExpr])
+  }, [modelName, currentExpr, currentRequestRuleExpr])
 
-  useEffect(() => {
-    initRef.current = false
-  }, [modelName])
+  const serialized = useMemo(
+    () =>
+      visualDocument ? serializeVisualBillingDocument(visualDocument) : null,
+    [visualDocument]
+  )
+  const invalidFlatDraft = useMemo(
+    () =>
+      visualConfig?.tiers.some((tier) => tier.billing_unit === 'request') &&
+      compileBillingExpression(generateExprFromVisualConfig(visualConfig))
+        .status !== 'ready',
+    [visualConfig]
+  )
+  const invalidDraft =
+    editorMode === 'visual' &&
+    (serialized?.ok === false || Boolean(invalidFlatDraft))
+  const canUseVisualRules =
+    !ruleExpr || tryParseRequestRuleExpr(ruleExpr) !== null
+  const effectiveExpr = baseExpr
 
-  const canUseVisualRules = useMemo(() => {
-    if (!currentRequestRuleExpr) return true
-    return tryParseRequestRuleExpr(currentRequestRuleExpr) !== null
-  }, [currentRequestRuleExpr])
+  const handleVisualChange = useCallback(
+    (next: VisualConfig) => {
+      setVisualConfig(next)
+      const expression = generateExprFromVisualConfig(next)
+      if (
+        next.tiers.some((tier) => tier.billing_unit === 'request') &&
+        compileBillingExpression(expression).status !== 'ready'
+      ) {
+        return
+      }
+      setBaseExpr(expression)
+      onBillingExprChange(expression)
+    },
+    [onBillingExprChange]
+  )
 
-  const effectiveExpr = useMemo(() => {
-    if (editorMode === 'visual') {
-      return generateExprFromVisualConfig(visualConfig)
-    }
-    const { billingExpr } = splitBillingExprAndRequestRules(rawExpr)
-    return billingExpr
-  }, [editorMode, visualConfig, rawExpr])
-
-  useEffect(() => {
-    if (effectiveExpr !== currentExpr) {
-      onBillingExprChange(effectiveExpr)
-    }
-  }, [effectiveExpr, currentExpr, onBillingExprChange])
-
-  useEffect(() => {
-    if (editorMode !== 'visual') return
-    const ruleExpr = buildRequestRuleExpr(requestRuleGroups)
-    if (ruleExpr !== currentRequestRuleExpr) {
-      onRequestRuleExprChange(ruleExpr)
-    }
-  }, [
-    editorMode,
-    requestRuleGroups,
-    currentRequestRuleExpr,
-    onRequestRuleExprChange,
-  ])
-
-  const handleVisualChange = useCallback((next: VisualConfig) => {
-    setVisualConfig(next)
-  }, [])
+  const handleDocumentChange = useCallback(
+    (next: VisualBillingDocument) => {
+      setVisualDocument(next)
+      const result = serializeVisualBillingDocument(next)
+      if (result.ok) {
+        setBaseExpr(result.source)
+        onBillingExprChange(result.source)
+      }
+    },
+    [onBillingExprChange]
+  )
 
   const handleRawChange = useCallback(
     (value: string) => {
       setRawExpr(value)
-      const { requestRuleExpr: ruleStr } =
-        splitBillingExprAndRequestRules(value)
-      onRequestRuleExprChange(ruleStr)
+      const split = splitBillingExprAndRequestRules(value)
+      setBaseExpr(split.billingExpr)
+      setRuleExpr(split.requestRuleExpr)
+      onBillingExprChange(split.billingExpr)
+      onRequestRuleExprChange(split.requestRuleExpr)
     },
-    [onRequestRuleExprChange]
+    [onBillingExprChange, onRequestRuleExprChange]
   )
 
   const handleModeChange = useCallback(
     (next: EditorMode) => {
+      if (next === editorMode) return
+      if (invalidDraft) return
       if (next === 'visual') {
-        const { billingExpr, requestRuleExpr: ruleStr } =
-          splitBillingExprAndRequestRules(rawExpr)
-        const parsed = tryParseVisualConfig(billingExpr)
-        if (parsed) {
-          setVisualConfig(parsed)
-        } else {
-          setVisualConfig(createDefaultVisualConfig())
+        const parsed = parseTierEditorConfig(baseExpr)
+        const document = parsed ? null : parseVisualBillingDocument(baseExpr)
+        if (!parsed && !document) {
+          toast.error(
+            t(
+              'This expression cannot be edited visually without losing information.'
+            )
+          )
+          return
         }
-        const parsedGroups = tryParseRequestRuleExpr(ruleStr)
-        setRequestRuleGroups(parsedGroups || [])
-        onRequestRuleExprChange(ruleStr)
+        setVisualConfig(parsed)
+        setVisualDocument(document)
+        setRequestRuleGroups(tryParseRequestRuleExpr(ruleExpr) || [])
       } else {
-        const expr = generateExprFromVisualConfig(visualConfig)
-        const ruleExpr = buildRequestRuleExpr(requestRuleGroups)
-        setRawExpr(combineBillingExpr(expr, ruleExpr) || expr)
+        setRawExpr(combineBillingExpr(baseExpr, ruleExpr))
       }
       setEditorMode(next)
     },
-    [rawExpr, visualConfig, requestRuleGroups, onRequestRuleExprChange]
+    [editorMode, invalidDraft, baseExpr, ruleExpr, t]
   )
 
   const applyPreset = useCallback(
     (preset: Preset) => {
-      const presetGroups = preset.requestRules || []
-      const ruleExpr = buildRequestRuleExpr(presetGroups)
-      const combined = combineBillingExpr(preset.expr, ruleExpr) || preset.expr
-      setRawExpr(combined)
-      const parsed = tryParseVisualConfig(preset.expr)
-      if (parsed) {
-        setVisualConfig(parsed)
-        setEditorMode('visual')
-      } else {
-        setEditorMode('raw')
-        setVisualConfig(null)
-      }
-      setRequestRuleGroups(presetGroups)
-      onRequestRuleExprChange(ruleExpr)
+      const groups = preset.requestRules || []
+      const rules = buildRequestRuleExpr(groups)
+      const config = parseTierEditorConfig(preset.expr)
+      const document = config ? null : parseVisualBillingDocument(preset.expr)
+      setRawExpr(combineBillingExpr(preset.expr, rules))
+      setBaseExpr(preset.expr)
+      setRuleExpr(rules)
+      setVisualConfig(config)
+      setVisualDocument(document)
+      setEditorMode(config || document ? 'visual' : 'raw')
+      setRequestRuleGroups(groups)
+      onBillingExprChange(preset.expr)
+      onRequestRuleExprChange(rules)
+    },
+    [onBillingExprChange, onRequestRuleExprChange]
+  )
+
+  const handleRuleGroupsChange = useCallback(
+    (next: RequestRuleGroup[]) => {
+      setRequestRuleGroups(next)
+      const rules = buildRequestRuleExpr(next)
+      setRuleExpr(rules)
+      onRequestRuleExprChange(rules)
     },
     [onRequestRuleExprChange]
   )
 
-  const handleRuleGroupsChange = useCallback((next: RequestRuleGroup[]) => {
-    setRequestRuleGroups(next)
-  }, [])
-
   return (
-    <div className='space-y-5'>
+    <div className='space-y-5' data-billing-invalid={invalidDraft || undefined}>
       <div className='grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end'>
         <Field className='gap-2'>
           <FieldLabel>{t('Editor mode')}</FieldLabel>
@@ -1823,13 +1617,19 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
             value={editorMode}
             onValueChange={(value) => handleModeChange(value as EditorMode)}
           >
-            <SelectTrigger className='w-full sm:w-56' size='sm'>
+            <SelectTrigger
+              aria-label={t('Editor mode')}
+              className='w-full sm:w-56'
+              size='sm'
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent alignItemWithTrigger={false}>
               <SelectGroup>
                 <SelectItem value='visual'>{t('Visual editor')}</SelectItem>
-                <SelectItem value='raw'>{t('Expression editor')}</SelectItem>
+                <SelectItem value='raw' disabled={invalidDraft}>
+                  {t('Expression editor')}
+                </SelectItem>
               </SelectGroup>
             </SelectContent>
           </Select>
@@ -1841,16 +1641,38 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
         )}
       </div>
 
+      <p className='text-muted-foreground text-xs'>
+        {t(
+          'Raw expressions and presets use USD. Currency selection only converts visual price inputs and monetary previews.'
+        )}
+      </p>
       <PresetSection applyPreset={applyPreset} />
 
       <div className='bg-muted/30 space-y-3 rounded-md border p-3'>
-        {editorMode === 'visual' ? (
+        {editorMode === 'visual' && visualDocument && (
+          <VisualBillingDocumentEditor
+            document={visualDocument}
+            currency={currency}
+            issues={serialized && !serialized.ok ? serialized.issues : []}
+            onChange={handleDocumentChange}
+          />
+        )}
+        {editorMode === 'visual' && !visualDocument && (
           <VisualEditor
+            currency={currency}
             visualConfig={visualConfig}
             onChange={handleVisualChange}
           />
-        ) : (
+        )}
+        {editorMode === 'raw' && (
           <RawExprEditor exprString={rawExpr} onChange={handleRawChange} />
+        )}
+        {invalidDraft && (
+          <p role='alert' className='text-destructive text-sm'>
+            {t(
+              'Complete the invalid fields before saving or switching modes. The last valid expression is preserved.'
+            )}
+          </p>
         )}
 
         {editorMode === 'visual' && (
@@ -1866,7 +1688,7 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
               </p>
             </div>
 
-            {currentRequestRuleExpr && !canUseVisualRules ? (
+            {ruleExpr && !canUseVisualRules ? (
               <Alert>
                 <AlertDescription className='text-xs'>
                   {t(
@@ -1876,22 +1698,19 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
               </Alert>
             ) : (
               <>
-                {keyedRequestRuleGroups.map((item) => (
+                {requestRuleGroups.map((group, groupIndex) => (
                   <RuleGroupCard
-                    key={item.key}
-                    group={item.group}
-                    index={item.position}
+                    key={getStableUiKey(group)}
+                    group={group}
+                    index={groupIndex}
                     onChange={(next) => {
                       const updated = [...requestRuleGroups]
-                      updated[item.position] = carryStableUiKey(
-                        item.group,
-                        next
-                      )
+                      updated[groupIndex] = carryStableUiKey(group, next)
                       handleRuleGroupsChange(updated)
                     }}
                     onRemove={() =>
                       handleRuleGroupsChange(
-                        requestRuleGroups.filter((_, i) => i !== item.position)
+                        requestRuleGroups.filter((_, i) => i !== groupIndex)
                       )
                     }
                   />
@@ -1900,11 +1719,12 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
                   variant='outline'
                   size='sm'
                   className='h-9 w-36 justify-center'
-                  onClick={() => {
-                    const newGroup = createEmptyRuleGroup()
-                    getStableUiKey(newGroup)
-                    handleRuleGroupsChange([...requestRuleGroups, newGroup])
-                  }}
+                  onClick={() =>
+                    handleRuleGroupsChange([
+                      ...requestRuleGroups,
+                      createEmptyRuleGroup(),
+                    ])
+                  }
                 >
                   <Plus className='mr-2 h-4 w-4' />
                   {t('Add rule group')}
@@ -1915,7 +1735,15 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
         )}
       </div>
 
-      <CostEstimator effectiveExpr={effectiveExpr} />
+      <CostEstimator
+        effectiveExpr={effectiveExpr}
+        fullExpr={
+          editorMode === 'raw'
+            ? rawExpr
+            : combineBillingExpr(effectiveExpr, ruleExpr)
+        }
+        currency={currency}
+      />
     </div>
   )
 })

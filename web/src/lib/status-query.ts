@@ -179,15 +179,13 @@ async function fetchStatusAndSync(): Promise<StatusRecord | null> {
  * this instead of calling `getStatus()` or `fetch('/api/status')` directly
  * so the SPA issues at most one in-flight status request per stale window.
  */
-export function statusQueryOptions() {
-  return queryOptions({
-    queryKey: STATUS_QUERY_KEY,
-    queryFn: fetchStatusAndSync,
-    placeholderData: getInitialStatus,
-    staleTime: STATUS_STALE_TIME,
-    gcTime: STATUS_GC_TIME,
-  })
-}
+export const statusQueryOptions = queryOptions({
+  queryKey: STATUS_QUERY_KEY,
+  queryFn: fetchStatusAndSync,
+  placeholderData: getInitialStatus,
+  staleTime: STATUS_STALE_TIME,
+  gcTime: STATUS_GC_TIME,
+})
 
 /**
  * Boot-time prefetch: a fresh localStorage cache is installed into the query
@@ -204,7 +202,7 @@ export async function prefetchStatusAtStartup(
     return cached
   }
   try {
-    return await queryClient.fetchQuery(statusQueryOptions())
+    return await queryClient.fetchQuery(statusQueryOptions)
   } catch {
     if (cached) {
       queryClient.setQueryData(STATUS_QUERY_KEY, cached)
@@ -225,7 +223,10 @@ export async function ensureSharedStatus(
   queryClient: QueryClient
 ): Promise<StatusRecord | null> {
   try {
-    const data = await queryClient.fetchQuery(statusQueryOptions())
+    const data = await queryClient.ensureQueryData({
+      ...statusQueryOptions,
+      revalidateIfStale: true,
+    })
     return (data as StatusRecord | null) ?? readCachedStatus()
   } catch {
     return (

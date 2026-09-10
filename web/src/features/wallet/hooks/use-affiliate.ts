@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { useState, useEffect, useCallback } from 'react'
 
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { handleServerError } from '@/lib/handle-server-error'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { getAffiliateCode } from '../api'
 import { generateAffiliateLink } from '../lib'
@@ -37,7 +39,7 @@ export function useAffiliate() {
   const fetchAffiliateCode = useCallback(async () => {
     try {
       setLoading(true)
-      const response = await getAffiliateCode()
+      const response = requireServerSuccess(await getAffiliateCode())
 
       if (response.success && response.data) {
         setAffiliateCode(response.data)
@@ -45,8 +47,7 @@ export function useAffiliate() {
         setAffiliateLink(link)
       }
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Failed to fetch affiliate code:', error)
+      handleServerError(error)
     } finally {
       setLoading(false)
     }

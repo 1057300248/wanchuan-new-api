@@ -121,7 +121,7 @@
 ### 3.6 API 请求
 
 - **React Query**：数据获取用 `useQuery`，变更用 `useMutation`；为每个查询配置唯一 `queryKey`（建议数组形式、层级一致）；在 `onSuccess` 中对相关 query 做 `invalidateQueries`，可配合乐观更新。服务端错误统一通过 `handleServerError` 处理（详见 [3.9 错误处理](#39-错误处理)）。
-- **Axios**：使用项目统一的 `api` 实例（含 `baseURL`、`headers`、`withCredentials: true`）；GET 默认请求去重，特殊请求可通过配置关闭；认证与通用错误在拦截器中处理。
+- **Axios**：使用项目统一的 `api` 实例（含 `baseURL`、`headers`、`withCredentials: true`）；GET 默认请求去重，特殊请求可通过配置关闭；认证刷新与请求重试在拦截器中处理；普通错误提示由 Query/Mutation 的最终失败回调或直接调用方负责。
 
 ### 3.7 表单
 
@@ -136,7 +136,10 @@
 
 ### 3.9 错误处理
 
-- **服务端错误**：统一使用 `handleServerError`，在 React Query 全局配置与拦截器中接入；按 HTTP 状态码给出合适提示，文案使用 i18n。
+- **服务端错误**：统一使用 `handleServerError(error, fallbackMessage?)`，优先保留服务端具体原因。相同失败沿 `cause` 传播时只提示一次；不同操作即使文案相同也分别提示。禁止把完整 Axios 错误对象（可能包含凭据）直接写入控制台。
+- **提示归属**：普通请求拦截器不弹 Toast。使用共享 `createAppQueryClient` 在 Query/Mutation 最终失败时提示；Mutation 自定义 `onError` 负责自己的提示或表单错误。自动重试期间和主动取消时不报错。`meta.errorToast: false` 关闭自动提示，页面仍可主动调用错误处理函数。
+- **业务失败**：保留原始 API 响应契约；Query 使用 `requireServerSuccess` 检查 `success: false`，或在业务层用 `createServerError(response, fallbackMessage?)` 抛错并保留来源。直接请求须明确处理失败响应和 Promise 拒绝；需要展示失败状态的 Mutation 不得把失败结果当作保存成功。
+- **认证兼容**：保留稳定错误码映射及 `AuthOperationError` 的安全消息，不解开其来源来展示被屏蔽的细节。维护既有刷新、跳转和一次性授权不重放约束。
 - **展示**：使用 `toast.error` 等统一方式；路由级错误由 `errorComponent` 承接，提供友好错误页并记录便于排查的信息。
 - **表单**：校验与服务端错误映射到字段后，在字段下方展示；使用 `form.setError` 等与表单库一致的方式。
 

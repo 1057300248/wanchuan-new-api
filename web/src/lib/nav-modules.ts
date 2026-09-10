@@ -184,7 +184,7 @@ export async function getModuleAccessForGuard(
   module: HeaderNavModule
 ): Promise<ModuleAccess> {
   try {
-    const status = await queryClient.fetchQuery(statusQueryOptions())
+    const status = await queryClient.fetchQuery(statusQueryOptions)
     if (!status) return { enabled: false, requireAuth: true }
     return getModuleAccessFromStatus(status, module)
   } catch {
