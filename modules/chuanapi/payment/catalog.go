@@ -8,24 +8,41 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 )
 
-type providerCatalogue struct{}
+const (
+	WaffoProviderID        = "chuanapi/waffo"
+	WaffoPancakeProviderID = "chuanapi/waffo-pancake"
+)
 
-func RegisterRuntime() error {
-	return paymentport.SetDefault(providerCatalogue{})
+type waffoCatalogue struct{}
+type waffoPancakeCatalogue struct{}
+
+// RegisterProviders contributes each concrete payment provider independently so
+// the generic registry can detect provider ids and response-surface collisions.
+// Pancake is registered first to preserve the historical payment-method order.
+func RegisterProviders(registry *paymentport.Registry) error {
+	if err := registry.Register(WaffoPancakeProviderID, waffoPancakeCatalogue{}); err != nil {
+		return err
+	}
+	return registry.Register(WaffoProviderID, waffoCatalogue{})
 }
 
-func (providerCatalogue) Contribution() paymentport.Contribution {
-	enableWaffo := isWaffoTopUpEnabled()
-	enablePancake := isWaffoPancakeTopUpEnabled()
-	contribution := paymentport.Contribution{
-		Fields: map[string]any{
-			"enable_waffo_topup":         enableWaffo,
-			"enable_waffo_pancake_topup": enablePancake,
-			"waffo_min_topup":            setting.WaffoMinTopUp,
-			"waffo_pancake_min_topup":    setting.WaffoPancakeMinTopUp,
+func (waffoPancakeCatalogue) Descriptor() paymentport.Descriptor {
+	return paymentport.Descriptor{
+		MethodTypes: []string{model.PaymentMethodWaffoPancake},
+		FieldKeys: []string{
+			"enable_waffo_pancake_topup",
+			"waffo_pancake_min_topup",
 		},
 	}
-	if enablePancake {
+}
+
+func (waffoPancakeCatalogue) Contribution() paymentport.Contribution {
+	enabled := isWaffoPancakeTopUpEnabled()
+	contribution := paymentport.Contribution{Fields: map[string]any{
+		"enable_waffo_pancake_topup": enabled,
+		"waffo_pancake_min_topup":    setting.WaffoPancakeMinTopUp,
+	}}
+	if enabled {
 		contribution.Methods = append(contribution.Methods, map[string]string{
 			"name":      "Waffo Pancake",
 			"type":      model.PaymentMethodWaffoPancake,
@@ -33,7 +50,28 @@ func (providerCatalogue) Contribution() paymentport.Contribution {
 			"min_topup": strconv.Itoa(setting.WaffoPancakeMinTopUp),
 		})
 	}
-	if enableWaffo {
+	return contribution
+}
+
+func (waffoCatalogue) Descriptor() paymentport.Descriptor {
+	return paymentport.Descriptor{
+		MethodTypes: []string{model.PaymentMethodWaffo},
+		FieldKeys: []string{
+			"enable_waffo_topup",
+			"waffo_min_topup",
+			"waffo_pay_methods",
+		},
+	}
+}
+
+func (waffoCatalogue) Contribution() paymentport.Contribution {
+	enabled := isWaffoTopUpEnabled()
+	contribution := paymentport.Contribution{Fields: map[string]any{
+		"enable_waffo_topup": enabled,
+		"waffo_min_topup":    setting.WaffoMinTopUp,
+		"waffo_pay_methods":  nil,
+	}}
+	if enabled {
 		contribution.Methods = append(contribution.Methods, map[string]string{
 			"name":      "Waffo (Global Payment)",
 			"type":      model.PaymentMethodWaffo,
@@ -41,8 +79,6 @@ func (providerCatalogue) Contribution() paymentport.Contribution {
 			"min_topup": strconv.Itoa(setting.WaffoMinTopUp),
 		})
 		contribution.Fields["waffo_pay_methods"] = setting.GetWaffoPayMethods()
-	} else {
-		contribution.Fields["waffo_pay_methods"] = nil
 	}
 	return contribution
 }

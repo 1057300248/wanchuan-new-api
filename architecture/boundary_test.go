@@ -123,7 +123,7 @@ func TestChuanAPICompositionRootStaysThin(t *testing.T) {
 	for _, imp := range file.Imports {
 		importPath, unquoteErr := strconv.Unquote(imp.Path.Value)
 		require.NoError(t, unquoteErr)
-		if importPath == "fmt" || importPath == modulePath+"/extension" || importPath == modulePath+"/pkg/moneyport" || strings.HasPrefix(importPath, modulePath+"/modules/chuanapi/") {
+		if importPath == "fmt" || importPath == modulePath+"/extension" || importPath == modulePath+"/pkg/moneyport" || importPath == modulePath+"/pkg/paymentport" || strings.HasPrefix(importPath, modulePath+"/modules/chuanapi/") {
 			continue
 		}
 		offenders = append(offenders, importPath)
@@ -207,6 +207,34 @@ func TestChuanAPIRouteModulesUseHostOwnedAPIScopes(t *testing.T) {
 				"%s must not reconstruct host API middleware policy (%s)", rel, forbidden)
 		}
 	}
+}
+
+func TestPaymentProviderCompositionUsesRegistry(t *testing.T) {
+	root := repoRoot(t)
+	var offenders []string
+	require.NoError(t, filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if skipDir(root, path) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if strings.Contains(string(data), "paymentport.SetDefault") {
+			offenders = append(offenders, slashRel(t, root, path))
+		}
+		return nil
+	}))
+	assert.Empty(t, offenders, "payment providers must register through the frozen multi-provider registry")
 }
 
 func TestWalletAndAffiliateRuntimeOwnershipStaysInModules(t *testing.T) {

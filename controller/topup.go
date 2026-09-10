@@ -55,11 +55,16 @@ func GetTopUpInfo(c *gin.Context) {
 		}
 	}
 
-	providerContribution := paymentport.Snapshot()
+	providerContribution, err := paymentport.Snapshot()
+	if err != nil {
+		logger.LogError(c.Request.Context(), "payment provider catalogue failed: "+err.Error())
+		common.ApiErrorMsg(c, "支付方式配置冲突，请联系管理员")
+		return
+	}
 	for _, method := range providerContribution.Methods {
 		hasType := false
 		for _, existing := range payMethods {
-			if existing["type"] == method["type"] {
+			if strings.EqualFold(strings.TrimSpace(existing["type"]), strings.TrimSpace(method["type"])) {
 				hasType = true
 				break
 			}

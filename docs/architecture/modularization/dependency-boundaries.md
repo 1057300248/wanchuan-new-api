@@ -22,6 +22,17 @@ endpoint-specific routes to these handles; they must not reconstruct the global
 gzip, audit, body-cleanup, or API rate-limit chain themselves. This keeps future
 host middleware changes automatically inherited by module routes.
 
+### Payment provider registry
+
+Optional payment catalogues register independently in `pkg/paymentport.Registry`
+with a stable provider id and a declared set of payment-method types and response
+field keys. Composition order is the deterministic render order. Duplicate
+provider ids, method types, or field keys are rejected before the registry is
+frozen; runtime contributions are also rejected if they emit undeclared
+surfaces. The process installs one frozen registry, not one concrete provider
+slot. Host-configured legacy `PayMethods` retain their existing precedence when
+the top-up response is assembled.
+
 ## Extension kernel versus runtime ports
 
 These are deliberately separate mechanisms:

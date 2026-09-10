@@ -22,6 +22,7 @@ import (
 	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
 	walletroutes "github.com/QuantumNous/new-api/modules/chuanapi/wallet/routes"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
+	"github.com/QuantumNous/new-api/pkg/paymentport"
 )
 
 const ExtensionName = "chuanapi"
@@ -49,7 +50,16 @@ func RegisterRuntimeServices() error {
 	if err := affiliatemodule.RegisterRuntime(); err != nil {
 		return err
 	}
-	return paymentmodule.RegisterRuntime()
+	return nil
+}
+
+// RegisterPaymentProviders composes ChuanAPI-owned provider catalogues into the
+// generic payment registry. Concrete providers register independently.
+func RegisterPaymentProviders(registry *paymentport.Registry) error {
+	if registry == nil {
+		return fmt.Errorf("chuanapi: payment provider registry must not be nil")
+	}
+	return paymentmodule.RegisterProviders(registry)
 }
 
 // RegisterFundingFactories composes ChuanAPI runtime funding implementations.

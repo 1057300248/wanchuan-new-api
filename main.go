@@ -28,6 +28,7 @@ import (
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
+	"github.com/QuantumNous/new-api/pkg/paymentport"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
@@ -324,6 +325,15 @@ func InitResources() error {
 
 	if err := chuanapi.RegisterRuntimeServices(); err != nil {
 		common.FatalLog("failed to register chuanapi runtime services: " + err.Error())
+		return err
+	}
+	paymentProviders := paymentport.NewRegistry()
+	if err := chuanapi.RegisterPaymentProviders(paymentProviders); err != nil {
+		common.FatalLog("failed to register chuanapi payment providers: " + err.Error())
+		return err
+	}
+	if err := paymentport.ConfigureRegistry(paymentProviders); err != nil {
+		common.FatalLog("failed to configure payment provider registry: " + err.Error())
 		return err
 	}
 
