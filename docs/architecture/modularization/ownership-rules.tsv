@@ -1,0 +1,36 @@
+match_type	pattern	ownership	module	disposition	note
+exact	main.go	COMPOSITION_ROOT	backend-composition	RETAIN	Only production host entrypoint allowed to import chuanapi composition adapter
+prefix	chuanapi/	COMPOSITION_ROOT	backend-composition	SPLIT	Current adapter; implementation details must migrate into individual modules
+exact	web/src/extensions/index.ts	COMPOSITION_ROOT	frontend-composition	RETAIN	Frontend concrete extension wiring root
+prefix	web/src/extensions/chuanapi/	CHUANAPI_MODULE	console	RETAIN	Concrete ChuanAPI frontend implementation
+prefix	web/src/extensions/	GENERIC_EXTENSION_KERNEL	frontend-extension	RETAIN	Generic frontend extension contracts
+prefix	extension/	GENERIC_EXTENSION_KERNEL	backend-extension	RETAIN	Startup model migration and route contribution registry
+prefix	pkg/moneyport/	GENERIC_EXTENSION_KERNEL	money-port	RETAIN	Runtime funding capability leaf package
+prefix	pkg/billingexpr/	GENERIC_CORE_ENHANCEMENT	billing-expression	UPSTREAM_CANDIDATE	Generic pricing expression capability
+prefix	model/balance_ledger	CHUANAPI_MODULE	wallet	EXTRACT	Wallet ledger-owned models and tests
+prefix	model/model_bonus_eligible	CHUANAPI_MODULE	wallet	EXTRACT	Wallet bonus policy-owned models and tests
+prefix	model/affiliate	CHUANAPI_MODULE	affiliate	EXTRACT	Affiliate-owned models
+prefix	service/affiliate_reward	CHUANAPI_MODULE	affiliate	EXTRACT	Affiliate reward and maintenance implementation
+prefix	controller/wallet	CHUANAPI_MODULE	wallet	EXTRACT	Wallet HTTP surface
+prefix	service/bonus_eligible	CHUANAPI_MODULE	wallet	EXTRACT	Wallet bonus eligibility implementation
+exact	service/funding_source.go	UPSTREAM_CORE	wallet-mixed	SPLIT	Contains WalletFunding and SubscriptionFunding; must split through ports before extraction
+exact	service/billing_session.go	GENERIC_CORE_ENHANCEMENT	billing-orchestration	RETAIN	Generic request billing orchestrator; Wallet implementation must be injected
+prefix	controller/topup_waffo	CHUANAPI_MODULE	payment-waffo	EXTRACT	ChuanAPI Waffo topup integration
+prefix	controller/subscription_payment_waffo	CHUANAPI_MODULE	payment-waffo	EXTRACT	ChuanAPI Waffo subscription integration
+prefix	setting/payment_waffo	CHUANAPI_MODULE	payment-waffo	EXTRACT	ChuanAPI Waffo configuration
+prefix	service/waffo	CHUANAPI_MODULE	payment-waffo	EXTRACT	ChuanAPI Waffo service
+prefix	constant/waffo	CHUANAPI_MODULE	payment-waffo	EXTRACT	ChuanAPI Waffo constants
+prefix	web/src/features/image-generation/	GENERIC_MODULE	imagegen	EXTRACT	Generic image-generation frontend module
+prefix	web/src/routes/_authenticated/image/	GENERIC_MODULE	imagegen	EXTRACT	Image-generation route shell
+contains	image_async	GENERIC_MODULE	imagegen	EXTRACT	Async image-generation backend surface
+exact	relay/image_handler.go	GENERIC_MODULE	imagegen	EXTRACT	Image relay entrypoint
+exact	relay/image_handler_test.go	GENERIC_MODULE	imagegen	EXTRACT	Image relay regression tests
+contains	responses_handler	GENERIC_CORE_ENHANCEMENT	responses	UPSTREAM_CANDIDATE	Generic Responses API relay enhancement
+contains	relay_responses	GENERIC_CORE_ENHANCEMENT	responses	UPSTREAM_CANDIDATE	Generic Responses API provider enhancement
+contains	chat_via_responses	GENERIC_CORE_ENHANCEMENT	responses	UPSTREAM_CANDIDATE	Generic Responses API chat bridge
+contains	auth_session	GENERIC_CORE_ENHANCEMENT	security	UPSTREAM_CANDIDATE	Generic session hardening
+contains	secure_verification	GENERIC_CORE_ENHANCEMENT	security	UPSTREAM_CANDIDATE	Generic verification hardening
+prefix	ops/	OPS_DEPLOYMENT	ops	RETAIN	Deployment and operations assets
+prefix	.github/	OPS_DEPLOYMENT	ci	REVIEW	CI and repository operations
+prefix	bin/	OPS_DEPLOYMENT	migration-tooling	REVIEW	Operational migration and helper scripts
+prefix	docs/	TEST_COMPAT	documentation	REVIEW	Non-runtime documentation and review evidence
