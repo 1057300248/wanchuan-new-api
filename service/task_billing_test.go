@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	affiliatemodule "github.com/QuantumNous/new-api/modules/chuanapi/affiliate"
 	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
@@ -66,6 +67,10 @@ func TestMain(m *testing.M) {
 		&model.AffiliateRewardReconcileState{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
+	}
+
+	if err := affiliatemodule.RegisterRuntime(); err != nil {
+		panic("failed to register affiliate runtime: " + err.Error())
 	}
 
 	fundingFactories := moneyport.NewFactoryRegistry()

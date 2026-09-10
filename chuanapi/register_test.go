@@ -19,6 +19,9 @@ var expectedWalletModelOrder = []any{
 	&model.BalanceLedgerOperation{},
 	&model.BalanceLedger{},
 	&model.ModelBonusEligibleAudit{},
+}
+
+var expectedAffiliateModelOrder = []any{
 	&model.AffiliateReward{},
 	&model.AffiliateRewardReconcileState{},
 }
@@ -28,16 +31,22 @@ func TestRegisterContributesWalletModelsInMigrationOrder(t *testing.T) {
 	require.NoError(t, Register(reg))
 
 	models := reg.ModelsFor(extension.PhaseAfterCoreModels)
-	require.Len(t, models, len(expectedWalletModelOrder))
+	require.Len(t, models, len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder))
 	for i, expected := range expectedWalletModelOrder {
 		assert.IsType(t, expected, models[i], "wallet model at index %d changed", i)
 	}
+	for i, expected := range expectedAffiliateModelOrder {
+		assert.IsType(t, expected, models[len(expectedWalletModelOrder)+i], "affiliate model at index %d changed", i)
+	}
 
 	sets := reg.ModelSets()
-	require.Len(t, sets, 1)
+	require.Len(t, sets, 2)
 	assert.Equal(t, ExtensionName, sets[0].Extension)
 	assert.Equal(t, WalletModelsName, sets[0].Name)
 	assert.Equal(t, extension.PhaseAfterCoreModels, sets[0].Phase)
+	assert.Equal(t, ExtensionName, sets[1].Extension)
+	assert.Equal(t, AffiliateModelsName, sets[1].Name)
+	assert.Equal(t, extension.PhaseAfterCoreModels, sets[1].Phase)
 }
 
 // The backfill mutates balances, so it must run only after the wallet schema
@@ -101,7 +110,7 @@ func TestRegisterTwiceIsRejectedWithoutDuplicatingModels(t *testing.T) {
 	require.NoError(t, Register(reg))
 	require.Error(t, Register(reg))
 
-	assert.Len(t, reg.ModelsFor(extension.PhaseAfterCoreModels), len(expectedWalletModelOrder))
+	assert.Len(t, reg.ModelsFor(extension.PhaseAfterCoreModels), len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder))
 	assert.Len(t, reg.StepsFor(extension.PhaseAfterCoreData), 1)
 	assert.Len(t, reg.RouteSetsFor(extension.PriorityBeforePlugin), 1)
 }

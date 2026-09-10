@@ -16,6 +16,7 @@ import (
 	"fmt"
 
 	"github.com/QuantumNous/new-api/extension"
+	affiliatemodule "github.com/QuantumNous/new-api/modules/chuanapi/affiliate"
 	consolemodule "github.com/QuantumNous/new-api/modules/chuanapi/console"
 	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
@@ -27,6 +28,7 @@ const ExtensionName = "chuanapi"
 // ownership of each contribution lives in its module.
 const (
 	WalletModelsName        = walletmodule.ModelsName
+	AffiliateModelsName     = affiliatemodule.ModelsName
 	LegacyQuotaBackfillName = walletmodule.LegacyQuotaBackfillName
 	LlmsRoutesName          = consolemodule.RoutesName
 )
@@ -34,6 +36,11 @@ const (
 // WalletModels remains as a compatibility accessor for migration tests and any
 // out-of-tree build-time tooling. Concrete model enumeration is module-owned.
 func WalletModels() []any { return walletmodule.Models() }
+
+// RegisterRuntimeServices composes ChuanAPI-owned runtime policy services.
+func RegisterRuntimeServices() error {
+	return affiliatemodule.RegisterRuntime()
+}
 
 // RegisterFundingFactories composes ChuanAPI runtime funding implementations.
 func RegisterFundingFactories(reg *moneyport.FactoryRegistry) error {
@@ -50,6 +57,9 @@ func Register(reg *extension.Registry) error {
 		return fmt.Errorf("chuanapi: registry must not be nil")
 	}
 	if err := walletmodule.Register(reg); err != nil {
+		return err
+	}
+	if err := affiliatemodule.RegisterSchema(reg); err != nil {
 		return err
 	}
 	return consolemodule.Register(reg)

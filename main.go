@@ -321,6 +321,11 @@ func InitResources() error {
 
 	service.InitTokenEncoders()
 
+	if err := chuanapi.RegisterRuntimeServices(); err != nil {
+		common.FatalLog("failed to register chuanapi runtime services: " + err.Error())
+		return err
+	}
+
 	// Runtime funding implementations are composed explicitly and frozen before
 	// any request can create a BillingSession.
 	fundingFactories := moneyport.NewFactoryRegistry()

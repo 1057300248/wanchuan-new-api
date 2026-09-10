@@ -4,4 +4,5 @@ phase,commit,status,runtime_scope,frontend_concrete_imports,core_brand_literal_f
 2,c87829008,PASS,frontend-help-route-contribution,0,0,"Help file routes resolve pages through generic extensionHelpPages; concrete ChuanAPI imports eliminated from frontend core"
 3,719253a25,PASS,module-ownership-and-lifecycle,0,0,"chuanapi/register is composition-only; console owns llms handlers/routes; wallet owns migration wiring; lifecycle hook added with no new callbacks registered"
 4,d474b6fd3,PASS,billing-runtime-ports,0,0,"moneyport owns FundingSource/Factory/SettlementResult; BillingSession uses explicit frozen registry and public structural transaction capability"
-5,THIS_COMMIT,PASS,wallet-runtime-extraction,0,0,"Wallet Funding implementation/factory is module-owned; production service retains host subscription orchestration; root ledger DB engine remains an explicit compatibility boundary"
+5,7973e5c91,PASS,wallet-runtime-extraction,0,0,"Wallet Funding implementation/factory is module-owned; production service retains host subscription orchestration; root ledger DB engine remains an explicit compatibility boundary"
+6,THIS_COMMIT,PASS,affiliate-policy-extraction,0,0,"Affiliate reward creation/maturity policy is module-owned behind affiliateport; affiliate schema contribution is separated from wallet; reconciliation scan remains a root data-compatibility boundary"

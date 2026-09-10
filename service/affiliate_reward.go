@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/affiliateport"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
@@ -22,66 +23,11 @@ import (
 // paidQuota 必须是该请求结算后的最终 paid 净份额（已含退款冲减）。
 // 返回是否创建了记录（重复请求返回 false）。
 func RecordAffiliateRewardForRequest(sourceUserId, paidQuota int, refType, refId string) (bool, error) {
-	if !common.AffiliateRewardEnabled {
-		return false, nil
-	}
-	if paidQuota <= 0 || sourceUserId <= 0 || refType == "" || refId == "" {
-		return false, nil
-	}
-	if common.AffiliateRewardRate <= 0 || common.AffiliateRewardFreezeDays < 0 {
-		return false, nil
-	}
-
-	// 源用户必须存在且未禁用，且存在邀请人。
-	source, err := model.GetUserById(sourceUserId, false)
+	rewardService, err := affiliateport.Default()
 	if err != nil {
-		return false, nil // 用户已删除：不产生返利
-	}
-	if source.Status != common.UserStatusEnabled || source.InviterId <= 0 {
-		return false, nil
-	}
-
-	// 邀请人必须存在且未禁用。
-	inviter, err := model.GetUserById(source.InviterId, false)
-	if err != nil {
-		return false, nil
-	}
-	if inviter.Status != common.UserStatusEnabled {
-		return false, nil
-	}
-
-	rewardQuota, clamp := common.QuotaFromFloatChecked(float64(paidQuota) * common.AffiliateRewardRate)
-	if clamp != nil {
-		common.SysError(fmt.Sprintf("affiliate reward quota saturated: source=%d inviter=%d paid=%d rate=%g clamped=%d",
-			sourceUserId, inviter.Id, paidQuota, common.AffiliateRewardRate, rewardQuota))
-	}
-	if rewardQuota <= 0 {
-		return false, nil
-	}
-
-	reward := &model.AffiliateReward{
-		UserId:            inviter.Id,
-		SourceUserId:      sourceUserId,
-		EligiblePaidQuota: paidQuota,
-		RewardQuota:       rewardQuota,
-		Status:            string(model.AffiliateRewardPending),
-		UnlockAt:          common.GetTimestamp() + int64(common.AffiliateRewardFreezeDays)*86400,
-		ReferenceType:     refType,
-		ReferenceId:       refId,
-		IdempotencyKey:    fmt.Sprintf("affiliate_reward:%s:%s", refType, refId),
-	}
-	err = model.CreateAffiliateReward(reward)
-	if err != nil {
-		if err == model.ErrAffiliateRewardExists {
-			return false, nil
-		}
-		common.SysError(fmt.Sprintf("create affiliate reward failed: source=%d inviter=%d ref=%s/%s err=%s",
-			sourceUserId, inviter.Id, refType, refId, err.Error()))
 		return false, err
 	}
-	common.SysLog(fmt.Sprintf("affiliate reward created: inviter=%d source=%d paid=%d reward=%d ref=%s/%s unlock_at=%d",
-		inviter.Id, sourceUserId, paidQuota, rewardQuota, refType, refId, reward.UnlockAt))
-	return true, nil
+	return rewardService.Record(sourceUserId, paidQuota, refType, refId)
 }
 
 func recordAffiliateRewardOrLog(sourceUserId, paidQuota int, refType, refId string) {
@@ -94,7 +40,11 @@ func recordAffiliateRewardOrLog(sourceUserId, paidQuota int, refType, refId stri
 // MatureAffiliateRewards 幂等成熟用户所有到期返利并返回本次成熟条数。
 // 供懒加载（钱包/推荐概览读取时）与显式 API 触发共用。
 func MatureAffiliateRewards(userId int) (int, error) {
-	return model.MatureAffiliateRewards(userId)
+	rewardService, err := affiliateport.Default()
+	if err != nil {
+		return 0, err
+	}
+	return rewardService.Mature(userId)
 }
 
 // ---------------------------------------------------------------------------

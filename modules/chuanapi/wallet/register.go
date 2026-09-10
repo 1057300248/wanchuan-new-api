@@ -24,8 +24,6 @@ func Models() []any {
 		&model.BalanceLedgerOperation{},
 		&model.BalanceLedger{},
 		&model.ModelBonusEligibleAudit{},
-		&model.AffiliateReward{},
-		&model.AffiliateRewardReconcileState{},
 	}
 }
 
