@@ -1,4 +1,4 @@
-package controller
+package imagegen
 
 import (
 	"bytes"
@@ -13,14 +13,13 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 )
 
 type AsyncImageHandler struct {
 	relay http.Handler
-	store service.AsyncImageStore
+	store AsyncImageStore
 	slots chan struct{}
 	wait  sync.WaitGroup
 }
@@ -33,7 +32,7 @@ func NewAsyncImageHandler(relay http.Handler) *AsyncImageHandler {
 }
 
 func newAsyncImageHandler(relay http.Handler, client redis.UniversalClient) *AsyncImageHandler {
-	return &AsyncImageHandler{relay: relay, store: service.AsyncImageStore{Client: client}, slots: make(chan struct{}, 8)}
+	return &AsyncImageHandler{relay: relay, store: AsyncImageStore{Client: client}, slots: make(chan struct{}, 8)}
 }
 
 func (h *AsyncImageHandler) Submit(c *gin.Context) {
@@ -85,7 +84,7 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 	if err != nil {
 		<-h.slots
 		status := 503
-		if errors.Is(err, service.ErrAsyncImageBusy) {
+		if errors.Is(err, ErrAsyncImageBusy) {
 			status = 429
 		}
 		c.JSON(status, gin.H{"error": gin.H{"message": "Async image service is busy or unavailable. Try again later.", "code": "async_image_unavailable"}})
@@ -94,7 +93,7 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 	// Re-enter the normal HTTP pipeline with an independent request: token/IP
 	// checks, model rate limits, channel selection, precharge and settlement run
 	// unchanged. No Gin context or body storage survives its original lifetime.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), service.AsyncImageTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), AsyncImageTimeout)
 	upstream := c.Request.Clone(ctx)
 	upstream.URL.Path, upstream.URL.RawPath, upstream.URL.RawQuery = path, "", ""
 	upstream.RequestURI = path
@@ -114,7 +113,7 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 	c.JSON(http.StatusAccepted, accepted)
 }
 
-func (h *AsyncImageHandler) run(request *http.Request, cancel context.CancelFunc, userID int, task *service.AsyncImageTask) {
+func (h *AsyncImageHandler) run(request *http.Request, cancel context.CancelFunc, userID int, task *AsyncImageTask) {
 	defer h.wait.Done()
 	defer func() {
 		<-h.slots
@@ -185,7 +184,7 @@ func (w *asyncImageResponse) WriteHeader(status int) {
 }
 func (w *asyncImageResponse) Write(data []byte) (int, error) {
 	w.written = true
-	if w.body.Len()+len(data) > service.AsyncImageMaxResult {
+	if w.body.Len()+len(data) > AsyncImageMaxResult {
 		w.overflow = true
 		return 0, io.ErrShortBuffer
 	}

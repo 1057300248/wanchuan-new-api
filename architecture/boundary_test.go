@@ -96,6 +96,22 @@ func TestServiceProductionDoesNotOwnWalletFunding(t *testing.T) {
 	assert.Empty(t, offenders, "production service must depend on moneyport funding capabilities, not own WalletFunding")
 }
 
+func TestAsyncImageOwnershipStaysInGenericModule(t *testing.T) {
+	root := repoRoot(t)
+	for _, legacy := range []string{
+		"controller/image_async.go",
+		"service/image_async.go",
+	} {
+		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(legacy)))
+		assert.ErrorIs(t, err, os.ErrNotExist, "%s must not return to a root business package", legacy)
+	}
+
+	relayRouter, err := os.ReadFile(filepath.Join(root, "router", "relay-router.go"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(relayRouter), "/v1/images/tasks",
+		"async image task routes must stay owned by modules/imagegen")
+}
+
 func TestChuanAPICompositionRootStaysThin(t *testing.T) {
 	root := repoRoot(t)
 	path := filepath.Join(root, "chuanapi", "register.go")

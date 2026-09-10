@@ -1,4 +1,4 @@
-package controller
+package imagegen
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -118,7 +117,7 @@ func TestAsyncImageWorkerPersistsFailureAndEnforcesResultLimit(t *testing.T) {
 		wantCode string
 	}{
 		{"upstream quota", 429, `{"error":{"message":"quota exhausted","code":"quota"}}`, "quota"},
-		{"oversized result", 200, strings.Repeat("x", service.AsyncImageMaxResult+1), "async_image_result_invalid"},
+		{"oversized result", 200, strings.Repeat("x", AsyncImageMaxResult+1), "async_image_result_invalid"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := miniredis.RunT(t)

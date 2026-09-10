@@ -24,6 +24,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/modules/imagegen"
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
@@ -348,6 +349,10 @@ func InitResources() error {
 	// build-time and explicit, so a wiring failure here must abort startup
 	// rather than silently start with an unmigrated extension schema.
 	registry := extension.NewRegistry()
+	if err := imagegen.Register(registry); err != nil {
+		common.FatalLog("failed to register image generation module: " + err.Error())
+		return err
+	}
 	if err := chuanapi.Register(registry); err != nil {
 		common.FatalLog("failed to register chuanapi extension: " + err.Error())
 		return err

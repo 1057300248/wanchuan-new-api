@@ -1,17 +1,22 @@
-package router
+package imagegen
 
 import (
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/extension"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestImageTasksRequireAuthentication(t *testing.T) {
 	engine := gin.New()
-	SetRelayRouter(engine)
+	reg := extension.NewRegistry()
+	require.NoError(t, Register(reg))
+	require.NoError(t, reg.Freeze())
+	require.NoError(t, reg.ApplyRoutes(engine, extension.PriorityBeforePlugin))
 	for _, tc := range []struct{ method, path string }{
 		{"POST", "/v1/images/tasks/generations"},
 		{"POST", "/v1/images/tasks/edits"},

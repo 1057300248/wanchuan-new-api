@@ -65,14 +65,6 @@ func SetRelayRouter(router *gin.Engine) {
 	{
 		playgroundRouter.POST("/chat/completions", controller.Playground)
 	}
-	imageTasks := controller.NewAsyncImageHandler(router)
-	imageTaskRouter := router.Group("/v1/images/tasks")
-	imageTaskRouter.Use(middleware.RouteTag("relay"), middleware.SystemPerformanceCheck())
-	imageTaskRouter.POST("/generations", middleware.TokenAuth(), imageTasks.Submit)
-	imageTaskRouter.POST("/edits", middleware.TokenAuth(), imageTasks.Submit)
-	// Result reads use the dashboard session, not quota-bearing API token auth.
-	// Spending the last token quota must not hide a completed image from its owner.
-	imageTaskRouter.GET("/:id", middleware.UserAuth(), imageTasks.Poll)
 	relayV1Router := router.Group("/v1")
 	relayV1Router.Use(middleware.RouteTag("relay"))
 	relayV1Router.Use(middleware.SystemPerformanceCheck())
