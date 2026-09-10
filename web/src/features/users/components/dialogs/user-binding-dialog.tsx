@@ -169,7 +169,7 @@ export function UserBindingDialog(props: Props) {
   const [unbindTarget, setUnbindTarget] = useState<BindingItem | null>(null)
   const [unbinding, setUnbinding] = useState(false)
   const { data: statusInfo, isLoading: statusLoading } = useQuery({
-    ...statusQueryOptions,
+    ...statusQueryOptions(),
     enabled: props.open && !!props.userId,
   })
 

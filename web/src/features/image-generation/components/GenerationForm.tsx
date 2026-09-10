@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { ImagePlus, SlidersHorizontal, Sparkles } from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -36,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 
 import {
@@ -68,6 +70,8 @@ export type GenerationFormValue = {
 }
 
 type GenerationFormProps = {
+  asyncMode?: boolean
+  onAsyncModeChange?: (enabled: boolean) => void
   value: GenerationFormValue
   onChange: (patch: Partial<GenerationFormValue>) => void
   keys: ImageApiKeyOption[]
@@ -91,6 +95,7 @@ type GenerationFormProps = {
 export function GenerationForm(props: GenerationFormProps) {
   const { t } = useTranslation()
   const [promptTouched, setPromptTouched] = useState(false)
+  const [openParameter, setOpenParameter] = useState<string | null>(null)
   const promptRef = useRef<HTMLTextAreaElement>(null)
   useLayoutEffect(() => {
     const input = promptRef.current
@@ -115,7 +120,7 @@ export function GenerationForm(props: GenerationFormProps) {
 
   return (
     <form
-      className='bg-card min-w-0 rounded-xl border p-4 sm:p-5'
+      className='bg-card min-w-0 rounded-lg border p-3 sm:p-4'
       onSubmit={(event) => {
         event.preventDefault()
         if (canGenerate) props.onGenerate()
@@ -254,6 +259,7 @@ export function GenerationForm(props: GenerationFormProps) {
               }
               aria-label={t('Add reference images')}
             >
+              <ImagePlus aria-hidden='true' />
               {t('Add reference images')}
               {props.references.length ? ` · ${props.references.length}` : ''}
             </PopoverTrigger>
@@ -277,7 +283,13 @@ export function GenerationForm(props: GenerationFormProps) {
             const label = parameter === 'size' ? t('Size') : t('Quality')
             const value = props.value[parameter]
             return (
-              <Popover key={parameter}>
+              <Popover
+                key={parameter}
+                open={openParameter === parameter}
+                onOpenChange={(open) =>
+                  setOpenParameter(open ? parameter : null)
+                }
+              >
                 <PopoverTrigger
                   render={
                     <Button
@@ -288,7 +300,9 @@ export function GenerationForm(props: GenerationFormProps) {
                   }
                   aria-label={label}
                 >
-                  {label}:{' '}
+                  {parameter === 'quality' ? (
+                    <SlidersHorizontal aria-hidden='true' />
+                  ) : null}
                   {IMAGE_PARAMETER_LABEL_KEYS[value]
                     ? t(IMAGE_PARAMETER_LABEL_KEYS[value])
                     : value || t('Auto')}
@@ -310,7 +324,11 @@ export function GenerationForm(props: GenerationFormProps) {
                         size='sm'
                         variant={value === option ? 'default' : 'outline'}
                         aria-pressed={value === option}
-                        onClick={() => props.onChange({ [parameter]: option })}
+                        disabled={props.isGenerating}
+                        onClick={() => {
+                          props.onChange({ [parameter]: option })
+                          setOpenParameter(null)
+                        }}
                       >
                         {IMAGE_PARAMETER_LABEL_KEYS[option]
                           ? t(IMAGE_PARAMETER_LABEL_KEYS[option])
@@ -321,9 +339,11 @@ export function GenerationForm(props: GenerationFormProps) {
                   {parameter === 'size' ? (
                     <div className='grid grid-cols-3 gap-2 border-t pt-3'>
                       {options
-                        .filter((option) => option.includes('x'))
+                        .filter((option) => /^\d+[x:]\d+$/.test(option))
                         .map((option) => {
-                          const [width, height] = option.split('x').map(Number)
+                          const [width, height] = option
+                            .split(/[x:]/)
+                            .map(Number)
                           let orientation = t('Square')
                           let icon = '□'
                           if (width > height) {
@@ -340,8 +360,13 @@ export function GenerationForm(props: GenerationFormProps) {
                               type='button'
                               variant={value === option ? 'default' : 'outline'}
                               className='h-auto flex-col gap-1 py-3'
+                              aria-label={`${orientation} ${option}`}
                               aria-pressed={value === option}
-                              onClick={() => props.onChange({ size: option })}
+                              disabled={props.isGenerating}
+                              onClick={() => {
+                                props.onChange({ size: option })
+                                setOpenParameter(null)
+                              }}
                             >
                               <span aria-hidden='true'>{icon}</span>
                               <span>{orientation}</span>
@@ -424,12 +449,32 @@ export function GenerationForm(props: GenerationFormProps) {
             variant={props.isGenerating ? 'outline' : 'default'}
             onClick={props.isGenerating ? props.onCancel : props.onGenerate}
           >
+            <Sparkles aria-hidden='true' />
             {props.isGenerating ? t('Stop waiting') : t('Generate')}
           </Button>
         </div>
-        <p className='text-muted-foreground text-right text-xs'>
-          Ctrl/⌘ + Enter
-        </p>
+        <div className='flex flex-wrap items-center justify-between gap-2'>
+          <div className='flex items-center gap-2'>
+            <Switch
+              id='image-async-mode'
+              size='sm'
+              checked={props.asyncMode ?? false}
+              onCheckedChange={(checked) => props.onAsyncModeChange?.(checked)}
+              disabled={props.isGenerating}
+            />
+            <Label htmlFor='image-async-mode' className='text-xs'>
+              {t('Async generation (avoid gateway timeouts)')}
+            </Label>
+          </div>
+          <p className='text-muted-foreground text-xs'>Ctrl/⌘ + Enter</p>
+        </div>
+        {props.asyncMode ? (
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Generate in the background and poll for results. Keep this page open; stopping only ends the wait.'
+            )}
+          </p>
+        ) : null}
         {props.formError ? (
           <Alert variant='destructive'>
             <AlertDescription role='alert'>{props.formError}</AlertDescription>

@@ -48,6 +48,7 @@ export function ImageGenerationPage() {
   const [quality, setQuality] = useState('')
   const [style, setStyle] = useState('')
   const [count, setCount] = useState(1)
+  const [asyncMode, setAsyncMode] = useState(false)
   const [reuseEntry, setReuseEntry] = useState<ImageHistoryEntry | null>(null)
   const artworkRef = useRef<HTMLDivElement>(null)
   const [completed, setCompleted] = useState(0)
@@ -107,6 +108,7 @@ export function ImageGenerationPage() {
       quality,
       style,
       images: references.items.map((item) => item.file),
+      asyncMode,
     })
     if (images?.length === 0) {
       generation.setError(
@@ -244,7 +246,7 @@ export function ImageGenerationPage() {
   }
 
   return (
-    <div className='mx-auto grid w-full max-w-[1440px] min-w-0 gap-6'>
+    <div className='mx-auto grid w-full max-w-7xl min-w-0 gap-5'>
       <div>
         <h1 className='text-xl font-semibold tracking-tight'>
           {t('Image Generation')}
@@ -279,8 +281,13 @@ export function ImageGenerationPage() {
           </AlertDescription>
         </Alert>
       ) : null}
-      <div className='grid min-w-0 gap-6'>
+      <div className='grid min-w-0 gap-4'>
+        <h2 className='text-center text-xl font-semibold'>
+          {t('Start generating images')}
+        </h2>
         <GenerationForm
+          asyncMode={asyncMode}
+          onAsyncModeChange={setAsyncMode}
           value={{
             prompt,
             apiKeyId: data.apiKeyId,

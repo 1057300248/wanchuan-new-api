@@ -34,7 +34,6 @@ export function useReferenceImages(model: string, maxReferenceImages: number) {
   const [items, setItems] = useState<ReferenceImageItem[]>([])
   const [errorKey, setErrorKey] = useState<string | null>(null)
   const itemsRef = useRef(items)
-  itemsRef.current = items
 
   useEffect(() => {
     const current = itemsRef.current
@@ -42,6 +41,7 @@ export function useReferenceImages(model: string, maxReferenceImages: number) {
       const kept = current.slice(0, maxReferenceImages)
       const removed = current.slice(maxReferenceImages)
       for (const item of removed) URL.revokeObjectURL(item.previewUrl)
+      itemsRef.current = kept
       setItems(kept)
     }
   }, [maxReferenceImages, model])
@@ -83,25 +83,24 @@ export function useReferenceImages(model: string, maxReferenceImages: number) {
           mime: file.type,
         }
       })
-      setItems((prev) => [...prev, ...next])
+      itemsRef.current = [...current, ...next]
+      setItems(itemsRef.current)
       return true
     },
     [model]
   )
 
   const removeItem = useCallback((id: string) => {
-    setItems((prev) => {
-      const target = prev.find((item) => item.id === id)
-      if (target) URL.revokeObjectURL(target.previewUrl)
-      return prev.filter((item) => item.id !== id)
-    })
+    const target = itemsRef.current.find((item) => item.id === id)
+    if (target) URL.revokeObjectURL(target.previewUrl)
+    itemsRef.current = itemsRef.current.filter((item) => item.id !== id)
+    setItems(itemsRef.current)
   }, [])
 
   const clear = useCallback(() => {
-    setItems((prev) => {
-      for (const item of prev) URL.revokeObjectURL(item.previewUrl)
-      return []
-    })
+    for (const item of itemsRef.current) URL.revokeObjectURL(item.previewUrl)
+    itemsRef.current = []
+    setItems([])
     setErrorKey(null)
   }, [])
 

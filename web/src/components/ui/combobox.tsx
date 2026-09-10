@@ -37,7 +37,7 @@ import {
   InputGroupButton,
   InputGroupInput,
 } from '@/components/ui/input-group'
-import { useMediaQuery } from '@/hooks'
+import { usePortalContainer } from '@/components/ui/portal-container'
 import { cn } from '@/lib/utils'
 
 type LegacyComboboxProps = {
@@ -48,12 +48,14 @@ type LegacyComboboxProps = {
   searchPlaceholder?: string
   emptyText?: string
   allowCustomValue?: boolean
+  showSelectedIcon?: boolean
   className?: string
   id?: string
   openOnFocus?: boolean
   disabled?: boolean
   name?: string
   onBlur?: React.FocusEventHandler<HTMLInputElement>
+  onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>
   ref?: React.Ref<HTMLInputElement>
   'aria-label'?: string
   'aria-labelledby'?: string
@@ -75,6 +77,9 @@ function Combobox(
     return (
       <LegacyComboboxInput
         id={props.id}
+        aria-label={props['aria-label']}
+        aria-labelledby={props['aria-labelledby']}
+        onKeyDown={props.onKeyDown}
         options={props.options}
         value={props.value ?? ''}
         onValueChange={(value) => props.onValueChange?.(value)}
@@ -130,6 +135,7 @@ function OptionCombobox(props: LegacyComboboxProps) {
           id={props.id}
           disabled={props.disabled}
           onBlur={props.onBlur}
+          onKeyDown={props.onKeyDown}
           onFocus={() => {
             if (props.openOnFocus !== false) setOpen(true)
           }}
@@ -142,7 +148,13 @@ function OptionCombobox(props: LegacyComboboxProps) {
           }
           triggerAriaLabel={props['aria-label'] ?? t('Open')}
           className='h-full min-h-8 w-full'
-        />
+        >
+          {props.showSelectedIcon && !open && selected?.icon && (
+            <InputGroupAddon align='inline-start' aria-hidden='true'>
+              {selected.icon}
+            </InputGroupAddon>
+          )}
+        </ComboboxInput>
       </div>
       <ComboboxContent anchor={anchor}>
         <ComboboxEmpty>
@@ -265,39 +277,29 @@ function ComboboxContent({
     ComboboxPrimitive.Positioner.Props,
     'side' | 'align' | 'sideOffset' | 'alignOffset' | 'anchor'
   >) {
-  const isMobile = useMediaQuery('(max-width: 640px)')
-  const portalContainer = React.useRef<HTMLDivElement>(null)
-  const content = (
-    <ComboboxPrimitive.Positioner
-      side={side}
-      sideOffset={sideOffset}
-      align={align}
-      alignOffset={alignOffset}
-      anchor={anchor}
-      className='isolate z-50'
-    >
-      <ComboboxPrimitive.Popup
-        data-slot='combobox-content'
-        data-chips={!!anchor}
-        className={cn(
-          'group/combobox-content bg-popover text-popover-foreground ring-foreground/10 data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 *:data-[slot=input-group]:border-input/30 *:data-[slot=input-group]:bg-input/30 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 relative max-h-(--available-height) w-(--anchor-width) max-w-(--available-width) min-w-[calc(var(--anchor-width)+--spacing(7))] origin-(--transform-origin) overflow-hidden rounded-lg shadow-md ring-1 duration-100 data-[chips=true]:min-w-(--anchor-width) *:data-[slot=input-group]:m-1 *:data-[slot=input-group]:mb-0 *:data-[slot=input-group]:h-8 *:data-[slot=input-group]:shadow-none',
-          className
-        )}
-        {...props}
-      />
-    </ComboboxPrimitive.Positioner>
+  const container = usePortalContainer()
+  return (
+    <ComboboxPrimitive.Portal container={container}>
+      <ComboboxPrimitive.Positioner
+        side={side}
+        sideOffset={sideOffset}
+        align={align}
+        alignOffset={alignOffset}
+        anchor={anchor}
+        className='isolate z-50'
+      >
+        <ComboboxPrimitive.Popup
+          data-slot='combobox-content'
+          data-chips={!!anchor}
+          className={cn(
+            'group/combobox-content bg-popover text-popover-foreground ring-foreground/10 data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 *:data-[slot=input-group]:border-input/30 *:data-[slot=input-group]:bg-input/30 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 relative max-h-(--available-height) w-(--anchor-width) max-w-(--available-width) min-w-[calc(var(--anchor-width)+--spacing(7))] origin-(--transform-origin) overflow-hidden rounded-lg shadow-md ring-1 duration-100 data-[chips=true]:min-w-(--anchor-width) *:data-[slot=input-group]:m-1 *:data-[slot=input-group]:mb-0 *:data-[slot=input-group]:h-8 *:data-[slot=input-group]:shadow-none',
+            className
+          )}
+          {...props}
+        />
+      </ComboboxPrimitive.Positioner>
+    </ComboboxPrimitive.Portal>
   )
-  if (isMobile) {
-    return (
-      <>
-        <div ref={portalContainer} className='contents' />
-        <ComboboxPrimitive.Portal container={portalContainer}>
-          {content}
-        </ComboboxPrimitive.Portal>
-      </>
-    )
-  }
-  return <ComboboxPrimitive.Portal>{content}</ComboboxPrimitive.Portal>
 }
 
 function ComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {

@@ -106,6 +106,7 @@ export function buildEditsFormData(params: {
   count: number
   size: string
   images: File[]
+  quality?: string
 }): FormData {
   const capability = getModelCapability(params.model)
   const count = normalizeCount(params.count, capability.maxN)
@@ -122,6 +123,9 @@ export function buildEditsFormData(params: {
     }
   }
   form.append('n', String(count))
+  if (capability.qualities.length > 0 && params.quality) {
+    form.append('quality', params.quality)
+  }
   if (capability.sizes.length > 0 && params.size) {
     form.append('size', params.size)
   }
@@ -177,6 +181,7 @@ export function normalizeImageResponse(params: {
 
   return items
     .map((item, index): GeneratedImage | null => {
+      if (!item || typeof item !== 'object') return null
       if (typeof item.url === 'string' && item.url.length > 0) {
         if (!isSafeImageUrl(item.url)) return null
         const isDataUrl = isDataSchemeUrl(item.url)
@@ -190,7 +195,7 @@ export function normalizeImageResponse(params: {
           createdAt: now,
         }
       }
-      if (item.b64_json) {
+      if (typeof item.b64_json === 'string' && item.b64_json) {
         const normalized = normalizeDataUrl(item.b64_json, item.mime_type)
         if (!isSafeImageUrl(normalized)) return null
         return {

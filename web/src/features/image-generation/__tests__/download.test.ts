@@ -46,6 +46,21 @@ afterEach(() => {
 })
 
 describe('downloadImage saves image data without navigating on failure', () => {
+  test('a raster Content-Type with parameters still downloads with the correct extension', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        blob: async () =>
+          new Blob(['jpeg'], { type: 'image/jpeg; charset=binary' }),
+      }))
+    )
+    URL.createObjectURL = vi.fn(() => 'blob:jpeg')
+    URL.revokeObjectURL = vi.fn()
+    await downloadImage('https://cdn.example/image', 'image.png')
+    expect(createdAnchors[0].download).toBe('image.jpg')
+  })
+
   test('saves data URLs through a temporary anchor without any fetch', async () => {
     const fetchSpy = vi.fn()
     vi.stubGlobal('fetch', fetchSpy)

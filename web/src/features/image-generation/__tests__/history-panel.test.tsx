@@ -69,6 +69,17 @@ function makeEntry(id: string): ImageHistoryEntry {
 }
 
 describe('history panel separates empty history from empty filters', () => {
+  test('results toolbar wraps on small screens and keeps filters compact on desktop', () => {
+    renderPanel()
+    const heading = screen.getByRole('heading', { name: 'Generation results' })
+    expect(heading.parentElement).toHaveClass('flex-wrap')
+    expect(screen.getByLabelText('Search history').parentElement).toHaveClass(
+      'sm:w-64'
+    )
+    expect(
+      screen.getByText('No history yet.').closest('[data-slot="empty"]')
+    ).toHaveClass('border-dashed')
+  })
   test('shows the first-run hint only when no history exists at all', () => {
     renderPanel({ entries: [], totalCount: 0 })
 

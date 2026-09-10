@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { ImageIcon } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -101,52 +102,56 @@ export function HistoryPanel(props: HistoryPanelProps) {
 
   return (
     <section className='grid min-w-0 gap-4' aria-label={t('Artwork')}>
-      <h2 className='text-lg font-semibold'>{t('Artwork')}</h2>
+      <div className='flex min-w-0 flex-wrap items-center gap-2'>
+        <h2 className='mr-auto text-sm font-semibold'>
+          {t('Generation results')}
+        </h2>
+        <div className='grid w-full min-w-0 gap-1.5 sm:w-64'>
+          <Label className='sr-only' htmlFor='image-history-search'>
+            {t('Search history')}
+          </Label>
+          <Input
+            id='image-history-search'
+            value={props.query}
+            placeholder={t('Search by prompt or model')}
+            onChange={(event) => props.onQueryChange(event.target.value)}
+          />
+        </div>
+        <div className='grid w-full min-w-0 gap-1.5 sm:w-auto'>
+          <Label className='sr-only' htmlFor='image-history-orientation'>
+            {t('Orientation')}
+          </Label>
+          <Select
+            value={props.orientation}
+            onValueChange={(next) => {
+              if (next !== null) props.onOrientationChange(next)
+            }}
+          >
+            <SelectTrigger id='image-history-orientation' className='w-full'>
+              <SelectValue>{orientationLabels[props.orientation]}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value='all'>{t('All orientations')}</SelectItem>
+                <SelectItem value='square'>{t('Square')}</SelectItem>
+                <SelectItem value='landscape'>{t('Landscape')}</SelectItem>
+                <SelectItem value='portrait'>{t('Portrait')}</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
       <p className='text-muted-foreground text-xs'>
         {t(
           'Unkept images expire after one hour. Keep locally saves in this browser, not as a downloaded file. Up to 120 batches.'
         )}
       </p>
       <div className='grid min-w-0 gap-3'>
-        <div className='grid gap-2 sm:grid-cols-2'>
-          <div className='grid gap-1.5'>
-            <Label htmlFor='image-history-search'>{t('Search history')}</Label>
-            <Input
-              id='image-history-search'
-              value={props.query}
-              placeholder={t('Search by prompt or model')}
-              onChange={(event) => props.onQueryChange(event.target.value)}
-            />
-          </div>
-          <div className='grid gap-1.5'>
-            <Label htmlFor='image-history-orientation'>
-              {t('Orientation')}
-            </Label>
-            <Select
-              value={props.orientation}
-              onValueChange={(next) => {
-                if (next !== null) props.onOrientationChange(next)
-              }}
-            >
-              <SelectTrigger id='image-history-orientation' className='w-full'>
-                <SelectValue>
-                  {orientationLabels[props.orientation]}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value='all'>{t('All orientations')}</SelectItem>
-                  <SelectItem value='square'>{t('Square')}</SelectItem>
-                  <SelectItem value='landscape'>{t('Landscape')}</SelectItem>
-                  <SelectItem value='portrait'>{t('Portrait')}</SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
         {props.totalCount === 0 && !props.isGenerating ? (
           <EmptyState
+            icon={ImageIcon}
+            bordered
+            className='min-h-[300px] border-dashed'
             title={t('No history yet.')}
             description={t('Generated images will appear here.')}
           />

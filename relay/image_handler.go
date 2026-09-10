@@ -2,8 +2,11 @@ package relay
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -52,6 +55,22 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
 		requestBody = common.NewReplayableBodyReader(storage)
+		if request.Model != imageReq.Model {
+			original, err := storage.Bytes()
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+			}
+			mapped, err := remapImagePassThroughBody(original, c.Request.Header.Get("Content-Type"), request.Model)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			}
+			body, closer, err := relaycommon.NewOutboundJSONBody(mapped)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			}
+			defer closer.Close()
+			requestBody = body
+		}
 	} else {
 		convertedRequest, err := adaptor.ConvertImageRequest(c, info, *request)
 		if err != nil {
@@ -148,4 +167,60 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), logContent)
 	return nil
+}
+
+// Only rewrite the top-level model. Preserve vendor fields and the original
+// replay storage, which may be reused for a retry on a different channel.
+func remapImagePassThroughBody(data []byte, contentType, model string) ([]byte, error) {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return nil, err
+	}
+	if mediaType != "multipart/form-data" {
+		var payload map[string]json.RawMessage
+		if err := common.Unmarshal(data, &payload); err != nil {
+			return nil, err
+		}
+		if payload == nil {
+			return nil, fmt.Errorf("expected image request object")
+		}
+		value, err := common.Marshal(model)
+		if err != nil {
+			return nil, err
+		}
+		payload["model"] = value
+		return common.Marshal(payload)
+	}
+	var output bytes.Buffer
+	writer := multipart.NewWriter(&output)
+	// Keep the original boundary so retries never inherit modified headers.
+	if err := writer.SetBoundary(params["boundary"]); err != nil {
+		return nil, err
+	}
+	reader := multipart.NewReader(bytes.NewReader(data), params["boundary"])
+	for {
+		part, err := reader.NextRawPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		destination, err := writer.CreatePart(part.Header)
+		if err != nil {
+			return nil, err
+		}
+		if part.FormName() == "model" && part.FileName() == "" {
+			_, err = io.WriteString(destination, model)
+		} else {
+			_, err = io.Copy(destination, part)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
 }

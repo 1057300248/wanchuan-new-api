@@ -42,6 +42,101 @@ const postMock = vi.mocked(api.post)
 
 beforeEach(() => {
   postMock.mockReset()
+  vi.mocked(api.get).mockReset()
+})
+
+test('async generation submits once then retrieves the result using the dashboard session', async () => {
+  const id = 'a'.repeat(48)
+  postMock.mockResolvedValue({ status: 202, data: { id, status: 'running' } })
+  vi.mocked(api.get).mockResolvedValue({
+    data: {
+      id,
+      status: 'succeeded',
+      result: { data: [{ url: 'https://example.com/image.png' }] },
+    },
+  })
+  const result = await requestImageGeneration({
+    fullKey: 'fixture',
+    model: 'gpt-image-2',
+    prompt: 'A lake',
+    count: 1,
+    size: 'auto',
+    quality: 'auto',
+    style: '',
+    images: [],
+    asyncMode: true,
+  })
+  expect(postMock).toHaveBeenCalledTimes(1)
+  expect(postMock.mock.calls[0][0]).toBe('/v1/images/tasks/generations')
+  expect(api.get).toHaveBeenCalledWith(
+    `/v1/images/tasks/${id}`,
+    expect.not.objectContaining({
+      headers: expect.anything(),
+      preserveAuthorization: true,
+    })
+  )
+  expect(result[0].url).toBe('https://example.com/image.png')
+})
+
+test('async terminal failure preserves the upstream message and never resubmits', async () => {
+  const id = 'b'.repeat(48)
+  postMock.mockResolvedValue({ status: 202, data: { id, status: 'running' } })
+  vi.mocked(api.get).mockResolvedValue({
+    data: {
+      id,
+      status: 'failed',
+      result: {
+        error: { message: 'Upstream image quota exhausted' },
+      },
+    },
+  })
+  await expect(
+    requestImageGeneration({
+      fullKey: 'fixture',
+      model: 'gpt-image-2',
+      prompt: 'A lake',
+      count: 1,
+      size: 'auto',
+      quality: 'auto',
+      style: '',
+      images: [],
+      asyncMode: true,
+    })
+  ).rejects.toThrow('Upstream image quota exhausted')
+  expect(postMock).toHaveBeenCalledTimes(1)
+})
+
+test('stopping async polling aborts the wait without resubmitting or sending cancellation upstream', async () => {
+  vi.useFakeTimers()
+  try {
+    const id = 'c'.repeat(48)
+    const controller = new AbortController()
+    postMock.mockResolvedValue({ status: 202, data: { id, status: 'running' } })
+    vi.mocked(api.get).mockResolvedValue({ data: { id, status: 'running' } })
+    const pending = requestImageGeneration({
+      fullKey: 'fixture',
+      model: 'gpt-image-2',
+      prompt: 'A lake',
+      count: 1,
+      size: 'auto',
+      quality: 'auto',
+      style: '',
+      images: [],
+      asyncMode: true,
+      signal: controller.signal,
+    })
+    const rejected = expect(pending).rejects.toMatchObject({
+      name: 'AbortError',
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    controller.abort()
+    await rejected
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(postMock).toHaveBeenCalledTimes(1)
+    expect(api.get).toHaveBeenCalledTimes(1)
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
 describe('requestImageGeneration selects the synchronous image endpoint', () => {
@@ -267,6 +362,7 @@ describe('requestImageGeneration selects the synchronous image endpoint', () => 
     expect(uploaded.type).toBe(file.type)
     expect(uploaded.size).toBe(file.size)
     expect(form.get('n')).toBe('2')
+    expect(form.get('quality')).toBe('medium')
     expect(config).toMatchObject({
       headers: { Authorization: 'Bearer sk-test' },
       skipErrorHandler: true,

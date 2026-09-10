@@ -70,6 +70,21 @@ function renderForm(
 }
 
 describe('generation form protects key interactions', () => {
+  test('async switch changes the submission mode and is locked while generating', async () => {
+    const onAsyncModeChange = vi.fn()
+    const view = renderForm({ asyncMode: false, onAsyncModeChange })
+    const user = userEvent.setup()
+    await user.click(
+      screen.getByRole('switch', {
+        name: 'Async generation (avoid gateway timeouts)',
+      })
+    )
+    expect(onAsyncModeChange).toHaveBeenCalledWith(true)
+    view.unmount()
+    renderForm({ asyncMode: true, onAsyncModeChange, isGenerating: true })
+    expect(screen.getByRole('switch')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('switch')).toBeChecked()
+  })
   test('empty prompt disables Generate and shows validation only after leaving the input', async () => {
     renderForm({ value: { ...baseValue, prompt: '   ' } })
     expect(screen.getByRole('button', { name: 'Generate' })).toBeDisabled()
@@ -165,6 +180,27 @@ test('size and quality open option panels and apply selected values', async () =
   await user.click(screen.getByRole('button', { name: 'Quality' }))
   await user.click(screen.getByRole('button', { name: 'HD' }))
   expect(onChange).toHaveBeenCalledWith({ quality: 'hd' })
+})
+
+test('Console ratios expose orientation tiles and close the size panel after selection', async () => {
+  const onChange = vi.fn()
+  renderForm({
+    onChange,
+    value: {
+      ...baseValue,
+      model: 'grok-imagine-image-2.0-console',
+      size: '1:1',
+    },
+    sizes: ['auto', '1:1', '16:9', '9:16'],
+  })
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Size' }))
+  await user.click(screen.getByRole('button', { name: 'Landscape 16:9' }))
+  expect(onChange).toHaveBeenCalledWith({ size: '16:9' })
+  expect(screen.getByRole('button', { name: 'Size' })).toHaveAttribute(
+    'aria-expanded',
+    'false'
+  )
 })
 
 test('long token and model labels stay clipped within non-shrinking toolbar controls', () => {

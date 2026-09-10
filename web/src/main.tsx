@@ -134,7 +134,7 @@ if (!rootElement) {
     // this one request instead of firing their own. `fetchStatus` owns the
     // localStorage write and the system-config store sync.
     queryClient
-      .ensureQueryData(statusQueryOptions)
+      .ensureQueryData(statusQueryOptions())
       .then((s) => {
         if (s?.system_name) apply(s.system_name as string)
         if (s?.logo) applyFaviconToDom(s.logo as string)

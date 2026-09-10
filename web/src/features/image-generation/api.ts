@@ -125,6 +125,7 @@ export async function requestImageGeneration(params: {
   quality: string
   style: string
   images: File[]
+  asyncMode?: boolean
   signal?: AbortSignal
 }): Promise<GeneratedImage[]> {
   const hasReference = params.images.length > 0
@@ -159,8 +160,11 @@ export async function requestImageGeneration(params: {
   } else {
     body = buildEditsFormData(params)
   }
+  const operation = hasReference ? 'edits' : 'generations'
   const res = await api.post(
-    hasReference ? '/v1/images/edits' : '/v1/images/generations',
+    params.asyncMode
+      ? `/v1/images/tasks/${operation}`
+      : `/v1/images/${operation}`,
     body,
     {
       headers,
@@ -170,11 +174,64 @@ export async function requestImageGeneration(params: {
       preserveAuthorization: true,
     }
   )
+  let result = res.data
+  if (params.asyncMode) {
+    const id = res.data?.id
+    if (
+      res.status !== 202 ||
+      typeof id !== 'string' ||
+      !/^[a-f0-9]{48}$/.test(id)
+    ) {
+      throw new Error(t('Image generation failed'))
+    }
+    const deadline = Date.now() + 330_000
+    for (;;) {
+      params.signal?.throwIfAborted()
+      // Session authentication lets the owner retrieve the result even when
+      // generation spent the selected API key's final quota. Never send that
+      // API key to the polling endpoint or follow a server-provided URL.
+      const response = await api.get(`/v1/images/tasks/${id}`, {
+        signal: params.signal,
+        timeout: 15_000,
+        skipErrorHandler: true,
+      })
+      const task = response.data
+      if (task?.status === 'succeeded') {
+        result = task.result
+        break
+      }
+      if (task?.status === 'failed') {
+        throw new Error(
+          task.result?.error?.message || t('Image generation failed')
+        )
+      }
+      if (task?.status !== 'running' || Date.now() >= deadline) {
+        throw new Error(t('Image generation failed'))
+      }
+      await waitForImageTask(params.signal)
+    }
+  }
   return normalizeImageResponse({
-    data: res.data,
+    data: result,
     prompt: params.prompt,
     model: params.model,
     size: params.size,
+  })
+}
+
+function waitForImageTask(signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    signal?.throwIfAborted()
+    const abort = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
+      reject(new DOMException('The operation was aborted.', 'AbortError'))
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', abort)
+      resolve()
+    }, 2000)
+    signal?.addEventListener('abort', abort, { once: true })
   })
 }
 
@@ -205,7 +262,7 @@ export async function downloadImage(
     const response = await fetch(url)
     if (!response.ok) throw new Error(`Download failed: ${response.status}`)
     const blob = await response.blob()
-    mimeType = blob.type.toLowerCase()
+    mimeType = blob.type.split(';', 1)[0].trim().toLowerCase()
     if (!extensions[mimeType]) throw new Error(t('Download failed'))
     temporaryUrl = URL.createObjectURL(blob)
     href = temporaryUrl
