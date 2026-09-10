@@ -61,8 +61,6 @@ var auditContentTemplates = map[string]string{
 	"redemption.create":       "Created ${count} redemption codes named ${name} (${quota} each)",
 	"redemption.delete_batch": "Batch deleted ${count} redemption codes",
 
-	"model.bonus_eligible_batch": "Batch set bonus eligibility to ${bonus_eligible} for ${count} models",
-
 	"subscription.plan_reset":      "Reset active subscriptions for plan ${plan_id}",
 	"subscription.user_plan_reset": "Reset active plan ${plan_id} subscriptions for user ${target_user_id}",
 }

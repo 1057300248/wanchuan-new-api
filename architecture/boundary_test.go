@@ -138,6 +138,43 @@ func TestCoreApiRouterDoesNotOwnWaffoRoutes(t *testing.T) {
 	assert.NotContains(t, strings.ToLower(string(data)), "waffo", "Waffo route ownership belongs to modules/chuanapi/payment, not the upstream-hot core API router")
 }
 
+func TestWalletCommercialPolicyDoesNotLeakBackIntoCore(t *testing.T) {
+	root := repoRoot(t)
+	apiRouter, err := os.ReadFile(filepath.Join(root, "router", "api-router.go"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(apiRouter), "bonus_eligible", "wallet commercial admin routes belong to modules/chuanapi/wallet")
+
+	_, err = os.Stat(filepath.Join(root, "controller", "model_bonus_eligible.go"))
+	assert.ErrorIs(t, err, os.ErrNotExist, "wallet commercial admin handler must not return to root controller ownership")
+
+	billingRoot := filepath.Join(root, "pkg", "billingexpr")
+	fset := token.NewFileSet()
+	var offenders []string
+	require.NoError(t, filepath.WalkDir(billingRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		if err != nil {
+			return err
+		}
+		for _, imp := range file.Imports {
+			importPath, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				return err
+			}
+			if importPath == modulePath+"/chuanapi" || strings.HasPrefix(importPath, modulePath+"/modules/chuanapi/") {
+				offenders = append(offenders, slashRel(t, root, path)+" -> "+importPath)
+			}
+		}
+		return nil
+	}))
+	assert.Empty(t, offenders, "generic billing expression engine must not depend on ChuanAPI commercial policy")
+}
+
 func TestFrontendConcreteChuanAPIImportsDoNotGrow(t *testing.T) {
 	root := repoRoot(t)
 	webRoot := filepath.Join(root, "web", "src")

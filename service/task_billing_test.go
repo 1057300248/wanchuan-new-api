@@ -72,6 +72,9 @@ func TestMain(m *testing.M) {
 	if err := affiliatemodule.RegisterRuntime(); err != nil {
 		panic("failed to register affiliate runtime: " + err.Error())
 	}
+	if err := walletmodule.RegisterRuntime(); err != nil {
+		panic("failed to register wallet policy runtime: " + err.Error())
+	}
 
 	fundingFactories := moneyport.NewFactoryRegistry()
 	if err := RegisterHostFundingFactories(fundingFactories); err != nil {

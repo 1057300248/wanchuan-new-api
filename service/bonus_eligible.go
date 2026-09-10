@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
+	"github.com/QuantumNous/new-api/pkg/walletport"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
@@ -29,10 +30,23 @@ func WalletDebitOrder(relayInfo *relaycommon.RelayInfo) []model.LedgerAccount {
 	if relayInfo != nil {
 		billingModel = relayInfo.GetBillingModelName()
 	}
-	if model.IsModelBonusEligible(billingModel) {
-		return []model.LedgerAccount{model.AccountBonus, model.AccountPaid}
+	policy, err := walletport.Default()
+	if err != nil {
+		return []model.LedgerAccount{model.AccountPaid}
 	}
-	return []model.LedgerAccount{model.AccountPaid}
+	rawOrder := policy.AccountOrder(billingModel)
+	order := make([]model.LedgerAccount, 0, len(rawOrder))
+	for _, raw := range rawOrder {
+		account := model.LedgerAccount(raw)
+		switch account {
+		case model.AccountBonus, model.AccountPaid, model.AccountAffiliate:
+			order = append(order, account)
+		}
+	}
+	if len(order) == 0 {
+		return []model.LedgerAccount{model.AccountPaid}
+	}
+	return order
 }
 
 // WalletBonusEligible 返回请求模型是否允许使用赠金（与 WalletDebitOrder 同源）。
@@ -40,7 +54,11 @@ func WalletBonusEligible(relayInfo *relaycommon.RelayInfo) bool {
 	if relayInfo == nil {
 		return false
 	}
-	return model.IsModelBonusEligible(relayInfo.GetBillingModelName())
+	policy, err := walletport.Default()
+	if err != nil {
+		return false
+	}
+	return policy.BonusEligible(relayInfo.GetBillingModelName())
 }
 
 // LedgerSharesFromRelayShares 将 relay 层份额（无 model 依赖）转换为账本份额。

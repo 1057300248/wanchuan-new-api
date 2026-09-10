@@ -1,10 +1,12 @@
-package controller
+package wallet
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
@@ -54,7 +56,7 @@ func BatchUpdateModelBonusEligible(c *gin.Context) {
 			target = "false"
 		}
 	}
-	recordManageAudit(c, "model.bonus_eligible_batch", map[string]interface{}{
+	recordBonusEligibilityAudit(c, map[string]interface{}{
 		"count":           changed,
 		"bonus_eligible":  target,
 		"idempotency_key": req.IdempotencyKey,
@@ -63,6 +65,32 @@ func BatchUpdateModelBonusEligible(c *gin.Context) {
 		"changed":         changed,
 		"idempotency_key": req.IdempotencyKey,
 	})
+}
+
+func recordBonusEligibilityAudit(c *gin.Context, params map[string]interface{}) {
+	action := "model.bonus_eligible_batch"
+	content := fmt.Sprintf("Batch set bonus eligibility to %v for %v models", params["bonus_eligible"], params["count"])
+	authMethod := "session"
+	if c.GetBool("use_access_token") {
+		authMethod = "access_token"
+	}
+	model.RecordOperationAuditLog(
+		c.GetInt("id"),
+		c.GetInt("role"),
+		content,
+		c.ClientIP(),
+		action,
+		params,
+		&model.AuditAdminInfo{
+			AdminID:       c.GetInt("id"),
+			AdminUsername: c.GetString("username"),
+			AdminRole:     c.GetInt("role"),
+			AuthMethod:    authMethod,
+		},
+		nil,
+		c,
+	)
+	common.SetContextKey(c, constant.ContextKeyAuditLogged, true)
 }
 
 // GetModelBonusEligibleAudits 查询赠金资格调整的独立审计记录（管理员）。
