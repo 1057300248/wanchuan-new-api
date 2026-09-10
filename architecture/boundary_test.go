@@ -115,6 +115,13 @@ func TestChuanAPICompositionRootStaysThin(t *testing.T) {
 	assert.Empty(t, offenders, "chuanapi/register.go must remain a thin composition root: no controller/model/service/common business imports")
 }
 
+func TestCoreApiRouterDoesNotOwnWaffoRoutes(t *testing.T) {
+	root := repoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "router", "api-router.go"))
+	require.NoError(t, err)
+	assert.NotContains(t, strings.ToLower(string(data)), "waffo", "Waffo route ownership belongs to modules/chuanapi/payment, not the upstream-hot core API router")
+}
+
 func TestFrontendConcreteChuanAPIImportsDoNotGrow(t *testing.T) {
 	root := repoRoot(t)
 	webRoot := filepath.Join(root, "web", "src")

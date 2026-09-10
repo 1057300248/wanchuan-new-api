@@ -65,15 +65,18 @@ func TestRegisterContributesBackfillStepAfterCoreData(t *testing.T) {
 	assert.Empty(t, reg.StepsFor(extension.PhaseAfterCoreModels))
 }
 
-func TestRegisterContributesLlmsRoutesBeforePluginSnapshot(t *testing.T) {
+func TestRegisterContributesModuleRoutesBeforePluginSnapshot(t *testing.T) {
 	reg := extension.NewRegistry()
 	require.NoError(t, Register(reg))
 
 	sets := reg.RouteSetsFor(extension.PriorityBeforePlugin)
-	require.Len(t, sets, 1)
+	require.Len(t, sets, 2)
 	assert.Equal(t, ExtensionName, sets[0].Extension)
-	assert.Equal(t, LlmsRoutesName, sets[0].Name)
+	assert.Equal(t, PaymentRoutesName, sets[0].Name)
 	require.NotNil(t, sets[0].Register)
+	assert.Equal(t, ExtensionName, sets[1].Extension)
+	assert.Equal(t, LlmsRoutesName, sets[1].Name)
+	require.NotNil(t, sets[1].Register)
 	assert.Empty(t, reg.RouteSetsFor(extension.PriorityAfterPlugin))
 }
 
@@ -112,5 +115,5 @@ func TestRegisterTwiceIsRejectedWithoutDuplicatingModels(t *testing.T) {
 
 	assert.Len(t, reg.ModelsFor(extension.PhaseAfterCoreModels), len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder))
 	assert.Len(t, reg.StepsFor(extension.PhaseAfterCoreData), 1)
-	assert.Len(t, reg.RouteSetsFor(extension.PriorityBeforePlugin), 1)
+	assert.Len(t, reg.RouteSetsFor(extension.PriorityBeforePlugin), 2)
 }

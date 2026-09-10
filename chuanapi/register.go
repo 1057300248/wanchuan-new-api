@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/extension"
 	affiliatemodule "github.com/QuantumNous/new-api/modules/chuanapi/affiliate"
 	consolemodule "github.com/QuantumNous/new-api/modules/chuanapi/console"
+	paymentmodule "github.com/QuantumNous/new-api/modules/chuanapi/payment"
 	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
 )
@@ -31,6 +32,7 @@ const (
 	AffiliateModelsName     = affiliatemodule.ModelsName
 	LegacyQuotaBackfillName = walletmodule.LegacyQuotaBackfillName
 	LlmsRoutesName          = consolemodule.RoutesName
+	PaymentRoutesName       = paymentmodule.RoutesName
 )
 
 // WalletModels remains as a compatibility accessor for migration tests and any
@@ -60,6 +62,9 @@ func Register(reg *extension.Registry) error {
 		return err
 	}
 	if err := affiliatemodule.RegisterSchema(reg); err != nil {
+		return err
+	}
+	if err := paymentmodule.Register(reg); err != nil {
 		return err
 	}
 	return consolemodule.Register(reg)
