@@ -7,12 +7,13 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/paymentcore"
+	"github.com/QuantumNous/new-api/pkg/paymentport"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -54,46 +55,17 @@ func GetTopUpInfo(c *gin.Context) {
 		}
 	}
 
-	// Waffo Pancake is displayed above the standard Waffo gateway.
-	enableWaffoPancake := isWaffoPancakeTopUpEnabled()
-	if enableWaffoPancake {
-		hasWaffoPancake := false
-		for _, method := range payMethods {
-			if method["type"] == model.PaymentMethodWaffoPancake {
-				hasWaffoPancake = true
+	providerContribution := paymentport.Snapshot()
+	for _, method := range providerContribution.Methods {
+		hasType := false
+		for _, existing := range payMethods {
+			if existing["type"] == method["type"] {
+				hasType = true
 				break
 			}
 		}
-
-		if !hasWaffoPancake {
-			payMethods = append(payMethods, map[string]string{
-				"name":      "Waffo Pancake",
-				"type":      model.PaymentMethodWaffoPancake,
-				"color":     "#F97316",
-				"min_topup": strconv.Itoa(setting.WaffoPancakeMinTopUp),
-			})
-		}
-	}
-
-	// 如果启用了 Waffo 支付，添加到支付方法列表
-	enableWaffo := isWaffoTopUpEnabled()
-	if enableWaffo {
-		hasWaffo := false
-		for _, method := range payMethods {
-			if method["type"] == model.PaymentMethodWaffo {
-				hasWaffo = true
-				break
-			}
-		}
-
-		if !hasWaffo {
-			waffoMethod := map[string]string{
-				"name":      "Waffo (Global Payment)",
-				"type":      model.PaymentMethodWaffo,
-				"color":     "#3B82F6",
-				"min_topup": strconv.Itoa(setting.WaffoMinTopUp),
-			}
-			payMethods = append(payMethods, waffoMethod)
+		if !hasType {
+			payMethods = append(payMethods, method)
 		}
 	}
 
@@ -101,26 +73,19 @@ func GetTopUpInfo(c *gin.Context) {
 		"enable_online_topup":              isEpayTopUpEnabled(),
 		"enable_stripe_topup":              isStripeTopUpEnabled(),
 		"enable_creem_topup":               isCreemTopUpEnabled(),
-		"enable_waffo_topup":               enableWaffo,
-		"enable_waffo_pancake_topup":       enableWaffoPancake,
 		"enable_redemption":                complianceConfirmed,
 		"payment_compliance_confirmed":     complianceConfirmed,
 		"payment_compliance_terms_version": operation_setting.CurrentComplianceTermsVersion,
-		"waffo_pay_methods": func() any {
-			if enableWaffo {
-				return setting.GetWaffoPayMethods()
-			}
-			return nil
-		}(),
-		"creem_products":          setting.CreemProducts,
-		"pay_methods":             payMethods,
-		"min_topup":               operation_setting.MinTopUp,
-		"stripe_min_topup":        setting.StripeMinTopUp,
-		"waffo_min_topup":         setting.WaffoMinTopUp,
-		"waffo_pancake_min_topup": setting.WaffoPancakeMinTopUp,
-		"amount_options":          operation_setting.GetPaymentSetting().AmountOptions,
-		"discount":                operation_setting.GetPaymentSetting().AmountDiscount,
-		"topup_link":              common.TopUpLink,
+		"creem_products":                   setting.CreemProducts,
+		"pay_methods":                      payMethods,
+		"min_topup":                        operation_setting.MinTopUp,
+		"stripe_min_topup":                 setting.StripeMinTopUp,
+		"amount_options":                   operation_setting.GetPaymentSetting().AmountOptions,
+		"discount":                         operation_setting.GetPaymentSetting().AmountDiscount,
+		"topup_link":                       common.TopUpLink,
+	}
+	for key, value := range providerContribution.Fields {
+		data[key] = value
 	}
 	common.ApiSuccess(c, data)
 }
@@ -223,79 +188,27 @@ func getMinTopup() int64 {
 }
 
 func getTopUpQuota(amount int64) (int, error) {
-	quota := decimal.NewFromInt(amount)
-	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
-		quotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-		quota = decimal.NewFromInt(quota.Div(quotaPerUnit).IntPart()).Mul(quotaPerUnit)
-	} else {
-		quota = quota.Mul(decimal.NewFromFloat(common.QuotaPerUnit))
-	}
-	return common.WalletQuotaFromDecimalStrict(quota)
+	return paymentcore.TopUpQuota(amount)
 }
 
 func getMaxTopUpAmount() int64 {
-	if common.QuotaPerUnit <= 0 {
-		return 0
-	}
-	quotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-	maxStoredAmount := decimal.NewFromInt(common.MaxWalletQuota).
-		Div(quotaPerUnit).
-		Floor()
-	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
-		return maxStoredAmount.Add(decimal.NewFromInt(1)).
-			Mul(quotaPerUnit).
-			Ceil().
-			Sub(decimal.NewFromInt(1)).
-			IntPart()
-	}
-	return maxStoredAmount.IntPart()
+	return paymentcore.MaxTopUpAmount()
 }
 
 func validateCreditedQuota(quota decimal.Decimal) (int, error) {
-	value, err := common.WalletQuotaFromDecimalStrict(quota)
-	if err != nil {
-		return 0, errors.New("充值额度超出系统可表示范围")
-	}
-	if value <= 0 {
-		return 0, errors.New("充值额度必须大于 0")
-	}
-	return value, nil
+	return paymentcore.ValidateCreditedQuota(quota)
 }
 
 func validateTopUpQuota(amount int64) (int, error) {
-	quota, err := getTopUpQuota(amount)
-	if err == nil && quota > 0 {
-		return quota, nil
-	}
-	maxAmount := getMaxTopUpAmount()
-	if maxAmount > 0 && amount > maxAmount {
-		return 0, fmt.Errorf("单笔充值数量不能大于 %d", maxAmount)
-	}
-	return 0, errors.New("充值数量无效")
+	return paymentcore.ValidateTopUpQuota(amount)
 }
 
 func rejectInvalidCreditedQuota(c *gin.Context, userId int, quota decimal.Decimal) bool {
-	creditedQuota, err := validateCreditedQuota(quota)
-	if err == nil {
-		err = model.ValidateTopUpQuotaCapacity(userId, creditedQuota)
-	}
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
-		return true
-	}
-	return false
+	return paymentcore.RejectInvalidCreditedQuota(c, userId, quota)
 }
 
 func rejectInvalidTopUpQuota(c *gin.Context, userId int, amount int64) bool {
-	creditedQuota, err := validateTopUpQuota(amount)
-	if err == nil {
-		err = model.ValidateTopUpQuotaCapacity(userId, creditedQuota)
-	}
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
-		return true
-	}
-	return false
+	return paymentcore.RejectInvalidTopUpQuota(c, userId, amount)
 }
 
 func RequestEpay(c *gin.Context) {
@@ -392,46 +305,14 @@ func RequestEpay(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": params, "url": uri})
 }
 
-// tradeNo lock
-var orderLocks sync.Map
-var createLock sync.Mutex
-
-// refCountedMutex 带引用计数的互斥锁，确保最后一个使用者才从 map 中删除
-type refCountedMutex struct {
-	mu       sync.Mutex
-	refCount int
-}
-
 // LockOrder 尝试对给定订单号加锁
 func LockOrder(tradeNo string) {
-	createLock.Lock()
-	var rcm *refCountedMutex
-	if v, ok := orderLocks.Load(tradeNo); ok {
-		rcm = v.(*refCountedMutex)
-	} else {
-		rcm = &refCountedMutex{}
-		orderLocks.Store(tradeNo, rcm)
-	}
-	rcm.refCount++
-	createLock.Unlock()
-	rcm.mu.Lock()
+	paymentcore.LockOrder(tradeNo)
 }
 
 // UnlockOrder 释放给定订单号的锁
 func UnlockOrder(tradeNo string) {
-	v, ok := orderLocks.Load(tradeNo)
-	if !ok {
-		return
-	}
-	rcm := v.(*refCountedMutex)
-	rcm.mu.Unlock()
-
-	createLock.Lock()
-	rcm.refCount--
-	if rcm.refCount == 0 {
-		orderLocks.Delete(tradeNo)
-	}
-	createLock.Unlock()
+	paymentcore.UnlockOrder(tradeNo)
 }
 
 func EpayNotify(c *gin.Context) {

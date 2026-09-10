@@ -1,4 +1,4 @@
-package controller
+package payment
 
 import (
 	"maps"

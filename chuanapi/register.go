@@ -46,7 +46,10 @@ func RegisterRuntimeServices() error {
 	if err := walletmodule.RegisterRuntime(); err != nil {
 		return err
 	}
-	return affiliatemodule.RegisterRuntime()
+	if err := affiliatemodule.RegisterRuntime(); err != nil {
+		return err
+	}
+	return paymentmodule.RegisterRuntime()
 }
 
 // RegisterFundingFactories composes ChuanAPI runtime funding implementations.

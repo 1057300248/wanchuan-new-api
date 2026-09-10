@@ -1,4 +1,4 @@
-package service
+package payment
 
 import (
 	"context"
@@ -430,10 +430,10 @@ type WaffoPancakeCatalog struct {
 	Stores []WaffoPancakeCatalogStore `json:"stores"`
 }
 
-// ListWaffoPancakeCatalog queries Pancake's GraphQL `stores` for the
+// FetchWaffoPancakeCatalog queries Pancake's GraphQL `stores` for the
 // merchant's stores + onetime products. A successful call also proves
 // the supplied credentials authenticate (doubles as a credential probe).
-func ListWaffoPancakeCatalog(ctx context.Context, merchantID, privateKey string) (*WaffoPancakeCatalog, error) {
+func FetchWaffoPancakeCatalog(ctx context.Context, merchantID, privateKey string) (*WaffoPancakeCatalog, error) {
 	client, err := newWaffoPancakeClientFromCreds(merchantID, privateKey)
 	if err != nil {
 		return nil, err

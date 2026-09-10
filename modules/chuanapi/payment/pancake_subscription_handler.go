@@ -1,4 +1,4 @@
-package controller
+package payment
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/pkg/paymentcore"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -21,7 +21,7 @@ type SubscriptionWaffoPancakePayRequest struct {
 }
 
 func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
-	if !requirePaymentCompliance(c) {
+	if !paymentcore.RequireCompliance(c) {
 		return
 	}
 
@@ -96,10 +96,10 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 	}
 
 	expiresInSeconds := 45 * 60
-	session, err := service.CreateWaffoPancakeCheckoutSession(c.Request.Context(), &service.WaffoPancakeCreateSessionParams{
+	session, err := CreateWaffoPancakeCheckoutSession(c.Request.Context(), &WaffoPancakeCreateSessionParams{
 		ProductID:     plan.WaffoPancakeProductId,
-		BuyerIdentity: service.WaffoPancakeBuyerIdentityFromUserID(user.Id),
-		PriceSnapshot: &service.WaffoPancakePriceSnapshot{
+		BuyerIdentity: WaffoPancakeBuyerIdentityFromUserID(user.Id),
+		PriceSnapshot: &WaffoPancakePriceSnapshot{
 			Amount:      decimal.NewFromFloat(plan.PriceAmount).StringFixed(2),
 			TaxCategory: "saas",
 		},

@@ -54,6 +54,29 @@ temporary: either the ChuanAPI console/help module owns the handlers, or a futur
 host-handler capability is explicitly injected. `chuanapi/register.go` must not
 remain the implementation owner.
 
+### Payment provider ownership
+
+Concrete Waffo and Waffo-Pancake HTTP handlers, webhook verification, checkout
+SDK calls and provider catalogue metadata are owned by
+`modules/chuanapi/payment`. Generic host concerns such as payment-compliance
+gating, wallet-capacity validation, callback/return-address resolution, payload
+correlation summaries and order serialization live in provider-neutral
+`pkg/paymentcore` / `pkg/paymentport` contracts.
+
+The first provider extraction intentionally retains two compatibility boundaries:
+
+- `setting/payment_waffo*.go` plus the matching option-map wiring remain in the
+  host settings layer so existing persisted option keys and operator configuration
+  continue to load without a migration;
+- the host `TopUp` / `SubscriptionPlan` schema and provider-specific completion
+  helpers in `model/` remain the transaction/data compatibility boundary. Moving
+  those fields requires a separate persisted-schema/settlement migration and is
+  not implied by handler/service modularization.
+
+These boundaries must be reported explicitly; Phase 10 removes concrete provider
+knowledge from root router/controller/service orchestration, not every historical
+provider column or option key from the host database/settings model.
+
 ## System task and frontend ownership
 
 Affiliate maintenance and similar module-specific scheduled jobs belong to the

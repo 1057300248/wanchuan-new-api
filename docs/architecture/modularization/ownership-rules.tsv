@@ -1,12 +1,23 @@
 match_type	pattern	ownership	module	disposition	note
 exact	main.go	COMPOSITION_ROOT	backend-composition	RETAIN	Only production host entrypoint allowed to import chuanapi composition adapter
+prefix	modules/chuanapi/wallet/	CHUANAPI_MODULE	wallet	RETAIN	Wallet runtime, commercial policy, admin surface and migration contribution
+prefix	modules/chuanapi/affiliate/	CHUANAPI_MODULE	affiliate	RETAIN	Affiliate reward policy and schema contribution
+prefix	modules/chuanapi/payment/	CHUANAPI_MODULE	payment-waffo	RETAIN	ChuanAPI Waffo and Waffo-Pancake provider implementation
+prefix	modules/chuanapi/console/	CHUANAPI_MODULE	console	RETAIN	ChuanAPI public console/help backend routes
+prefix	modules/imagegen/	GENERIC_MODULE	imagegen	RETAIN	Generic asynchronous image generation backend module
 prefix	chuanapi/	COMPOSITION_ROOT	backend-composition	SPLIT	Current adapter; implementation details must migrate into individual modules
 exact	web/src/extensions/index.ts	COMPOSITION_ROOT	frontend-composition	RETAIN	Frontend concrete extension wiring root
 prefix	web/src/extensions/chuanapi/	CHUANAPI_MODULE	console	RETAIN	Concrete ChuanAPI frontend implementation
 prefix	web/src/extensions/	GENERIC_EXTENSION_KERNEL	frontend-extension	RETAIN	Generic frontend extension contracts
 prefix	extension/	GENERIC_EXTENSION_KERNEL	backend-extension	RETAIN	Startup model migration and route contribution registry
 prefix	pkg/moneyport/	GENERIC_EXTENSION_KERNEL	money-port	RETAIN	Runtime funding capability leaf package
+prefix	pkg/affiliateport/	GENERIC_EXTENSION_KERNEL	affiliate-port	RETAIN	Runtime affiliate policy capability leaf package
+prefix	pkg/walletport/	GENERIC_EXTENSION_KERNEL	wallet-port	RETAIN	Runtime wallet commercial policy capability leaf package
+prefix	pkg/paymentport/	GENERIC_EXTENSION_KERNEL	payment-port	RETAIN	Provider-agnostic payment catalogue capability leaf package
+prefix	pkg/paymentcore/	GENERIC_CORE_ENHANCEMENT	payment-core	RETAIN	Provider-neutral payment compliance, quota, callback and idempotency helpers
 prefix	pkg/billingexpr/	GENERIC_CORE_ENHANCEMENT	billing-expression	UPSTREAM_CANDIDATE	Generic pricing expression capability
+prefix	architecture/	TEST_COMPAT	architecture-tests	RETAIN	Executable dependency and ownership gates
+prefix	cmd/archmanifest/	TEST_COMPAT	architecture-tooling	RETAIN	Deterministic fork ownership manifest generator
 prefix	model/balance_ledger	CHUANAPI_MODULE	wallet	EXTRACT	Wallet ledger-owned models and tests
 prefix	model/model_bonus_eligible	CHUANAPI_MODULE	wallet	EXTRACT	Wallet bonus policy-owned models and tests
 prefix	model/affiliate	CHUANAPI_MODULE	affiliate	EXTRACT	Affiliate-owned models

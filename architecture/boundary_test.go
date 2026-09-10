@@ -138,6 +138,54 @@ func TestCoreApiRouterDoesNotOwnWaffoRoutes(t *testing.T) {
 	assert.NotContains(t, strings.ToLower(string(data)), "waffo", "Waffo route ownership belongs to modules/chuanapi/payment, not the upstream-hot core API router")
 }
 
+func TestPaymentProviderOwnershipStaysInModule(t *testing.T) {
+	root := repoRoot(t)
+	for _, legacy := range []string{
+		"controller/topup_waffo.go",
+		"controller/topup_waffo_pancake.go",
+		"controller/subscription_payment_waffo_pancake.go",
+		"service/waffo_pancake.go",
+	} {
+		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(legacy)))
+		assert.ErrorIs(t, err, os.ErrNotExist, "%s must remain module-owned", legacy)
+	}
+
+	for _, coreFile := range []string{"controller/topup.go", "controller/payment_webhook_availability.go"} {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(coreFile)))
+		require.NoError(t, err)
+		assert.NotContains(t, strings.ToLower(string(data)), "waffo",
+			"generic payment catalogue/availability code must not know concrete Waffo providers: %s", coreFile)
+	}
+
+	moduleRoot := filepath.Join(root, "modules", "chuanapi", "payment")
+	fset := token.NewFileSet()
+	var offenders []string
+	require.NoError(t, filepath.WalkDir(moduleRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		if err != nil {
+			return err
+		}
+		for _, imp := range file.Imports {
+			importPath, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				return err
+			}
+			if importPath == modulePath+"/controller" || strings.HasPrefix(importPath, modulePath+"/controller/") ||
+				importPath == modulePath+"/service" || strings.HasPrefix(importPath, modulePath+"/service/") {
+				offenders = append(offenders, slashRel(t, root, path)+" -> "+importPath)
+			}
+		}
+		return nil
+	}))
+	assert.Empty(t, offenders, "ChuanAPI payment module must own provider handlers/services without importing root controller/service")
+}
+
 func TestWalletCommercialPolicyDoesNotLeakBackIntoCore(t *testing.T) {
 	root := repoRoot(t)
 	apiRouter, err := os.ReadFile(filepath.Join(root, "router", "api-router.go"))

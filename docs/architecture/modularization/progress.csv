@@ -8,4 +8,5 @@ phase,commit,status,runtime_scope,frontend_concrete_imports,core_brand_literal_f
 6,11689e966,PASS,affiliate-policy-extraction,0,0,"Affiliate reward creation/maturity policy is module-owned behind affiliateport; affiliate schema contribution is separated from wallet; reconciliation scan remains a root data-compatibility boundary"
 7,54975e54f,PASS,payment-route-extraction,0,0,"Waffo and Waffo-Pancake route ownership moved out of router/api-router.go into modules/chuanapi/payment; existing controller handlers remain host adapters"
 8,c056aa52f,PASS,imagegen-async-extraction,0,0,"Async image task handler/store/routes moved into generic modules/imagegen; synchronous image relay remains in generic relay pipeline"
-9,THIS_COMMIT,PASS,commercial-policy-adapter,0,0,"Wallet bonus eligibility decision is behind stdlib-only walletport; admin routes/handler are module-owned; pkg/billingexpr stays generic and independent"
+9,9eeac571a,PASS,commercial-policy-adapter,0,0,"Wallet bonus eligibility decision is behind stdlib-only walletport; admin routes/handler are module-owned; pkg/billingexpr stays generic and independent"
+10,THIS_COMMIT,IN_PROGRESS,provider-and-upstream-closeout,0,0,"Waffo/Pancake handlers and SDK service are module-owned; generic paymentcore/paymentport remove concrete provider knowledge from core; current metrics and upstream rehearsal pending"
