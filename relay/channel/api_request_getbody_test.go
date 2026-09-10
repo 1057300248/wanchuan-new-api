@@ -601,8 +601,11 @@ func TestUpstreamGetBody_HTTP2CannotRetryWithoutGetBody(t *testing.T) {
 	resp, err := client.Do(req) //nolint:bodyclose // Do fails, no body to close
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	require.ErrorContains(t, err, "cannot retry err")
-	require.ErrorContains(t, err, "Request.Body was written")
+	// The concrete transport error is intentionally not asserted here. Depending
+	// on the OS/socket timing, Go may surface its own "cannot retry" error or the
+	// peer reset first. The safety invariant is transport-independent: a body with
+	// no GetBody must fail rather than be replayed, and the server must observe
+	// exactly one stream containing the original body.
 
 	srv := awaitH2ServerResult(t, resCh)
 	require.NoError(t, srv.err)
