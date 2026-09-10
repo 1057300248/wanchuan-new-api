@@ -738,8 +738,7 @@ it('distinguishes pending and failed pricing requests from an unset price', asyn
 
 it('filters actual visibility independently of policy and restores filters through browser history', async () => {
   const { get, router } = await renderList([channel], {
-    initialUrl:
-      '/model-management/metadata?page=3&status=%5B%22enabled%22%5D',
+    initialUrl: '/model-management/metadata?page=3&status=%5B%22enabled%22%5D',
     total: 100,
   })
   const user = userEvent.setup()

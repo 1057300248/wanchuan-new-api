@@ -238,10 +238,13 @@ export function useUsersColumns(): ColumnDef<User>[] {
         const inviterId = user.inviter_id || 0
         const showInviteCount = affCount > 0
         const showLegacyAffiliateEarnings =
-          extensionFlags.showLegacyAffiliateQuota &&
-          affHistoryQuota !== 0
+          extensionFlags.showLegacyAffiliateQuota && affHistoryQuota !== 0
 
-        if (!showInviteCount && !showLegacyAffiliateEarnings && inviterId === 0) {
+        if (
+          !showInviteCount &&
+          !showLegacyAffiliateEarnings &&
+          inviterId === 0
+        ) {
           return <span className='text-muted-foreground text-sm'>—</span>
         }
 

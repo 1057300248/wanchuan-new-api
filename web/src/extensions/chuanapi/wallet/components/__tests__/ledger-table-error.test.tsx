@@ -44,7 +44,9 @@ describe('wallet ledger errors', () => {
       </QueryClientProvider>
     )
 
-    expect(await screen.findByText('Oops! Something went wrong')).toBeInTheDocument()
+    expect(
+      await screen.findByText('Oops! Something went wrong')
+    ).toBeInTheDocument()
     expect(screen.queryByText('No ledger records yet')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
   })

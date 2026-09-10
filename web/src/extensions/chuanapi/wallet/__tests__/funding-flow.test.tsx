@@ -166,7 +166,9 @@ describe('wallet funding flow', () => {
 
     const { container } = renderWallet()
 
-    expect(await screen.findByText('Oops! Something went wrong')).toBeInTheDocument()
+    expect(
+      await screen.findByText('Oops! Something went wrong')
+    ).toBeInTheDocument()
     expect(container.querySelector('[data-wallet-stat="paid"]')).toBeNull()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
   })

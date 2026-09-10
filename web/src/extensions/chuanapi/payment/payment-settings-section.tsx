@@ -46,9 +46,6 @@ import {
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { handleServerError } from '@/lib/handle-server-error'
-import { cn } from '@/lib/utils'
-
 import { confirmPaymentCompliance } from '@/features/system-settings/api'
 import {
   SettingsForm,
@@ -68,8 +65,11 @@ import {
   removeTrailingSlash,
 } from '@/features/system-settings/integrations/utils'
 import { safeNumberFieldProps } from '@/features/system-settings/utils/numeric-field'
-import { saveWaffoPancakeConfig } from './waffo-pancake-api'
+import { handleServerError } from '@/lib/handle-server-error'
+import { cn } from '@/lib/utils'
+
 import { PaymentMethodsVisualEditor } from './payment-methods-visual-editor'
+import { saveWaffoPancakeConfig } from './waffo-pancake-api'
 import {
   WaffoPancakeSettingsSection,
   type WaffoPancakeBinding,

@@ -104,7 +104,6 @@ import {
   normalizeVisualTier,
   tryParseVisualConfig,
 } from '@/features/pricing/lib/tier-expr'
-import { carryStableUiKey, getStableUiKey } from './tiered-pricing-ui-key'
 import { cn } from '@/lib/utils'
 
 import {
@@ -114,6 +113,7 @@ import {
 import { DraftNumberInput } from './draft-number-input'
 import { RequestSimulation } from './request-simulation'
 import { TierPriceFields } from './tier-price-fields'
+import { carryStableUiKey, getStableUiKey } from './tiered-pricing-ui-key'
 import { VisualBillingDocumentEditor } from './visual-billing-document-editor'
 
 const CONDITION_INPUT_OPTIONS: {
@@ -442,14 +442,18 @@ function VisualTierCard({
 }: VisualTierCardProps) {
   const { t } = useTranslation()
   const cacheMode = getTierCacheMode(tier)
-  const emitTierChange = (next: VisualTier) => onChange(carryStableUiKey(tier, next))
+  const emitTierChange = (next: VisualTier) =>
+    onChange(carryStableUiKey(tier, next))
 
   const handleConditionChange = (
     conditionIndex: number,
     next: TierConditionInput
   ) => {
     const conditions = [...tier.conditions]
-    conditions[conditionIndex] = carryStableUiKey(conditions[conditionIndex], next)
+    conditions[conditionIndex] = carryStableUiKey(
+      conditions[conditionIndex],
+      next
+    )
     emitTierChange({ ...tier, conditions })
   }
 
@@ -528,7 +532,9 @@ function VisualTierCard({
         onBillingUnitChange={(billing_unit) =>
           emitTierChange({ ...tier, billing_unit })
         }
-        onFixedPriceChange={(fixed_price) => emitTierChange({ ...tier, fixed_price })}
+        onFixedPriceChange={(fixed_price) =>
+          emitTierChange({ ...tier, fixed_price })
+        }
         prices={{
           p: tier.input_unit_cost,
           c: tier.output_unit_cost,
@@ -554,7 +560,10 @@ function VisualTierCard({
           const field =
             variable === 'p' ? 'input_unit_cost' : 'output_unit_cost'
           const extra = BILLING_EXTRA_VARS.find((item) => item.key === variable)
-          emitTierChange({ ...tier, [extra?.tierField ?? field]: Number(value) })
+          emitTierChange({
+            ...tier,
+            [extra?.tierField ?? field]: Number(value),
+          })
         }}
       />
     </div>
@@ -590,7 +599,10 @@ function VisualEditor({ visualConfig, onChange, currency }: VisualEditorProps) {
 
   const handleTierChange = (index: number, next: VisualTier) => {
     const tiers = [...config.tiers]
-    tiers[index] = carryStableUiKey(config.tiers[index], normalizeVisualTier(next))
+    tiers[index] = carryStableUiKey(
+      config.tiers[index],
+      normalizeVisualTier(next)
+    )
     onChange({ ...config, tiers })
   }
 
@@ -601,10 +613,13 @@ function VisualEditor({ visualConfig, onChange, currency }: VisualEditorProps) {
     // upper-bound condition so the expression compiles into a sane two-tier
     // shape with an immediately useful fallback.
     if (lastIndex >= 0 && tiers[lastIndex].conditions.length === 0) {
-      tiers[lastIndex] = carryStableUiKey(tiers[lastIndex], normalizeVisualTier({
-        ...tiers[lastIndex],
-        conditions: [{ var: 'len', op: '<', value: 200000 }],
-      }))
+      tiers[lastIndex] = carryStableUiKey(
+        tiers[lastIndex],
+        normalizeVisualTier({
+          ...tiers[lastIndex],
+          conditions: [{ var: 'len', op: '<', value: 200000 }],
+        })
+      )
     }
     tiers.push(
       normalizeVisualTier({
@@ -942,14 +957,18 @@ function RuleGroupCard({
   onRemove,
 }: RuleGroupCardProps) {
   const { t } = useTranslation()
-  const emitGroupChange = (next: RequestRuleGroup) => onChange(carryStableUiKey(group, next))
+  const emitGroupChange = (next: RequestRuleGroup) =>
+    onChange(carryStableUiKey(group, next))
 
   const handleConditionChange = (
     conditionIndex: number,
     next: RequestCondition
   ) => {
     const conditions = [...group.conditions]
-    conditions[conditionIndex] = carryStableUiKey(conditions[conditionIndex], next)
+    conditions[conditionIndex] = carryStableUiKey(
+      conditions[conditionIndex],
+      next
+    )
     emitGroupChange({ ...group, conditions })
   }
 

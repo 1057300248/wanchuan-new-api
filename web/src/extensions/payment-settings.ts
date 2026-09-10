@@ -25,7 +25,9 @@ export type PaymentSettingsExtension = {
 
 let paymentSettingsExtension: PaymentSettingsExtension | null = null
 
-export function setPaymentSettingsExtension(extension: PaymentSettingsExtension) {
+export function setPaymentSettingsExtension(
+  extension: PaymentSettingsExtension
+) {
   if (paymentSettingsExtension !== null) {
     throw new Error('frontend payment settings extension is already configured')
   }
