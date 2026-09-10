@@ -17,11 +17,7 @@ import (
 
 const modulePath = "github.com/QuantumNous/new-api"
 
-var frontendConcreteChuanAPIBaseline = map[string]struct{}{
-	"web/src/routes/help/index.tsx":        {},
-	"web/src/routes/help/guides/$slug.tsx": {},
-	"web/src/routes/help/api/index.tsx":    {},
-}
+var frontendConcreteChuanAPIBaseline = map[string]struct{}{}
 
 var coreBrandLiteralBaseline = map[string]struct{}{}
 
@@ -108,8 +104,8 @@ func TestFrontendConcreteChuanAPIImportsDoNotGrow(t *testing.T) {
 		return nil
 	}))
 
-	assert.Empty(t, unexpected, "Batch A freezes the current three frontend concrete imports; new offenders are forbidden")
-	assert.LessOrEqual(t, len(actual), len(frontendConcreteChuanAPIBaseline), "frontend concrete ChuanAPI imports may shrink but must not grow beyond the Batch A baseline")
+	assert.Empty(t, unexpected, "Phase 2 removed frontend concrete ChuanAPI imports from core; new offenders are forbidden")
+	assert.Empty(t, actual, "frontend core must consume ChuanAPI UI only through generic extension accessors")
 }
 
 func TestCoreChuanAPIDomainStringLiteralsDoNotGrow(t *testing.T) {

@@ -18,8 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute } from '@tanstack/react-router'
 
-import { DocsIndexPage } from '@/extensions/chuanapi/help'
+import { extensionHelpPages } from '@/extensions'
+
+const { indexPage: HelpIndexPage } = extensionHelpPages()
 
 export const Route = createFileRoute('/help/')({
-  component: DocsIndexPage,
+  component: HelpIndexPage,
 })

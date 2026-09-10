@@ -17,8 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { BrandExtension } from '../brand'
+import type { HelpExtension } from '../help'
 import type { I18nExtension } from '../i18n'
 import { CHUANAPI_BRAND_LOGO } from './brand'
+import { ApiReferencePage, DocsIndexPage, GuidePage } from './help'
 import { loadChuanapiI18nOverride } from './i18n'
 
 export { CHUANAPI_PUBLIC_HOME, chuanapiNavigationExtension } from './navigation'
@@ -29,6 +31,13 @@ export { loadChuanapiI18nOverride } from './i18n'
 export const chuanapiBrandExtension: BrandExtension = {
   id: 'chuanapi/brand',
   logoUrl: CHUANAPI_BRAND_LOGO,
+}
+
+export const chuanapiHelpExtension: HelpExtension = {
+  id: 'chuanapi/help',
+  indexPage: DocsIndexPage,
+  guidePage: GuidePage,
+  apiReferencePage: ApiReferencePage,
 }
 
 export const chuanapiI18nExtension: I18nExtension = {

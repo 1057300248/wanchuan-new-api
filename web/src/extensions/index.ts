@@ -19,11 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 import { setBrandExtension } from './brand'
 import {
   chuanapiBrandExtension,
+  chuanapiHelpExtension,
   chuanapiI18nExtension,
   chuanapiNavigationExtension,
   SHOW_LEGACY_AFFILIATE_QUOTA,
 } from './chuanapi'
 import { setExtensionFlags } from './flags'
+import { setHelpExtension } from './help'
 import { setI18nExtensions } from './i18n'
 import { setNavigationExtensions } from './navigation'
 
@@ -32,6 +34,7 @@ import { setNavigationExtensions } from './navigation'
 // importing a concrete `@/extensions/chuanapi/*` module.
 setNavigationExtensions([chuanapiNavigationExtension])
 setBrandExtension(chuanapiBrandExtension)
+setHelpExtension(chuanapiHelpExtension)
 setI18nExtensions([chuanapiI18nExtension])
 setExtensionFlags({ showLegacyAffiliateQuota: SHOW_LEGACY_AFFILIATE_QUOTA })
 
@@ -44,6 +47,8 @@ export type {
   NavigationExtension,
   NavigationExtensionContext,
 } from './navigation'
+export { extensionHelpPages } from './help'
+export type { HelpExtension } from './help'
 export { extensionBrandLogo } from './brand'
 export type { BrandExtension } from './brand'
 export { extensionFlags, isExtensionFeatureEnabled } from './flags'
