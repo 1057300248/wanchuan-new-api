@@ -21,6 +21,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 )
 
 type TokenDetails struct {
@@ -152,10 +153,12 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 		return fmt.Errorf("token quota is not enough, token remain quota: %s, need quota: %s", logger.FormatQuota(token.RemainQuota), logger.FormatQuota(quota))
 	}
 
-	err = PostConsumeQuota(relayInfo, quota, 0, false)
+	nextSequence := relayInfo.WssPostConsumeSequence + 1
+	_, err = postConsumeQuotaWithOperation(relayInfo, quota, 0, false, fmt.Sprintf("wss:%d", nextSequence))
 	if err != nil {
 		return err
 	}
+	relayInfo.WssPostConsumeSequence = nextSequence
 	logger.LogInfo(ctx, "realtime streaming consume quota success, quota: "+fmt.Sprintf("%d", quota))
 	return nil
 }
@@ -447,6 +450,10 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 }
 
 func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (result postConsumeQuotaResult, err error) {
+	return postConsumeQuotaWithOperation(relayInfo, quota, preConsumedQuota, sendEmail, "")
+}
+
+func postConsumeQuotaWithOperation(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool, operationSuffix string) (result postConsumeQuotaResult, err error) {
 
 	// 1) Consume from wallet quota OR subscription item
 	if relayInfo != nil && relayInfo.BillingSource == BillingSourceSubscription {
@@ -460,6 +467,18 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 			}
 			relayInfo.SubscriptionPostDelta += delta
 		}
+		result.FundingApplied = true
+		if !relayInfo.IsPlayground {
+			if quota > 0 {
+				err = model.DecreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, quota)
+			} else {
+				err = model.IncreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, -quota)
+			}
+			if err != nil {
+				return result, err
+			}
+			result.TokenApplied = true
+		}
 	} else {
 		// Wallet：差额结算写账本（幂等键 = request_id + settle / settle_refund）。
 		// P0-5：扣减与退款均按模型赠金资格确定账户顺序/份额（与预扣一致）。
@@ -471,48 +490,58 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 			ReferenceId:   relayInfo.RequestId,
 			RequestId:     relayInfo.RequestId,
 		}
-		if quota > 0 {
-			entry.Delta = quota
-			// 幂等键包含差额：同一 request 同方向可能按不同差额多次结算（WSS 分段计费）
-			entry.IdempotencyKey = fmt.Sprintf("billing:settle:%s:%d", relayInfo.RequestId, quota)
-			var ledgerResult *model.LedgerResult
-			ledgerResult, err = model.DebitQuota(entry, WalletDebitOrder(relayInfo)...)
-			if err != nil {
-				if !WalletBonusEligible(relayInfo) && errors.Is(err, model.ErrLedgerInsufficientBalance) {
-					return result, ErrModelBonusNotSupported
+		operationPart := ""
+		if operationSuffix != "" {
+			operationPart = ":" + operationSuffix
+		}
+		// Resolve model policy before opening the wallet transaction. The policy
+		// lookup may hit model.DB; doing that from inside a transaction can block
+		// forever on single-connection SQLite test/runtime configurations.
+		debitOrder := WalletDebitOrder(relayInfo)
+		var ledgerResult *model.LedgerResult
+		for attempt := 0; attempt < 2; attempt++ {
+			ledgerResult = nil
+			err = model.DB.Transaction(func(tx *gorm.DB) error {
+				if quota > 0 {
+					entry.Delta = quota
+					entry.IdempotencyKey = fmt.Sprintf("billing:settle:%s%s:%d", relayInfo.RequestId, operationPart, quota)
+					ledgerResult, err = model.DebitQuotaTx(tx, entry, debitOrder...)
+				} else {
+					refund := -quota
+					entry.IdempotencyKey = fmt.Sprintf("billing:settle_refund:%s%s:%d", relayInfo.RequestId, operationPart, refund)
+					if shares := splitFromRelayShares(relayInfo.WalletDebitShares, refund); len(shares) > 0 {
+						ledgerResult, err = model.CreditQuotaSharesTx(tx, entry, shares)
+					} else {
+						entry.Delta = refund
+						ledgerResult, err = model.CreditQuotaTx(tx, entry)
+					}
 				}
-				return result, err
+				if err != nil {
+					return err
+				}
+				if ledgerResult == nil || ledgerResult.Replayed || relayInfo.IsPlayground {
+					return nil
+				}
+				return model.ApplyTokenQuotaDeltaTx(tx, relayInfo.TokenId, relayInfo.TokenKey, -quota)
+			})
+			if !errors.Is(err, model.ErrLedgerDuplicate) {
+				break
 			}
-			if !ledgerResult.Replayed {
+		}
+		if err != nil {
+			if quota > 0 && !WalletBonusEligible(relayInfo) && errors.Is(err, model.ErrLedgerInsufficientBalance) {
+				return result, ErrModelBonusNotSupported
+			}
+			return result, err
+		}
+		if ledgerResult != nil {
+			model.RefreshUserQuotaCache(relayInfo.UserId, ledgerResult.TotalAfter)
+			if quota > 0 && !ledgerResult.Replayed {
 				relayInfo.WalletDebitShares = appendShares(relayInfo.WalletDebitShares, ledgerResult)
 			}
-		} else {
-			refund := -quota
-			if shares := splitFromRelayShares(relayInfo.WalletDebitShares, refund); len(shares) > 0 {
-				entry.IdempotencyKey = fmt.Sprintf("billing:settle_refund:%s:%d", relayInfo.RequestId, refund)
-				_, err = model.CreditQuotaShares(entry, shares)
-			} else {
-				entry.Delta = refund
-				entry.IdempotencyKey = fmt.Sprintf("billing:settle_refund:%s:%d", relayInfo.RequestId, refund)
-				_, err = model.CreditQuota(entry)
-			}
 		}
-		if err != nil {
-			return result, err
-		}
-	}
-	result.FundingApplied = true
-
-	if !relayInfo.IsPlayground {
-		if quota > 0 {
-			err = model.DecreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, quota)
-		} else {
-			err = model.IncreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, -quota)
-		}
-		if err != nil {
-			return result, err
-		}
-		result.TokenApplied = true
+		result.FundingApplied = true
+		result.TokenApplied = !relayInfo.IsPlayground
 	}
 
 	if sendEmail {

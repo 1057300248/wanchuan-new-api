@@ -25,6 +25,17 @@
     "Signup Bonus": "Signup Bonus",
     "Signup Bonus Quota": "Signup Bonus Quota",
     "Total Balance": "Total Balance",
-    "Unknown Account": "Unknown Account"
+    "Unknown Account": "Unknown Account",
+    "Delete model \"{{name}}\"? This cannot be undone.": "Delete model \"{{name}}\"? This cannot be undone.",
+    "Add quota to your wallet to start using the Playground.": "Add quota to your wallet to start using the Playground.",
+    "Go to Wallet": "Go to Wallet",
+    "Select preset": "Select preset",
+    "Are you sure you want to delete \"{{name}}\"? Users who authenticated with this provider will no longer be able to log in.": "Are you sure you want to delete \"{{name}}\"? Users who authenticated with this provider will no longer be able to log in.",
+    "{{count}} announcements deleted. Click \"Save Settings\" to apply.": "{{count}} announcements deleted. Click \"Save Settings\" to apply.",
+    "{{count}} API entries deleted. Click \"Save Settings\" to apply.": "{{count}} API entries deleted. Click \"Save Settings\" to apply.",
+    "{{count}} FAQs deleted. Click \"Save Settings\" to apply.": "{{count}} FAQs deleted. Click \"Save Settings\" to apply.",
+    "{{count}} groups deleted. Click \"Save Settings\" to apply.": "{{count}} groups deleted. Click \"Save Settings\" to apply.",
+    "Configure a custom ratio for \"{{userGroup}}\" users when using a specific token group.": "Configure a custom ratio for \"{{userGroup}}\" users when using a specific token group.",
+    "Length": "Length"
   }
 }

@@ -16,7 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { getReferralOverview, getWalletSummary } from '../api'
 import type { ReferralOverview, WalletSummary } from '../types'
@@ -26,51 +28,37 @@ import type { ReferralOverview, WalletSummary } from '../types'
 // ============================================================================
 
 export function useWalletSummary() {
-  const [summary, setSummary] = useState<WalletSummary | null>(null)
-  const [loading, setLoading] = useState(true)
+  const query = useQuery({
+    queryKey: ['wallet', 'summary'],
+    queryFn: async (): Promise<WalletSummary> => {
+      const response = requireServerSuccess(await getWalletSummary())
+      if (!response.data) throw new Error('Wallet summary is unavailable')
+      return response.data
+    },
+  })
 
-  const refetch = useCallback(async () => {
-    try {
-      setLoading(true)
-      const response = await getWalletSummary()
-      if (response.success && response.data) {
-        setSummary(response.data)
-      }
-    } catch {
-      // keep previous data; wallet page shows a fallback state
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    refetch()
-  }, [refetch])
-
-  return { summary, loading, refetch }
+  return {
+    summary: query.data ?? null,
+    loading: query.isFetching,
+    error: query.error,
+    refetch: query.refetch,
+  }
 }
 
 export function useReferralOverview() {
-  const [overview, setOverview] = useState<ReferralOverview | null>(null)
-  const [loading, setLoading] = useState(true)
+  const query = useQuery({
+    queryKey: ['wallet', 'referral-overview'],
+    queryFn: async (): Promise<ReferralOverview> => {
+      const response = requireServerSuccess(await getReferralOverview())
+      if (!response.data) throw new Error('Referral overview is unavailable')
+      return response.data
+    },
+  })
 
-  const refetch = useCallback(async () => {
-    try {
-      setLoading(true)
-      const response = await getReferralOverview()
-      if (response.success && response.data) {
-        setOverview(response.data)
-      }
-    } catch {
-      // keep previous data
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    refetch()
-  }, [refetch])
-
-  return { overview, loading, refetch }
+  return {
+    overview: query.data ?? null,
+    loading: query.isFetching,
+    error: query.error,
+    refetch: query.refetch,
+  }
 }

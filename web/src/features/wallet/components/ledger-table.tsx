@@ -16,9 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ErrorState } from '@/components/error-state'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -40,6 +42,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { formatQuota } from '@/lib/format'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { getWalletLedger } from '../api'
 import { ledgerReasonLabelKey } from '../lib/ledger'
@@ -66,36 +69,28 @@ function accountTone(account: string): string {
 
 export function LedgerTable() {
   const { t } = useTranslation()
-  const [rows, setRows] = useState<WalletLedgerRow[]>([])
-  const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [account, setAccount] = useState('')
   const [reason, setReason] = useState('')
-  const [loading, setLoading] = useState(true)
 
-  const fetchLedger = useCallback(async () => {
-    try {
-      setLoading(true)
-      const response = await getWalletLedger({
-        p: page,
-        page_size: PAGE_SIZE,
-        account: account || undefined,
-        reason: reason || undefined,
-      })
-      if (response.success && response.data) {
-        setRows(response.data.items)
-        setTotal(response.data.total)
-      }
-    } catch {
-      setRows([])
-    } finally {
-      setLoading(false)
-    }
-  }, [page, account, reason])
+  const ledgerQuery = useQuery({
+    queryKey: ['wallet', 'ledger', page, account, reason],
+    queryFn: async () => {
+      const response = requireServerSuccess(
+        await getWalletLedger({
+          p: page,
+          page_size: PAGE_SIZE,
+          account: account || undefined,
+          reason: reason || undefined,
+        })
+      )
+      if (!response.data) throw new Error('Wallet ledger is unavailable')
+      return response.data
+    },
+  })
 
-  useEffect(() => {
-    fetchLedger()
-  }, [fetchLedger])
+  const rows: WalletLedgerRow[] = ledgerQuery.data?.items ?? []
+  const total = ledgerQuery.data?.total ?? 0
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(total / PAGE_SIZE)),
@@ -139,13 +134,21 @@ export function LedgerTable() {
   )
 
   function renderBody() {
-    if (loading) {
+    if (ledgerQuery.isLoading) {
       return (
         <div className='space-y-2 p-4'>
           {[0, 1, 2, 3].map((key) => (
             <Skeleton key={key} className='h-10 w-full' />
           ))}
         </div>
+      )
+    }
+    if (ledgerQuery.isError) {
+      return (
+        <ErrorState
+          className='min-h-[220px]'
+          onRetry={() => void ledgerQuery.refetch()}
+        />
       )
     }
     if (rows.length === 0) {

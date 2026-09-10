@@ -25,6 +25,17 @@
     "Signup Bonus": "注册赠金",
     "Signup Bonus Quota": "注册赠金额度",
     "Total Balance": "总余额",
-    "Unknown Account": "未知账户"
+    "Unknown Account": "未知账户",
+    "Delete model \"{{name}}\"? This cannot be undone.": "确定删除模型“{{name}}”吗？此操作无法撤销。",
+    "Add quota to your wallet to start using the Playground.": "向钱包充值额度后即可开始使用 Playground。",
+    "Go to Wallet": "前往钱包",
+    "Select preset": "选择预设",
+    "Are you sure you want to delete \"{{name}}\"? Users who authenticated with this provider will no longer be able to log in.": "确定删除“{{name}}”吗？通过此提供商认证的用户将无法再登录。",
+    "{{count}} announcements deleted. Click \"Save Settings\" to apply.": "已删除 {{count}} 条公告。点击“保存设置”以应用。",
+    "{{count}} API entries deleted. Click \"Save Settings\" to apply.": "已删除 {{count}} 个 API 条目。点击“保存设置”以应用。",
+    "{{count}} FAQs deleted. Click \"Save Settings\" to apply.": "已删除 {{count}} 条常见问题。点击“保存设置”以应用。",
+    "{{count}} groups deleted. Click \"Save Settings\" to apply.": "已删除 {{count}} 个分组。点击“保存设置”以应用。",
+    "Configure a custom ratio for \"{{userGroup}}\" users when using a specific token group.": "为“{{userGroup}}”用户使用特定令牌分组时配置自定义倍率。",
+    "Length": "长度"
   }
 }

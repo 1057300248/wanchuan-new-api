@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
@@ -103,6 +104,17 @@ const onlineTopupInfo: TopupInfo = {
   discount: {},
 }
 
+function renderWallet() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <Wallet />
+    </QueryClientProvider>
+  )
+}
+
 describe('wallet funding flow', () => {
   beforeEach(() => {
     vi.mocked(getSelf).mockResolvedValue({ success: true, data: walletUser })
@@ -119,7 +131,7 @@ describe('wallet funding flow', () => {
       message: 'topup unavailable',
     })
 
-    render(<Wallet />)
+    renderWallet()
 
     expect(
       await screen.findByText(
@@ -142,13 +154,30 @@ describe('wallet funding flow', () => {
     ).toBeInTheDocument()
   })
 
+  test('shows a financial error state instead of zero balances when wallet summary fails', async () => {
+    vi.mocked(getTopupInfo).mockResolvedValue({
+      success: true,
+      data: onlineTopupInfo,
+    })
+    vi.mocked(getWalletSummary).mockResolvedValue({
+      success: false,
+      message: 'wallet unavailable',
+    })
+
+    const { container } = renderWallet()
+
+    expect(await screen.findByText('Oops! Something went wrong')).toBeInTheDocument()
+    expect(container.querySelector('[data-wallet-stat="paid"]')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
+
   test('shows amount, payment methods, and redemption input when online topup and redemption are enabled', async () => {
     vi.mocked(getTopupInfo).mockResolvedValue({
       success: true,
       data: onlineTopupInfo,
     })
 
-    render(<Wallet />)
+    renderWallet()
 
     const amountInput = await screen.findByLabelText('Custom Amount')
     await waitFor(() => expect(amountInput).toHaveDisplayValue('10'))
@@ -178,7 +207,7 @@ describe('wallet funding flow', () => {
     // covered by the requestPayment assertion below.
     vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {})
 
-    render(<Wallet />)
+    renderWallet()
 
     const epayButton = await screen.findByRole('button', { name: 'Epay' })
     await waitFor(() => expect(epayButton).toBeEnabled())
@@ -215,7 +244,7 @@ describe('wallet funding flow', () => {
       data: 500_000,
     })
 
-    render(<Wallet />)
+    renderWallet()
 
     const codeInput = await screen.findByLabelText('Have a Code?')
     await userEvent.setup().type(codeInput, 'WELCOME-10')
@@ -248,7 +277,7 @@ describe('wallet funding flow', () => {
     const visibilityState = vi.spyOn(document, 'visibilityState', 'get')
     visibilityState.mockReturnValue('visible')
 
-    const view = render(<Wallet />)
+    const view = renderWallet()
     await screen.findByLabelText('Custom Amount')
 
     const initialSelfCalls = vi.mocked(getSelf).mock.calls.length
@@ -287,7 +316,7 @@ describe('wallet funding flow', () => {
       data: { ...onlineTopupInfo, enable_redemption: false },
     })
 
-    render(<Wallet />)
+    renderWallet()
 
     const amountInput = await screen.findByLabelText('Custom Amount')
     await waitFor(() => expect(amountInput).toHaveDisplayValue('10'))
@@ -306,7 +335,7 @@ describe('wallet funding flow', () => {
       data: onlineTopupInfo,
     })
 
-    render(<Wallet />)
+    renderWallet()
 
     expect(await screen.findByLabelText('Custom Amount')).toBeInTheDocument()
     expect(screen.queryByText('Referral Rewards')).not.toBeInTheDocument()

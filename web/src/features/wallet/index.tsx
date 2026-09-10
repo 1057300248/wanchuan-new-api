@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ErrorState } from '@/components/error-state'
 import { SectionPageLayout } from '@/components/layout'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
@@ -80,6 +81,7 @@ export function Wallet(_props: WalletProps) {
   const {
     summary,
     loading: walletLoading,
+    error: walletError,
     refetch: refetchWallet,
   } = useWalletSummary()
   const {
@@ -268,12 +270,19 @@ export function Wallet(_props: WalletProps) {
         <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
         <SectionPageLayout.Content>
           <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
-            <WalletStatsCard
-              user={user}
-              summary={summary}
-              userLoading={userLoading}
-              summaryLoading={walletLoading}
-            />
+            {walletError ? (
+              <ErrorState
+                className='min-h-[160px] rounded-lg border'
+                onRetry={() => void refetchWallet()}
+              />
+            ) : (
+              <WalletStatsCard
+                user={user}
+                summary={summary}
+                userLoading={userLoading}
+                summaryLoading={walletLoading}
+              />
+            )}
             <RechargeFormCard
               topupInfo={topupInfo}
               presetAmounts={presetAmounts}

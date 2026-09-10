@@ -25,6 +25,17 @@
     "Signup Bonus": "Signup Bonus",
     "Signup Bonus Quota": "Signup Bonus Quota",
     "Total Balance": "Total Balance",
-    "Unknown Account": "Unknown Account"
+    "Unknown Account": "Unknown Account",
+    "Delete model \"{{name}}\"? This cannot be undone.": "モデル「{{name}}」を削除しますか？この操作は元に戻せません。",
+    "Add quota to your wallet to start using the Playground.": "Playground を使用するには、ウォレットにクォータを追加してください。",
+    "Go to Wallet": "ウォレットへ移動",
+    "Select preset": "プリセットを選択",
+    "Are you sure you want to delete \"{{name}}\"? Users who authenticated with this provider will no longer be able to log in.": "「{{name}}」を削除しますか？このプロバイダーで認証したユーザーはログインできなくなります。",
+    "{{count}} announcements deleted. Click \"Save Settings\" to apply.": "{{count}} 件のお知らせを削除しました。「設定を保存」をクリックして適用してください。",
+    "{{count}} API entries deleted. Click \"Save Settings\" to apply.": "{{count}} 件の API 項目を削除しました。「設定を保存」をクリックして適用してください。",
+    "{{count}} FAQs deleted. Click \"Save Settings\" to apply.": "{{count}} 件の FAQ を削除しました。「設定を保存」をクリックして適用してください。",
+    "{{count}} groups deleted. Click \"Save Settings\" to apply.": "{{count}} 個のグループを削除しました。「設定を保存」をクリックして適用してください。",
+    "Configure a custom ratio for \"{{userGroup}}\" users when using a specific token group.": "「{{userGroup}}」ユーザーが特定のトークングループを使用する際のカスタム倍率を設定します。",
+    "Length": "長さ"
   }
 }

@@ -744,9 +744,8 @@ func TestSettleMidjourneyTaskBillingFundingFailureClearsMarkers(t *testing.T) {
 	assert.Zero(t, countLogs(t))
 }
 
-func TestSettleMidjourneyTaskBillingTokenFailureKeepsFundingRefundable(t *testing.T) {
+func TestSettleMidjourneyTaskBillingTokenFailureRollsBackFundingAtomically(t *testing.T) {
 	truncate(t)
-	ctx := context.Background()
 
 	const userID, tokenID, channelID = 53, 53, 53
 	const initialUserQuota, initialTokenQuota, chargedQuota = 10000, 5000, 3000
@@ -784,26 +783,19 @@ func TestSettleMidjourneyTaskBillingTokenFailureKeepsFundingRefundable(t *testin
 	billed, err := SettleMidjourneyTaskBilling(relayInfo, task, prepared)
 
 	require.Error(t, err)
-	require.True(t, billed)
-	assert.Equal(t, initialUserQuota-chargedQuota, getUserQuota(t, userID))
+	require.False(t, billed)
+	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
 	assert.Equal(t, initialTokenQuota, getTokenRemainQuota(t, tokenID))
 	assert.Zero(t, getTokenUsedQuota(t, tokenID))
 	persisted := getMidjourneyTask(t, task.Id)
-	assert.Equal(t, chargedQuota, persisted.Quota)
+	assert.Zero(t, persisted.Quota)
 	assert.Zero(t, persisted.TokenId)
-	assert.Equal(t, channelID, persisted.BillingChannelId)
-
-	seedChargedAccounting(t, userID, channelID, 0, chargedQuota, 1)
-	assert.True(t, RefundMidjourneyQuota(ctx, task, "token settlement failed"))
-	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
-	assert.Equal(t, initialTokenQuota, getTokenRemainQuota(t, tokenID))
+	assert.Zero(t, persisted.BillingChannelId)
 	usedQuota, requestCount := getUserUsageAccounting(t, userID)
 	assert.Zero(t, usedQuota)
-	assert.Equal(t, 1, requestCount)
+	assert.Zero(t, requestCount)
 	assert.Zero(t, getChannelUsedQuota(t, channelID))
-	log := getLastLog(t)
-	require.NotNil(t, log)
-	assert.Zero(t, log.TokenId)
+	assert.Zero(t, countLogs(t))
 }
 
 func TestPrepareMidjourneyTaskBillingRejectsSubscriptionBeforeCharge(t *testing.T) {
@@ -1599,6 +1591,81 @@ func TestSettle_TieredSuccessStillRecomputes(t *testing.T) {
 	facts, ok := other["usage_facts"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, map[string]any{"seconds": float64(8), "clips": float64(2)}, facts)
+}
+
+func TestSettle_TieredRequestContextSurvivesSnapshotPersistence(t *testing.T) {
+	truncate(t)
+	const userID = 39
+	const initialQuota, preConsumed = 10_000, 2
+	seedUser(t, userID, initialQuota)
+
+	expression := `tier("base", header("x-plan") == "fast" ? u("seconds") * 2.0 : u("seconds"))`
+	snapshot := billingexpr.BillingSnapshot{
+		ExprString:       expression,
+		ExprHash:         billingexpr.ExprHashString(expression),
+		GroupRatio:       1,
+		QuotaPerUnit:     1,
+		ExprVersion:      1,
+		TaskUsageBilling: true,
+		UsageFacts:       map[string]any{"seconds": float64(1)},
+		EstimatedTier:    "base",
+		RequestInput: &billingexpr.RequestInput{
+			Headers:   map[string]string{"x-plan": "fast"},
+			Timestamp: time.Date(2026, time.September, 10, 3, 15, 0, 0, time.UTC).Unix(),
+		},
+	}
+	encoded, err := common.Marshal(snapshot)
+	require.NoError(t, err)
+	var persisted billingexpr.BillingSnapshot
+	require.NoError(t, common.Unmarshal(encoded, &persisted))
+
+	task := makeTask(userID, 0, preConsumed, 0, BillingSourceWallet, 0)
+	task.Status = model.TaskStatusSuccess
+	task.PrivateData.BillingContext.TieredSnapshot = &persisted
+	settled := settleTaskBillingOnComplete(
+		context.Background(),
+		&mockAdaptor{},
+		task,
+		&relaycommon.TaskInfo{Status: model.TaskStatusSuccess, UsageFacts: map[string]any{"seconds": float64(4)}},
+	)
+
+	require.True(t, settled)
+	assert.Equal(t, 8, task.Quota)
+	assert.Equal(t, initialQuota-(8-preConsumed), getUserQuota(t, userID))
+	require.NotNil(t, task.PrivateData.BillingContext.TieredSnapshot.RequestInput)
+	assert.Equal(t, "fast", task.PrivateData.BillingContext.TieredSnapshot.RequestInput.Headers["x-plan"])
+}
+
+func TestSettle_LegacyTieredSnapshotMissingRequestContextKeepsPreConsumedCharge(t *testing.T) {
+	truncate(t)
+	const userID = 40
+	const initialQuota, preConsumed = 10_000, 50
+	seedUser(t, userID, initialQuota)
+
+	expression := `tier("base", header("x-plan") == "fast" ? u("seconds") * 2.0 : u("seconds"))`
+	task := makeTask(userID, 0, preConsumed, 0, BillingSourceWallet, 0)
+	task.Status = model.TaskStatusSuccess
+	task.PrivateData.BillingContext.TieredSnapshot = &billingexpr.BillingSnapshot{
+		ExprString:       expression,
+		ExprHash:         billingexpr.ExprHashString(expression),
+		GroupRatio:       1,
+		QuotaPerUnit:     1,
+		ExprVersion:      1,
+		TaskUsageBilling: true,
+		UsageFacts:       map[string]any{"seconds": float64(5)},
+		EstimatedTier:    "base",
+	}
+
+	settled := settleTaskBillingOnComplete(
+		context.Background(),
+		&mockAdaptor{},
+		task,
+		&relaycommon.TaskInfo{Status: model.TaskStatusSuccess, UsageFacts: map[string]any{"seconds": float64(8)}},
+	)
+
+	assert.True(t, settled)
+	assert.Equal(t, preConsumed, task.Quota)
+	assert.Equal(t, initialQuota, getUserQuota(t, userID))
 }
 
 func TestSettle_TieredUsageFactsMergeCompletionOverSubmission(t *testing.T) {

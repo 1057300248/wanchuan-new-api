@@ -327,6 +327,7 @@ it('sends balance sorting to the server and keeps the inviter without legacy aff
     screen.queryByRole('button', { name: 'Total Used' })
   ).not.toBeInTheDocument()
   expect(screen.getByText('Inviter ID: 42')).toBeInTheDocument()
+  expect(screen.getByText('Invited 2 users')).toBeInTheDocument()
   expect(screen.queryByText(/Earnings:/)).not.toBeInTheDocument()
 })
 

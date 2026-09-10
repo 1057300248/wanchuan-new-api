@@ -25,6 +25,17 @@
     "Signup Bonus": "Signup Bonus",
     "Signup Bonus Quota": "Signup Bonus Quota",
     "Total Balance": "Total Balance",
-    "Unknown Account": "Unknown Account"
+    "Unknown Account": "Unknown Account",
+    "Delete model \"{{name}}\"? This cannot be undone.": "Supprimer le modèle « {{name}} » ? Cette action est irréversible.",
+    "Add quota to your wallet to start using the Playground.": "Ajoutez du quota à votre portefeuille pour commencer à utiliser le Playground.",
+    "Go to Wallet": "Accéder au portefeuille",
+    "Select preset": "Sélectionner un préréglage",
+    "Are you sure you want to delete \"{{name}}\"? Users who authenticated with this provider will no longer be able to log in.": "Voulez-vous vraiment supprimer « {{name}} » ? Les utilisateurs authentifiés avec ce fournisseur ne pourront plus se connecter.",
+    "{{count}} announcements deleted. Click \"Save Settings\" to apply.": "{{count}} annonces supprimées. Cliquez sur « Enregistrer les paramètres » pour appliquer.",
+    "{{count}} API entries deleted. Click \"Save Settings\" to apply.": "{{count}} entrées API supprimées. Cliquez sur « Enregistrer les paramètres » pour appliquer.",
+    "{{count}} FAQs deleted. Click \"Save Settings\" to apply.": "{{count}} FAQ supprimées. Cliquez sur « Enregistrer les paramètres » pour appliquer.",
+    "{{count}} groups deleted. Click \"Save Settings\" to apply.": "{{count}} groupes supprimés. Cliquez sur « Enregistrer les paramètres » pour appliquer.",
+    "Configure a custom ratio for \"{{userGroup}}\" users when using a specific token group.": "Configurez un ratio personnalisé pour les utilisateurs « {{userGroup}} » lorsqu’ils utilisent un groupe de jetons spécifique.",
+    "Length": "Longueur"
   }
 }

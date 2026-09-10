@@ -160,6 +160,10 @@ type RelayInfo struct {
 	SubscriptionPlanTitle string
 	// RequestId is used for idempotent pre-consume/refund
 	RequestId string
+	// WssPostConsumeSequence gives each realtime incremental settlement a stable
+	// operation identity even when consecutive segments happen to cost the same.
+	// It advances only after the segment's accounting transaction commits.
+	WssPostConsumeSequence uint64
 	// WalletDebitShares 记录钱包计费预扣在各账户的实际扣减（旧 PostConsumeQuota
 	// 回退路径专用），供结算退款按原账户精确退回。Account 为账本账户标识
 	// （paid/bonus/affiliate）。

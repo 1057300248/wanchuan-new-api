@@ -3,6 +3,7 @@ package relay
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -229,4 +230,41 @@ func TestRelayTaskSubmitAliasBillingIdentityAndExprFallback(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRelayTaskSubmitFreezesRequestPricingContext(t *testing.T) {
+	saveBillingConfig(t)
+	exprStr := `tier("base", 1) * (header("x-plan") == "fast" ? 2 : 1)`
+	modeJSON, err := common.Marshal(map[string]string{"declared-model": billing_setting.BillingModeTieredExpr})
+	require.NoError(t, err)
+	exprJSON, err := common.Marshal(map[string]string{"declared-model": exprStr})
+	require.NoError(t, err)
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": string(modeJSON),
+		"billing_setting.billing_expr": string(exprJSON),
+	}))
+
+	c, info := newTaskSubmitContext(t, "declared-model", "")
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"quality":"hd","secret":"do-not-store"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Plan", "fast")
+	c.Request.Header.Set("Authorization", "Bearer do-not-store")
+	c.Set("group", "default")
+	info.UserGroup = "default"
+	info.UsingGroup = "default"
+	info.OriginModelName = "declared-model"
+	pinMappingOrderPlugin(t, c, billingFallbackPlugin)
+
+	_, taskErr := RelayTaskSubmit(c, info)
+	require.NotNil(t, taskErr)
+	require.NotNil(t, info.TieredBillingSnapshot)
+	require.NotNil(t, info.TieredBillingSnapshot.RequestInput)
+	assert.Equal(t, map[string]string{"x-plan": "fast"}, info.TieredBillingSnapshot.RequestInput.Headers)
+	assert.Empty(t, info.TieredBillingSnapshot.RequestInput.Body)
+	assert.Equal(t, 2*common.QuotaPerUnit, info.TieredBillingSnapshot.EstimatedQuotaBeforeGroup)
+	assert.Equal(t, info.TieredBillingSnapshot.EstimatedQuotaAfterGroup, info.PriceData.Quota)
+
+	encoded, err := common.Marshal(info.TieredBillingSnapshot)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "do-not-store")
 }

@@ -25,6 +25,17 @@
     "Signup Bonus": "註冊贈金",
     "Signup Bonus Quota": "註冊贈金額度",
     "Total Balance": "總餘額",
-    "Unknown Account": "未知帳戶"
+    "Unknown Account": "未知帳戶",
+    "Delete model \"{{name}}\"? This cannot be undone.": "確定刪除模型「{{name}}」嗎？此操作無法復原。",
+    "Add quota to your wallet to start using the Playground.": "向錢包充值額度後即可開始使用 Playground。",
+    "Go to Wallet": "前往錢包",
+    "Select preset": "選擇預設",
+    "Are you sure you want to delete \"{{name}}\"? Users who authenticated with this provider will no longer be able to log in.": "確定刪除「{{name}}」嗎？透過此提供商驗證的使用者將無法再登入。",
+    "{{count}} announcements deleted. Click \"Save Settings\" to apply.": "已刪除 {{count}} 則公告。點擊「儲存設定」以套用。",
+    "{{count}} API entries deleted. Click \"Save Settings\" to apply.": "已刪除 {{count}} 個 API 項目。點擊「儲存設定」以套用。",
+    "{{count}} FAQs deleted. Click \"Save Settings\" to apply.": "已刪除 {{count}} 則常見問題。點擊「儲存設定」以套用。",
+    "{{count}} groups deleted. Click \"Save Settings\" to apply.": "已刪除 {{count}} 個群組。點擊「儲存設定」以套用。",
+    "Configure a custom ratio for \"{{userGroup}}\" users when using a specific token group.": "為「{{userGroup}}」使用者使用特定令牌群組時設定自訂倍率。",
+    "Length": "長度"
   }
 }
