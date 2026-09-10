@@ -1,4 +1,4 @@
-package service
+package affiliate
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 )
 
@@ -26,23 +27,23 @@ type AffiliateRewardMaintenanceResult struct {
 	MaturedRewards      int `json:"matured_rewards"`
 }
 
-type affiliateRewardMaintenanceHandler struct{}
+type MaintenanceHandler struct{}
 
-func (affiliateRewardMaintenanceHandler) Type() string {
+func (MaintenanceHandler) Type() string {
 	return model.SystemTaskTypeAffiliateRewardMaintenance
 }
 
 // Matured rewards must continue to be revalidated even when creation of new
 // rewards is disabled, so this scheduled handler itself is always enabled.
-func (affiliateRewardMaintenanceHandler) Enabled() bool { return true }
+func (MaintenanceHandler) Enabled() bool { return true }
 
-func (affiliateRewardMaintenanceHandler) Interval() time.Duration {
+func (MaintenanceHandler) Interval() time.Duration {
 	return affiliateMaintenanceInterval
 }
 
-func (affiliateRewardMaintenanceHandler) NewPayload() any { return nil }
+func (MaintenanceHandler) NewPayload() any { return nil }
 
-func (affiliateRewardMaintenanceHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+func (MaintenanceHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
 	result, err := runAffiliateRewardMaintenance(ctx)
 	status := model.SystemTaskStatusSucceeded
 	errorMessage := ""
@@ -51,15 +52,16 @@ func (affiliateRewardMaintenanceHandler) Run(ctx context.Context, task *model.Sy
 		errorMessage = err.Error()
 	}
 	if finishErr := model.FinishSystemTask(task.TaskID, runnerID, status, result, errorMessage); finishErr != nil {
-		logSystemTaskLockError(ctx, task, finishErr)
+		logMaintenanceTaskError(ctx, task, finishErr)
 	}
 }
 
-// RegisterAffiliateRewardMaintenanceSystemTask registers the maintenance job
-// before StartSystemTaskRunner. Registration is explicit (no init hook), so the
-// composition root controls whether the ChuanAPI behavior is present.
-func RegisterAffiliateRewardMaintenanceSystemTask() {
-	RegisterSystemTaskHandler(affiliateRewardMaintenanceHandler{})
+func logMaintenanceTaskError(ctx context.Context, task *model.SystemTask, err error) {
+	if errors.Is(err, model.ErrSystemTaskLockLost) {
+		logger.LogWarn(ctx, fmt.Sprintf("system task %s lock lost", task.TaskID))
+		return
+	}
+	logger.LogWarn(ctx, fmt.Sprintf("system task %s update failed: %v", task.TaskID, err))
 }
 
 func runAffiliateRewardMaintenance(ctx context.Context) (AffiliateRewardMaintenanceResult, error) {
@@ -98,7 +100,7 @@ func runAffiliateRewardMaintenance(ctx context.Context) (AffiliateRewardMaintena
 			errs = append(errs, err)
 			break
 		}
-		matured, err := model.MatureAffiliateRewards(userId)
+		matured, err := (RewardService{}).Mature(userId)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("affiliate reward maturity failed: user=%d: %w", userId, err))
 			continue
@@ -139,7 +141,7 @@ func reconcileAffiliatePaidCostWithError(candidate model.AffiliatePaidCostCandid
 	}
 
 	if paidQuota > 0 && canonicalType != "" && canonicalId != "" {
-		if _, err := RecordAffiliateRewardForRequest(candidate.SourceUserId, paidQuota, canonicalType, canonicalId); err != nil {
+		if _, err := (RewardService{}).Record(candidate.SourceUserId, paidQuota, canonicalType, canonicalId); err != nil {
 			state.Status = model.AffiliateReconcileRetry
 			state.LastError = err.Error()
 			if saveErr := model.SaveAffiliateRewardReconcileState(state); saveErr != nil {
@@ -193,10 +195,24 @@ func resolveAffiliateTaskCost(userId int, taskId string) (string, string, int, b
 		}
 		return "task", taskId, 0, true, nil
 	}
-	refs := TaskWalletCostRefs(task)
+	refs := taskWalletCostRefs(task)
 	cost, err := model.NetCostByReferences(userId, refs)
 	if err != nil {
 		return "task", taskId, 0, true, err
 	}
 	return "task", taskId, -cost[model.AccountPaid], false, nil
+}
+
+func taskWalletCostRefs(task *model.Task) [][2]string {
+	if task == nil {
+		return nil
+	}
+	var refs [][2]string
+	if requestID := task.PrivateData.EffectiveRequestID(); requestID != "" {
+		refs = append(refs, [2]string{"relay", requestID})
+	}
+	if task.TaskID != "" {
+		refs = append(refs, [2]string{"task", task.TaskID})
+	}
+	return refs
 }

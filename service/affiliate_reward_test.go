@@ -1,12 +1,14 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	affiliatemodule "github.com/QuantumNous/new-api/modules/chuanapi/affiliate"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -303,11 +305,20 @@ func TestAffiliateLedgerReconciliationCreatesDurableReward(t *testing.T) {
 	seedAffiliateRewardConfig(t, true, 0.2)
 	seedAffiliateUser(t, 654, 0)
 	seedAffiliatePaidCost(t, 655, 654, 750, "REQ-reconcile")
+	require.NoError(t, model.DB.Model(&model.BalanceLedger{}).
+		Where("user_id = ? AND reference_type = ? AND reference_id = ?", 655, "relay", "REQ-reconcile").
+		Update("created_at", common.GetTimestamp()-180).Error)
 
 	candidates, err := model.ListAffiliatePaidCostCandidates(common.GetTimestamp()+1, 10)
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
-	reconcileAffiliatePaidCost(candidates[0])
+	handler := affiliatemodule.MaintenanceHandler{}
+	task, err := model.CreateSystemTask(handler.Type(), nil, nil)
+	require.NoError(t, err)
+	claimed, ok, err := model.ClaimSystemTask(task.ID, handler.Type(), "affiliate-reconcile-test", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, ok)
+	handler.Run(context.Background(), claimed, "affiliate-reconcile-test")
 
 	var reward model.AffiliateReward
 	require.NoError(t, model.DB.Where(

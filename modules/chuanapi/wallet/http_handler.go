@@ -1,4 +1,4 @@
-package controller
+package wallet
 
 import (
 	"net/http"
@@ -6,7 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/pkg/affiliateport"
 
 	"github.com/gin-gonic/gin"
 )
@@ -30,10 +30,18 @@ func walletRuleSummary() WalletRuleSummary {
 	}
 }
 
+func matureAffiliateRewards(userID int) {
+	rewardService, err := affiliateport.Default()
+	if err != nil {
+		return
+	}
+	_, _ = rewardService.Mature(userID)
+}
+
 // GetWalletSummary 只公开 paid 与 bonus；旧 affiliate 字段由迁移清零并停止暴露。
 func GetWalletSummary(c *gin.Context) {
 	userId := c.GetInt("id")
-	_, _ = service.MatureAffiliateRewards(userId)
+	matureAffiliateRewards(userId)
 	paid, bonus, _, err := model.GetUserAccountBalances(userId)
 	if err != nil {
 		common.ApiError(c, err)
@@ -123,7 +131,7 @@ func GetWalletLedger(c *gin.Context) {
 
 func GetReferralOverview(c *gin.Context) {
 	userId := c.GetInt("id")
-	_, _ = service.MatureAffiliateRewards(userId)
+	matureAffiliateRewards(userId)
 	overview, err := model.GetAffiliateOverview(userId)
 	if err != nil {
 		common.ApiError(c, err)
@@ -155,7 +163,7 @@ func GetReferralOverview(c *gin.Context) {
 
 func GetReferralRewards(c *gin.Context) {
 	userId := c.GetInt("id")
-	_, _ = service.MatureAffiliateRewards(userId)
+	matureAffiliateRewards(userId)
 	rewards, total, err := model.ListAffiliateRewards(userId, getPageParam(c), getPageSizeParam(c))
 	if err != nil {
 		common.ApiError(c, err)

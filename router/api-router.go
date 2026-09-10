@@ -136,15 +136,6 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/stripe/amount", controller.RequestStripeAmount)
 				selfRoute.POST("/creem/pay", middleware.CriticalRateLimit(), controller.RequestCreemPay)
 				selfRoute.PUT("/setting", controller.UpdateUserSetting)
-
-				// TokenMix P1-2：钱包分账与账本
-				selfRoute.GET("/wallet", controller.GetWalletSummary)
-				selfRoute.GET("/wallet/ledger", controller.GetWalletLedger)
-
-				// 推荐赠金：成熟由后台任务处理，读取时做幂等补偿。
-				selfRoute.GET("/referral/overview", controller.GetReferralOverview)
-				selfRoute.GET("/referral/rewards", controller.GetReferralRewards)
-
 				// 2FA routes
 				selfRoute.GET("/2fa/status", controller.Get2FAStatus)
 				selfRoute.POST("/2fa/setup", middleware.UserCriticalRateLimit("security-verification"), middleware.DisableCache(), controller.Setup2FA)

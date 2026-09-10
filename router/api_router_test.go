@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/QuantumNous/new-api/extension"
 	"github.com/QuantumNous/new-api/model"
+	walletroutes "github.com/QuantumNous/new-api/modules/chuanapi/wallet/routes"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -30,6 +32,10 @@ func TestTokenMixP1RoutesRegistered(t *testing.T) {
 	engine := gin.New()
 	// 路由注册本身不 panic 即代表无冲突（重复注册相同路径会 panic）。
 	require.NotPanics(t, func() { SetApiRouter(engine) })
+	registry := extension.NewRegistry()
+	require.NoError(t, walletroutes.Register(registry))
+	require.NoError(t, registry.Freeze())
+	require.NoError(t, registry.ApplyRoutes(engine, extension.PriorityBeforePlugin))
 
 	routes := engine.Routes()
 	paths := make(map[string]bool)

@@ -8,13 +8,14 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	affiliatemodule "github.com/QuantumNous/new-api/modules/chuanapi/affiliate"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAffiliateRewardMaintenanceHandlerContract(t *testing.T) {
-	handler := affiliateRewardMaintenanceHandler{}
+	handler := affiliatemodule.MaintenanceHandler{}
 	assert.Equal(t, model.SystemTaskTypeAffiliateRewardMaintenance, handler.Type())
 	assert.True(t, handler.Enabled(), "maturity must continue when new reward creation is disabled")
 	assert.Equal(t, time.Minute, handler.Interval())
@@ -24,7 +25,7 @@ func TestAffiliateRewardMaintenanceHandlerContract(t *testing.T) {
 func TestAffiliateRewardMaintenanceSystemTaskRecordsSuccessfulRun(t *testing.T) {
 	truncate(t)
 	seedAffiliateRewardConfig(t, false, 0.2)
-	handler := affiliateRewardMaintenanceHandler{}
+	handler := affiliatemodule.MaintenanceHandler{}
 	withSystemTaskRegistry(t, handler)
 
 	runSystemTaskScheduler()
@@ -47,7 +48,7 @@ func TestAffiliateRewardMaintenanceSystemTaskRecordsSuccessfulRun(t *testing.T) 
 	require.NotNil(t, finished)
 	assert.Equal(t, model.SystemTaskStatusSucceeded, finished.Status)
 	assert.Empty(t, finished.Error)
-	var result AffiliateRewardMaintenanceResult
+	var result affiliatemodule.AffiliateRewardMaintenanceResult
 	require.NoError(t, json.Unmarshal([]byte(finished.Result), &result))
 	assert.Zero(t, result.ReconcileCandidates)
 	assert.Zero(t, result.MaturedUsers)
@@ -57,7 +58,7 @@ func TestAffiliateRewardMaintenanceSystemTaskRecordsSuccessfulRun(t *testing.T) 
 func TestAffiliateRewardMaintenanceSystemTaskPersistsFailure(t *testing.T) {
 	truncate(t)
 	seedAffiliateRewardConfig(t, true, 0.2)
-	handler := affiliateRewardMaintenanceHandler{}
+	handler := affiliatemodule.MaintenanceHandler{}
 
 	task, err := model.CreateSystemTask(handler.Type(), nil, nil)
 	require.NoError(t, err)

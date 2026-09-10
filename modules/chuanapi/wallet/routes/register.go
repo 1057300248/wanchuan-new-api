@@ -15,7 +15,7 @@ const (
 	RoutesName    = "wallet_bonus_policy_routes"
 )
 
-// Register owns HTTP wiring for the Wallet admin surface. Keeping middleware
+// Register owns HTTP wiring for Wallet user and admin surfaces. Keeping middleware
 // dependencies in this adapter package leaves the wallet domain/runtime package
 // independent of middleware -> service, so core service tests can import the
 // wallet implementation without creating a package cycle.
@@ -41,6 +41,14 @@ func registerRoutes(engine *gin.Engine) error {
 	api.Use(middleware.AccessTokenAudit())
 	api.Use(middleware.BodyStorageCleanup())
 	api.Use(middleware.GlobalAPIRateLimit())
+
+	user := api.Group("/user")
+	user.Use(middleware.DisableCache(), middleware.UserAuth())
+	user.GET("/wallet", walletmodule.GetWalletSummary)
+	user.GET("/wallet/ledger", walletmodule.GetWalletLedger)
+	user.GET("/referral/overview", walletmodule.GetReferralOverview)
+	user.GET("/referral/rewards", walletmodule.GetReferralRewards)
+
 	models := api.Group("/models")
 	models.Use(middleware.AdminAuth())
 	models.GET("/bonus_eligible/audits", walletmodule.GetModelBonusEligibleAudits)

@@ -186,6 +186,57 @@ func TestPaymentProviderOwnershipStaysInModule(t *testing.T) {
 	assert.Empty(t, offenders, "ChuanAPI payment module must own provider handlers/services without importing root controller/service")
 }
 
+func TestWalletAndAffiliateRuntimeOwnershipStaysInModules(t *testing.T) {
+	root := repoRoot(t)
+	for _, legacy := range []string{
+		"controller/wallet.go",
+		"service/affiliate_reward_maintenance.go",
+	} {
+		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(legacy)))
+		assert.ErrorIs(t, err, os.ErrNotExist, "%s must remain module-owned", legacy)
+	}
+
+	apiRouter, err := os.ReadFile(filepath.Join(root, "router", "api-router.go"))
+	require.NoError(t, err)
+	for _, path := range []string{
+		`"/wallet"`,
+		`"/wallet/ledger"`,
+		`"/referral/overview"`,
+		`"/referral/rewards"`,
+	} {
+		assert.NotContains(t, string(apiRouter), path,
+			"Wallet/Affiliate user route %s belongs to modules/chuanapi/wallet/routes", path)
+	}
+
+	moduleRoot := filepath.Join(root, "modules", "chuanapi", "affiliate")
+	fset := token.NewFileSet()
+	var offenders []string
+	require.NoError(t, filepath.WalkDir(moduleRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		if err != nil {
+			return err
+		}
+		for _, imp := range file.Imports {
+			importPath, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				return err
+			}
+			if importPath == modulePath+"/controller" || strings.HasPrefix(importPath, modulePath+"/controller/") ||
+				importPath == modulePath+"/service" || strings.HasPrefix(importPath, modulePath+"/service/") {
+				offenders = append(offenders, slashRel(t, root, path)+" -> "+importPath)
+			}
+		}
+		return nil
+	}))
+	assert.Empty(t, offenders, "Affiliate module must not import root controller/service")
+}
+
 func TestWalletCommercialPolicyDoesNotLeakBackIntoCore(t *testing.T) {
 	root := repoRoot(t)
 	apiRouter, err := os.ReadFile(filepath.Join(root, "router", "api-router.go"))

@@ -18,12 +18,14 @@ prefix	pkg/paymentcore/	GENERIC_CORE_ENHANCEMENT	payment-core	RETAIN	Provider-ne
 prefix	pkg/billingexpr/	GENERIC_CORE_ENHANCEMENT	billing-expression	UPSTREAM_CANDIDATE	Generic pricing expression capability
 prefix	architecture/	TEST_COMPAT	architecture-tests	RETAIN	Executable dependency and ownership gates
 prefix	cmd/archmanifest/	TEST_COMPAT	architecture-tooling	RETAIN	Deterministic fork ownership manifest generator
-prefix	model/balance_ledger	CHUANAPI_MODULE	wallet	EXTRACT	Wallet ledger-owned models and tests
-prefix	model/model_bonus_eligible	CHUANAPI_MODULE	wallet	EXTRACT	Wallet bonus policy-owned models and tests
-prefix	model/affiliate	CHUANAPI_MODULE	affiliate	EXTRACT	Affiliate-owned models
-prefix	service/affiliate_reward	CHUANAPI_MODULE	affiliate	EXTRACT	Affiliate reward and maintenance implementation
-prefix	controller/wallet	CHUANAPI_MODULE	wallet	EXTRACT	Wallet HTTP surface
-prefix	service/bonus_eligible	CHUANAPI_MODULE	wallet	EXTRACT	Wallet bonus eligibility implementation
+prefix	model/balance_ledger	DATA_COMPATIBILITY	wallet-data	DEFERRED_MIGRATION	Ledger schema and transaction engine still atomically update root users.quota* columns
+prefix	model/model_bonus_eligible	DATA_COMPATIBILITY	wallet-data	DEFERRED_MIGRATION	Bonus eligibility persistence and audit schema remain host model compatibility until dedicated data migration
+prefix	model/affiliate	DATA_COMPATIBILITY	affiliate-data	DEFERRED_MIGRATION	Affiliate reward/reconcile persistence remains host model compatibility until dedicated data migration
+exact	service/affiliate_reward.go	GENERIC_CORE_ENHANCEMENT	affiliate-wallet-bridge	RETAIN	Generic wallet cost accounting plus affiliateport bridge; no concrete reward policy
+exact	service/affiliate_reward_test.go	TEST_COMPAT	affiliate-wallet-bridge	RETAIN	Cross-boundary accounting/reward integration tests
+exact	service/affiliate_reward_maintenance_system_task_test.go	TEST_COMPAT	affiliate-integration	RETAIN	Host system-task registry integration test for module MaintenanceHandler
+exact	service/bonus_eligible.go	GENERIC_CORE_ENHANCEMENT	wallet-accounting	RETAIN	Generic wallet account-order adapter and ledger share/refund accounting
+exact	service/bonus_eligible_test.go	TEST_COMPAT	wallet-accounting	RETAIN	Wallet accounting/adapter integration tests
 exact	service/funding_source.go	UPSTREAM_CORE	wallet-mixed	SPLIT	Contains WalletFunding and SubscriptionFunding; must split through ports before extraction
 exact	service/billing_session.go	GENERIC_CORE_ENHANCEMENT	billing-orchestration	RETAIN	Generic request billing orchestrator; Wallet implementation must be injected
 prefix	controller/topup_waffo	CHUANAPI_MODULE	payment-waffo	EXTRACT	ChuanAPI Waffo topup integration
