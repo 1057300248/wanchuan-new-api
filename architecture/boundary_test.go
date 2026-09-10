@@ -317,6 +317,18 @@ func TestFrontendConcreteChuanAPIImportsDoNotGrow(t *testing.T) {
 	assert.Empty(t, actual, "frontend core must consume ChuanAPI UI only through generic extension accessors")
 }
 
+func TestWalletFrontendOwnershipStaysInChuanAPIExtension(t *testing.T) {
+	root := repoRoot(t)
+	legacy := filepath.Join(root, "web", "src", "features", "wallet")
+	_, err := os.Stat(legacy)
+	assert.ErrorIs(t, err, os.ErrNotExist, "Wallet frontend must remain extension-owned")
+
+	route, err := os.ReadFile(filepath.Join(root, "web", "src", "routes", "_authenticated", "wallet", "index.tsx"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(route), "@/features/wallet")
+	assert.Contains(t, string(route), "extensionWalletPage")
+}
+
 func TestCoreChuanAPIDomainStringLiteralsDoNotGrow(t *testing.T) {
 	root := repoRoot(t)
 	var offenders []string

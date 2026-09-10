@@ -20,6 +20,10 @@ For commercial licensing, please contact support@quantumnous.com
 // Wallet Type Definitions
 // ============================================================================
 
+import type { CreemProduct } from '@/lib/creem'
+
+export type { CreemProduct } from '@/lib/creem'
+
 /**
  * Generic API response
  */
@@ -58,22 +62,6 @@ export type WaffoPancakePaymentResponse = ApiResponse<
     }
   | string
 >
-
-/**
- * Creem product configuration
- */
-export interface CreemProduct {
-  /** Product display name */
-  name: string
-  /** Creem product ID */
-  productId: string
-  /** Product price */
-  price: number
-  /** Quota amount to credit */
-  quota: number
-  /** Currency (USD or EUR) */
-  currency: 'USD' | 'EUR'
-}
 
 /**
  * Creem payment request

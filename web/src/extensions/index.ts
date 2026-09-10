@@ -22,12 +22,14 @@ import {
   chuanapiHelpExtension,
   chuanapiI18nExtension,
   chuanapiNavigationExtension,
+  chuanapiWalletExtension,
   SHOW_LEGACY_AFFILIATE_QUOTA,
 } from './chuanapi'
 import { setExtensionFlags } from './flags'
 import { setHelpExtension } from './help'
 import { setI18nExtensions } from './i18n'
 import { setNavigationExtensions } from './navigation'
+import { setWalletExtension } from './wallet'
 
 // Composition root for frontend extensions. Core code must consume extension
 // capabilities only through the generic accessors exported below, never by
@@ -37,6 +39,7 @@ setBrandExtension(chuanapiBrandExtension)
 setHelpExtension(chuanapiHelpExtension)
 setI18nExtensions([chuanapiI18nExtension])
 setExtensionFlags({ showLegacyAffiliateQuota: SHOW_LEGACY_AFFILIATE_QUOTA })
+setWalletExtension(chuanapiWalletExtension)
 
 export {
   applyNavigationExtensions,
@@ -59,3 +62,5 @@ export type {
   ExtensionLocaleKey,
   I18nExtension,
 } from './i18n'
+export { extensionWalletPage } from './wallet'
+export type { WalletExtension, WalletPageProps } from './wallet'

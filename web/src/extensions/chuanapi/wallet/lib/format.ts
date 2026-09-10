@@ -18,33 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { DEFAULT_DISCOUNT_RATE } from '../constants'
 
+export { formatCreemPrice, formatQuotaShort } from '@/lib/creem'
+
 // ============================================================================
 // Wallet-specific Formatting Functions
 // ============================================================================
-
-/**
- * Format Creem price with currency symbol (USD/EUR)
- */
-export function formatCreemPrice(
-  price: number,
-  currency: 'USD' | 'EUR'
-): string {
-  const symbol = currency === 'EUR' ? '€' : '$'
-  return `${symbol}${price.toFixed(2)}`
-}
-
-/**
- * Format large quota numbers with K/M suffix
- */
-export function formatQuotaShort(quota: number): string {
-  if (quota >= 1000000) {
-    return `${(quota / 1000000).toFixed(1)}M`
-  }
-  if (quota >= 1000) {
-    return `${(quota / 1000).toFixed(1)}K`
-  }
-  return quota.toString()
-}
 
 /**
  * Format currency amount that is already in local currency.

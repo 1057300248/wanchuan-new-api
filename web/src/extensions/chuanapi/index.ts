@@ -19,9 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 import type { BrandExtension } from '../brand'
 import type { HelpExtension } from '../help'
 import type { I18nExtension } from '../i18n'
+import type { WalletExtension } from '../wallet'
 import { CHUANAPI_BRAND_LOGO } from './brand'
 import { ApiReferencePage, DocsIndexPage, GuidePage } from './help'
 import { loadChuanapiI18nOverride } from './i18n'
+import { Wallet } from './wallet'
 
 export { CHUANAPI_PUBLIC_HOME, chuanapiNavigationExtension } from './navigation'
 
@@ -43,4 +45,9 @@ export const chuanapiHelpExtension: HelpExtension = {
 export const chuanapiI18nExtension: I18nExtension = {
   id: 'chuanapi/i18n',
   loadOverride: loadChuanapiI18nOverride,
+}
+
+export const chuanapiWalletExtension: WalletExtension = {
+  id: 'chuanapi/wallet',
+  page: Wallet,
 }
