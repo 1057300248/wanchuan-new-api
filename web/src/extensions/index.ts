@@ -16,34 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { setBrandExtension } from './brand'
-import {
-  chuanapiBrandExtension,
-  chuanapiHelpExtension,
-  chuanapiI18nExtension,
-  chuanapiNavigationExtension,
-  chuanapiPaymentSettingsExtension,
-  chuanapiWalletExtension,
-  SHOW_LEGACY_AFFILIATE_QUOTA,
-} from './chuanapi'
-import { setExtensionFlags } from './flags'
-import { setHelpExtension } from './help'
-import { setI18nExtensions } from './i18n'
-import { setNavigationExtensions } from './navigation'
-import { setPaymentSettingsExtension } from './payment-settings'
-import { setWalletExtension } from './wallet'
-
-// Composition root for frontend extensions. Core code must consume extension
-// capabilities only through the generic accessors exported below, never by
-// importing a concrete `@/extensions/chuanapi/*` module.
-setNavigationExtensions([chuanapiNavigationExtension])
-setBrandExtension(chuanapiBrandExtension)
-setHelpExtension(chuanapiHelpExtension)
-setI18nExtensions([chuanapiI18nExtension])
-setExtensionFlags({ showLegacyAffiliateQuota: SHOW_LEGACY_AFFILIATE_QUOTA })
-setPaymentSettingsExtension(chuanapiPaymentSettingsExtension)
-setWalletExtension(chuanapiWalletExtension)
-
 export {
   applyNavigationExtensions,
   extensionPublicHomeUrl,

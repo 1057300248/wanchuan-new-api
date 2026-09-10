@@ -29,14 +29,16 @@ update. It must not happen as incidental refactoring.
 
 ## Frontend
 
-`web/src/extensions/index.ts` is the frontend composition root. Concrete
-ChuanAPI implementation lives under `web/src/extensions/chuanapi/`.
+`web/src/extensions/bootstrap.ts` is the frontend composition root and is
+loaded explicitly by `web/src/main.tsx`. `web/src/extensions/index.ts` is a
+generic accessor surface only and must not import the concrete implementation.
+Concrete ChuanAPI implementation lives under `web/src/extensions/chuanapi/`.
 
-At the Batch A baseline, three route shells still directly import
-`@/extensions/chuanapi/help`. They are a measured migration debt, not a permanent
-exception. Batch A allows only those three existing files and forbids any new
-concrete import. Phase 2 replaces them with a generic help/page contribution;
-after that the gate changes to zero.
+At the Batch A baseline, three route shells directly imported
+`@/extensions/chuanapi/help`. Phase 2 replaced them with generic help/page
+contributions and the core concrete-import gate is now zero. Later Wallet and
+payment-settings extraction follows the same rule: core imports generic accessors
+from `@/extensions`, while `bootstrap.ts` is the single concrete wiring point.
 
 ## Brand literals
 

@@ -21,7 +21,7 @@ import type { BillingSettings } from '@/features/system-settings/types'
 import type { PaymentSettingsExtension } from '../../payment-settings'
 import { PaymentSettingsSection } from './payment-settings-section'
 
-function ChuanApiPaymentSettings({ settings }: { settings: BillingSettings }) {
+function renderChuanApiPaymentSettings(settings: BillingSettings) {
   return (
     <PaymentSettingsSection
       defaultValues={{
@@ -71,7 +71,8 @@ function ChuanApiPaymentSettings({ settings }: { settings: BillingSettings }) {
       waffoPancakeProvisionedProductID={settings.WaffoPancakeProductID ?? ''}
       complianceDefaults={{
         confirmed: settings['payment_setting.compliance_confirmed'] ?? false,
-        termsVersion: settings['payment_setting.compliance_terms_version'] ?? '',
+        termsVersion:
+          settings['payment_setting.compliance_terms_version'] ?? '',
         confirmedAt: settings['payment_setting.compliance_confirmed_at'] ?? 0,
         confirmedBy: settings['payment_setting.compliance_confirmed_by'] ?? 0,
       }}
@@ -81,7 +82,6 @@ function ChuanApiPaymentSettings({ settings }: { settings: BillingSettings }) {
 
 export const chuanapiPaymentSettingsExtension: PaymentSettingsExtension = {
   id: 'chuanapi/payment-settings',
-  render: (settings) => (
-    <ChuanApiPaymentSettings settings={settings as BillingSettings} />
-  ),
+  render: (settings) =>
+    renderChuanApiPaymentSettings(settings as BillingSettings),
 }

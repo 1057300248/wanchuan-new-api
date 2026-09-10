@@ -317,6 +317,52 @@ func TestFrontendConcreteChuanAPIImportsDoNotGrow(t *testing.T) {
 	assert.Empty(t, actual, "frontend core must consume ChuanAPI UI only through generic extension accessors")
 }
 
+func TestFrontendCompositionRootStaysIsolated(t *testing.T) {
+	root := repoRoot(t)
+	indexPath := filepath.Join(root, "web", "src", "extensions", "index.ts")
+	bootstrapPath := filepath.Join(root, "web", "src", "extensions", "bootstrap.ts")
+
+	index, err := os.ReadFile(indexPath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(index), "./chuanapi",
+		"generic extension API must not import concrete ChuanAPI composition")
+
+	bootstrap, err := os.ReadFile(bootstrapPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(bootstrap), "from './chuanapi'",
+		"frontend composition root must explicitly wire the concrete ChuanAPI extension")
+
+	mainEntry, err := os.ReadFile(filepath.Join(root, "web", "src", "main.tsx"))
+	require.NoError(t, err)
+	assert.Contains(t, string(mainEntry), "./extensions/bootstrap",
+		"application entrypoint must initialize frontend composition before rendering")
+
+	var offenders []string
+	webRoot := filepath.Join(root, "web", "src")
+	require.NoError(t, filepath.WalkDir(webRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !(strings.HasSuffix(path, ".ts") || strings.HasSuffix(path, ".tsx")) {
+			return nil
+		}
+		rel := slashRel(t, root, path)
+		if rel == "web/src/extensions/bootstrap.ts" || strings.HasPrefix(rel, "web/src/extensions/chuanapi/") ||
+			strings.Contains(filepath.Base(rel), ".test.") || strings.Contains(filepath.Base(rel), ".spec.") {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if strings.Contains(string(data), "from './chuanapi'") || strings.Contains(string(data), "from \"./chuanapi\"") {
+			offenders = append(offenders, rel)
+		}
+		return nil
+	}))
+	assert.Empty(t, offenders, "only web/src/extensions/bootstrap.ts may wire the concrete frontend ChuanAPI extension")
+}
+
 func TestWalletFrontendOwnershipStaysInChuanAPIExtension(t *testing.T) {
 	root := repoRoot(t)
 	legacy := filepath.Join(root, "web", "src", "features", "wallet")

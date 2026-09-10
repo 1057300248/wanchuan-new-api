@@ -6,7 +6,7 @@ prefix	modules/chuanapi/payment/	CHUANAPI_MODULE	payment-waffo	RETAIN	ChuanAPI W
 prefix	modules/chuanapi/console/	CHUANAPI_MODULE	console	RETAIN	ChuanAPI public console/help backend routes
 prefix	modules/imagegen/	GENERIC_MODULE	imagegen	RETAIN	Generic asynchronous image generation backend module
 prefix	chuanapi/	COMPOSITION_ROOT	backend-composition	SPLIT	Current adapter; implementation details must migrate into individual modules
-exact	web/src/extensions/index.ts	COMPOSITION_ROOT	frontend-composition	RETAIN	Frontend concrete extension wiring root
+exact	web/src/extensions/bootstrap.ts	COMPOSITION_ROOT	frontend-composition	RETAIN	Single frontend concrete extension wiring root loaded by main.tsx
 prefix	web/src/extensions/chuanapi/	CHUANAPI_MODULE	console	RETAIN	Concrete ChuanAPI frontend implementation
 prefix	web/src/extensions/	GENERIC_EXTENSION_KERNEL	frontend-extension	RETAIN	Generic frontend extension contracts
 prefix	extension/	GENERIC_EXTENSION_KERNEL	backend-extension	RETAIN	Startup model migration and route contribution registry

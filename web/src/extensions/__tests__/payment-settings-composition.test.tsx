@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { describe, expect, test } from 'vitest'
 
+import '@/extensions/bootstrap'
 import { extensionPaymentSettingsSection } from '@/extensions'
 
 describe('payment settings extension composition', () => {
