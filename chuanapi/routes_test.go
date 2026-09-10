@@ -34,8 +34,8 @@ func TestLlmsRouteSetPreservesLegacyRouteTableAndHandlers(t *testing.T) {
 		http.MethodHead + " /llms.txt",
 		http.MethodHead + " /llms-full.txt",
 	}, got)
-	assert.True(t, strings.HasSuffix(handlers[http.MethodGet+" /llms.txt"], "/controller.GetLlmsIndex"))
-	assert.True(t, strings.HasSuffix(handlers[http.MethodHead+" /llms.txt"], "/controller.GetLlmsIndex"))
-	assert.True(t, strings.HasSuffix(handlers[http.MethodGet+" /llms-full.txt"], "/controller.GetLlmsFull"))
-	assert.True(t, strings.HasSuffix(handlers[http.MethodHead+" /llms-full.txt"], "/controller.GetLlmsFull"))
+	assert.True(t, strings.HasSuffix(handlers[http.MethodGet+" /llms.txt"], "/console.GetLlmsIndex"))
+	assert.True(t, strings.HasSuffix(handlers[http.MethodHead+" /llms.txt"], "/console.GetLlmsIndex"))
+	assert.True(t, strings.HasSuffix(handlers[http.MethodGet+" /llms-full.txt"], "/console.GetLlmsFull"))
+	assert.True(t, strings.HasSuffix(handlers[http.MethodHead+" /llms-full.txt"], "/console.GetLlmsFull"))
 }

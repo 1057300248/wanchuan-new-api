@@ -65,6 +65,25 @@ func TestGoCoreDoesNotImportConcreteChuanAPI(t *testing.T) {
 	assert.Empty(t, offenders, "core production Go code must not import concrete ChuanAPI modules; main.go is the composition-root exception")
 }
 
+func TestChuanAPICompositionRootStaysThin(t *testing.T) {
+	root := repoRoot(t)
+	path := filepath.Join(root, "chuanapi", "register.go")
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+	require.NoError(t, err)
+
+	var offenders []string
+	for _, imp := range file.Imports {
+		importPath, unquoteErr := strconv.Unquote(imp.Path.Value)
+		require.NoError(t, unquoteErr)
+		if importPath == "fmt" || importPath == modulePath+"/extension" || strings.HasPrefix(importPath, modulePath+"/modules/chuanapi/") {
+			continue
+		}
+		offenders = append(offenders, importPath)
+	}
+	assert.Empty(t, offenders, "chuanapi/register.go must remain a thin composition root: no controller/model/service/common business imports")
+}
+
 func TestFrontendConcreteChuanAPIImportsDoNotGrow(t *testing.T) {
 	root := repoRoot(t)
 	webRoot := filepath.Join(root, "web", "src")

@@ -155,6 +155,10 @@ func main() {
 	// (DB-lease dedup across masters + run history), then start the runner that
 	// schedules and executes them. Master-only execution and the UpdateTask
 	// switch are enforced inside the runner and each handler's Enabled().
+	if err := extension.Default().ApplyLifecycle(extension.PhaseBeforeBackgroundWorkers); err != nil {
+		common.FatalLog("failed to apply extension startup lifecycle: " + err.Error())
+		return
+	}
 	controller.RegisterScheduledSystemTasks()
 	service.StartSystemTaskRunner()
 
