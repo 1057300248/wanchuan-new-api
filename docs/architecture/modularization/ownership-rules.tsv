@@ -26,13 +26,18 @@ exact	service/affiliate_reward_test.go	TEST_COMPAT	affiliate-wallet-bridge	RETAI
 exact	service/affiliate_reward_maintenance_system_task_test.go	TEST_COMPAT	affiliate-integration	RETAIN	Host system-task registry integration test for module MaintenanceHandler
 exact	service/bonus_eligible.go	GENERIC_CORE_ENHANCEMENT	wallet-accounting	RETAIN	Generic wallet account-order adapter and ledger share/refund accounting
 exact	service/bonus_eligible_test.go	TEST_COMPAT	wallet-accounting	RETAIN	Wallet accounting/adapter integration tests
-exact	service/funding_source.go	UPSTREAM_CORE	wallet-mixed	SPLIT	Contains WalletFunding and SubscriptionFunding; must split through ports before extraction
+exact	service/funding_source.go	GENERIC_CORE_ENHANCEMENT	subscription-funding	RETAIN	SubscriptionFunding is the host implementation behind moneyport; WalletFunding has been extracted
 exact	service/billing_session.go	GENERIC_CORE_ENHANCEMENT	billing-orchestration	RETAIN	Generic request billing orchestrator; Wallet implementation must be injected
 prefix	controller/topup_waffo	CHUANAPI_MODULE	payment-waffo	EXTRACT	ChuanAPI Waffo topup integration
 prefix	controller/subscription_payment_waffo	CHUANAPI_MODULE	payment-waffo	EXTRACT	ChuanAPI Waffo subscription integration
-prefix	setting/payment_waffo	CHUANAPI_MODULE	payment-waffo	EXTRACT	ChuanAPI Waffo configuration
-prefix	service/waffo	CHUANAPI_MODULE	payment-waffo	EXTRACT	ChuanAPI Waffo service
-prefix	constant/waffo	CHUANAPI_MODULE	payment-waffo	EXTRACT	ChuanAPI Waffo constants
+prefix	setting/payment_waffo	DATA_COMPATIBILITY	payment-config	DEFERRED_MIGRATION	Persisted OptionMap binding still targets host setting variables; runtime provider implementation is module-owned
+prefix	service/waffo	TEST_COMPAT	payment-legacy-path	REVIEW	Legacy service path should remain absent after provider extraction; matching test artifacts are compatibility evidence
+prefix	constant/waffo	DATA_COMPATIBILITY	payment-config	DEFERRED_MIGRATION	Serialized Waffo payment-method shape remains host option compatibility data
+exact	model/option.go	DATA_COMPATIBILITY	shared-option-store	DEFERRED_MIGRATION	Shared option bootstrap and persistence still enumerate provider configuration keys
+exact	model/topup.go	DATA_COMPATIBILITY	payment-persistence	DEFERRED_MIGRATION	Shared TopUp persistence and settlement rows retain provider identifiers for backward-compatible data
+exact	model/subscription.go	DATA_COMPATIBILITY	subscription-persistence	DEFERRED_MIGRATION	Shared subscription schema retains provider-specific product/order compatibility fields
+exact	web/src/features/system-settings/types.ts	DATA_COMPATIBILITY	frontend-payment-config	DEFERRED_MIGRATION	Host option DTO retains persisted provider fields while concrete settings UI is extension-owned
+exact	web/src/features/system-settings/billing/index.tsx	DATA_COMPATIBILITY	frontend-payment-config	DEFERRED_MIGRATION	Host default option snapshot retains provider defaults while concrete settings UI is extension-owned
 prefix	web/src/features/image-generation/	GENERIC_MODULE	imagegen	EXTRACT	Generic image-generation frontend module
 prefix	web/src/routes/_authenticated/image/	GENERIC_MODULE	imagegen	EXTRACT	Image-generation route shell
 contains	image_async	GENERIC_MODULE	imagegen	EXTRACT	Async image-generation backend surface
@@ -47,3 +52,29 @@ prefix	ops/	OPS_DEPLOYMENT	ops	RETAIN	Deployment and operations assets
 prefix	.github/	OPS_DEPLOYMENT	ci	REVIEW	CI and repository operations
 prefix	bin/	OPS_DEPLOYMENT	migration-tooling	REVIEW	Operational migration and helper scripts
 prefix	docs/	TEST_COMPAT	documentation	REVIEW	Non-runtime documentation and review evidence
+suffix	_test.go	TEST_COMPAT	go-tests	RETAIN	Host regression and compatibility tests remain alongside their generic owner
+suffix	.test.ts	TEST_COMPAT	frontend-tests	RETAIN	Frontend regression tests
+suffix	.test.tsx	TEST_COMPAT	frontend-tests	RETAIN	Frontend regression tests
+suffix	.spec.ts	TEST_COMPAT	frontend-tests	RETAIN	Frontend regression tests
+suffix	.spec.tsx	TEST_COMPAT	frontend-tests	RETAIN	Frontend regression tests
+exact	AGENTS.md	TEST_COMPAT	repository-guidance	RETAIN	Repository contribution guidance
+exact	.dockerignore	OPS_DEPLOYMENT	build-config	RETAIN	Container build configuration
+exact	.env.example	OPS_DEPLOYMENT	build-config	RETAIN	Deployment configuration template
+exact	.gitattributes	OPS_DEPLOYMENT	repository-config	RETAIN	Repository configuration
+exact	.gitignore	OPS_DEPLOYMENT	repository-config	RETAIN	Repository configuration
+exact	Dockerfile	OPS_DEPLOYMENT	build-config	RETAIN	Container build configuration
+exact	docker-compose.yml	OPS_DEPLOYMENT	build-config	RETAIN	Container deployment configuration
+exact	VERSION	OPS_DEPLOYMENT	release-config	RETAIN	Product release metadata
+prefix	web/	PRODUCT_CORE_CUSTOMIZATION	frontend-core	RETAIN_REVIEW	Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
+prefix	common/	GENERIC_CORE_ENHANCEMENT	core-common	UPSTREAM_REVIEW	Generic host hardening/behavior changes; candidate for upstream-style patch cleanup
+prefix	constant/	GENERIC_CORE_ENHANCEMENT	core-constant	UPSTREAM_REVIEW	Generic host constants/context changes
+prefix	controller/	GENERIC_CORE_ENHANCEMENT	core-controller	UPSTREAM_REVIEW	Generic host HTTP behavior changes after concrete ChuanAPI handlers are extracted
+prefix	logger/	GENERIC_CORE_ENHANCEMENT	core-logging	UPSTREAM_REVIEW	Generic logging hardening
+prefix	middleware/	GENERIC_CORE_ENHANCEMENT	core-middleware	UPSTREAM_REVIEW	Generic authentication/rate-limit/security hardening
+prefix	model/	GENERIC_CORE_ENHANCEMENT	core-model	UPSTREAM_REVIEW	Generic host persistence changes not classified as deferred module data compatibility
+prefix	pkg/	GENERIC_CORE_ENHANCEMENT	core-package	UPSTREAM_REVIEW	Generic reusable package changes not covered by a narrower port/module rule
+prefix	relay/	GENERIC_CORE_ENHANCEMENT	core-relay	UPSTREAM_REVIEW	Generic relay/billing/protocol behavior changes
+prefix	relaykit/	GENERIC_CORE_ENHANCEMENT	core-relaykit	UPSTREAM_REVIEW	Generic protocol conversion changes
+prefix	router/	GENERIC_CORE_ENHANCEMENT	core-router	UPSTREAM_REVIEW	Generic host route changes after module routes are extracted
+prefix	service/	GENERIC_CORE_ENHANCEMENT	core-service	UPSTREAM_REVIEW	Generic orchestration/accounting/task changes after module policy extraction
+prefix	setting/	GENERIC_CORE_ENHANCEMENT	core-setting	UPSTREAM_REVIEW	Generic host settings changes not classified as deferred provider data compatibility
