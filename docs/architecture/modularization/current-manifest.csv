@@ -8,14 +8,14 @@ path,old_path,status,insertions,deletions,binary,ownership,module,artifact_kind,
 AGENTS.md,,M,0,3,false,TEST_COMPAT,repository-guidance,documentation,RETAIN,exact:AGENTS.md,Repository contribution guidance
 Dockerfile,,M,5,0,false,OPS_DEPLOYMENT,build-config,production,RETAIN,exact:Dockerfile,Container build configuration
 VERSION,,M,1,0,false,OPS_DEPLOYMENT,release-config,production,RETAIN,exact:VERSION,Product release metadata
-architecture/boundary_test.go,,A,502,0,false,TEST_COMPAT,architecture-tests,test,RETAIN,prefix:architecture/,Executable dependency and ownership gates
+architecture/boundary_test.go,,A,553,0,false,TEST_COMPAT,architecture-tests,test,RETAIN,prefix:architecture/,Executable dependency and ownership gates
 architecture/doc.go,,A,3,0,false,TEST_COMPAT,architecture-tests,production,RETAIN,prefix:architecture/,Executable dependency and ownership gates
 bin/migration_quota_bigint_mysql.sql,,A,233,0,false,OPS_DEPLOYMENT,migration-tooling,tooling,REVIEW,prefix:bin/,Operational migration and helper scripts
 bin/migration_quota_bigint_postgres.sql,,A,271,0,false,OPS_DEPLOYMENT,migration-tooling,tooling,REVIEW,prefix:bin/,Operational migration and helper scripts
 chuanapi/backfill_step_test.go,,A,154,0,false,COMPOSITION_ROOT,backend-composition,test,SPLIT,prefix:chuanapi/,Current adapter; implementation details must migrate into individual modules
-chuanapi/register.go,,A,82,0,false,COMPOSITION_ROOT,backend-composition,production,SPLIT,prefix:chuanapi/,Current adapter; implementation details must migrate into individual modules
+chuanapi/register.go,,A,92,0,false,COMPOSITION_ROOT,backend-composition,production,SPLIT,prefix:chuanapi/,Current adapter; implementation details must migrate into individual modules
 chuanapi/register_test.go,,A,122,0,false,COMPOSITION_ROOT,backend-composition,test,SPLIT,prefix:chuanapi/,Current adapter; implementation details must migrate into individual modules
-chuanapi/routes_test.go,,A,41,0,false,COMPOSITION_ROOT,backend-composition,test,SPLIT,prefix:chuanapi/,Current adapter; implementation details must migrate into individual modules
+chuanapi/routes_test.go,,A,51,0,false,COMPOSITION_ROOT,backend-composition,test,SPLIT,prefix:chuanapi/,Current adapter; implementation details must migrate into individual modules
 cmd/archmanifest/main.go,,A,257,0,false,TEST_COMPAT,architecture-tooling,tooling,RETAIN,prefix:cmd/archmanifest/,Deterministic fork ownership manifest generator
 common/account_password.go,,M,20,0,false,GENERIC_CORE_ENHANCEMENT,core-common,production,UPSTREAM_REVIEW,prefix:common/,Generic host hardening/behavior changes; candidate for upstream-style patch cleanup
 common/account_password_blocklist.LICENSE,,A,25,0,false,GENERIC_CORE_ENHANCEMENT,core-common,production,UPSTREAM_REVIEW,prefix:common/,Generic host hardening/behavior changes; candidate for upstream-style patch cleanup
@@ -55,7 +55,7 @@ controller/return_path.go,,M,2,7,false,GENERIC_CORE_ENHANCEMENT,core-controller,
 controller/return_path_test.go,,M,9,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 controller/secure_verification.go,,M,1,1,false,GENERIC_CORE_ENHANCEMENT,security,production,UPSTREAM_CANDIDATE,contains:secure_verification,Generic verification hardening
 controller/security_account_test.go,,M,29,3,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
-controller/topup.go,,M,91,165,false,GENERIC_CORE_ENHANCEMENT,core-controller,production,UPSTREAM_REVIEW,prefix:controller/,Generic host HTTP behavior changes after concrete ChuanAPI handlers are extracted
+controller/topup.go,,M,95,164,false,GENERIC_CORE_ENHANCEMENT,core-controller,production,UPSTREAM_REVIEW,prefix:controller/,Generic host HTTP behavior changes after concrete ChuanAPI handlers are extracted
 controller/topup_creem.go,,M,18,14,false,GENERIC_CORE_ENHANCEMENT,core-controller,production,UPSTREAM_REVIEW,prefix:controller/,Generic host HTTP behavior changes after concrete ChuanAPI handlers are extracted
 controller/topup_epay_test.go,,A,84,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 controller/topup_stripe.go,,M,9,5,false,GENERIC_CORE_ENHANCEMENT,core-controller,production,UPSTREAM_REVIEW,prefix:controller/,Generic host HTTP behavior changes after concrete ChuanAPI handlers are extracted
@@ -68,13 +68,15 @@ docs/architecture/modularization/baseline.csv,,A,23,0,false,TEST_COMPAT,document
 docs/architecture/modularization/billing-contract.md,,A,64,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/brand-baseline.csv,,A,4,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/core-attribution.md,,A,101,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
-docs/architecture/modularization/dependency-boundaries.md,,A,47,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
+docs/architecture/modularization/current-manifest.csv,,A,711,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
+docs/architecture/modularization/dependency-boundaries.md,,A,68,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
+docs/architecture/modularization/final-closeout.md,,A,127,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/fork-manifest.csv,,A,621,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/funding-factory-contract.md,,A,95,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/import-baseline.csv,,A,6,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/module-ownership.md,,A,85,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/ownership-rules.tsv,,A,80,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
-docs/architecture/modularization/progress.csv,,A,17,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
+docs/architecture/modularization/progress.csv,,A,19,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/new-api-rc33-production-runbook.md,,A,122,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/new-api-rc33-review.md,,A,103,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 extension/boundary_test.go,,A,71,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,test,RETAIN,prefix:extension/,Startup model migration and route contribution registry
@@ -84,10 +86,10 @@ extension/migration.go,,A,280,0,false,GENERIC_EXTENSION_KERNEL,backend-extension
 extension/migration_test.go,,A,381,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,test,RETAIN,prefix:extension/,Startup model migration and route contribution registry
 extension/registry.go,,A,194,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,production,RETAIN,prefix:extension/,Startup model migration and route contribution registry
 extension/registry_test.go,,A,361,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,test,RETAIN,prefix:extension/,Startup model migration and route contribution registry
-extension/routes.go,,A,153,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,production,RETAIN,prefix:extension/,Startup model migration and route contribution registry
-extension/routes_test.go,,A,213,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,test,RETAIN,prefix:extension/,Startup model migration and route contribution registry
+extension/routes.go,,A,182,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,production,RETAIN,prefix:extension/,Startup model migration and route contribution registry
+extension/routes_test.go,,A,245,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,test,RETAIN,prefix:extension/,Startup model migration and route contribution registry
 logger/logger.go,,M,6,7,false,GENERIC_CORE_ENHANCEMENT,core-logging,production,UPSTREAM_REVIEW,prefix:logger/,Generic logging hardening
-main.go,,M,59,5,false,COMPOSITION_ROOT,backend-composition,production,RETAIN,exact:main.go,Only production host entrypoint allowed to import chuanapi composition adapter
+main.go,,M,69,5,false,COMPOSITION_ROOT,backend-composition,production,RETAIN,exact:main.go,Only production host entrypoint allowed to import chuanapi composition adapter
 middleware/auth.go,,M,25,1,false,GENERIC_CORE_ENHANCEMENT,core-middleware,production,UPSTREAM_REVIEW,prefix:middleware/,Generic authentication/rate-limit/security hardening
 middleware/cache.go,,M,12,3,false,GENERIC_CORE_ENHANCEMENT,core-middleware,production,UPSTREAM_REVIEW,prefix:middleware/,Generic authentication/rate-limit/security hardening
 middleware/cache_test.go,,A,55,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
@@ -145,13 +147,14 @@ modules/chuanapi/console/llms_test.go,,A,71,0,false,CHUANAPI_MODULE,console,test
 modules/chuanapi/console/register.go,,A,36,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:modules/chuanapi/console/,ChuanAPI public console/help backend routes
 modules/chuanapi/payment/availability.go,,A,40,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
 modules/chuanapi/payment/availability_test.go,,A,94,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
-modules/chuanapi/payment/catalog.go,,A,48,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/catalog.go,,A,84,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/catalog_registry_test.go,,A,35,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
 modules/chuanapi/payment/pancake_handler.go,controller/topup_waffo_pancake.go,R091,0,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
 modules/chuanapi/payment/pancake_handler_test.go,controller/topup_waffo_pancake_test.go,R099,0,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
 modules/chuanapi/payment/pancake_service.go,service/waffo_pancake.go,R098,0,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
 modules/chuanapi/payment/pancake_subscription_handler.go,controller/subscription_payment_waffo_pancake.go,R091,0,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
-modules/chuanapi/payment/register.go,,A,63,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
-modules/chuanapi/payment/register_test.go,,A,40,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/register.go,,A,51,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/register_test.go,,A,49,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
 modules/chuanapi/payment/waffo_handler.go,controller/topup_waffo.go,R092,0,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
 modules/chuanapi/wallet/admin_handler.go,,A,114,0,false,CHUANAPI_MODULE,wallet,production,RETAIN,prefix:modules/chuanapi/wallet/,"Wallet runtime, commercial policy, admin surface and migration contribution"
 modules/chuanapi/wallet/funding.go,,A,330,0,false,CHUANAPI_MODULE,wallet,production,RETAIN,prefix:modules/chuanapi/wallet/,"Wallet runtime, commercial policy, admin surface and migration contribution"
@@ -159,7 +162,7 @@ modules/chuanapi/wallet/http_handler.go,,A,196,0,false,CHUANAPI_MODULE,wallet,pr
 modules/chuanapi/wallet/http_handler_test.go,,A,158,0,false,CHUANAPI_MODULE,wallet,test,RETAIN,prefix:modules/chuanapi/wallet/,"Wallet runtime, commercial policy, admin surface and migration contribution"
 modules/chuanapi/wallet/policy.go,,A,27,0,false,CHUANAPI_MODULE,wallet,production,RETAIN,prefix:modules/chuanapi/wallet/,"Wallet runtime, commercial policy, admin surface and migration contribution"
 modules/chuanapi/wallet/register.go,,A,59,0,false,CHUANAPI_MODULE,wallet,production,RETAIN,prefix:modules/chuanapi/wallet/,"Wallet runtime, commercial policy, admin surface and migration contribution"
-modules/chuanapi/wallet/routes/register.go,,A,57,0,false,CHUANAPI_MODULE,wallet,production,RETAIN,prefix:modules/chuanapi/wallet/,"Wallet runtime, commercial policy, admin surface and migration contribution"
+modules/chuanapi/wallet/routes/register.go,,A,43,0,false,CHUANAPI_MODULE,wallet,production,RETAIN,prefix:modules/chuanapi/wallet/,"Wallet runtime, commercial policy, admin surface and migration contribution"
 modules/imagegen/async_handler.go,,A,193,0,false,GENERIC_MODULE,imagegen,production,RETAIN,prefix:modules/imagegen/,Generic asynchronous image generation backend module
 modules/imagegen/async_handler_test.go,,A,142,0,false,GENERIC_MODULE,imagegen,test,RETAIN,prefix:modules/imagegen/,Generic asynchronous image generation backend module
 modules/imagegen/async_store.go,,A,114,0,false,GENERIC_MODULE,imagegen,production,RETAIN,prefix:modules/imagegen/,Generic asynchronous image generation backend module
@@ -185,7 +188,8 @@ pkg/moneyport/funding.go,,A,62,0,false,GENERIC_EXTENSION_KERNEL,money-port,produ
 pkg/paymentcore/boundary_test.go,,A,37,0,false,GENERIC_CORE_ENHANCEMENT,payment-core,test,RETAIN,prefix:pkg/paymentcore/,"Provider-neutral payment compliance, quota, callback and idempotency helpers"
 pkg/paymentcore/helpers.go,,A,157,0,false,GENERIC_CORE_ENHANCEMENT,payment-core,production,RETAIN,prefix:pkg/paymentcore/,"Provider-neutral payment compliance, quota, callback and idempotency helpers"
 pkg/paymentport/boundary_test.go,,A,36,0,false,GENERIC_EXTENSION_KERNEL,payment-port,test,RETAIN,prefix:pkg/paymentport/,Provider-agnostic payment catalogue capability leaf package
-pkg/paymentport/catalog.go,,A,65,0,false,GENERIC_EXTENSION_KERNEL,payment-port,production,RETAIN,prefix:pkg/paymentport/,Provider-agnostic payment catalogue capability leaf package
+pkg/paymentport/catalog.go,,A,274,0,false,GENERIC_EXTENSION_KERNEL,payment-port,production,RETAIN,prefix:pkg/paymentport/,Provider-agnostic payment catalogue capability leaf package
+pkg/paymentport/registry_test.go,,A,93,0,false,GENERIC_EXTENSION_KERNEL,payment-port,test,RETAIN,prefix:pkg/paymentport/,Provider-agnostic payment catalogue capability leaf package
 pkg/walletport/boundary_test.go,,A,35,0,false,GENERIC_EXTENSION_KERNEL,wallet-port,test,RETAIN,prefix:pkg/walletport/,Runtime wallet commercial policy capability leaf package
 pkg/walletport/policy.go,,A,48,0,false,GENERIC_EXTENSION_KERNEL,wallet-port,production,RETAIN,prefix:pkg/walletport/,Runtime wallet commercial policy capability leaf package
 relay/channel/api_request_getbody_test.go,,M,26,4,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
@@ -216,12 +220,12 @@ relaykit/relayconvert/internal/oai_responses/to_oai_chat_stream_resp.go,,M,23,4,
 relaykit/relayconvert/internal/oai_responses/usage_text_capture_test.go,,A,26,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 relaykit/relayconvert/response_registry.go,,M,1,1,false,GENERIC_CORE_ENHANCEMENT,core-relaykit,production,UPSTREAM_REVIEW,prefix:relaykit/,Generic protocol conversion changes
 relaykit/relayconvert/response_registry_test.go,,M,1,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
-router/api-router.go,,M,60,43,false,GENERIC_CORE_ENHANCEMENT,core-router,production,UPSTREAM_REVIEW,prefix:router/,Generic host route changes after module routes are extracted
-router/api_router_test.go,,A,69,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
+router/api-router.go,,M,70,44,false,GENERIC_CORE_ENHANCEMENT,core-router,production,UPSTREAM_REVIEW,prefix:router/,Generic host route changes after module routes are extracted
+router/api_router_test.go,,A,84,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 router/auth_session_test.go,,A,197,0,false,GENERIC_CORE_ENHANCEMENT,security,test,UPSTREAM_CANDIDATE,contains:auth_session,Generic session hardening
 router/dashboard.go,,M,0,1,false,GENERIC_CORE_ENHANCEMENT,core-router,production,UPSTREAM_REVIEW,prefix:router/,Generic host route changes after module routes are extracted
-router/extension_routes_test.go,,A,120,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
-router/main.go,,M,32,2,false,GENERIC_CORE_ENHANCEMENT,core-router,production,UPSTREAM_REVIEW,prefix:router/,Generic host route changes after module routes are extracted
+router/extension_routes_test.go,,A,121,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
+router/main.go,,M,36,3,false,GENERIC_CORE_ENHANCEMENT,core-router,production,UPSTREAM_REVIEW,prefix:router/,Generic host route changes after module routes are extracted
 router/plugin_router_test.go,,M,1,1,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 router/pricing_access_test.go,,A,29,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 router/relay-router.go,,M,0,1,false,GENERIC_CORE_ENHANCEMENT,core-router,production,UPSTREAM_REVIEW,prefix:router/,Generic host route changes after module routes are extracted
