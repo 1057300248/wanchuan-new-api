@@ -26,6 +26,7 @@ import { loadChuanapiI18nOverride } from './i18n'
 import { Wallet } from './wallet'
 
 export { CHUANAPI_PUBLIC_HOME, chuanapiNavigationExtension } from './navigation'
+export { chuanapiPaymentSettingsExtension } from './payment'
 
 export { SHOW_LEGACY_AFFILIATE_QUOTA } from './flags'
 export { CHUANAPI_BRAND_LOGO } from './brand'

@@ -31,8 +31,8 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 
-import { safeJsonParseWithValidation } from '../utils/json-parser'
-import { isArray } from '../utils/json-validators'
+import { safeJsonParseWithValidation } from '@/features/system-settings/utils/json-parser'
+import { isArray } from '@/features/system-settings/utils/json-validators'
 import {
   PaymentMethodDialog,
   type PaymentMethodData,

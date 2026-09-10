@@ -49,27 +49,27 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { handleServerError } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
 
-import { confirmPaymentCompliance } from '../api'
+import { confirmPaymentCompliance } from '@/features/system-settings/api'
 import {
   SettingsForm,
   SettingsSwitchContent,
   SettingsSwitchItem,
-} from '../components/settings-form-layout'
-import { SettingsPageFormActions } from '../components/settings-page-context'
-import { SettingsSection } from '../components/settings-section'
-import { useUpdateOption } from '../hooks/use-update-option'
-import { safeNumberFieldProps } from '../utils/numeric-field'
-import { AmountDiscountVisualEditor } from './amount-discount-visual-editor'
-import { AmountOptionsVisualEditor } from './amount-options-visual-editor'
-import { CreemProductsVisualEditor } from './creem-products-visual-editor'
-import { PaymentMethodsVisualEditor } from './payment-methods-visual-editor'
+} from '@/features/system-settings/components/settings-form-layout'
+import { SettingsPageFormActions } from '@/features/system-settings/components/settings-page-context'
+import { SettingsSection } from '@/features/system-settings/components/settings-section'
+import { useUpdateOption } from '@/features/system-settings/hooks/use-update-option'
+import { AmountDiscountVisualEditor } from '@/features/system-settings/integrations/amount-discount-visual-editor'
+import { AmountOptionsVisualEditor } from '@/features/system-settings/integrations/amount-options-visual-editor'
+import { CreemProductsVisualEditor } from '@/features/system-settings/integrations/creem-products-visual-editor'
 import {
   formatJsonForEditor,
   getJsonError,
   normalizeJsonForComparison,
   removeTrailingSlash,
-} from './utils'
+} from '@/features/system-settings/integrations/utils'
+import { safeNumberFieldProps } from '@/features/system-settings/utils/numeric-field'
 import { saveWaffoPancakeConfig } from './waffo-pancake-api'
+import { PaymentMethodsVisualEditor } from './payment-methods-visual-editor'
 import {
   WaffoPancakeSettingsSection,
   type WaffoPancakeBinding,

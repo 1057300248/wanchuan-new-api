@@ -329,6 +329,27 @@ func TestWalletFrontendOwnershipStaysInChuanAPIExtension(t *testing.T) {
 	assert.Contains(t, string(route), "extensionWalletPage")
 }
 
+func TestPaymentSettingsFrontendOwnershipStaysInChuanAPIExtension(t *testing.T) {
+	root := repoRoot(t)
+	for _, legacy := range []string{
+		"web/src/features/system-settings/integrations/payment-settings-section.tsx",
+		"web/src/features/system-settings/integrations/payment-method-dialog.tsx",
+		"web/src/features/system-settings/integrations/payment-methods-visual-editor.tsx",
+		"web/src/features/system-settings/integrations/waffo-settings-section.tsx",
+		"web/src/features/system-settings/integrations/waffo-pancake-settings-section.tsx",
+		"web/src/features/system-settings/integrations/waffo-pancake-api.ts",
+	} {
+		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(legacy)))
+		assert.ErrorIs(t, err, os.ErrNotExist, "%s must remain ChuanAPI extension-owned", legacy)
+	}
+
+	registry, err := os.ReadFile(filepath.Join(root, "web", "src", "features", "system-settings", "billing", "section-registry.tsx"))
+	require.NoError(t, err)
+	assert.Contains(t, string(registry), "extensionPaymentSettingsSection")
+	assert.NotContains(t, strings.ToLower(string(registry)), "waffo",
+		"generic billing section registry must not know concrete Waffo providers")
+}
+
 func TestCoreChuanAPIDomainStringLiteralsDoNotGrow(t *testing.T) {
 	root := repoRoot(t)
 	var offenders []string

@@ -28,7 +28,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { handleServerError } from '@/lib/handle-server-error'
 
-import { removeTrailingSlash } from './utils'
+import { removeTrailingSlash } from '@/features/system-settings/integrations/utils'
 import {
   type CatalogStore,
   type PairOrphanError,
