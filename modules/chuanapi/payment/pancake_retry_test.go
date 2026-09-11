@@ -202,3 +202,42 @@ func TestPancakeSubscriptionWebhookRetriesTransientBindingWriteFailure(t *testin
 	require.NoError(t, db.First(order, order.Id).Error)
 	assert.Equal(t, common.TopUpStatusPending, order.Status)
 }
+
+func TestPancakeResolversTreatDatabaseUnavailableAsRetryable(t *testing.T) {
+	previousDB := model.DB
+	model.DB = nil
+	t.Cleanup(func() { model.DB = previousDB })
+
+	topupEvent := &WaffoPancakeWebhookEvent{
+		Data: WaffoPancakeWebhookData{OrderMerchantExternalID: "WAFFO_PANCAKE-db-down"},
+	}
+	_, err := ResolveWaffoPancakeTradeNo(topupEvent)
+	require.Error(t, err)
+	assert.True(t, retryablePancakeWebhookError(err), "top-up database outage must request provider retry")
+
+	subscriptionEvent := &WaffoPancakeWebhookEvent{
+		Data: WaffoPancakeWebhookData{OrderMerchantExternalID: "WAFFO_PANCAKE_SUB-db-down"},
+	}
+	_, err = ResolveWaffoPancakeSubscriptionTradeNo(subscriptionEvent)
+	require.Error(t, err)
+	assert.True(t, retryablePancakeWebhookError(err), "subscription database outage must request provider retry")
+}
+
+func TestProviderOrderIdentityConflictIsPermanent(t *testing.T) {
+	db := withPaymentBindingDB(t)
+	binding := PaymentOrderBinding{
+		TradeNo:          "provider-order-race",
+		Provider:         model.PaymentProviderWaffoPancake,
+		OrderKind:        OrderBindingKindTopUp,
+		Environment:      "prod",
+		ProviderOrderID:  "ORD_WINNER",
+		ExpectedAmount:   "100.00",
+		ExpectedCurrency: "USD",
+	}
+	require.NoError(t, db.Create(&binding).Error)
+
+	err := bindProviderOrderID(binding.TradeNo, "ORD_LOSER")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrProviderOrderIDMismatch)
+	assert.False(t, retryablePancakeWebhookError(pancakePermanentError(err)), "identity conflict is not a transient storage error")
+}

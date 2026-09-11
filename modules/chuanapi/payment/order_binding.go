@@ -39,6 +39,8 @@ type PaymentOrderBinding struct {
 
 func (PaymentOrderBinding) TableName() string { return "chuanapi_payment_order_bindings" }
 
+var ErrProviderOrderIDMismatch = errors.New("payment provider order id mismatch")
+
 type paymentCallbackFacts struct {
 	Provider         string
 	OrderKind        string
@@ -213,7 +215,7 @@ func bindProviderOrderID(tradeNo, providerOrderID string) error {
 		return err
 	}
 	if binding.ProviderOrderID != providerOrderID {
-		return fmt.Errorf("provider order id mismatch for tradeNo=%s", tradeNo)
+		return fmt.Errorf("%w for tradeNo=%s", ErrProviderOrderIDMismatch, tradeNo)
 	}
 	return nil
 }
@@ -253,7 +255,7 @@ func validatePaymentOrderBinding(binding *PaymentOrderBinding, facts paymentCall
 		return fmt.Errorf("provider order id missing for tradeNo=%s", binding.TradeNo)
 	}
 	if binding.ProviderOrderID != "" && binding.ProviderOrderID != providerOrderID {
-		return fmt.Errorf("provider order id mismatch for tradeNo=%s", binding.TradeNo)
+		return fmt.Errorf("%w for tradeNo=%s", ErrProviderOrderIDMismatch, binding.TradeNo)
 	}
 	return nil
 }
