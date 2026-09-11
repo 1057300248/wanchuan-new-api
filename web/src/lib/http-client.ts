@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import axios, { type AxiosRequestConfig } from 'axios'
 import { t } from 'i18next'
 
+import i18n from '@/i18n/config'
+import { toBackendLanguage } from '@/i18n/languages'
 import {
   applyAuthRotation,
   clearAuthentication,
@@ -151,6 +153,10 @@ api.interceptors.response.use(
 )
 
 api.interceptors.request.use(async (config) => {
+  config.headers.set(
+    'Accept-Language',
+    toBackendLanguage(i18n.resolvedLanguage || i18n.language)
+  )
   if (config.preserveAuthorization) return config
   if (config.singleUseAuthorization || config.headers.has('X-Security-Proof')) {
     // Refresh before spending a proof/flow, never by replaying its request.
