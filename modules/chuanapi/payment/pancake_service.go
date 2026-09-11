@@ -2,13 +2,42 @@ package payment
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	pancake "github.com/waffo-com/waffo-pancake-sdk-go"
+	"gorm.io/gorm"
 )
+
+type pancakeWebhookResolveError struct {
+	err       error
+	retryable bool
+}
+
+func (e *pancakeWebhookResolveError) Error() string { return e.err.Error() }
+func (e *pancakeWebhookResolveError) Unwrap() error { return e.err }
+
+func retryablePancakeWebhookError(err error) bool {
+	var target *pancakeWebhookResolveError
+	return errors.As(err, &target) && target.retryable
+}
+
+func pancakePermanentError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &pancakeWebhookResolveError{err: err}
+}
+
+func pancakeRetryableError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &pancakeWebhookResolveError{err: err, retryable: true}
+}
 
 // WaffoPancakePriceSnapshot is the per-session price override sent with checkout.
 type WaffoPancakePriceSnapshot struct {
@@ -198,19 +227,22 @@ func VerifyConfiguredWaffoPancakeWebhook(payload string, signatureHeader string)
 // trade_no via OrderMerchantExternalID, and rejects buyer-identity mismatches.
 func ResolveWaffoPancakeTradeNo(event *WaffoPancakeWebhookEvent) (string, error) {
 	if event == nil {
-		return "", fmt.Errorf("missing webhook event")
+		return "", pancakePermanentError(fmt.Errorf("missing webhook event"))
 	}
 	tradeNo := strings.TrimSpace(event.Data.OrderMerchantExternalID)
 	if tradeNo == "" {
-		return "", fmt.Errorf("missing webhook orderMerchantExternalId")
+		return "", pancakePermanentError(fmt.Errorf("missing webhook orderMerchantExternalId"))
 	}
 	topUp := model.GetTopUpByTradeNo(tradeNo)
 	if topUp == nil || topUp.PaymentProvider != model.PaymentProviderWaffoPancake {
-		return "", fmt.Errorf("waffo pancake order not found for tradeNo=%s", tradeNo)
+		return "", pancakePermanentError(fmt.Errorf("waffo pancake order not found for tradeNo=%s", tradeNo))
 	}
 	binding, err := getPaymentOrderBinding(tradeNo)
 	if err != nil {
-		return "", fmt.Errorf("waffo pancake binding not found for tradeNo=%s: %w", tradeNo, err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", pancakePermanentError(fmt.Errorf("waffo pancake binding not found for tradeNo=%s: %w", tradeNo, err))
+		}
+		return "", pancakeRetryableError(fmt.Errorf("waffo pancake binding lookup failed for tradeNo=%s: %w", tradeNo, err))
 	}
 	if err := validatePaymentOrderBinding(binding, paymentCallbackFacts{
 		Provider:        model.PaymentProviderWaffoPancake,
@@ -221,21 +253,21 @@ func ResolveWaffoPancakeTradeNo(event *WaffoPancakeWebhookEvent) (string, error)
 		ActualAmount:    event.Data.Amount,
 		ActualCurrency:  event.Data.Currency,
 	}); err != nil {
-		return "", err
+		return "", pancakePermanentError(err)
 	}
 	expectedIdentity := WaffoPancakeBuyerIdentityFromUserID(topUp.UserId)
 	actualIdentity := strings.TrimSpace(event.Data.MerchantProvidedBuyerIdentity)
 	if actualIdentity != expectedIdentity {
-		return "", fmt.Errorf(
+		return "", pancakePermanentError(fmt.Errorf(
 			"waffo pancake buyer identity mismatch for tradeNo=%s: expected=%q actual=%q",
 			tradeNo,
 			expectedIdentity,
 			actualIdentity,
-		)
+		))
 	}
 	if binding.ProviderOrderID == "" {
 		if err := bindProviderOrderID(tradeNo, event.Data.OrderID); err != nil {
-			return "", err
+			return "", pancakeRetryableError(fmt.Errorf("persist provider order id for tradeNo=%s: %w", tradeNo, err))
 		}
 	}
 	return tradeNo, nil
@@ -245,19 +277,22 @@ func ResolveWaffoPancakeTradeNo(event *WaffoPancakeWebhookEvent) (string, error)
 // of ResolveWaffoPancakeTradeNo.
 func ResolveWaffoPancakeSubscriptionTradeNo(event *WaffoPancakeWebhookEvent) (string, error) {
 	if event == nil {
-		return "", fmt.Errorf("missing webhook event")
+		return "", pancakePermanentError(fmt.Errorf("missing webhook event"))
 	}
 	tradeNo := strings.TrimSpace(event.Data.OrderMerchantExternalID)
 	if tradeNo == "" {
-		return "", fmt.Errorf("missing webhook orderMerchantExternalId")
+		return "", pancakePermanentError(fmt.Errorf("missing webhook orderMerchantExternalId"))
 	}
 	order := model.GetSubscriptionOrderByTradeNo(tradeNo)
 	if order == nil || order.PaymentProvider != model.PaymentProviderWaffoPancake {
-		return "", fmt.Errorf("waffo pancake subscription order not found for tradeNo=%s", tradeNo)
+		return "", pancakePermanentError(fmt.Errorf("waffo pancake subscription order not found for tradeNo=%s", tradeNo))
 	}
 	binding, err := getPaymentOrderBinding(tradeNo)
 	if err != nil {
-		return "", fmt.Errorf("waffo pancake subscription binding not found for tradeNo=%s: %w", tradeNo, err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", pancakePermanentError(fmt.Errorf("waffo pancake subscription binding not found for tradeNo=%s: %w", tradeNo, err))
+		}
+		return "", pancakeRetryableError(fmt.Errorf("waffo pancake subscription binding lookup failed for tradeNo=%s: %w", tradeNo, err))
 	}
 	if err := validatePaymentOrderBinding(binding, paymentCallbackFacts{
 		Provider:        model.PaymentProviderWaffoPancake,
@@ -268,21 +303,21 @@ func ResolveWaffoPancakeSubscriptionTradeNo(event *WaffoPancakeWebhookEvent) (st
 		ActualAmount:    event.Data.Amount,
 		ActualCurrency:  event.Data.Currency,
 	}); err != nil {
-		return "", err
+		return "", pancakePermanentError(err)
 	}
 	expectedIdentity := WaffoPancakeBuyerIdentityFromUserID(order.UserId)
 	actualIdentity := strings.TrimSpace(event.Data.MerchantProvidedBuyerIdentity)
 	if actualIdentity != expectedIdentity {
-		return "", fmt.Errorf(
+		return "", pancakePermanentError(fmt.Errorf(
 			"waffo pancake buyer identity mismatch for subscription tradeNo=%s: expected=%q actual=%q",
 			tradeNo,
 			expectedIdentity,
 			actualIdentity,
-		)
+		))
 	}
 	if binding.ProviderOrderID == "" {
 		if err := bindProviderOrderID(tradeNo, event.Data.OrderID); err != nil {
-			return "", err
+			return "", pancakeRetryableError(fmt.Errorf("persist provider order id for subscription tradeNo=%s: %w", tradeNo, err))
 		}
 	}
 	return tradeNo, nil
