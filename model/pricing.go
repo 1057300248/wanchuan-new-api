@@ -79,6 +79,33 @@ var (
 	modelSupportEndpointsLock = sync.RWMutex{}
 )
 
+// FilterPricingByUsableGroups projects a pricing catalogue onto the host's
+// usable-group set. Public pricing handlers and optional console modules share
+// this implementation so visibility semantics cannot drift between surfaces.
+func FilterPricingByUsableGroups(pricing []Pricing, usableGroups map[string]string) []Pricing {
+	if len(pricing) == 0 {
+		return pricing
+	}
+	if len(usableGroups) == 0 {
+		return []Pricing{}
+	}
+
+	filtered := make([]Pricing, 0, len(pricing))
+	for _, item := range pricing {
+		if common.StringsContains(item.EnableGroup, "all") {
+			filtered = append(filtered, item)
+			continue
+		}
+		for _, group := range item.EnableGroup {
+			if _, ok := usableGroups[group]; ok {
+				filtered = append(filtered, item)
+				break
+			}
+		}
+	}
+	return filtered
+}
+
 func GetPricing() []Pricing {
 	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
 		updatePricingLock.Lock()

@@ -186,6 +186,37 @@ func TestPaymentProviderOwnershipStaysInModule(t *testing.T) {
 	assert.Empty(t, offenders, "ChuanAPI payment module must own provider handlers/services without importing root controller/service")
 }
 
+func TestChuanAPIConsoleDoesNotImportHostControllerOrService(t *testing.T) {
+	root := repoRoot(t)
+	moduleRoot := filepath.Join(root, "modules", "chuanapi", "console")
+	fset := token.NewFileSet()
+	var offenders []string
+	require.NoError(t, filepath.WalkDir(moduleRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		if parseErr != nil {
+			return parseErr
+		}
+		for _, imp := range file.Imports {
+			importPath, unquoteErr := strconv.Unquote(imp.Path.Value)
+			if unquoteErr != nil {
+				return unquoteErr
+			}
+			if importPath == modulePath+"/controller" || strings.HasPrefix(importPath, modulePath+"/controller/") ||
+				importPath == modulePath+"/service" || strings.HasPrefix(importPath, modulePath+"/service/") {
+				offenders = append(offenders, slashRel(t, root, path)+" -> "+importPath)
+			}
+		}
+		return nil
+	}))
+	assert.Empty(t, offenders, "ChuanAPI console must consume shared model/setting projections instead of host controller/service runtime logic")
+}
+
 func TestChuanAPIRouteModulesUseHostOwnedAPIScopes(t *testing.T) {
 	root := repoRoot(t)
 	for _, rel := range []string{

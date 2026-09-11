@@ -3,37 +3,12 @@ package controller
 import (
 	"maps"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 )
-
-func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string]string) []model.Pricing {
-	if len(pricing) == 0 {
-		return pricing
-	}
-	if len(usableGroup) == 0 {
-		return []model.Pricing{}
-	}
-
-	filtered := make([]model.Pricing, 0, len(pricing))
-	for _, item := range pricing {
-		if common.StringsContains(item.EnableGroup, "all") {
-			filtered = append(filtered, item)
-			continue
-		}
-		for _, group := range item.EnableGroup {
-			if _, ok := usableGroup[group]; ok {
-				filtered = append(filtered, item)
-				break
-			}
-		}
-	}
-	return filtered
-}
 
 // GetPublicPricing serves the anonymous marketing catalogue. The public route
 // is intentionally distinct from /api/pricing, whose router always requires a
@@ -67,7 +42,7 @@ func writePricingResponse(c *gin.Context) {
 	}
 
 	usableGroup = service.GetUserUsableGroups(group)
-	pricing = filterPricingByUsableGroups(pricing, usableGroup)
+	pricing = model.FilterPricingByUsableGroups(pricing, usableGroup)
 	// check groupRatio contains usableGroup
 	for group := range ratio_setting.GetGroupRatioCopy() {
 		if _, ok := usableGroup[group]; !ok {
