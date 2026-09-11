@@ -3,6 +3,7 @@ package wallet
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
@@ -13,11 +14,12 @@ import (
 // runtime contract. Billing orchestration owns token quota; this type owns only
 // wallet ledger/account mutations and receipt state.
 type Funding struct {
-	userID      int
-	requestID   string
-	consumed    int
-	debitOrder  []model.LedgerAccount
-	debitShares map[model.LedgerAccount]int
+	userID            int
+	requestID         string
+	consumed          int
+	debitOrder        []model.LedgerAccount
+	debitShares       map[model.LedgerAccount]int
+	receiptOperations map[string]struct{}
 }
 
 var (
@@ -57,6 +59,7 @@ func (w *Funding) PreConsume(amount int) error {
 	if amount <= 0 {
 		return nil
 	}
+	operationID := "billing:preconsume:" + w.requestID
 	entry := model.LedgerEntry{
 		UserId:         w.userID,
 		Delta:          amount,
@@ -64,20 +67,14 @@ func (w *Funding) PreConsume(amount int) error {
 		ReferenceType:  "relay",
 		ReferenceId:    w.requestID,
 		RequestId:      w.requestID,
-		IdempotencyKey: "billing:preconsume:" + w.requestID,
+		IdempotencyKey: operationID,
 	}
 	result, err := model.DebitQuota(entry, w.debitOrder...)
 	if err != nil {
 		return w.mapInsufficient(err)
 	}
 	w.consumed = amount
-	// A reconstructed Funding instance can hit a persisted ledger replay. The
-	// replay result includes the original ledger rows, so hydrate receipt state
-	// when this instance has none. An in-process replay on the same instance must
-	// not add the same shares twice.
-	if !result.Replayed || len(w.debitShares) == 0 {
-		w.addSharesFromLedger(result)
-	}
+	w.recordLedgerDebitOperation(operationID, result)
 	return nil
 }
 
@@ -141,8 +138,8 @@ func (w *Funding) SettleInTx(tx *gorm.DB, delta int) (moneyport.SettlementResult
 
 func (w *Funding) ApplySettlementResult(delta int, result moneyport.SettlementResult) {
 	model.RefreshUserQuotaCache(w.userID, result.TotalAfter)
-	if delta > 0 && !result.Replayed {
-		w.addMoneyportShares(result.DebitShares)
+	if delta > 0 {
+		w.recordMoneyportDebitOperation(fmt.Sprintf("billing:settle:%s:%d", w.requestID, delta), result.DebitShares)
 	}
 }
 
@@ -171,6 +168,7 @@ func (w *Funding) Reserve(targetQuota int) error {
 		return nil
 	}
 	delta := targetQuota - w.consumed
+	operationID := fmt.Sprintf("billing:reserve:%s:%d", w.requestID, targetQuota)
 	entry := model.LedgerEntry{
 		UserId:         w.userID,
 		Delta:          delta,
@@ -178,16 +176,14 @@ func (w *Funding) Reserve(targetQuota int) error {
 		ReferenceType:  "relay",
 		ReferenceId:    w.requestID,
 		RequestId:      w.requestID,
-		IdempotencyKey: fmt.Sprintf("billing:reserve:%s:%d", w.requestID, targetQuota),
+		IdempotencyKey: operationID,
 	}
 	result, err := model.DebitQuota(entry, w.debitOrder...)
 	if err != nil {
 		return w.mapInsufficient(err)
 	}
 	w.consumed = targetQuota
-	if !result.Replayed {
-		w.addSharesFromLedger(result)
-	}
+	w.recordLedgerDebitOperation(operationID, result)
 	return nil
 }
 
@@ -255,6 +251,35 @@ func (w *Funding) addMoneyportShares(shares []moneyport.AccountShare) {
 	}
 }
 
+func (w *Funding) recordLedgerDebitOperation(operationID string, result *model.LedgerResult) {
+	if result == nil || !w.markReceiptOperation(operationID) {
+		return
+	}
+	w.addSharesFromLedger(result)
+}
+
+func (w *Funding) recordMoneyportDebitOperation(operationID string, shares []moneyport.AccountShare) {
+	if !w.markReceiptOperation(operationID) {
+		return
+	}
+	w.addMoneyportShares(shares)
+}
+
+func (w *Funding) markReceiptOperation(operationID string) bool {
+	operationID = strings.TrimSpace(operationID)
+	if operationID == "" {
+		return false
+	}
+	if w.receiptOperations == nil {
+		w.receiptOperations = make(map[string]struct{})
+	}
+	if _, exists := w.receiptOperations[operationID]; exists {
+		return false
+	}
+	w.receiptOperations[operationID] = struct{}{}
+	return true
+}
+
 func (w *Funding) refundShares(amount int) []model.LedgerShare {
 	if len(w.debitShares) == 0 {
 		return nil
@@ -295,7 +320,10 @@ func splitRefund(original []model.LedgerShare, refundAmount int) []model.LedgerS
 	if total <= 0 {
 		return nil
 	}
-	if refundAmount >= total {
+	if refundAmount > total {
+		return nil
+	}
+	if refundAmount == total {
 		return append([]model.LedgerShare(nil), original...)
 	}
 	out := make([]model.LedgerShare, 0, len(original))
