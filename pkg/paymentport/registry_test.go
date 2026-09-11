@@ -13,7 +13,7 @@ type testCatalogue struct {
 }
 
 func (c testCatalogue) Descriptor() Descriptor     { return c.descriptor.Clone() }
-func (c testCatalogue) Contribution() Contribution { return c.contribution.Clone() }
+func (c testCatalogue) Contribution() Contribution { return c.contribution }
 
 func TestRegistryMergesProvidersInRegistrationOrder(t *testing.T) {
 	registry := NewRegistry()
@@ -40,6 +40,55 @@ func TestRegistryMergesProvidersInRegistrationOrder(t *testing.T) {
 	assert.Equal(t, "alpha", snapshot.Methods[1]["type"])
 	assert.Equal(t, true, snapshot.Fields["beta_enabled"])
 	assert.Equal(t, true, snapshot.Fields["alpha_enabled"])
+}
+
+type nestedFieldDTO struct {
+	Name   string
+	Values []string
+	Meta   map[string][]int
+}
+
+func TestRegistrySnapshotDeeplyIsolatesNestedFieldValues(t *testing.T) {
+	shared := nestedFieldDTO{
+		Name:   "original",
+		Values: []string{"one", "two"},
+		Meta:   map[string][]int{"levels": {1, 2}},
+	}
+	registry := NewRegistry()
+	require.NoError(t, registry.Register("nested", testCatalogue{
+		descriptor: Descriptor{FieldKeys: []string{"nested"}},
+		contribution: Contribution{Fields: map[string]any{
+			"nested": shared,
+		}},
+	}))
+	require.NoError(t, registry.Freeze())
+
+	first, err := registry.Snapshot()
+	require.NoError(t, err)
+	firstDTO := first.Fields["nested"].(nestedFieldDTO)
+	firstDTO.Values[0] = "mutated"
+	firstDTO.Meta["levels"][0] = 99
+	first.Fields["nested"] = firstDTO
+
+	second, err := registry.Snapshot()
+	require.NoError(t, err)
+	secondDTO := second.Fields["nested"].(nestedFieldDTO)
+	assert.Equal(t, []string{"one", "two"}, secondDTO.Values)
+	assert.Equal(t, []int{1, 2}, secondDTO.Meta["levels"])
+}
+
+func TestRegistrySnapshotFailsClosedOnUnsafeFieldValue(t *testing.T) {
+	registry := NewRegistry()
+	require.NoError(t, registry.Register("unsafe", testCatalogue{
+		descriptor: Descriptor{FieldKeys: []string{"callback"}},
+		contribution: Contribution{Fields: map[string]any{
+			"callback": func() {},
+		}},
+	}))
+	require.NoError(t, registry.Freeze())
+	_, err := registry.Snapshot()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported mutable field kind func")
 }
 
 func TestRegistryRejectsProviderAndSurfaceCollisions(t *testing.T) {

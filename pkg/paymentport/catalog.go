@@ -3,6 +3,7 @@ package paymentport
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 )
@@ -16,7 +17,9 @@ type Contribution struct {
 	Fields  map[string]any
 }
 
-func (c Contribution) Clone() Contribution {
+const maxContributionCloneDepth = 64
+
+func cloneContribution(c Contribution) (Contribution, error) {
 	out := Contribution{Fields: make(map[string]any, len(c.Fields))}
 	for _, method := range c.Methods {
 		copyMethod := make(map[string]string, len(method))
@@ -26,9 +29,114 @@ func (c Contribution) Clone() Contribution {
 		out.Methods = append(out.Methods, copyMethod)
 	}
 	for key, value := range c.Fields {
-		out.Fields[key] = value
+		cloned, err := cloneFieldValue(reflect.ValueOf(value), 0)
+		if err != nil {
+			return Contribution{}, fmt.Errorf("paymentport: clone field %q: %w", key, err)
+		}
+		if !cloned.IsValid() {
+			out.Fields[key] = nil
+			continue
+		}
+		out.Fields[key] = cloned.Interface()
 	}
-	return out
+	return out, nil
+}
+
+// cloneFieldValue preserves concrete DTO types while recursively detaching all
+// mutable containers. The depth bound fails closed for cyclic/self-referential
+// data without introducing unsafe pointer bookkeeping.
+func cloneFieldValue(value reflect.Value, depth int) (reflect.Value, error) {
+	if !value.IsValid() {
+		return reflect.Value{}, nil
+	}
+	if depth > maxContributionCloneDepth {
+		return reflect.Value{}, errors.New("field value exceeds clone depth (possible cycle)")
+	}
+
+	switch value.Kind() {
+	case reflect.Interface:
+		if value.IsNil() {
+			return reflect.Zero(value.Type()), nil
+		}
+		cloned, err := cloneFieldValue(value.Elem(), depth+1)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		out := reflect.New(value.Type()).Elem()
+		out.Set(cloned)
+		return out, nil
+	case reflect.Pointer:
+		if value.IsNil() {
+			return reflect.Zero(value.Type()), nil
+		}
+		cloned, err := cloneFieldValue(value.Elem(), depth+1)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		out := reflect.New(value.Type().Elem())
+		out.Elem().Set(cloned)
+		return out, nil
+	case reflect.Map:
+		if value.IsNil() {
+			return reflect.Zero(value.Type()), nil
+		}
+		out := reflect.MakeMapWithSize(value.Type(), value.Len())
+		iter := value.MapRange()
+		for iter.Next() {
+			key, err := cloneFieldValue(iter.Key(), depth+1)
+			if err != nil {
+				return reflect.Value{}, err
+			}
+			item, err := cloneFieldValue(iter.Value(), depth+1)
+			if err != nil {
+				return reflect.Value{}, err
+			}
+			out.SetMapIndex(key, item)
+		}
+		return out, nil
+	case reflect.Slice:
+		if value.IsNil() {
+			return reflect.Zero(value.Type()), nil
+		}
+		out := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
+		for i := 0; i < value.Len(); i++ {
+			item, err := cloneFieldValue(value.Index(i), depth+1)
+			if err != nil {
+				return reflect.Value{}, err
+			}
+			out.Index(i).Set(item)
+		}
+		return out, nil
+	case reflect.Array:
+		out := reflect.New(value.Type()).Elem()
+		for i := 0; i < value.Len(); i++ {
+			item, err := cloneFieldValue(value.Index(i), depth+1)
+			if err != nil {
+				return reflect.Value{}, err
+			}
+			out.Index(i).Set(item)
+		}
+		return out, nil
+	case reflect.Struct:
+		out := reflect.New(value.Type()).Elem()
+		for i := 0; i < value.NumField(); i++ {
+			field := value.Type().Field(i)
+			if field.PkgPath != "" {
+				return reflect.Value{}, fmt.Errorf("unsupported unexported struct field %s.%s", value.Type(), field.Name)
+			}
+			item, err := cloneFieldValue(value.Field(i), depth+1)
+			if err != nil {
+				return reflect.Value{}, err
+			}
+			out.Field(i).Set(item)
+		}
+		return out, nil
+	case reflect.Func, reflect.Chan, reflect.UnsafePointer:
+		return reflect.Value{}, fmt.Errorf("unsupported mutable field kind %s", value.Kind())
+	default:
+		// Scalars (including strings, numbers and booleans) are immutable values.
+		return value, nil
+	}
 }
 
 // Descriptor declares the stable response surface owned by one provider. A
@@ -205,7 +313,10 @@ func (r *Registry) Snapshot() (Contribution, error) {
 			declaredFields[key] = struct{}{}
 		}
 
-		contribution := provider.catalogue.Contribution().Clone()
+		contribution, err := cloneContribution(provider.catalogue.Contribution())
+		if err != nil {
+			return Contribution{}, fmt.Errorf("paymentport: provider %q contribution isolation failed: %w", provider.id, err)
+		}
 		for _, method := range contribution.Methods {
 			methodType := normalizeMethodType(method["type"])
 			if methodType == "" {
