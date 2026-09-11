@@ -8,13 +8,14 @@ path,old_path,status,insertions,deletions,binary,ownership,module,artifact_kind,
 AGENTS.md,,M,0,3,false,TEST_COMPAT,repository-guidance,documentation,RETAIN,exact:AGENTS.md,Repository contribution guidance
 Dockerfile,,M,5,0,false,OPS_DEPLOYMENT,build-config,production,RETAIN,exact:Dockerfile,Container build configuration
 VERSION,,M,1,0,false,OPS_DEPLOYMENT,release-config,production,RETAIN,exact:VERSION,Product release metadata
-architecture/boundary_test.go,,A,553,0,false,TEST_COMPAT,architecture-tests,test,RETAIN,prefix:architecture/,Executable dependency and ownership gates
+architecture/boundary_test.go,,A,623,0,false,TEST_COMPAT,architecture-tests,test,RETAIN,prefix:architecture/,Executable dependency and ownership gates
 architecture/doc.go,,A,3,0,false,TEST_COMPAT,architecture-tests,production,RETAIN,prefix:architecture/,Executable dependency and ownership gates
+bin/audit_payment_binding_pending.sql,,A,39,0,false,OPS_DEPLOYMENT,migration-tooling,tooling,REVIEW,prefix:bin/,Operational migration and helper scripts
 bin/migration_quota_bigint_mysql.sql,,A,233,0,false,OPS_DEPLOYMENT,migration-tooling,tooling,REVIEW,prefix:bin/,Operational migration and helper scripts
 bin/migration_quota_bigint_postgres.sql,,A,271,0,false,OPS_DEPLOYMENT,migration-tooling,tooling,REVIEW,prefix:bin/,Operational migration and helper scripts
 chuanapi/backfill_step_test.go,,A,154,0,false,COMPOSITION_ROOT,backend-composition,test,SPLIT,prefix:chuanapi/,Current adapter; implementation details must migrate into individual modules
-chuanapi/register.go,,A,92,0,false,COMPOSITION_ROOT,backend-composition,production,SPLIT,prefix:chuanapi/,Current adapter; implementation details must migrate into individual modules
-chuanapi/register_test.go,,A,122,0,false,COMPOSITION_ROOT,backend-composition,test,SPLIT,prefix:chuanapi/,Current adapter; implementation details must migrate into individual modules
+chuanapi/register.go,,A,93,0,false,COMPOSITION_ROOT,backend-composition,production,SPLIT,prefix:chuanapi/,Current adapter; implementation details must migrate into individual modules
+chuanapi/register_test.go,,A,133,0,false,COMPOSITION_ROOT,backend-composition,test,SPLIT,prefix:chuanapi/,Current adapter; implementation details must migrate into individual modules
 chuanapi/routes_test.go,,A,51,0,false,COMPOSITION_ROOT,backend-composition,test,SPLIT,prefix:chuanapi/,Current adapter; implementation details must migrate into individual modules
 cmd/archmanifest/main.go,,A,257,0,false,TEST_COMPAT,architecture-tooling,tooling,RETAIN,prefix:cmd/archmanifest/,Deterministic fork ownership manifest generator
 common/account_password.go,,M,20,0,false,GENERIC_CORE_ENHANCEMENT,core-common,production,UPSTREAM_REVIEW,prefix:common/,Generic host hardening/behavior changes; candidate for upstream-style patch cleanup
@@ -47,7 +48,7 @@ controller/playground.go,,M,91,0,false,GENERIC_CORE_ENHANCEMENT,core-controller,
 controller/playground_bootstrap_test.go,,A,149,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 controller/playground_test.go,,A,103,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 controller/plugin_native_e2e_test.go,,M,32,7,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
-controller/pricing.go,,M,11,0,false,GENERIC_CORE_ENHANCEMENT,core-controller,production,UPSTREAM_REVIEW,prefix:controller/,Generic host HTTP behavior changes after concrete ChuanAPI handlers are extracted
+controller/pricing.go,,M,10,24,false,GENERIC_CORE_ENHANCEMENT,core-controller,production,UPSTREAM_REVIEW,prefix:controller/,Generic host HTTP behavior changes after concrete ChuanAPI handlers are extracted
 controller/relay.go,,M,15,7,false,GENERIC_CORE_ENHANCEMENT,core-controller,production,UPSTREAM_REVIEW,prefix:controller/,Generic host HTTP behavior changes after concrete ChuanAPI handlers are extracted
 controller/relay_responses_stream_error_test.go,,A,42,0,false,GENERIC_CORE_ENHANCEMENT,responses,test,UPSTREAM_CANDIDATE,contains:relay_responses,Generic Responses API provider enhancement
 controller/relay_task_plugin_test.go,,M,35,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
@@ -68,15 +69,16 @@ docs/architecture/modularization/baseline.csv,,A,23,0,false,TEST_COMPAT,document
 docs/architecture/modularization/billing-contract.md,,A,64,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/brand-baseline.csv,,A,4,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/core-attribution.md,,A,101,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
-docs/architecture/modularization/current-manifest.csv,,A,711,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
+docs/architecture/modularization/current-manifest.csv,,A,715,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/dependency-boundaries.md,,A,68,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
-docs/architecture/modularization/final-closeout.md,,A,127,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
+docs/architecture/modularization/final-closeout.md,,A,157,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/fork-manifest.csv,,A,621,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/funding-factory-contract.md,,A,95,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/import-baseline.csv,,A,6,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/module-ownership.md,,A,85,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/ownership-rules.tsv,,A,80,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
-docs/architecture/modularization/progress.csv,,A,19,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
+docs/architecture/modularization/payment-binding-rollout.md,,A,77,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
+docs/architecture/modularization/progress.csv,,A,21,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/new-api-rc33-production-runbook.md,,A,122,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/new-api-rc33-review.md,,A,103,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 extension/boundary_test.go,,A,71,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,test,RETAIN,prefix:extension/,Startup model migration and route contribution registry
@@ -115,10 +117,11 @@ model/model_bonus_eligible_test.go,,A,230,0,false,DATA_COMPATIBILITY,wallet-data
 model/model_meta.go,,M,33,1,false,GENERIC_CORE_ENHANCEMENT,core-model,production,UPSTREAM_REVIEW,prefix:model/,Generic host persistence changes not classified as deferred module data compatibility
 model/model_metadata_sync.go,,M,65,8,false,GENERIC_CORE_ENHANCEMENT,core-model,production,UPSTREAM_REVIEW,prefix:model/,Generic host persistence changes not classified as deferred module data compatibility
 model/model_metadata_test.go,,A,265,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
-model/option.go,,M,46,8,false,DATA_COMPATIBILITY,shared-option-store,production,DEFERRED_MIGRATION,exact:model/option.go,Shared option bootstrap and persistence still enumerate provider configuration keys
+model/option.go,,M,60,8,false,DATA_COMPATIBILITY,shared-option-store,production,DEFERRED_MIGRATION,exact:model/option.go,Shared option bootstrap and persistence still enumerate provider configuration keys
 model/option_affiliate_reward_test.go,,A,64,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 model/payment_method_guard_test.go,,M,62,11,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
-model/pricing.go,,M,21,0,false,GENERIC_CORE_ENHANCEMENT,core-model,production,UPSTREAM_REVIEW,prefix:model/,Generic host persistence changes not classified as deferred module data compatibility
+model/pricing.go,,M,48,0,false,GENERIC_CORE_ENHANCEMENT,core-model,production,UPSTREAM_REVIEW,prefix:model/,Generic host persistence changes not classified as deferred module data compatibility
+model/pricing_filter_test.go,,A,33,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 model/pricing_refresh.go,,M,1,0,false,GENERIC_CORE_ENHANCEMENT,core-model,production,UPSTREAM_REVIEW,prefix:model/,Generic host persistence changes not classified as deferred module data compatibility
 model/quota_reserve.go,,M,13,80,false,GENERIC_CORE_ENHANCEMENT,core-model,production,UPSTREAM_REVIEW,prefix:model/,Generic host persistence changes not classified as deferred module data compatibility
 model/quota_reserve_test.go,,M,152,31,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
@@ -142,22 +145,28 @@ model/utils.go,,M,8,7,false,GENERIC_CORE_ENHANCEMENT,core-model,production,UPSTR
 modules/chuanapi/affiliate/maintenance.go,,A,218,0,false,CHUANAPI_MODULE,affiliate,production,RETAIN,prefix:modules/chuanapi/affiliate/,Affiliate reward policy and schema contribution
 modules/chuanapi/affiliate/register.go,,A,41,0,false,CHUANAPI_MODULE,affiliate,production,RETAIN,prefix:modules/chuanapi/affiliate/,Affiliate reward policy and schema contribution
 modules/chuanapi/affiliate/reward.go,,A,68,0,false,CHUANAPI_MODULE,affiliate,production,RETAIN,prefix:modules/chuanapi/affiliate/,Affiliate reward policy and schema contribution
-modules/chuanapi/console/llms.go,,A,326,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:modules/chuanapi/console/,ChuanAPI public console/help backend routes
+modules/chuanapi/console/llms.go,,A,302,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:modules/chuanapi/console/,ChuanAPI public console/help backend routes
 modules/chuanapi/console/llms_test.go,,A,71,0,false,CHUANAPI_MODULE,console,test,RETAIN,prefix:modules/chuanapi/console/,ChuanAPI public console/help backend routes
 modules/chuanapi/console/register.go,,A,36,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:modules/chuanapi/console/,ChuanAPI public console/help backend routes
-modules/chuanapi/payment/availability.go,,A,40,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
-modules/chuanapi/payment/availability_test.go,,A,94,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/availability.go,,A,44,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/availability_test.go,,A,108,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
 modules/chuanapi/payment/catalog.go,,A,84,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
 modules/chuanapi/payment/catalog_registry_test.go,,A,35,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
-modules/chuanapi/payment/pancake_handler.go,controller/topup_waffo_pancake.go,R091,0,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/order_binding.go,,A,259,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/order_binding_migration_test.go,,A,175,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/order_binding_test.go,,A,284,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/pancake_handler.go,controller/topup_waffo_pancake.go,R084,0,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
 modules/chuanapi/payment/pancake_handler_test.go,controller/topup_waffo_pancake_test.go,R099,0,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
-modules/chuanapi/payment/pancake_service.go,service/waffo_pancake.go,R098,0,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
-modules/chuanapi/payment/pancake_subscription_handler.go,controller/subscription_payment_waffo_pancake.go,R091,0,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
-modules/chuanapi/payment/register.go,,A,51,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
-modules/chuanapi/payment/register_test.go,,A,49,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
-modules/chuanapi/payment/waffo_handler.go,controller/topup_waffo.go,R092,0,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/pancake_retry_test.go,,A,204,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/pancake_service.go,service/waffo_pancake.go,R080,0,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/pancake_subscription_handler.go,controller/subscription_payment_waffo_pancake.go,R066,0,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/register.go,,A,60,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/register_test.go,,A,52,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/waffo_handler.go,controller/topup_waffo.go,R075,0,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
 modules/chuanapi/wallet/admin_handler.go,,A,114,0,false,CHUANAPI_MODULE,wallet,production,RETAIN,prefix:modules/chuanapi/wallet/,"Wallet runtime, commercial policy, admin surface and migration contribution"
-modules/chuanapi/wallet/funding.go,,A,330,0,false,CHUANAPI_MODULE,wallet,production,RETAIN,prefix:modules/chuanapi/wallet/,"Wallet runtime, commercial policy, admin surface and migration contribution"
+modules/chuanapi/wallet/funding.go,,A,360,0,false,CHUANAPI_MODULE,wallet,production,RETAIN,prefix:modules/chuanapi/wallet/,"Wallet runtime, commercial policy, admin surface and migration contribution"
+modules/chuanapi/wallet/funding_replay_test.go,,A,63,0,false,CHUANAPI_MODULE,wallet,test,RETAIN,prefix:modules/chuanapi/wallet/,"Wallet runtime, commercial policy, admin surface and migration contribution"
+modules/chuanapi/wallet/funding_reserve_replay_test.go,,A,98,0,false,CHUANAPI_MODULE,wallet,test,RETAIN,prefix:modules/chuanapi/wallet/,"Wallet runtime, commercial policy, admin surface and migration contribution"
 modules/chuanapi/wallet/http_handler.go,,A,196,0,false,CHUANAPI_MODULE,wallet,production,RETAIN,prefix:modules/chuanapi/wallet/,"Wallet runtime, commercial policy, admin surface and migration contribution"
 modules/chuanapi/wallet/http_handler_test.go,,A,158,0,false,CHUANAPI_MODULE,wallet,test,RETAIN,prefix:modules/chuanapi/wallet/,"Wallet runtime, commercial policy, admin surface and migration contribution"
 modules/chuanapi/wallet/policy.go,,A,27,0,false,CHUANAPI_MODULE,wallet,production,RETAIN,prefix:modules/chuanapi/wallet/,"Wallet runtime, commercial policy, admin surface and migration contribution"
@@ -188,8 +197,8 @@ pkg/moneyport/funding.go,,A,62,0,false,GENERIC_EXTENSION_KERNEL,money-port,produ
 pkg/paymentcore/boundary_test.go,,A,37,0,false,GENERIC_CORE_ENHANCEMENT,payment-core,test,RETAIN,prefix:pkg/paymentcore/,"Provider-neutral payment compliance, quota, callback and idempotency helpers"
 pkg/paymentcore/helpers.go,,A,157,0,false,GENERIC_CORE_ENHANCEMENT,payment-core,production,RETAIN,prefix:pkg/paymentcore/,"Provider-neutral payment compliance, quota, callback and idempotency helpers"
 pkg/paymentport/boundary_test.go,,A,36,0,false,GENERIC_EXTENSION_KERNEL,payment-port,test,RETAIN,prefix:pkg/paymentport/,Provider-agnostic payment catalogue capability leaf package
-pkg/paymentport/catalog.go,,A,274,0,false,GENERIC_EXTENSION_KERNEL,payment-port,production,RETAIN,prefix:pkg/paymentport/,Provider-agnostic payment catalogue capability leaf package
-pkg/paymentport/registry_test.go,,A,93,0,false,GENERIC_EXTENSION_KERNEL,payment-port,test,RETAIN,prefix:pkg/paymentport/,Provider-agnostic payment catalogue capability leaf package
+pkg/paymentport/catalog.go,,A,385,0,false,GENERIC_EXTENSION_KERNEL,payment-port,production,RETAIN,prefix:pkg/paymentport/,Provider-agnostic payment catalogue capability leaf package
+pkg/paymentport/registry_test.go,,A,142,0,false,GENERIC_EXTENSION_KERNEL,payment-port,test,RETAIN,prefix:pkg/paymentport/,Provider-agnostic payment catalogue capability leaf package
 pkg/walletport/boundary_test.go,,A,35,0,false,GENERIC_EXTENSION_KERNEL,wallet-port,test,RETAIN,prefix:pkg/walletport/,Runtime wallet commercial policy capability leaf package
 pkg/walletport/policy.go,,A,48,0,false,GENERIC_EXTENSION_KERNEL,wallet-port,production,RETAIN,prefix:pkg/walletport/,Runtime wallet commercial policy capability leaf package
 relay/channel/api_request_getbody_test.go,,M,26,4,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
@@ -263,6 +272,7 @@ service/tiered_settle_test.go,,M,10,17,false,TEST_COMPAT,go-tests,test,RETAIN,su
 service/usage_count_bench_test.go,,A,57,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 service/wallet_funding_compat_test.go,,A,117,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 service/wallet_funding_ledger_test.go,,A,157,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
+setting/payment_waffo_pancake.go,,M,31,7,false,DATA_COMPATIBILITY,payment-config,production,DEFERRED_MIGRATION,prefix:setting/payment_waffo,Persisted OptionMap binding still targets host setting variables; runtime provider implementation is module-owned
 setting/system_setting/public_site.go,,A,41,0,false,GENERIC_CORE_ENHANCEMENT,core-setting,production,UPSTREAM_REVIEW,prefix:setting/,Generic host settings changes not classified as deferred provider data compatibility
 setting/system_setting/public_site_test.go,,A,32,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 web/bun.lock,,M,7,6,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
@@ -404,15 +414,16 @@ web/src/extensions/chuanapi/i18n/locales/ru.json,,A,41,0,false,CHUANAPI_MODULE,c
 web/src/extensions/chuanapi/i18n/locales/vi.json,,A,41,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
 web/src/extensions/chuanapi/i18n/locales/zh-TW.json,,A,41,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
 web/src/extensions/chuanapi/i18n/locales/zh.json,,A,41,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
-web/src/extensions/chuanapi/index.ts,,A,54,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/index.ts,,A,67,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/lazy-pages.tsx,,A,80,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
 web/src/extensions/chuanapi/navigation.test.ts,,A,126,0,false,CHUANAPI_MODULE,console,test,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
 web/src/extensions/chuanapi/navigation.ts,,A,54,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
-web/src/extensions/chuanapi/payment/index.tsx,,A,87,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/payment/index.tsx,,A,88,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
 web/src/extensions/chuanapi/payment/payment-method-dialog.tsx,web/src/features/system-settings/integrations/payment-method-dialog.tsx,R100,0,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
 web/src/extensions/chuanapi/payment/payment-methods-visual-editor.tsx,web/src/features/system-settings/integrations/payment-methods-visual-editor.tsx,R098,0,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
-web/src/extensions/chuanapi/payment/payment-settings-section.tsx,web/src/features/system-settings/integrations/payment-settings-section.tsx,R098,0,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
-web/src/extensions/chuanapi/payment/waffo-pancake-api.ts,web/src/features/system-settings/integrations/waffo-pancake-api.ts,R100,0,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
-web/src/extensions/chuanapi/payment/waffo-pancake-settings-section.tsx,web/src/features/system-settings/integrations/waffo-pancake-settings-section.tsx,R099,0,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/payment/payment-settings-section.tsx,web/src/features/system-settings/integrations/payment-settings-section.tsx,R097,0,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/payment/waffo-pancake-api.ts,web/src/features/system-settings/integrations/waffo-pancake-api.ts,R093,0,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/payment/waffo-pancake-settings-section.tsx,web/src/features/system-settings/integrations/waffo-pancake-settings-section.tsx,R093,0,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
 web/src/extensions/chuanapi/payment/waffo-settings-section.tsx,web/src/features/system-settings/integrations/waffo-settings-section.tsx,R099,0,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
 web/src/extensions/chuanapi/wallet/__tests__/funding-flow.test.tsx,,A,347,0,false,CHUANAPI_MODULE,console,test,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
 web/src/extensions/chuanapi/wallet/api.ts,web/src/features/wallet/api.ts,R077,0,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
@@ -611,7 +622,7 @@ web/src/features/system-info/components/system-tasks-panel.tsx,,M,49,36,false,PR
 web/src/features/system-settings/__tests__/pricing-sync.test.tsx,,M,29,8,false,TEST_COMPAT,frontend-tests,test,RETAIN,suffix:.test.tsx,Frontend regression tests
 web/src/features/system-settings/__tests__/task-public-address.test.ts,,M,1,0,false,TEST_COMPAT,frontend-tests,test,RETAIN,suffix:.test.ts,Frontend regression tests
 web/src/features/system-settings/auth/custom-oauth/components/preset-selector.tsx,,M,13,9,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
-web/src/features/system-settings/billing/index.tsx,,M,2,2,false,DATA_COMPATIBILITY,frontend-payment-config,production,DEFERRED_MIGRATION,exact:web/src/features/system-settings/billing/index.tsx,Host default option snapshot retains provider defaults while concrete settings UI is extension-owned
+web/src/features/system-settings/billing/index.tsx,,M,3,2,false,DATA_COMPATIBILITY,frontend-payment-config,production,DEFERRED_MIGRATION,exact:web/src/features/system-settings/billing/index.tsx,Host default option snapshot retains provider defaults while concrete settings UI is extension-owned
 web/src/features/system-settings/billing/section-registry.tsx,,M,5,63,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/features/system-settings/content/dashboard-section.tsx,,M,4,6,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/features/system-settings/general/channel-affinity/__tests__/cache-stats-dialog.test.tsx,,A,124,0,false,TEST_COMPAT,frontend-tests,test,RETAIN,suffix:.test.tsx,Frontend regression tests
@@ -639,10 +650,13 @@ web/src/features/system-settings/models/upstream-ratio-sync-table.tsx,,M,1,1,fal
 web/src/features/system-settings/models/utils.ts,,M,5,5,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/features/system-settings/request-limits/rate-limit-dialog.tsx,,M,2,2,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/features/system-settings/request-limits/rate-limit-section.tsx,,M,3,3,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
-web/src/features/system-settings/types.ts,,M,2,2,false,DATA_COMPATIBILITY,frontend-payment-config,production,DEFERRED_MIGRATION,exact:web/src/features/system-settings/types.ts,Host option DTO retains persisted provider fields while concrete settings UI is extension-owned
+web/src/features/system-settings/types.ts,,M,3,2,false,DATA_COMPATIBILITY,frontend-payment-config,production,DEFERRED_MIGRATION,exact:web/src/features/system-settings/types.ts,Host option DTO retains persisted provider fields while concrete settings UI is extension-owned
 web/src/features/system-settings/utils/json-parser.ts,,M,5,5,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/features/task-plugins/__tests__/enabled-option.test.ts,,M,1,4,false,TEST_COMPAT,frontend-tests,test,RETAIN,suffix:.test.ts,Frontend regression tests
+web/src/features/task-plugins/__tests__/plugin-icon-image.test.tsx,,M,18,0,false,TEST_COMPAT,frontend-tests,test,RETAIN,suffix:.test.tsx,Frontend regression tests
 web/src/features/task-plugins/__tests__/plugin-url.test.ts,,M,1,0,false,TEST_COMPAT,frontend-tests,test,RETAIN,suffix:.test.ts,Frontend regression tests
+web/src/features/task-plugins/components/javascript-viewer.tsx,,M,18,0,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
+web/src/features/task-plugins/components/plugin-detail-sheet.tsx,,M,18,0,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/features/task-plugins/lib/host-protocols.ts,,M,0,1,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/features/usage-logs/__tests__/access.test.ts,,M,1,0,false,TEST_COMPAT,frontend-tests,test,RETAIN,suffix:.test.ts,Frontend regression tests
 web/src/features/usage-logs/__tests__/artifacts.test.ts,,M,1,0,false,TEST_COMPAT,frontend-tests,test,RETAIN,suffix:.test.ts,Frontend regression tests
@@ -684,7 +698,7 @@ web/src/i18n/locales/zh-TW.json,,M,147,3,false,PRODUCT_CORE_CUSTOMIZATION,fronte
 web/src/i18n/locales/zh.json,,M,147,3,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/i18n/static-keys.ts,,M,27,2,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/lib/__tests__/status-query.test.ts,,A,109,0,false,TEST_COMPAT,frontend-tests,test,RETAIN,suffix:.test.ts,Frontend regression tests
-web/src/lib/creem.ts,,A,44,0,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
+web/src/lib/creem.ts,,A,43,0,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/lib/currency.ts,,M,12,3,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/lib/http-client.ts,,M,9,2,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/lib/http-status-code-rules.ts,,M,3,3,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
