@@ -16,10 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { BillingSettings } from "@/features/system-settings/types";
+import type { BillingSettings } from '@/features/system-settings/types'
 
-import type { PaymentSettingsExtension } from "../../payment-settings";
-import { PaymentSettingsSection } from "./payment-settings-section";
+import type { PaymentSettingsExtension } from '../../payment-settings'
+import { PaymentSettingsSection } from './payment-settings-section'
 
 function renderChuanApiPaymentSettings(settings: BillingSettings) {
   return (
@@ -32,8 +32,8 @@ function renderChuanApiPaymentSettings(settings: BillingSettings) {
         MinTopUp: settings.MinTopUp,
         CustomCallbackAddress: settings.CustomCallbackAddress,
         PayMethods: settings.PayMethods,
-        AmountOptions: settings["payment_setting.amount_options"],
-        AmountDiscount: settings["payment_setting.amount_discount"],
+        AmountOptions: settings['payment_setting.amount_options'],
+        AmountDiscount: settings['payment_setting.amount_discount'],
         StripeApiSecret: settings.StripeApiSecret,
         StripeWebhookSecret: settings.StripeWebhookSecret,
         StripePriceId: settings.StripePriceId,
@@ -47,42 +47,42 @@ function renderChuanApiPaymentSettings(settings: BillingSettings) {
       }}
       waffoDefaultValues={{
         WaffoEnabled: settings.WaffoEnabled ?? false,
-        WaffoApiKey: settings.WaffoApiKey ?? "",
-        WaffoPrivateKey: settings.WaffoPrivateKey ?? "",
-        WaffoPublicCert: settings.WaffoPublicCert ?? "",
-        WaffoSandboxPublicCert: settings.WaffoSandboxPublicCert ?? "",
-        WaffoSandboxApiKey: settings.WaffoSandboxApiKey ?? "",
-        WaffoSandboxPrivateKey: settings.WaffoSandboxPrivateKey ?? "",
+        WaffoApiKey: settings.WaffoApiKey ?? '',
+        WaffoPrivateKey: settings.WaffoPrivateKey ?? '',
+        WaffoPublicCert: settings.WaffoPublicCert ?? '',
+        WaffoSandboxPublicCert: settings.WaffoSandboxPublicCert ?? '',
+        WaffoSandboxApiKey: settings.WaffoSandboxApiKey ?? '',
+        WaffoSandboxPrivateKey: settings.WaffoSandboxPrivateKey ?? '',
         WaffoSandbox: settings.WaffoSandbox ?? false,
-        WaffoMerchantId: settings.WaffoMerchantId ?? "",
-        WaffoCurrency: settings.WaffoCurrency ?? "USD",
+        WaffoMerchantId: settings.WaffoMerchantId ?? '',
+        WaffoCurrency: settings.WaffoCurrency ?? 'USD',
         WaffoUnitPrice: settings.WaffoUnitPrice ?? 1,
         WaffoMinTopUp: settings.WaffoMinTopUp ?? 1,
-        WaffoNotifyUrl: settings.WaffoNotifyUrl ?? "",
-        WaffoReturnUrl: settings.WaffoReturnUrl ?? "",
-        WaffoPayMethods: settings.WaffoPayMethods ?? "[]",
+        WaffoNotifyUrl: settings.WaffoNotifyUrl ?? '',
+        WaffoReturnUrl: settings.WaffoReturnUrl ?? '',
+        WaffoPayMethods: settings.WaffoPayMethods ?? '[]',
       }}
       waffoPancakeDefaultValues={{
-        WaffoPancakeMerchantID: settings.WaffoPancakeMerchantID ?? "",
-        WaffoPancakePrivateKey: settings.WaffoPancakePrivateKey ?? "",
-        WaffoPancakeEnvironment: settings.WaffoPancakeEnvironment ?? "prod",
-        WaffoPancakeReturnURL: settings.WaffoPancakeReturnURL ?? "",
+        WaffoPancakeMerchantID: settings.WaffoPancakeMerchantID ?? '',
+        WaffoPancakePrivateKey: settings.WaffoPancakePrivateKey ?? '',
+        WaffoPancakeEnvironment: settings.WaffoPancakeEnvironment ?? 'prod',
+        WaffoPancakeReturnURL: settings.WaffoPancakeReturnURL ?? '',
       }}
-      waffoPancakeProvisionedStoreID={settings.WaffoPancakeStoreID ?? ""}
-      waffoPancakeProvisionedProductID={settings.WaffoPancakeProductID ?? ""}
+      waffoPancakeProvisionedStoreID={settings.WaffoPancakeStoreID ?? ''}
+      waffoPancakeProvisionedProductID={settings.WaffoPancakeProductID ?? ''}
       complianceDefaults={{
-        confirmed: settings["payment_setting.compliance_confirmed"] ?? false,
+        confirmed: settings['payment_setting.compliance_confirmed'] ?? false,
         termsVersion:
-          settings["payment_setting.compliance_terms_version"] ?? "",
-        confirmedAt: settings["payment_setting.compliance_confirmed_at"] ?? 0,
-        confirmedBy: settings["payment_setting.compliance_confirmed_by"] ?? 0,
+          settings['payment_setting.compliance_terms_version'] ?? '',
+        confirmedAt: settings['payment_setting.compliance_confirmed_at'] ?? 0,
+        confirmedBy: settings['payment_setting.compliance_confirmed_by'] ?? 0,
       }}
     />
-  );
+  )
 }
 
 export const chuanapiPaymentSettingsExtension: PaymentSettingsExtension = {
-  id: "chuanapi/payment-settings",
+  id: 'chuanapi/payment-settings',
   render: (settings) =>
     renderChuanApiPaymentSettings(settings as BillingSettings),
-};
+}

@@ -447,10 +447,10 @@ func TestFrontendCompositionRootStaysIsolated(t *testing.T) {
 
 func TestFrontendChuanAPIBootstrapKeepsHeavyPagesLazy(t *testing.T) {
 	root := repoRoot(t)
-	path := filepath.Join(root, "web", "src", "extensions", "chuanapi", "index.tsx")
-	data, err := os.ReadFile(path)
+	descriptorPath := filepath.Join(root, "web", "src", "extensions", "chuanapi", "index.ts")
+	descriptor, err := os.ReadFile(descriptorPath)
 	require.NoError(t, err)
-	source := string(data)
+	descriptorSource := string(descriptor)
 
 	for _, forbidden := range []string{
 		"from './help'",
@@ -460,9 +460,16 @@ func TestFrontendChuanAPIBootstrapKeepsHeavyPagesLazy(t *testing.T) {
 		"from './payment'",
 		"from \"./payment\"",
 	} {
-		assert.NotContains(t, source, forbidden,
+		assert.NotContains(t, descriptorSource, forbidden,
 			"frontend bootstrap descriptor must not statically load heavy ChuanAPI page implementation (%s)", forbidden)
 	}
+	assert.Contains(t, descriptorSource, "from './lazy-pages'",
+		"frontend bootstrap descriptor must delegate heavy page loading to the lazy component boundary")
+
+	lazyPath := filepath.Join(root, "web", "src", "extensions", "chuanapi", "lazy-pages.tsx")
+	lazy, err := os.ReadFile(lazyPath)
+	require.NoError(t, err)
+	lazySource := string(lazy)
 	for _, modulePath := range []string{
 		"./help/pages/docs-index",
 		"./help/pages/guide-page",
@@ -471,10 +478,10 @@ func TestFrontendChuanAPIBootstrapKeepsHeavyPagesLazy(t *testing.T) {
 		"./payment",
 	} {
 		pattern := regexp.MustCompile(`import\(["']` + regexp.QuoteMeta(modulePath) + `["']\)`)
-		assert.True(t, pattern.MatchString(source),
+		assert.True(t, pattern.MatchString(lazySource),
 			"frontend bootstrap descriptor must preserve dynamic import for %s", modulePath)
 	}
-	assert.Contains(t, source, "<Suspense", "lazy extension pages require an explicit Suspense boundary")
+	assert.Contains(t, lazySource, "<Suspense", "lazy extension pages require an explicit Suspense boundary")
 }
 
 func TestWalletFrontendOwnershipStaysInChuanAPIExtension(t *testing.T) {
