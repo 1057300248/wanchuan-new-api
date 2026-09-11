@@ -26,6 +26,8 @@ var (
 	_ moneyport.FundingReceipt    = (*Funding)(nil)
 )
 
+var ErrMissingDebitReceipt = errors.New("wallet funding: consumed quota has no debit receipt")
+
 func NewFunding(request moneyport.FactoryRequest) (*Funding, error) {
 	order := make([]model.LedgerAccount, 0, len(request.AccountOrder))
 	for _, raw := range request.AccountOrder {
@@ -69,7 +71,11 @@ func (w *Funding) PreConsume(amount int) error {
 		return w.mapInsufficient(err)
 	}
 	w.consumed = amount
-	if !result.Replayed {
+	// A reconstructed Funding instance can hit a persisted ledger replay. The
+	// replay result includes the original ledger rows, so hydrate receipt state
+	// when this instance has none. An in-process replay on the same instance must
+	// not add the same shares twice.
+	if !result.Replayed || len(w.debitShares) == 0 {
 		w.addSharesFromLedger(result)
 	}
 	return nil
@@ -130,9 +136,7 @@ func (w *Funding) SettleInTx(tx *gorm.DB, delta int) (moneyport.SettlementResult
 		result, err := model.CreditQuotaSharesTx(tx, entry, shares)
 		return settlementResultFromLedger(result), err
 	}
-	entry.Delta = refund
-	result, err := model.CreditQuotaTx(tx, entry)
-	return settlementResultFromLedger(result), err
+	return moneyport.SettlementResult{}, ErrMissingDebitReceipt
 }
 
 func (w *Funding) ApplySettlementResult(delta int, result moneyport.SettlementResult) {
@@ -159,9 +163,7 @@ func (w *Funding) Refund() error {
 		_, err := model.CreditQuotaShares(entry, shares)
 		return err
 	}
-	entry.Delta = w.consumed
-	_, err := model.CreditQuota(entry)
-	return err
+	return ErrMissingDebitReceipt
 }
 
 func (w *Funding) Reserve(targetQuota int) error {
