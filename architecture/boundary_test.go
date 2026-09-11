@@ -414,6 +414,38 @@ func TestFrontendCompositionRootStaysIsolated(t *testing.T) {
 	assert.Empty(t, offenders, "only web/src/extensions/bootstrap.ts may wire the concrete frontend ChuanAPI extension")
 }
 
+func TestFrontendChuanAPIBootstrapKeepsHeavyPagesLazy(t *testing.T) {
+	root := repoRoot(t)
+	path := filepath.Join(root, "web", "src", "extensions", "chuanapi", "index.tsx")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	source := string(data)
+
+	for _, forbidden := range []string{
+		"from './help'",
+		"from \"./help\"",
+		"from './wallet'",
+		"from \"./wallet\"",
+		"from './payment'",
+		"from \"./payment\"",
+	} {
+		assert.NotContains(t, source, forbidden,
+			"frontend bootstrap descriptor must not statically load heavy ChuanAPI page implementation (%s)", forbidden)
+	}
+	for _, modulePath := range []string{
+		"./help/pages/docs-index",
+		"./help/pages/guide-page",
+		"./help/pages/api-reference-page",
+		"./wallet",
+		"./payment",
+	} {
+		pattern := regexp.MustCompile(`import\(["']` + regexp.QuoteMeta(modulePath) + `["']\)`)
+		assert.True(t, pattern.MatchString(source),
+			"frontend bootstrap descriptor must preserve dynamic import for %s", modulePath)
+	}
+	assert.Contains(t, source, "<Suspense", "lazy extension pages require an explicit Suspense boundary")
+}
+
 func TestWalletFrontendOwnershipStaysInChuanAPIExtension(t *testing.T) {
 	root := repoRoot(t)
 	legacy := filepath.Join(root, "web", "src", "features", "wallet")
