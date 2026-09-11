@@ -43,6 +43,11 @@ const LazyApiReferencePage = lazy(() =>
 const LazyWalletPage = lazy(() =>
   import('./wallet').then(({ Wallet }) => ({ default: Wallet }))
 )
+const LazyUsageChartPage = lazy(() =>
+  import('./dashboard/usage-chart').then(({ UsageChart }) => ({
+    default: UsageChart,
+  }))
+)
 const LazyPaymentSettingsPage = lazy(() =>
   import('./payment').then(({ chuanapiPaymentSettingsExtension }) => ({
     default: ({ settings }: { settings: unknown }) => (
@@ -70,6 +75,10 @@ export const LazyHelpApiReference: HelpApiReferencePage = (props) =>
 
 export const LazyWallet: WalletPage = (props) =>
   withLoading(<LazyWalletPage {...props} />)
+
+export function LazyUsageChart() {
+  return withLoading(<LazyUsageChartPage />)
+}
 
 export function LazyPaymentSettingsRenderer({
   settings,

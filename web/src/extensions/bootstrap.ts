@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { setBrandExtension } from './brand'
 import {
   chuanapiBrandExtension,
+  chuanapiDashboardOverviewExtension,
   chuanapiHelpExtension,
   chuanapiI18nExtension,
   chuanapiNavigationExtension,
@@ -26,6 +27,7 @@ import {
   chuanapiWalletExtension,
   SHOW_LEGACY_AFFILIATE_QUOTA,
 } from './chuanapi'
+import { setDashboardOverviewExtensions } from './dashboard'
 import { setExtensionFlags } from './flags'
 import { setHelpExtension } from './help'
 import { setI18nExtensions } from './i18n'
@@ -37,6 +39,7 @@ import { setWalletExtension } from './wallet'
 // `@/extensions`; concrete ChuanAPI wiring is evaluated exactly once by the
 // application entrypoint (and explicitly by composition tests).
 setNavigationExtensions([chuanapiNavigationExtension])
+setDashboardOverviewExtensions([chuanapiDashboardOverviewExtension])
 setBrandExtension(chuanapiBrandExtension)
 setHelpExtension(chuanapiHelpExtension)
 setI18nExtensions([chuanapiI18nExtension])

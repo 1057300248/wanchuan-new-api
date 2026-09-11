@@ -48,6 +48,7 @@ import {
 } from '@/components/page-transition'
 import { Button } from '@/components/ui/button'
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
+import { extensionDashboardOverviewWidgets } from '@/extensions'
 import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
 import type { ApiKey } from '@/features/keys/types'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
@@ -820,6 +821,8 @@ export function OverviewDashboard() {
           )}
 
           <SummaryCards />
+
+          {extensionDashboardOverviewWidgets()}
 
           {showContentPanels && (
             <CardStaggerContainer

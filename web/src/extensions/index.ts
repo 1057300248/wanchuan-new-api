@@ -25,6 +25,11 @@ export type {
   NavigationExtension,
   NavigationExtensionContext,
 } from './navigation'
+export {
+  extensionDashboardOverviewWidgets,
+  setDashboardOverviewExtensions,
+} from './dashboard'
+export type { DashboardOverviewExtension } from './dashboard'
 export { extensionHelpPages } from './help'
 export type { HelpExtension } from './help'
 export { extensionBrandLogo } from './brand'
