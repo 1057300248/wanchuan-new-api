@@ -126,9 +126,10 @@ still exactly:
 
 `bdef117505247769268b209665fb3ad7554c3da7`
 
-It is an ancestor of the tested implementation head. `git merge-tree --write-tree
-HEAD upstream-official/main` completed without conflicts and produced the same
-tree as the post-review implementation head (`d3428bde8938dad59df66be512c7d9d4c763524e`).
+It is an ancestor of the branch. A fresh
+`git merge-tree --write-tree HEAD upstream-official/main` completed with exit code
+0 and no conflicts. The exact synthetic tree id is intentionally not recorded so
+this document does not become stale when documentation-only commits advance HEAD.
 
 This is a clean current-upstream rehearsal, but it is **not evidence** that the
 future target of `<=5` manual conflicts across dozens of new upstream commits has
