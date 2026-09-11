@@ -25,7 +25,9 @@ func TestLlmsRouteSetPreservesLegacyRouteTableAndHandlers(t *testing.T) {
 	handlers := make(map[string]string)
 	for _, route := range engine.Routes() {
 		key := route.Method + " " + route.Path
-		got = append(got, key)
+		if route.Path == "/llms.txt" || route.Path == "/llms-full.txt" {
+			got = append(got, key)
+		}
 		handlers[key] = route.Handler
 	}
 	assert.Equal(t, []string{

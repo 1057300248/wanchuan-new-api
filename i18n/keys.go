@@ -40,6 +40,11 @@ const (
 	MsgAuthInsufficientPrivilege = "auth.insufficient_privilege"
 )
 
+// Support center messages
+const (
+	MsgSupportTicketResolved = "support.ticket_resolved"
+)
+
 // Token related messages
 const (
 	MsgTokenNameTooLong          = "token.name_too_long"

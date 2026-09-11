@@ -6,6 +6,7 @@ import (
 	"github.com/QuantumNous/new-api/extension"
 	"github.com/QuantumNous/new-api/model"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,21 +24,32 @@ var expectedWalletModelOrder = []any{
 	&model.AffiliateRewardReconcileState{},
 }
 
+var expectedSupportModelOrder = []any{
+	&model.SupportTicket{},
+	&model.SupportTicketMessage{},
+}
+
 func TestRegisterContributesWalletModelsInMigrationOrder(t *testing.T) {
 	reg := extension.NewRegistry()
 	require.NoError(t, Register(reg))
 
 	models := reg.ModelsFor(extension.PhaseAfterCoreModels)
-	require.Len(t, models, len(expectedWalletModelOrder))
+	require.Len(t, models, len(expectedWalletModelOrder)+len(expectedSupportModelOrder))
 	for i, expected := range expectedWalletModelOrder {
 		assert.IsType(t, expected, models[i], "wallet model at index %d changed", i)
 	}
+	for i, expected := range expectedSupportModelOrder {
+		assert.IsType(t, expected, models[len(expectedWalletModelOrder)+i], "support model at index %d changed", i)
+	}
 
 	sets := reg.ModelSets()
-	require.Len(t, sets, 1)
+	require.Len(t, sets, 2)
 	assert.Equal(t, ExtensionName, sets[0].Extension)
 	assert.Equal(t, WalletModelsName, sets[0].Name)
 	assert.Equal(t, extension.PhaseAfterCoreModels, sets[0].Phase)
+	assert.Equal(t, ExtensionName, sets[1].Extension)
+	assert.Equal(t, SupportModelsName, sets[1].Name)
+	assert.Equal(t, extension.PhaseAfterCoreModels, sets[1].Phase)
 }
 
 // The backfill mutates balances, so it must run only after the wallet schema
@@ -61,11 +73,44 @@ func TestRegisterContributesLlmsRoutesBeforePluginSnapshot(t *testing.T) {
 	require.NoError(t, Register(reg))
 
 	sets := reg.RouteSetsFor(extension.PriorityBeforePlugin)
-	require.Len(t, sets, 1)
+	require.Len(t, sets, 2)
 	assert.Equal(t, ExtensionName, sets[0].Extension)
 	assert.Equal(t, LlmsRoutesName, sets[0].Name)
 	require.NotNil(t, sets[0].Register)
+	assert.Equal(t, ExtensionName, sets[1].Extension)
+	assert.Equal(t, SupportRoutesName, sets[1].Name)
+	require.NotNil(t, sets[1].Register)
 	assert.Empty(t, reg.RouteSetsFor(extension.PriorityAfterPlugin))
+}
+
+func TestSupportRouteSetRegistersUserAndAdminTicketAPIs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	reg := extension.NewRegistry()
+	require.NoError(t, Register(reg))
+	sets := reg.RouteSetsFor(extension.PriorityBeforePlugin)
+	require.Len(t, sets, 2)
+
+	engine := gin.New()
+	require.NoError(t, sets[1].Register(engine))
+	routes := make(map[string]struct{})
+	for _, route := range engine.Routes() {
+		routes[route.Method+" "+route.Path] = struct{}{}
+	}
+	for _, expected := range []string{
+		"GET /api/support/tickets",
+		"POST /api/support/tickets",
+		"GET /api/support/tickets/:id",
+		"POST /api/support/tickets/:id/replies",
+		"POST /api/support/tickets/:id/read",
+		"GET /api/admin/support/tickets",
+		"GET /api/admin/support/tickets/:id",
+		"POST /api/admin/support/tickets/:id/replies",
+		"POST /api/admin/support/tickets/:id/read",
+		"PUT /api/admin/support/tickets/:id/status",
+	} {
+		_, ok := routes[expected]
+		assert.True(t, ok, "missing route %s", expected)
+	}
 }
 
 // WalletModels is handed straight to the registry, so a shared backing array
@@ -79,6 +124,16 @@ func TestWalletModelsReturnsAFreshSlicePerCall(t *testing.T) {
 	first[0] = nil
 	assert.IsType(t, expectedWalletModelOrder[0], second[0],
 		"mutating a returned slice must not affect a later call")
+}
+
+func TestSupportModelsReturnsAFreshSlicePerCall(t *testing.T) {
+	first := SupportModels()
+	second := SupportModels()
+	require.Len(t, first, len(expectedSupportModelOrder))
+	require.Len(t, second, len(expectedSupportModelOrder))
+
+	first[0] = nil
+	assert.IsType(t, expectedSupportModelOrder[0], second[0])
 }
 
 func TestRegisterRejectsNilRegistry(t *testing.T) {
@@ -101,7 +156,7 @@ func TestRegisterTwiceIsRejectedWithoutDuplicatingModels(t *testing.T) {
 	require.NoError(t, Register(reg))
 	require.Error(t, Register(reg))
 
-	assert.Len(t, reg.ModelsFor(extension.PhaseAfterCoreModels), len(expectedWalletModelOrder))
+	assert.Len(t, reg.ModelsFor(extension.PhaseAfterCoreModels), len(expectedWalletModelOrder)+len(expectedSupportModelOrder))
 	assert.Len(t, reg.StepsFor(extension.PhaseAfterCoreData), 1)
-	assert.Len(t, reg.RouteSetsFor(extension.PriorityBeforePlugin), 1)
+	assert.Len(t, reg.RouteSetsFor(extension.PriorityBeforePlugin), 2)
 }

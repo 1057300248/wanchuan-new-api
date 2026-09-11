@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/extension"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
@@ -36,12 +37,16 @@ const (
 	// WalletModelsName is the model set carrying the wallet ledger, bonus audit,
 	// and affiliate reward schema.
 	WalletModelsName = "wallet_models"
+	// SupportModelsName is the model set carrying first-party support tickets.
+	SupportModelsName = "support_models"
 	// LegacyQuotaBackfillName is the data step that backfills legacy
 	// users.quota balances into the paid account.
 	LegacyQuotaBackfillName = "legacy_quota_backfill"
 	// LlmsRoutesName is the public llms.txt route set. Its identity is stable
 	// because registry failures and route diagnostics expose it to operators.
 	LlmsRoutesName = "llms_routes"
+	// SupportRoutesName is the authenticated support-center API route set.
+	SupportRoutesName = "support_routes"
 )
 
 // WalletModels returns the ChuanAPI GORM models in the exact order the host
@@ -58,6 +63,14 @@ func WalletModels() []any {
 		&model.ModelBonusEligibleAudit{},
 		&model.AffiliateReward{},
 		&model.AffiliateRewardReconcileState{},
+	}
+}
+
+// SupportModels returns the support-center schema contributed by ChuanAPI.
+func SupportModels() []any {
+	return []any{
+		&model.SupportTicket{},
+		&model.SupportTicketMessage{},
 	}
 }
 
@@ -83,6 +96,14 @@ func Register(reg *extension.Registry) error {
 	}); err != nil {
 		return err
 	}
+	if err := reg.RegisterModelSet(extension.ModelSet{
+		Extension: ExtensionName,
+		Name:      SupportModelsName,
+		Phase:     extension.PhaseAfterCoreModels,
+		Models:    SupportModels(),
+	}); err != nil {
+		return err
+	}
 	if err := reg.RegisterDataStep(extension.DataStep{
 		Extension: ExtensionName,
 		Name:      LegacyQuotaBackfillName,
@@ -91,11 +112,19 @@ func Register(reg *extension.Registry) error {
 	}); err != nil {
 		return err
 	}
-	return reg.RegisterRouteSet(extension.RouteSet{
+	if err := reg.RegisterRouteSet(extension.RouteSet{
 		Extension: ExtensionName,
 		Name:      LlmsRoutesName,
 		Priority:  extension.PriorityBeforePlugin,
 		Register:  registerLlmsRoutes,
+	}); err != nil {
+		return err
+	}
+	return reg.RegisterRouteSet(extension.RouteSet{
+		Extension: ExtensionName,
+		Name:      SupportRoutesName,
+		Priority:  extension.PriorityBeforePlugin,
+		Register:  registerSupportRoutes,
 	})
 }
 
@@ -109,6 +138,38 @@ func registerLlmsRoutes(engine *gin.Engine) error {
 	engine.HEAD("/llms.txt", controller.GetLlmsIndex)
 	engine.GET("/llms-full.txt", controller.GetLlmsFull)
 	engine.HEAD("/llms-full.txt", controller.GetLlmsFull)
+	return nil
+}
+
+// registerSupportRoutes wires the ticket API into the host's shared request
+// budget. These groups hang off the raw engine rather than the /api group in
+// router.SetApiRouter, so they must opt into the same middleware the group would
+// otherwise inherit: cache protection, the API route tag, and the configured
+// global API rate limit. The per-user write limiter is attached after auth so it
+// can key on the authenticated user instead of a rotatable client IP, and the
+// create and reply actions use separate scopes so one cannot exhaust the other.
+func registerSupportRoutes(engine *gin.Engine) error {
+	user := engine.Group("/api/support/tickets")
+	user.Use(middleware.DisableCache())
+	user.Use(middleware.RouteTag("api"))
+	user.Use(middleware.GlobalAPIRateLimit())
+	user.Use(middleware.UserAuth())
+	user.GET("", middleware.SearchRateLimit(), controller.ListSupportTickets)
+	user.POST("", middleware.UserCriticalRateLimit("support-ticket-create"), controller.CreateSupportTicket)
+	user.GET("/:id", controller.GetSupportTicket)
+	user.POST("/:id/replies", middleware.UserCriticalRateLimit("support-ticket-reply"), controller.ReplySupportTicket)
+	user.POST("/:id/read", controller.MarkSupportTicketRead)
+
+	admin := engine.Group("/api/admin/support/tickets")
+	admin.Use(middleware.DisableCache())
+	admin.Use(middleware.RouteTag("api"))
+	admin.Use(middleware.GlobalAPIRateLimit())
+	admin.Use(middleware.AdminAuth())
+	admin.GET("", middleware.SearchRateLimit(), controller.ListAdminSupportTickets)
+	admin.GET("/:id", controller.GetAdminSupportTicket)
+	admin.POST("/:id/replies", middleware.UserCriticalRateLimit("support-ticket-reply"), controller.ReplyAdminSupportTicket)
+	admin.POST("/:id/read", controller.MarkAdminSupportTicketRead)
+	admin.PUT("/:id/status", controller.UpdateAdminSupportTicketStatus)
 	return nil
 }
 
