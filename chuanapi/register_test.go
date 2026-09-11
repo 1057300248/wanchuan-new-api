@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/extension"
 	"github.com/QuantumNous/new-api/model"
+	paymentmodule "github.com/QuantumNous/new-api/modules/chuanapi/payment"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,27 +27,37 @@ var expectedAffiliateModelOrder = []any{
 	&model.AffiliateRewardReconcileState{},
 }
 
+var expectedPaymentModelOrder = []any{
+	&paymentmodule.PaymentOrderBinding{},
+}
+
 func TestRegisterContributesWalletModelsInMigrationOrder(t *testing.T) {
 	reg := extension.NewRegistry()
 	require.NoError(t, Register(reg))
 
 	models := reg.ModelsFor(extension.PhaseAfterCoreModels)
-	require.Len(t, models, len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder))
+	require.Len(t, models, len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+len(expectedPaymentModelOrder))
 	for i, expected := range expectedWalletModelOrder {
 		assert.IsType(t, expected, models[i], "wallet model at index %d changed", i)
 	}
 	for i, expected := range expectedAffiliateModelOrder {
 		assert.IsType(t, expected, models[len(expectedWalletModelOrder)+i], "affiliate model at index %d changed", i)
 	}
+	for i, expected := range expectedPaymentModelOrder {
+		assert.IsType(t, expected, models[len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+i], "payment model at index %d changed", i)
+	}
 
 	sets := reg.ModelSets()
-	require.Len(t, sets, 2)
+	require.Len(t, sets, 3)
 	assert.Equal(t, ExtensionName, sets[0].Extension)
 	assert.Equal(t, WalletModelsName, sets[0].Name)
 	assert.Equal(t, extension.PhaseAfterCoreModels, sets[0].Phase)
 	assert.Equal(t, ExtensionName, sets[1].Extension)
 	assert.Equal(t, AffiliateModelsName, sets[1].Name)
 	assert.Equal(t, extension.PhaseAfterCoreModels, sets[1].Phase)
+	assert.Equal(t, ExtensionName, sets[2].Extension)
+	assert.Equal(t, PaymentModelsName, sets[2].Name)
+	assert.Equal(t, extension.PhaseAfterCoreModels, sets[2].Phase)
 }
 
 // The backfill mutates balances, so it must run only after the wallet schema
@@ -116,7 +127,7 @@ func TestRegisterTwiceIsRejectedWithoutDuplicatingModels(t *testing.T) {
 	require.NoError(t, Register(reg))
 	require.Error(t, Register(reg))
 
-	assert.Len(t, reg.ModelsFor(extension.PhaseAfterCoreModels), len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder))
+	assert.Len(t, reg.ModelsFor(extension.PhaseAfterCoreModels), len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+len(expectedPaymentModelOrder))
 	assert.Len(t, reg.StepsFor(extension.PhaseAfterCoreData), 1)
 	assert.Len(t, reg.RouteSetsFor(extension.PriorityBeforePlugin), 3)
 }

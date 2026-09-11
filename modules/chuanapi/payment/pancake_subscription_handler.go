@@ -44,11 +44,17 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		common.ApiErrorMsg(c, "该套餐未配置 WaffoPancakeProductId")
 		return
 	}
-	// Plan targets its own Pancake product, so we only require credentials
-	// here — not the gateway-level WaffoPancakeProductID.
+	// Plan targets its own Pancake product, so the gateway-level product ID is not
+	// required. Store/environment are required because webhook settlement is bound
+	// to the server-side order snapshot rather than the callback URL alone.
 	if strings.TrimSpace(setting.WaffoPancakeMerchantID) == "" ||
-		strings.TrimSpace(setting.WaffoPancakePrivateKey) == "" {
+		strings.TrimSpace(setting.WaffoPancakePrivateKey) == "" ||
+		strings.TrimSpace(setting.WaffoPancakeStoreID) == "" {
 		common.ApiErrorMsg(c, "Waffo Pancake 未配置或密钥无效")
+		return
+	}
+	if _, err := configuredWaffoPancakeEnvironment(); err != nil {
+		common.ApiErrorMsg(c, "Waffo Pancake 环境配置无效")
 		return
 	}
 
@@ -89,7 +95,14 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
 	}
-	if err := order.Insert(); err != nil {
+	expectedAmount := decimal.NewFromFloat(plan.PriceAmount).StringFixed(2)
+	binding, err := newWaffoPancakeBinding(tradeNo, OrderBindingKindSubscription, expectedAmount)
+	if err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅绑定配置失败 user_id=%d plan_id=%d trade_no=%s error=%q", userId, plan.Id, tradeNo, err.Error()))
+		common.ApiErrorMsg(c, "支付配置错误")
+		return
+	}
+	if err := insertSubscriptionOrderWithBinding(order, binding); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅订单创建失败 user_id=%d plan_id=%d trade_no=%s error=%q", userId, plan.Id, tradeNo, err.Error()))
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
 		return
@@ -100,7 +113,7 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		ProductID:     plan.WaffoPancakeProductId,
 		BuyerIdentity: WaffoPancakeBuyerIdentityFromUserID(user.Id),
 		PriceSnapshot: &WaffoPancakePriceSnapshot{
-			Amount:      decimal.NewFromFloat(plan.PriceAmount).StringFixed(2),
+			Amount:      expectedAmount,
 			TaxCategory: "saas",
 		},
 		BuyerEmail:              getWaffoPancakeBuyerEmail(user),
@@ -112,6 +125,13 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		order.Status = common.TopUpStatusFailed
 		_ = order.Update()
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
+		return
+	}
+	if err := bindProviderSessionID(tradeNo, session.SessionID); err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅保存上游会话失败 user_id=%d plan_id=%d trade_no=%s session_id=%s error=%q", userId, plan.Id, tradeNo, session.SessionID, err.Error()))
+		order.Status = common.TopUpStatusFailed
+		_ = order.Update()
+		common.ApiErrorMsg(c, "支付订单绑定失败")
 		return
 	}
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅订单创建成功 user_id=%d plan_id=%d trade_no=%s session_id=%s money=%.2f", userId, plan.Id, tradeNo, session.SessionID, plan.PriceAmount))

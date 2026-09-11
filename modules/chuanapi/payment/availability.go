@@ -31,8 +31,12 @@ func isWaffoPancakeTopUpEnabled() bool {
 	if !operation_setting.IsPaymentComplianceConfirmed() {
 		return false
 	}
+	if _, err := configuredWaffoPancakeEnvironment(); err != nil {
+		return false
+	}
 	return strings.TrimSpace(setting.WaffoPancakeMerchantID) != "" &&
 		strings.TrimSpace(setting.WaffoPancakePrivateKey) != "" &&
+		strings.TrimSpace(setting.WaffoPancakeStoreID) != "" &&
 		strings.TrimSpace(setting.WaffoPancakeProductID) != ""
 }
 

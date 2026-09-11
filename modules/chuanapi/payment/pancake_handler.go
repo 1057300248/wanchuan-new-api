@@ -107,11 +107,12 @@ func getWaffoPancakeBuyerEmail(user *model.User) string {
 // resolveWaffoPancakeAdminCreds). Only SaveWaffoPancake writes to OptionMap.
 
 type saveWaffoPancakeRequest struct {
-	MerchantID string `json:"merchant_id"`
-	PrivateKey string `json:"private_key"`
-	ReturnURL  string `json:"return_url"`
-	StoreID    string `json:"store_id"`
-	ProductID  string `json:"product_id"`
+	MerchantID  string `json:"merchant_id"`
+	PrivateKey  string `json:"private_key"`
+	Environment string `json:"environment"`
+	ReturnURL   string `json:"return_url"`
+	StoreID     string `json:"store_id"`
+	ProductID   string `json:"product_id"`
 }
 
 type createWaffoPancakePairRequest struct {
@@ -120,7 +121,7 @@ type createWaffoPancakePairRequest struct {
 	ReturnURL  string `json:"return_url"`
 }
 
-// SaveWaffoPancake atomically persists all five operator-controlled fields.
+// SaveWaffoPancake atomically persists the operator-controlled binding fields.
 // Catalog / pair endpoints are transient — only this one writes the OptionMap.
 func SaveWaffoPancake(c *gin.Context) {
 	var req saveWaffoPancakeRequest
@@ -132,6 +133,7 @@ func SaveWaffoPancake(c *gin.Context) {
 		c.Request.Context(),
 		req.MerchantID,
 		req.PrivateKey,
+		req.Environment,
 		req.ReturnURL,
 		req.StoreID,
 		req.ProductID,
@@ -146,8 +148,9 @@ func SaveWaffoPancake(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 		"data": gin.H{
-			"product_id": setting.WaffoPancakeProductID,
-			"store_id":   setting.WaffoPancakeStoreID,
+			"product_id":  setting.WaffoPancakeProductID,
+			"store_id":    setting.WaffoPancakeStoreID,
+			"environment": setting.WaffoPancakeEnvironment,
 		},
 	})
 }
@@ -392,7 +395,13 @@ func RequestWaffoPancakePay(c *gin.Context) {
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
 	}
-	if err := topUp.Insert(); err != nil {
+	binding, err := newWaffoPancakeBinding(tradeNo, OrderBindingKindTopUp, formatWaffoPancakeAmount(payMoney))
+	if err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订单绑定配置失败 user_id=%d trade_no=%s error=%q", id, tradeNo, err.Error()))
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "支付配置错误"})
+		return
+	}
+	if err := insertTopUpWithBinding(topUp, binding); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 创建充值订单失败 user_id=%d trade_no=%s amount=%d error=%q", id, tradeNo, req.Amount, err.Error()))
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
 		return
@@ -415,6 +424,13 @@ func RequestWaffoPancakePay(c *gin.Context) {
 		topUp.Status = common.TopUpStatusFailed
 		_ = topUp.Update()
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
+		return
+	}
+	if err := bindProviderSessionID(tradeNo, session.SessionID); err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 保存上游会话失败 user_id=%d trade_no=%s session_id=%s error=%q", id, tradeNo, session.SessionID, err.Error()))
+		topUp.Status = common.TopUpStatusFailed
+		_ = topUp.Update()
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "支付订单绑定失败"})
 		return
 	}
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake 充值订单创建成功 user_id=%d trade_no=%s session_id=%s amount=%d money=%.2f", id, tradeNo, session.SessionID, req.Amount, payMoney))

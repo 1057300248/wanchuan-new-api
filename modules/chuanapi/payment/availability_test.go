@@ -71,18 +71,32 @@ func TestWaffoPancakeWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	originalMerchantID := setting.WaffoPancakeMerchantID
 	originalPrivateKey := setting.WaffoPancakePrivateKey
 	originalProductID := setting.WaffoPancakeProductID
+	originalStoreID := setting.WaffoPancakeStoreID
+	originalEnvironment := setting.WaffoPancakeEnvironment
 	t.Cleanup(func() {
 		setting.WaffoPancakeMerchantID = originalMerchantID
 		setting.WaffoPancakePrivateKey = originalPrivateKey
 		setting.WaffoPancakeProductID = originalProductID
+		setting.WaffoPancakeStoreID = originalStoreID
+		setting.WaffoPancakeEnvironment = originalEnvironment
 	})
 
 	setting.WaffoPancakeMerchantID = ""
 	setting.WaffoPancakePrivateKey = "private"
 	setting.WaffoPancakeProductID = "product"
+	setting.WaffoPancakeStoreID = ""
+	setting.WaffoPancakeEnvironment = setting.WaffoPancakeEnvironmentProd
 	require.False(t, isWaffoPancakeWebhookEnabled())
 
 	setting.WaffoPancakeMerchantID = "merchant"
+	require.False(t, isWaffoPancakeWebhookEnabled(), "StoreID is part of the trusted webhook binding")
+
+	setting.WaffoPancakeStoreID = "store"
+	require.True(t, isWaffoPancakeWebhookEnabled())
+
+	setting.WaffoPancakeEnvironment = "invalid"
+	require.False(t, isWaffoPancakeWebhookEnabled(), "invalid trusted environment must fail closed")
+	setting.WaffoPancakeEnvironment = setting.WaffoPancakeEnvironmentTest
 	require.True(t, isWaffoPancakeWebhookEnabled())
 
 	setting.WaffoPancakeProductID = ""

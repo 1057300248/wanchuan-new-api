@@ -9,6 +9,7 @@ import (
 
 const (
 	ExtensionName = "chuanapi"
+	ModelsName    = "payment_order_bindings"
 	RoutesName    = "payment_routes"
 )
 
@@ -18,6 +19,14 @@ const (
 func Register(reg *extension.Registry) error {
 	if reg == nil {
 		return fmt.Errorf("chuanapi payment: registry must not be nil")
+	}
+	if err := reg.RegisterModelSet(extension.ModelSet{
+		Extension: ExtensionName,
+		Name:      ModelsName,
+		Phase:     extension.PhaseAfterCoreModels,
+		Models:    []any{&PaymentOrderBinding{}},
+	}); err != nil {
+		return err
 	}
 	return reg.RegisterRouteSet(extension.RouteSet{
 		Extension:      ExtensionName,

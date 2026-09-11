@@ -125,6 +125,7 @@ func InitOptionMap() {
 	common.OptionMap["WaffoPancakeMinTopUp"] = strconv.Itoa(setting.WaffoPancakeMinTopUp)
 	common.OptionMap["WaffoPancakeStoreID"] = setting.WaffoPancakeStoreID
 	common.OptionMap["WaffoPancakeProductID"] = setting.WaffoPancakeProductID
+	common.OptionMap["WaffoPancakeEnvironment"] = setting.WaffoPancakeEnvironment
 	common.OptionMap["TopupGroupRatio"] = common.TopupGroupRatio2JSONString()
 	common.OptionMap["Chats"] = setting.Chats2JsonString()
 	common.OptionMap["AutoGroups"] = setting.AutoGroups2JsonString()
@@ -227,6 +228,10 @@ func validateOptionValue(key string, value string) error {
 	if key == "MaxTokenAutoGroups" {
 		return setting.ValidateMaxTokenAutoGroups(value)
 	}
+	if key == "WaffoPancakeEnvironment" {
+		_, err := setting.NormalizeWaffoPancakeEnvironment(value)
+		return err
+	}
 	return rejectRetiredAffiliateReward(key, value)
 }
 
@@ -323,6 +328,13 @@ func updateOptionMap(key string, value string) (err error) {
 	// 全局变量之前生效，防止历史 true 值污染内存；其余选项不在启动路径上重新校验。
 	if err := rejectRetiredAffiliateReward(key, value); err != nil {
 		return err
+	}
+	if key == "WaffoPancakeEnvironment" {
+		normalized, normalizeErr := setting.NormalizeWaffoPancakeEnvironment(value)
+		if normalizeErr != nil {
+			return normalizeErr
+		}
+		value = normalized
 	}
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
@@ -544,6 +556,8 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.WaffoPancakeStoreID = value
 	case "WaffoPancakeProductID":
 		setting.WaffoPancakeProductID = value
+	case "WaffoPancakeEnvironment":
+		setting.WaffoPancakeEnvironment = value
 	case "WaffoPancakeUnitPrice":
 		setting.WaffoPancakeUnitPrice, _ = strconv.ParseFloat(value, 64)
 	case "WaffoPancakeMinTopUp":

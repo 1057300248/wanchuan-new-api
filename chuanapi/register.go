@@ -33,6 +33,7 @@ const (
 	WalletModelsName        = walletmodule.ModelsName
 	WalletPolicyRoutesName  = walletroutes.RoutesName
 	AffiliateModelsName     = affiliatemodule.ModelsName
+	PaymentModelsName       = paymentmodule.ModelsName
 	LegacyQuotaBackfillName = walletmodule.LegacyQuotaBackfillName
 	LlmsRoutesName          = consolemodule.RoutesName
 	PaymentRoutesName       = paymentmodule.RoutesName
