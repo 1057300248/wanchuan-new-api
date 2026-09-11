@@ -3,7 +3,7 @@ path,old_path,status,insertions,deletions,binary,ownership,module,artifact_kind,
 .env.example,,M,14,0,false,OPS_DEPLOYMENT,build-config,production,RETAIN,exact:.env.example,Deployment configuration template
 .gitattributes,,M,2,0,false,OPS_DEPLOYMENT,repository-config,production,RETAIN,exact:.gitattributes,Repository configuration
 .github/workflows/ci.yml,,M,27,1,false,OPS_DEPLOYMENT,ci,ops,REVIEW,prefix:.github/,CI and repository operations
-.github/workflows/database-compat.yml,,A,110,0,false,OPS_DEPLOYMENT,ci,ops,REVIEW,prefix:.github/,CI and repository operations
+.github/workflows/database-compat.yml,,A,127,0,false,OPS_DEPLOYMENT,ci,ops,REVIEW,prefix:.github/,CI and repository operations
 .gitignore,,M,11,0,false,OPS_DEPLOYMENT,repository-config,production,RETAIN,exact:.gitignore,Repository configuration
 AGENTS.md,,M,0,3,false,TEST_COMPAT,repository-guidance,documentation,RETAIN,exact:AGENTS.md,Repository contribution guidance
 Dockerfile,,M,5,0,false,OPS_DEPLOYMENT,build-config,production,RETAIN,exact:Dockerfile,Container build configuration
@@ -71,14 +71,14 @@ docs/architecture/modularization/brand-baseline.csv,,A,4,0,false,TEST_COMPAT,doc
 docs/architecture/modularization/core-attribution.md,,A,101,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/current-manifest.csv,,A,729,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/dependency-boundaries.md,,A,68,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
-docs/architecture/modularization/final-closeout.md,,A,195,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
+docs/architecture/modularization/final-closeout.md,,A,225,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/fork-manifest.csv,,A,621,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/funding-factory-contract.md,,A,95,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/import-baseline.csv,,A,6,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/module-ownership.md,,A,85,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/ownership-rules.tsv,,A,80,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/architecture/modularization/payment-binding-rollout.md,,A,77,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
-docs/architecture/modularization/progress.csv,,A,28,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
+docs/architecture/modularization/progress.csv,,A,32,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/new-api-rc33-production-runbook.md,,A,122,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 docs/new-api-rc33-review.md,,A,103,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
 extension/boundary_test.go,,A,71,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,test,RETAIN,prefix:extension/,Startup model migration and route contribution registry
@@ -153,6 +153,7 @@ modules/chuanapi/payment/availability_test.go,,A,108,0,false,CHUANAPI_MODULE,pay
 modules/chuanapi/payment/catalog.go,,A,84,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
 modules/chuanapi/payment/catalog_registry_test.go,,A,35,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
 modules/chuanapi/payment/order_binding.go,,A,261,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
+modules/chuanapi/payment/order_binding_database_compat_test.go,,A,203,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
 modules/chuanapi/payment/order_binding_migration_test.go,,A,175,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
 modules/chuanapi/payment/order_binding_test.go,,A,284,0,false,CHUANAPI_MODULE,payment-waffo,test,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
 modules/chuanapi/payment/pancake_handler.go,controller/topup_waffo_pancake.go,R084,0,0,false,CHUANAPI_MODULE,payment-waffo,production,RETAIN,prefix:modules/chuanapi/payment/,ChuanAPI Waffo and Waffo-Pancake provider implementation
@@ -201,8 +202,15 @@ pkg/paymentport/catalog.go,,A,385,0,false,GENERIC_EXTENSION_KERNEL,payment-port,
 pkg/paymentport/registry_test.go,,A,142,0,false,GENERIC_EXTENSION_KERNEL,payment-port,test,RETAIN,prefix:pkg/paymentport/,Provider-agnostic payment catalogue capability leaf package
 pkg/walletport/boundary_test.go,,A,35,0,false,GENERIC_EXTENSION_KERNEL,wallet-port,test,RETAIN,prefix:pkg/walletport/,Runtime wallet commercial policy capability leaf package
 pkg/walletport/policy.go,,A,48,0,false,GENERIC_EXTENSION_KERNEL,wallet-port,production,RETAIN,prefix:pkg/walletport/,Runtime wallet commercial policy capability leaf package
-relay/channel/api_request_getbody_test.go,,M,26,4,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
+relay/channel/api_request_getbody_test.go,,M,26,5,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
+relay/channel/api_request_redirect_test.go,,M,0,1,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
+relay/channel/api_request_test.go,,M,0,6,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 relay/channel/deepseek/adaptor_reasoning_test.go,,A,48,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
+relay/channel/gemini/relay_gemini_usage_test.go,,M,0,11,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
+relay/channel/gemini/relay_responses_test.go,,M,0,3,false,GENERIC_CORE_ENHANCEMENT,responses,test,UPSTREAM_CANDIDATE,contains:relay_responses,Generic Responses API provider enhancement
+relay/channel/gemini/test_main_test.go,,A,13,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
+relay/channel/minimax/adaptor_test.go,,M,0,1,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
+relay/channel/minimax/test_main_test.go,,A,13,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 relay/channel/openai/chat_via_responses.go,,M,35,1,false,GENERIC_CORE_ENHANCEMENT,responses,production,UPSTREAM_CANDIDATE,contains:chat_via_responses,Generic Responses API chat bridge
 relay/channel/openai/chat_via_responses_stream_estimate_test.go,,A,116,0,false,GENERIC_CORE_ENHANCEMENT,responses,test,UPSTREAM_CANDIDATE,contains:chat_via_responses,Generic Responses API chat bridge
 relay/channel/openai/helper.go,,M,0,7,false,GENERIC_CORE_ENHANCEMENT,core-relay,production,UPSTREAM_REVIEW,prefix:relay/,Generic relay/billing/protocol behavior changes
@@ -210,6 +218,7 @@ relay/channel/openai/image_console_test.go,,A,42,0,false,TEST_COMPAT,go-tests,te
 relay/channel/openai/relay_responses.go,,M,117,3,false,GENERIC_CORE_ENHANCEMENT,responses,production,UPSTREAM_CANDIDATE,contains:relay_responses,Generic Responses API provider enhancement
 relay/channel/openai/relay_responses_stream_failure_test.go,,A,234,0,false,GENERIC_CORE_ENHANCEMENT,responses,test,UPSTREAM_CANDIDATE,contains:relay_responses,Generic Responses API provider enhancement
 relay/channel/openai/relay_responses_test.go,,A,72,0,false,GENERIC_CORE_ENHANCEMENT,responses,test,UPSTREAM_CANDIDATE,contains:relay_responses,Generic Responses API provider enhancement
+relay/channel/test_main_test.go,,A,13,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 relay/channel/xai/adaptor_reasoning_test.go,,A,76,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
 relay/claude_handler.go,,M,19,1,false,GENERIC_CORE_ENHANCEMENT,core-relay,production,UPSTREAM_REVIEW,prefix:relay/,Generic relay/billing/protocol behavior changes
 relay/common/relay_info.go,,M,23,3,false,GENERIC_CORE_ENHANCEMENT,core-relay,production,UPSTREAM_REVIEW,prefix:relay/,Generic relay/billing/protocol behavior changes
@@ -275,9 +284,9 @@ service/wallet_funding_ledger_test.go,,A,157,0,false,TEST_COMPAT,go-tests,test,R
 setting/payment_waffo_pancake.go,,M,31,7,false,DATA_COMPATIBILITY,payment-config,production,DEFERRED_MIGRATION,prefix:setting/payment_waffo,Persisted OptionMap binding still targets host setting variables; runtime provider implementation is module-owned
 setting/system_setting/public_site.go,,A,41,0,false,GENERIC_CORE_ENHANCEMENT,core-setting,production,UPSTREAM_REVIEW,prefix:setting/,Generic host settings changes not classified as deferred provider data compatibility
 setting/system_setting/public_site_test.go,,A,32,0,false,TEST_COMPAT,go-tests,test,RETAIN,suffix:_test.go,Host regression and compatibility tests remain alongside their generic owner
-web/bun.lock,,M,7,6,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
+web/bun.lock,,M,9,7,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/index.html,,M,2,2,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
-web/package.json,,M,4,2,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
+web/package.json,,M,5,2,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/public/brand/wanchuan-mark-v2.png,,A,0,0,true,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/public/logo.png,,M,0,0,true,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/rsbuild.config.ts,,M,6,3,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
@@ -686,6 +695,7 @@ web/src/hooks/__tests__/use-table-url-state.test.ts,,A,81,0,false,TEST_COMPAT,fr
 web/src/hooks/use-notifications.ts,,M,11,10,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/hooks/use-sidebar-config.ts,,M,5,3,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/hooks/use-sidebar-data.ts,,M,8,2,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
+web/src/hooks/use-system-config.ts,,M,4,4,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/hooks/use-table-url-state.ts,,M,6,4,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/hooks/use-top-nav-links.ts,,M,30,15,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
 web/src/i18n/config.ts,,M,113,40,false,PRODUCT_CORE_CUSTOMIZATION,frontend-core,production,RETAIN_REVIEW,prefix:web/,Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
