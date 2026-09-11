@@ -41,6 +41,11 @@ jobs:
           TEST_DATABASE_COMPAT: "1"
           TEST_DATABASE_DIALECT: sqlite
         run: go test ./model -run '^TestDatabaseCompatibilityReal$' -count=1 -v
+      - name: Real SQLite payment binding migration and constraints
+        env:
+          TEST_DATABASE_COMPAT: "1"
+          TEST_DATABASE_DIALECT: sqlite
+        run: go test ./modules/chuanapi/payment -run '^TestPaymentOrderBindingDatabaseCompatibilityReal$' -count=1 -v
 
   mysql57:
     name: MySQL 5.7 real migration
@@ -77,6 +82,12 @@ jobs:
           TEST_DATABASE_DSN: root:compat@tcp(127.0.0.1:3306)/newapi_compat?charset=utf8mb4&parseTime=true&loc=UTC
           TEST_MYSQL_DSN: root:compat@tcp(127.0.0.1:3306)/newapi_compat?charset=utf8mb4&parseTime=true&loc=UTC
         run: go test ./model -run '^(TestDatabaseCompatibilityReal|TestMoneyColumnsAre64BitOnConfiguredDatabases)$' -count=1 -v
+      - name: Real MySQL payment binding migration and constraints
+        env:
+          TEST_DATABASE_COMPAT: "1"
+          TEST_DATABASE_DIALECT: mysql
+          TEST_DATABASE_DSN: root:compat@tcp(127.0.0.1:3306)/newapi_compat?charset=utf8mb4&parseTime=true&loc=UTC
+        run: go test ./modules/chuanapi/payment -run '^TestPaymentOrderBindingDatabaseCompatibilityReal$' -count=1 -v
 
   postgres96:
     name: PostgreSQL 9.6 real migration
@@ -108,3 +119,9 @@ jobs:
           TEST_DATABASE_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat?sslmode=disable
           TEST_POSTGRES_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat?sslmode=disable
         run: go test ./model -run '^(TestDatabaseCompatibilityReal|TestMoneyColumnsAre64BitOnConfiguredDatabases)$' -count=1 -v
+      - name: Real PostgreSQL payment binding migration and constraints
+        env:
+          TEST_DATABASE_COMPAT: "1"
+          TEST_DATABASE_DIALECT: postgres
+          TEST_DATABASE_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat?sslmode=disable
+        run: go test ./modules/chuanapi/payment -run '^TestPaymentOrderBindingDatabaseCompatibilityReal$' -count=1 -v

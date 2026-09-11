@@ -15,12 +15,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// installDatabaseCompatRegistry mirrors the schema/data descriptors installed by
-// chuanapi.Register at the production composition root. This test lives in the
-// model package, so importing chuanapi here would create an import cycle
-// (chuanapi imports model). Keeping the production-owned models and backfill in
-// the test registry makes InitDB exercise the same extension migration phases
-// without changing the package dependency graph.
+// installDatabaseCompatRegistry mirrors the root-model-owned schema/data
+// descriptors installed by chuanapi.Register at the production composition
+// root. This test lives in the model package, so importing concrete ChuanAPI
+// modules here would create an import cycle. Provider-owned schema (including
+// PaymentOrderBinding) is exercised by its module-level real-database
+// compatibility test instead of being duplicated here.
 func installDatabaseCompatRegistry(t *testing.T) {
 	t.Helper()
 	reg := extension.NewRegistry()
