@@ -26,3 +26,7 @@ R6,8a0be51ef,PASS,frontend-copyright-gate,0,0,"Canonical copyright check repaire
 R7,380eccee7,PASS,payment-binding-sqlite-migration-gate,0,0,"SQLite fresh/legacy/repeat migration, trade_no uniqueness and binding transaction rollback tests added"
 R8,eb7d139e4,PASS,payment-binding-rollout-audit,0,0,"Read-only legacy pending-order audit and fail-closed rollout runbook added; webhook payloads are not used to synthesize missing bindings"
 R9,b8ea30671,PASS,pancake-error-classification,0,0,"TopUp/Subscription DB lookup failures are retryable while provider-order identity conflicts are permanent, preventing both lost callbacks and infinite retry loops"
+R10,96d13ecec,PASS,frontend-production-dependency-audit,0,0,"colord is pinned to 2.9.4 inside leva's compatible range; bun audit --production reports no vulnerabilities"
+R11,b58d4ea36,PASS,strict-frontend-lint-gate,0,0,"Image preloading uses addEventListener/removeEventListener; lint:ci now reports zero warnings and zero errors"
+R12,83591f830,PASS,payment-binding-real-database-matrix,0,0,"Provider-owned PaymentOrderBinding schema has permanent SQLite/MySQL/PostgreSQL fresh/legacy/repeat migration, uniqueness, rollback and concurrent identity-binding coverage in database-compat CI"
+R13,918d58061,PASS,go-race-test-isolation,0,0,"Gin test mode is set once per affected package; root and relaykit full race suites pass with CGO enabled"

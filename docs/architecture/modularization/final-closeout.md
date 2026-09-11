@@ -6,10 +6,12 @@ ownership success from the remaining upstream-owned fork surface.
 
 ## Measurement point
 
-- Tested runtime implementation head: `b8ea306715f0e3156797f11ac8eb999255160b35`
+- Tested candidate implementation head: `918d58061` (`test: isolate gin mode for race safety`).
+  The last production-source change before the release-preflight test hardening is
+  `b58d4ea36` (`fix: satisfy strict frontend lint gate`).
 - Official NewAPI comparison base/current upstream main: `bdef117505247769268b209665fb3ad7554c3da7`
 - Generated manifest: `docs/architecture/modularization/current-manifest.csv`
-- Manifest rows: **728**
+- Manifest rows: **738**
 - Unclassified/default `UPSTREAM_CORE` rows: **0**
 - Concrete ChuanAPI-owned paths outside `modules/chuanapi/` and
   `web/src/extensions/chuanapi/`: **0**
@@ -18,29 +20,29 @@ Final ownership distribution at the tested implementation head:
 
 | Ownership | Files | Production files |
 | --- | ---: | ---: |
-| ChuanAPI module | 126 | 107 |
+| ChuanAPI module | 127 | 107 |
 | Generic module | 58 | 27 |
 | Generic extension kernel | 33 | 17 |
 | Composition root | 6 | 3 |
-| Generic core enhancement | 93 | 85 |
-| Product-core customization | 251 | 250 |
+| Generic core enhancement | 94 | 85 |
+| Product-core customization | 252 | 251 |
 | Data compatibility | 13 | 11 |
-| Test/documentation compatibility | 131 | 1 |
+| Test/documentation compatibility | 138 | 1 |
 | Ops/deployment | 17 | 7 |
 
-The remaining upstream-owned production core surface is **346 files**:
+The remaining upstream-owned production core surface is **347 files**:
 
 ```text
 generic core enhancement       85
-product-core customization    250
+product-core customization    251
 data compatibility             11
 ---------------------------------
-core production surface       346
+core production surface       347
 ```
 
 Therefore the earlier aspirational `<120–150` core-file target is **not met**.
 The refactor achieved concrete module ownership and dependency isolation, but it
-did not turn the customized product into a thin fork. The 346-file surface must
+ did not turn the customized product into a thin fork. The 347-file surface must
 remain an explicit upstream-conflict backlog.
 
 ## Dependency/ownership result
@@ -74,29 +76,32 @@ In particular:
 
 ## Validation
 
-Release-candidate backend validation after the payment failure-classification
-hardening on `b8ea306715f0e3156797f11ac8eb999255160b35`:
+Release-candidate validation through `918d58061`:
 
 - Codex release-review overlay (`^TestFinalReview`) for Pancake retry and Wallet
   Reserve replay — **PASS** for both payment and wallet packages.
 - `go test -count=1 -timeout 900s ./...` — **PASS**.
 - `go vet ./...` — **PASS**.
 - `go build ./...` — **PASS**.
-- `relaykit` independent `GOWORK=off go build ./...` — **PASS**.
+- Root `go test -race -count=1 ./...` — **PASS** after isolating Gin's global
+  test mode in package `TestMain` hooks; the discovered races were test-global
+  `gin.SetMode` writes rather than production request-state races.
+- `relaykit` independent `GOWORK=off` test/vet/build — **PASS**.
+- `relaykit` independent `CGO_ENABLED=1 go test -race -count=1 ./...` — **PASS**.
+- Root and relaykit `go mod verify` — **PASS**.
 - Payment binding SQLite tests cover fresh migration, legacy upgrade, repeated
   migration, `trade_no` uniqueness, and top-up/subscription transaction rollback
   when binding persistence fails — **PASS**.
 - Frontend typecheck — **PASS**.
-- oxlint — **0 errors**, with the existing four `prefer-add-event-listener`
-  warnings only.
+- `bun audit --production` — **PASS / no vulnerabilities found** after pinning the
+  transitive `colord` dependency to 2.9.4.
+- strict `lint:ci` (`oxlint --deny-warnings`) — **0 warnings / 0 errors**.
 - protected-header `format:check` — **PASS**.
 - `copyright:check` — **PASS**.
 - production Rsbuild — **PASS**.
 - single-worker full Vitest — **171/171 test files and 1408/1408 tests PASS**.
-- Initial JS referenced directly by `index.html`: **2,378,749 bytes raw / 687,887
+- Initial JS referenced directly by `index.html`: **2,378,821 bytes raw / 687,897
   bytes gzip**, preserving the restored lazy-loading budget.
-- The final backend-only payment classification plus manifest commits changed no
-  files under `web/` from the frontend-validated source tree.
 - The default parallel frontend run remained resource/timing-sensitive on this
   Windows runner (5-second UI-test timeouts/DOM races); the previously failing
   files passed in isolation and the complete single-worker suite passed without
@@ -104,20 +109,26 @@ hardening on `b8ea306715f0e3156797f11ac8eb999255160b35`:
 - The Windows HTTP/2 no-GetBody negative test was stabilized to assert the
   transport-independent invariant (request fails, no retry, one intact body)
   rather than Go transport error wording; the focused test passed **20/20** runs.
-- Real SQLite production migration/CRUD compatibility was previously **PASS** on
-  SQLite **3.50.4**. In addition, the new payment binding table now has dedicated
-  SQLite migration/rollback/uniqueness coverage in the current full Go suite.
-
-Database limitation for this run:
-
-- `TEST_FIXED_MYSQL_DSN` — unset.
-- `TEST_FIXED_POSTGRES_DSN` — unset.
-- `TEST_MYSQL_DSN` — unset.
-- `TEST_POSTGRES_DSN` — unset.
-
-Accordingly this closeout **does not claim MySQL/PostgreSQL certification**.
-The repository CI matrix still defines real MySQL 5.7 and PostgreSQL 9.6 gates;
-those external jobs remain required before a strict production freeze.
+- Real SQLite production migration/CRUD compatibility — **PASS**, SQLite **3.50.4**.
+- Real disposable MySQL **5.7.44** matrix — **PASS** for the production migration
+  path, BIGINT schema, token/prefill/session migration checks, PaymentOrderBinding
+  fresh/legacy/repeat migration, uniqueness, transaction rollback and concurrent
+  provider-order binding.
+- Real disposable PostgreSQL **9.6.24** matrix — **PASS** for the corresponding
+  production migration, BIGINT, migration and PaymentOrderBinding scenarios.
+- Release-upgrade rehearsal from rebuildable deployed-line component
+  `a515b6689fb288a4d59426874dc9b98a97dc9ab1` to the current candidate and then
+  old-version readback — **PASS on SQLite, MySQL 5.7.44 and PostgreSQL 9.6.24**.
+  The public production version contains later build-component ids that are not
+  present in any configured remote, so this is not claimed as an exact checkout
+  reconstruction of the currently deployed binary.
+- Release-gate unit suite — **8/8 PASS**. The owner explicitly waived the 72-hour
+  canary for this release review; no synthetic 800-row canary evidence was created.
+- All seven GitHub Actions workflow files pass `actionlint`.
+- Linux Go cross-builds for `linux/amd64` and `linux/arm64` produced valid ELF
+  binaries. Dockerfile base images are digest-pinned and Compose static checks
+  confirm fail-closed image/secrets, loopback app exposure, health checks,
+  healthy dependencies and the 150-second drain period.
 
 ## Upstream rehearsal
 
@@ -141,8 +152,15 @@ That KPI can only be measured when a meaningful new upstream range exists.
 - No production deployment was performed.
 - The code-level HOLD findings from the `f26e1e5bb` release review are closed in
   committed changes and promoted to repository regression tests.
-- Production remains **HOLD** until the real MySQL/PostgreSQL compatibility matrix
-  and environment-specific release rehearsal are completed.
+- Local code, frontend, race and three-database compatibility gates are **PASS**.
+- The owner explicitly waived the 72-hour/800-observation canary requirement for
+  this release review. The repository gate itself was not weakened or bypassed.
+- Production remains **HOLD** only for release-artifact/environment work that this
+  local checkout cannot truthfully complete: a full Buildx production image for
+  the exact candidate, immutable image digest, SBOM/provenance, cosign
+  sign/verify evidence, and the actual production backup/restore + Compose/reverse
+  proxy rehearsal. The current candidate is not pushed and this Windows runner
+  has no Linux container engine, so those artifacts were not fabricated.
 - Legacy pending Waffo/Waffo-Pancake orders must be audited before rollout using
   `bin/audit_payment_binding_pending.sql`; missing bindings are never synthesized
   from a newly arriving webhook. See `payment-binding-rollout.md`.
@@ -166,10 +184,11 @@ P2 risks. Both are closed in committed, independently validated changes:
    historical precedence during response assembly.
 
 The remaining release limitations are therefore external/strategic rather than
-these two P2 code defects: real MySQL/PostgreSQL execution is still pending, the
-346-file upstream-owned production core surface remains above the thin-fork
-target, and future-conflict performance cannot be measured until official main
-advances by a meaningful commit range.
+these two P2 code defects: immutable image/SBOM/signature and actual production
+backup/deployment evidence are still pending, the 347-file upstream-owned
+production core surface remains above the thin-fork target, and future-conflict
+performance cannot be measured until official main advances by a meaningful
+commit range.
 
 ## Release-review hardening after `f26e1e5bb`
 
@@ -193,3 +212,14 @@ frontend-gate issues. They are closed as follows:
 7. `b8ea30671` — temporary TopUp/Subscription lookup failures are retryable, while
    provider-order identity conflicts are explicit permanent errors rather than
    infinite-retry conditions.
+8. `96d13ecec` — the production dependency audit is restored to zero known
+   advisories by pinning `colord` to 2.9.4 within the dependency's compatible
+   semver range.
+9. `b58d4ea36` — the strict frontend lint gate is restored to zero warnings by
+   replacing image `onload/onerror` property assignment with explicit event
+   listener registration/removal.
+10. `83591f830` — PaymentOrderBinding real-database compatibility becomes a
+    permanent SQLite/MySQL/PostgreSQL CI gate, including legacy migration,
+    uniqueness, rollback and concurrent provider-order identity binding.
+11. `918d58061` — Gin test mode is initialized once per affected package so the
+    full root race suite no longer races on Gin's process-global mode state.
