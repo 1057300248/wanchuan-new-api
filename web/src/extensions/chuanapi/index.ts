@@ -19,7 +19,6 @@ For commercial licensing, please contact support@quantumnous.com
 import { createElement } from 'react'
 
 import type { BrandExtension } from '../brand'
-import type { DashboardOverviewExtension } from '../dashboard'
 import type { HelpExtension } from '../help'
 import type { I18nExtension } from '../i18n'
 import type { PaymentSettingsExtension } from '../payment-settings'
@@ -32,7 +31,6 @@ import {
   LazyHelpIndex,
   LazyPaymentSettingsRenderer,
   LazyWallet,
-  LazyUsageChart,
 } from './lazy-pages'
 
 export { CHUANAPI_PUBLIC_HOME, chuanapiNavigationExtension } from './navigation'
@@ -60,11 +58,6 @@ export const chuanapiI18nExtension: I18nExtension = {
 export const chuanapiWalletExtension: WalletExtension = {
   id: 'chuanapi/wallet',
   page: LazyWallet,
-}
-
-export const chuanapiDashboardOverviewExtension: DashboardOverviewExtension = {
-  id: 'chuanapi/dashboard-overview',
-  render: LazyUsageChart,
 }
 
 export const chuanapiPaymentSettingsExtension: PaymentSettingsExtension = {
