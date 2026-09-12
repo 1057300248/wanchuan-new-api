@@ -123,3 +123,21 @@ func TestFrozenRequestTimestampKeepsTimeRuleStable(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2.0, cost)
 }
+
+func TestFrozenImageQuantitySurvivesPersistenceWithoutChangingRequestN(t *testing.T) {
+	expression := `tier("images", fixed(0.01)) * image_count * (param("n") == 2 ? 3 : 1)`
+	count := 4
+	frozen, err := FreezeRequestInput(expression, RequestInput{Body: []byte(`{"n":2}`), ImageCount: &count})
+	require.NoError(t, err)
+	count = 8 // The original request owner may reuse its quantity storage.
+	encoded, err := common.Marshal(frozen)
+	require.NoError(t, err)
+	var restored RequestInput
+	require.NoError(t, common.Unmarshal(encoded, &restored))
+	cost, trace, err := RunExprWithRequest(expression, TokenParams{}, restored)
+	require.NoError(t, err)
+	assert.Equal(t, 120000.0, cost)
+	require.NotNil(t, trace.ImageCount)
+	assert.Equal(t, 4, *trace.ImageCount)
+	assert.Equal(t, float64(2), restored.Params["n"])
+}

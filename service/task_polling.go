@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"sort"
 	"strings"
@@ -16,7 +15,6 @@ import (
 	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
@@ -661,19 +659,7 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		if task.Status == model.TaskStatusFailure {
 			return false
 		}
-		usageFacts := make(map[string]any, len(bc.TieredSnapshot.UsageFacts)+len(taskResult.UsageFacts))
-		maps.Copy(usageFacts, bc.TieredSnapshot.UsageFacts)
-		maps.Copy(usageFacts, taskResult.UsageFacts)
-		requestInput := billingexpr.RequestInput{Usage: usageFacts}
-		if bc.TieredSnapshot.RequestInput != nil {
-			requestInput.Headers = maps.Clone(bc.TieredSnapshot.RequestInput.Headers)
-			requestInput.Params = maps.Clone(bc.TieredSnapshot.RequestInput.Params)
-			requestInput.Timestamp = bc.TieredSnapshot.RequestInput.Timestamp
-		} else if billingexpr.UsesRequestContext(bc.TieredSnapshot.ExprString) {
-			logger.LogWarn(ctx, fmt.Sprintf("任务 %s 缺少提交时请求计费快照，保留预扣额度", task.TaskID))
-			return true
-		}
-		result, err := billingexpr.ComputeTieredQuotaWithRequest(bc.TieredSnapshot, billingexpr.TokenParams{}, requestInput)
+		result, usageFacts, err := EvaluateTaskCompletionUsage(bc.TieredSnapshot, taskResult.UsageFacts)
 		if err != nil {
 			logger.LogWarn(ctx, fmt.Sprintf("任务 %s 表达式结算失败，保留预扣额度: %v", task.TaskID, err))
 			return true

@@ -47,6 +47,7 @@ import {
 } from '@/components/ui/collapsible'
 import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
@@ -2127,6 +2128,10 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
   const { t } = useTranslation()
   const operation = ruleEditorProps.operation
   const mode = operation.mode || 'set'
+  const returnErrorDraft =
+    mode === 'return_error' ? ruleEditorProps.returnErrorDraft : null
+  const pruneObjectsDraft =
+    mode === 'prune_objects' ? ruleEditorProps.pruneObjectsDraft : null
   const meta = MODE_META[mode] || MODE_META.set
   const conditions = operation.conditions
   const syncFromTarget =
@@ -2255,27 +2260,23 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
         </div>
 
         {/* Value section */}
-        {Boolean(meta.value) &&
-          showReturnErrorEditor &&
-          ruleEditorProps.returnErrorDraft && (
-            <ReturnErrorEditor
-              operationId={operation.id}
-              draft={ruleEditorProps.returnErrorDraft}
-              updateDraft={ruleEditorProps.updateReturnErrorDraft}
-            />
-          )}
-        {Boolean(meta.value) &&
-          showPruneObjectsEditor &&
-          ruleEditorProps.pruneObjectsDraft && (
-            <PruneObjectsEditor
-              operationId={operation.id}
-              draft={ruleEditorProps.pruneObjectsDraft}
-              updateDraft={ruleEditorProps.updatePruneObjectsDraft}
-              addRule={ruleEditorProps.addPruneRule}
-              updateRule={ruleEditorProps.updatePruneRule}
-              removeRule={ruleEditorProps.removePruneRule}
-            />
-          )}
+        {Boolean(meta.value) && showReturnErrorEditor && returnErrorDraft && (
+          <ReturnErrorEditor
+            operationId={operation.id}
+            draft={returnErrorDraft}
+            updateDraft={ruleEditorProps.updateReturnErrorDraft}
+          />
+        )}
+        {Boolean(meta.value) && showPruneObjectsEditor && pruneObjectsDraft && (
+          <PruneObjectsEditor
+            operationId={operation.id}
+            draft={pruneObjectsDraft}
+            updateDraft={ruleEditorProps.updatePruneObjectsDraft}
+            addRule={ruleEditorProps.addPruneRule}
+            updateRule={ruleEditorProps.updatePruneRule}
+            removeRule={ruleEditorProps.removePruneRule}
+          />
+        )}
         {showDefaultValueEditor && (
           <div className='space-y-1.5'>
             <div className='flex items-center justify-between'>
@@ -2696,9 +2697,9 @@ function ReturnErrorEditor(returnErrorEditorProps: ReturnErrorEditorProps) {
       </div>
 
       <div className='space-y-1.5'>
-        <label className='text-xs font-medium'>
-          {t('Error Message (required)')}
-        </label>
+        <Label required className='text-xs font-medium'>
+          {t('Error Message')}
+        </Label>
         <Textarea
           value={draft.message}
           onChange={(e) =>

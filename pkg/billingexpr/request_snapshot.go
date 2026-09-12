@@ -57,6 +57,10 @@ func FreezeRequestInput(exprStr string, input RequestInput) (RequestInput, error
 	}
 
 	frozen := RequestInput{Timestamp: input.Timestamp}
+	if input.ImageCount != nil {
+		count := *input.ImageCount
+		frozen.ImageCount = &count
+	}
 	if frozen.Timestamp <= 0 {
 		frozen.Timestamp = time.Now().Unix()
 	}

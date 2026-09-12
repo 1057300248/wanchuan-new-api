@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 
 	"github.com/bytedance/gopkg/util/gopool"
@@ -257,7 +258,12 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.settled || s.refunded || s.trusted || targetQuota <= s.preConsumedQuota {
+	imageRequest := false
+	if s.relayInfo != nil {
+		_, imageRequest = s.relayInfo.Request.(*dto.ImageRequest)
+		imageRequest = imageRequest || s.relayInfo.ImageRequestCount > 0
+	}
+	if s.settled || s.refunded || s.trusted && !imageRequest || targetQuota <= s.preConsumedQuota {
 		return nil
 	}
 
@@ -285,6 +291,9 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 	s.preConsumedQuota += delta
 	s.tokenConsumed += delta
 	s.extraReserved += delta
+	if imageRequest {
+		s.trusted = false
+	}
 	s.syncRelayInfo()
 	return nil
 }
@@ -380,7 +389,7 @@ func (s *BillingSession) reserveFunding(delta int) error {
 			types.ErrOptionWithNoRecordErrorLog(),
 		)
 	}
-	if errors.Is(err, ErrModelBonusNotSupported) {
+	if errors.Is(err, ErrModelBonusNotSupported) || errors.Is(err, moneyport.ErrWalletInsufficientBalance) {
 		return types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 	}
 	return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
