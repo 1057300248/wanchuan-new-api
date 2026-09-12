@@ -41,6 +41,9 @@ import type {
   WalletLedgerPage,
   ReferralOverview,
   AffiliateRewardPage,
+  ReferralCoinSummary,
+  ReferralCoinRedeemRequest,
+  ReferralCoinRewardPage,
 } from './types'
 
 // ============================================================================
@@ -293,6 +296,30 @@ export async function getReferralRewards(
 ): Promise<ApiResponse<AffiliateRewardPage>> {
   const res = await api.get(
     `/api/user/referral/rewards?p=${p}&page_size=${page_size}`
+  )
+  return res.data
+}
+
+export async function getReferralCoins(): Promise<
+  ApiResponse<ReferralCoinSummary>
+> {
+  const res = await api.get('/api/user/referral/coins')
+  return res.data
+}
+
+export async function redeemReferralCoins(
+  request: ReferralCoinRedeemRequest
+): Promise<ApiResponse<{ coins: number }>> {
+  const res = await api.post('/api/user/referral/coins/redeem', request)
+  return res.data
+}
+
+export async function getReferralCoinRewards(
+  p: number,
+  page_size: number
+): Promise<ApiResponse<ReferralCoinRewardPage>> {
+  const res = await api.get(
+    `/api/user/referral/coins/rewards?p=${p}&page_size=${page_size}`
   )
   return res.data
 }

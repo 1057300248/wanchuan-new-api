@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -147,6 +148,9 @@ func InitOptionMap() {
 	common.OptionMap["AffiliateRewardEnabled"] = strconv.FormatBool(common.AffiliateRewardEnabled)
 	common.OptionMap["AffiliateRewardRate"] = strconv.FormatFloat(common.AffiliateRewardRate, 'f', -1, 64)
 	common.OptionMap["AffiliateRewardFreezeDays"] = strconv.Itoa(common.AffiliateRewardFreezeDays)
+	common.OptionMap["ReferralCoinEnabled"] = strconv.FormatBool(common.ReferralCoinEnabled)
+	common.OptionMap["ReferralCoinRate"] = strconv.FormatFloat(common.ReferralCoinRate, 'f', -1, 64)
+	common.OptionMap["ReferralCoinFreezeDays"] = strconv.Itoa(common.ReferralCoinFreezeDays)
 	common.OptionMap["QuotaRemindThreshold"] = strconv.Itoa(common.QuotaRemindThreshold)
 	common.OptionMap["PreConsumedQuota"] = strconv.Itoa(common.PreConsumedQuota)
 	common.OptionMap["ModelRequestRateLimitCount"] = strconv.Itoa(setting.ModelRequestRateLimitCount)
@@ -240,7 +244,30 @@ func validateOptionValue(key string, value string) error {
 		_, err := setting.NormalizeWaffoPancakeEnvironment(value)
 		return err
 	}
+	if err := validateReferralCoinOption(key, value); err != nil {
+		return err
+	}
 	return rejectRetiredAffiliateReward(key, value)
+}
+
+func validateReferralCoinOption(key, value string) error {
+	switch key {
+	case "ReferralCoinEnabled":
+		if _, err := strconv.ParseBool(value); err != nil {
+			return errors.New("ReferralCoinEnabled must be a boolean")
+		}
+	case "ReferralCoinRate":
+		rate, err := strconv.ParseFloat(value, 64)
+		if err != nil || math.IsNaN(rate) || math.IsInf(rate, 0) || rate < 0 || rate > 1 {
+			return errors.New("ReferralCoinRate must be between 0 and 1")
+		}
+	case "ReferralCoinFreezeDays":
+		days, err := strconv.Atoi(value)
+		if err != nil || days < 0 || days > 3650 {
+			return errors.New("ReferralCoinFreezeDays must be between 0 and 3650")
+		}
+	}
+	return nil
 }
 
 // errAffiliateRewardRetired 表示对已永久下线推荐返利的再次启用尝试。
@@ -344,6 +371,9 @@ func updateOptionMap(key string, value string) (err error) {
 	// 启动/SyncOptions 时 loadOptionsFromDatabase 读取历史数据库记录。此处只对
 	// 已下线的 AffiliateRewardEnabled 做窄拦截，并在写 common.OptionMap 与任何
 	// 全局变量之前生效，防止历史 true 值污染内存；其余选项不在启动路径上重新校验。
+	if err := validateReferralCoinOption(key, value); err != nil {
+		return err
+	}
 	if err := rejectRetiredAffiliateReward(key, value); err != nil {
 		return err
 	}
@@ -624,6 +654,12 @@ func updateOptionMap(key string, value string) (err error) {
 		common.AffiliateRewardRate, _ = strconv.ParseFloat(value, 64)
 	case "AffiliateRewardFreezeDays":
 		common.AffiliateRewardFreezeDays, _ = strconv.Atoi(value)
+	case "ReferralCoinEnabled":
+		common.ReferralCoinEnabled, _ = strconv.ParseBool(value)
+	case "ReferralCoinRate":
+		common.ReferralCoinRate, _ = strconv.ParseFloat(value, 64)
+	case "ReferralCoinFreezeDays":
+		common.ReferralCoinFreezeDays, _ = strconv.Atoi(value)
 	case "QuotaRemindThreshold":
 		common.QuotaRemindThreshold, _ = strconv.Atoi(value)
 	case "PreConsumedQuota":

@@ -650,6 +650,7 @@ func (user *User) Insert(inviterId int) error {
 			if err := user.prepareForInsert(tx); err != nil {
 				return err
 			}
+			user.InviterId = resolveInviterForInsert(tx, user.Id, inviterId)
 			initialQuota := signupBonusQuota()
 			// 先以零余额创建用户，再由同一事务内账本入账，避免初始字段与
 			// CreditQuotaTx 各加一次造成注册赠额翻倍。
@@ -684,7 +685,7 @@ func (user *User) Insert(inviterId int) error {
 		return err
 	}
 
-	user.finishInsert(inviterId)
+	user.finishInsert(user.InviterId)
 	return nil
 }
 
@@ -724,6 +725,7 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 		if err := user.prepareForInsert(tx); err != nil {
 			return err
 		}
+		user.InviterId = resolveInviterForInsert(tx, user.Id, inviterId)
 		initialQuota := signupBonusQuota()
 		user.QuotaPaid = 0
 		user.QuotaBonus = 0
@@ -751,6 +753,26 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 		}
 		return nil
 	})
+}
+
+// resolveInviterForInsert validates and snapshots the direct inviter while the
+// new user row is being created. Invalid, disabled, deleted, and self referrals
+// are ignored rather than turning a valid registration into an error.
+func resolveInviterForInsert(tx *gorm.DB, userId, inviterId int) int {
+	if tx == nil || inviterId <= 0 || inviterId == userId {
+		return 0
+	}
+	var inviter struct {
+		Id     int
+		Status int
+	}
+	if err := tx.Model(&User{}).Select("id, status").Where("id = ?", inviterId).First(&inviter).Error; err != nil {
+		return 0
+	}
+	if inviter.Status != common.UserStatusEnabled {
+		return 0
+	}
+	return inviter.Id
 }
 
 // signupBonusQuota 返回注册赠金额度（quota units）。功能开关关闭时返回 0，

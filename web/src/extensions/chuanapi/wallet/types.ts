@@ -352,3 +352,37 @@ export interface AffiliateRewardPage {
   items: AffiliateRewardItem[]
   total: number
 }
+
+export interface ReferralCoinSummary {
+  balance: number
+  pending: number
+  scale: number
+  redemption_step: number
+  enabled: boolean
+  rate: number
+  freeze_days: number
+}
+
+export interface ReferralCoinRedeemRequest {
+  coins: number
+  request_id: string
+}
+
+export interface ReferralCoinRewardItem {
+  id: number
+  source_user_id: number
+  paid_amount: number
+  coin_amount: number
+  status: 'pending' | 'credited' | 'cancelled'
+  unlock_at: number
+  reference_type: string
+  reference_id: string
+  created_at: number
+  credited_at: number
+  cancelled_at: number
+}
+
+export interface ReferralCoinRewardPage {
+  items: ReferralCoinRewardItem[]
+  total: number
+}

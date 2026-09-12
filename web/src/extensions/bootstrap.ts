@@ -24,6 +24,7 @@ import {
   chuanapiNavigationExtension,
   chuanapiPaymentSettingsExtension,
   chuanapiWalletExtension,
+  chuanapiReferralsExtension,
   SHOW_LEGACY_AFFILIATE_QUOTA,
 } from './chuanapi'
 import { setExtensionFlags } from './flags'
@@ -31,6 +32,7 @@ import { setHelpExtension } from './help'
 import { setI18nExtensions } from './i18n'
 import { setNavigationExtensions } from './navigation'
 import { setPaymentSettingsExtension } from './payment-settings'
+import { setReferralsExtension } from './referrals'
 import { setWalletExtension } from './wallet'
 
 // Frontend composition root. Generic application code imports only from
@@ -43,3 +45,5 @@ setI18nExtensions([chuanapiI18nExtension])
 setExtensionFlags({ showLegacyAffiliateQuota: SHOW_LEGACY_AFFILIATE_QUOTA })
 setPaymentSettingsExtension(chuanapiPaymentSettingsExtension)
 setWalletExtension(chuanapiWalletExtension)
+
+setReferralsExtension(chuanapiReferralsExtension)

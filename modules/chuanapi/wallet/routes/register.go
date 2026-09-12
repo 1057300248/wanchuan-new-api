@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/QuantumNous/new-api/extension"
+	"github.com/QuantumNous/new-api/middleware"
+	"github.com/QuantumNous/new-api/modules/chuanapi/affiliate"
 	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
 )
 
@@ -36,6 +38,11 @@ func registerRoutes(scopes extension.RouteScopes) error {
 	scopes.UserSelf.GET("/wallet/ledger", walletmodule.GetWalletLedger)
 	scopes.UserSelf.GET("/referral/overview", walletmodule.GetReferralOverview)
 	scopes.UserSelf.GET("/referral/rewards", walletmodule.GetReferralRewards)
+
+	scopes.UserSelf.GET("/referral/invitees", affiliate.GetReferralInvitees)
+	scopes.UserSelf.GET("/referral/coins", affiliate.GetReferralCoins)
+	scopes.UserSelf.GET("/referral/coins/rewards", affiliate.GetReferralCoinRewards)
+	scopes.UserSelf.POST("/referral/coins/redeem", middleware.CriticalRateLimitByScope("referral-redeem"), middleware.UserCriticalRateLimit("referral-redeem"), affiliate.RedeemReferralCoins)
 
 	scopes.AdminModels.GET("/bonus_eligible/audits", walletmodule.GetModelBonusEligibleAudits)
 	scopes.AdminModels.POST("/bonus_eligible/batch", walletmodule.BatchUpdateModelBonusEligible)

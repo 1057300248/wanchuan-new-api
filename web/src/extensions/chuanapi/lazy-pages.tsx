@@ -40,6 +40,10 @@ const LazyApiReferencePage = lazy(() =>
     default: ApiReferencePage,
   }))
 )
+const LazyReferralsPage = lazy(() =>
+  import('./referrals').then(({ Referrals }) => ({ default: Referrals }))
+)
+
 const LazyWalletPage = lazy(() =>
   import('./wallet').then(({ Wallet }) => ({ default: Wallet }))
 )
@@ -78,3 +82,5 @@ export function LazyPaymentSettingsRenderer({
 }) {
   return withLoading(<LazyPaymentSettingsPage settings={settings} />)
 }
+
+export const LazyReferrals = () => withLoading(<LazyReferralsPage />)

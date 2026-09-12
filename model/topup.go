@@ -102,6 +102,11 @@ func creditTopUpQuota(tx *gorm.DB, entry LedgerEntry) (*LedgerResult, error) {
 	if result.TotalAfter > common.MaxWalletQuota {
 		return nil, ErrTopUpQuotaLimitExceeded
 	}
+	if entry.Reason == LedgerReasonTopup && entry.ReferenceType == "topup" {
+		if err := RecordReferralCoinForTopupTx(tx, entry.UserId, entry.Delta, entry.ReferenceId); err != nil {
+			return nil, err
+		}
+	}
 	return result, nil
 }
 

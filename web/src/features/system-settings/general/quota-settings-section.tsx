@@ -54,6 +54,9 @@ const quotaSchema = z.object({
   PreConsumedQuota: z.coerce.number().min(0),
   SignupBonusEnabled: z.boolean(),
   QuotaForSignupBonus: z.coerce.number().min(0),
+  ReferralCoinEnabled: z.boolean(),
+  ReferralCoinRate: z.coerce.number().min(0).max(1),
+  ReferralCoinFreezeDays: z.coerce.number().int().min(0).max(3650),
   TopUpLink: z.string(),
   general_setting: z.object({
     docs_link: z.string(),
@@ -213,6 +216,83 @@ export function QuotaSettingsSection({
                       'Bonus quota for new users ({{formattedQuota}}), credited to the bonus account',
                       { formattedQuota: formatQuotaInputValue(field.value) }
                     )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='ReferralCoinEnabled'
+              render={({ field }) => (
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>{t('Referral Coin Rewards')}</FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Reward inviters with Coins when referred users complete paid top-ups'
+                      )}
+                    </FormDescription>
+                  </SettingsSwitchContent>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </SettingsSwitchItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='ReferralCoinRate'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Referral Coin Rate')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={0}
+                      max={1}
+                      step={0.001}
+                      value={field.value ?? ''}
+                      onChange={handleNumberChange(field.onChange)}
+                      name={field.name}
+                      onBlur={field.onBlur}
+                      ref={field.ref}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t('Share of paid top-ups credited as referral Coins')}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='ReferralCoinFreezeDays'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Referral Coin Freeze Days')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={0}
+                      max={3650}
+                      step={1}
+                      value={field.value ?? ''}
+                      onChange={handleNumberChange(field.onChange)}
+                      name={field.name}
+                      onBlur={field.onBlur}
+                      ref={field.ref}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t('Days before a referral Coin reward is unlocked')}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
