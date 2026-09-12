@@ -44,6 +44,8 @@ class DashboardRouteContractTest(unittest.TestCase):
             "/wallet/*",
             "/profile",
             "/profile/*",
+            "/support",
+            "/support/*",
         )
         matcher_tokens = set(self.ui_matcher.split())
         for path in expected:
@@ -87,6 +89,13 @@ class DashboardRouteContractTest(unittest.TestCase):
             self.caddy.index("handle @new_api_ui"),
             self.caddy.index("try_files {path}index.html"),
         )
+
+    def test_static_assets_retain_prior_chunks_with_application_fallback(self) -> None:
+        handler = named_block(self.caddy, "handle @new_api_static {")
+        self.assertIn("root /opt/middle/new-api-static", handler)
+        self.assertIn("pass_thru", handler)
+        self.assertLess(handler.index("file_server"), handler.index("reverse_proxy"))
+        self.assertIn('header Cache-Control "public, max-age=31536000, immutable"', handler)
 
     def test_legacy_redirects_and_split_dashboard_matcher_are_absent(self) -> None:
         for source in ("/keys*", "/usage-logs*", "/wallet*", "/profile*"):

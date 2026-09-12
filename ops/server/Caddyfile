@@ -86,16 +86,23 @@ http://:8081 {
 		# --- P0-1: New API same-origin proxy (http://127.0.0.1:3000) ---
 		# Matchers sit before the web-home file_server below; public web-home
 		# paths (/, /models*, /about*, /apps*, /docs*, /blog*, /status*,
-		# /support*, /terms*, /privacy*, /refund*, /_next/*,
+		# /terms*, /privacy*, /refund*, /_next/*,
 		# /favicon.ico, /logo.svg) are intentionally NOT captured here.
 		# /pricing*, /playground* and /image* are owned by New API (see @new_api_ui).
 
 		@new_api_static path /static/*
 		handle @new_api_static {
-			reverse_proxy http://127.0.0.1:3000 {
-				header_up Host {host}
-				header_up X-Forwarded-Host {host}
-				header_up X-Forwarded-Proto https
+			route {
+				# Retain immutable chunks across releases for already-open tabs.
+				file_server {
+					root /opt/middle/new-api-static
+					pass_thru
+				}
+				reverse_proxy http://127.0.0.1:3000 {
+					header_up Host {host}
+					header_up X-Forwarded-Host {host}
+					header_up X-Forwarded-Proto https
+				}
 			}
 			header Cache-Control "public, max-age=31536000, immutable"
 		}
@@ -110,6 +117,7 @@ http://:8081 {
 			path /playground /playground/*
 			path /image /image/*
 			path /help /help/*
+			path /support /support/*
 			path /llms.txt /llms-full.txt
 			path /subscriptions /subscriptions/* /redemption-codes /redemption-codes/* /chat /chat/* /chat2link /chat2link/* /errors /errors/* /user-agreement /privacy-policy
 			path /channels /channels/* /model-management /model-management/* /users /users/* /system-info /system-info/* /system-settings /system-settings/* /rankings /rankings/* /setup /setup/* /auth /auth/* /billing /billing/* /content /content/* /operations /operations/* /security /security/* /site /site/*

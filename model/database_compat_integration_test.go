@@ -36,6 +36,12 @@ func installDatabaseCompatRegistry(t *testing.T) {
 			&AffiliateRewardReconcileState{},
 		},
 	}))
+	require.NoError(t, reg.RegisterModelSet(extension.ModelSet{
+		Extension: "chuanapi",
+		Name:      "support_models",
+		Phase:     extension.PhaseAfterCoreModels,
+		Models:    []any{&SupportTicket{}, &SupportTicketMessage{}},
+	}))
 	require.NoError(t, reg.RegisterDataStep(extension.DataStep{
 		Extension: "chuanapi",
 		Name:      "legacy_quota_backfill",
@@ -82,7 +88,8 @@ func TestDatabaseCompatibilityReal(t *testing.T) {
 	default:
 		t.Fatalf("unsupported TEST_DATABASE_DIALECT %q", dialect)
 	}
-	t.Setenv("LOG_SQL_DSN", "")
+	logDSN := strings.TrimSpace(os.Getenv("TEST_LOG_DATABASE_DSN"))
+	t.Setenv("LOG_SQL_DSN", logDSN)
 
 	require.NoError(t, InitDB(), "production InitDB/migrateDB path must succeed on %s", dialect)
 	require.NoError(t, InitLogDB(), "production InitLogDB path must succeed on %s", dialect)
@@ -104,6 +111,17 @@ func TestDatabaseCompatibilityReal(t *testing.T) {
 	sqlDB, err := DB.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sqlDB.Close() })
+	if LOG_DB != DB {
+		logSQLDB, logErr := LOG_DB.DB()
+		require.NoError(t, logErr)
+		t.Cleanup(func() { require.NoError(t, logSQLDB.Close()) })
+		require.NoError(t, logSQLDB.Ping())
+	}
+	if logDSN != "" {
+		require.NotSame(t, DB, LOG_DB, "configured log databases must be initialized independently")
+		require.True(t, LOG_DB.Migrator().HasTable(&Log{}))
+		require.True(t, LOG_DB.Migrator().HasTable(&AuditLog{}))
+	}
 	require.NoError(t, sqlDB.Ping())
 
 	var version string
@@ -124,6 +142,8 @@ func TestDatabaseCompatibilityReal(t *testing.T) {
 		"quota_data":         &QuotaData{},
 		"balance_ledger":     &BalanceLedger{},
 		"subscription_plans": &SubscriptionPlan{},
+		"support_tickets":    &SupportTicket{},
+		"support_messages":   &SupportTicketMessage{},
 	} {
 		require.Truef(t, DB.Migrator().HasTable(table), "migrateDB did not create %s on %s", name, dialect)
 	}

@@ -19,6 +19,7 @@ import (
 	affiliatemodule "github.com/QuantumNous/new-api/modules/chuanapi/affiliate"
 	consolemodule "github.com/QuantumNous/new-api/modules/chuanapi/console"
 	paymentmodule "github.com/QuantumNous/new-api/modules/chuanapi/payment"
+	supportmodule "github.com/QuantumNous/new-api/modules/chuanapi/support"
 	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
 	walletroutes "github.com/QuantumNous/new-api/modules/chuanapi/wallet/routes"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
@@ -37,11 +38,16 @@ const (
 	LegacyQuotaBackfillName = walletmodule.LegacyQuotaBackfillName
 	LlmsRoutesName          = consolemodule.RoutesName
 	PaymentRoutesName       = paymentmodule.RoutesName
+	SupportModelsName       = supportmodule.ModelsName
+	SupportRoutesName       = supportmodule.RoutesName
 )
 
 // WalletModels remains as a compatibility accessor for migration tests and any
 // out-of-tree build-time tooling. Concrete model enumeration is module-owned.
 func WalletModels() []any { return walletmodule.Models() }
+
+// SupportModels exposes the module-owned schema to migration verification.
+func SupportModels() []any { return supportmodule.Models() }
 
 // RegisterRuntimeServices composes ChuanAPI-owned runtime policy services.
 func RegisterRuntimeServices() error {
@@ -89,5 +95,8 @@ func Register(reg *extension.Registry) error {
 	if err := paymentmodule.Register(reg); err != nil {
 		return err
 	}
-	return consolemodule.Register(reg)
+	if err := consolemodule.Register(reg); err != nil {
+		return err
+	}
+	return supportmodule.Register(reg)
 }

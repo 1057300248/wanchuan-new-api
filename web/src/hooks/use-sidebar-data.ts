@@ -26,6 +26,7 @@ import {
   Image as ImageIcon,
   Key,
   LayoutDashboard,
+  LifeBuoy,
   ListTodo,
   MessageSquare,
   PlugZap,
@@ -121,6 +122,11 @@ export function useSidebarData(): SidebarData {
             title: t('Wallet'),
             url: '/wallet',
             icon: Wallet,
+          },
+          {
+            title: t('Support Center'),
+            url: '/support',
+            icon: LifeBuoy,
           },
           {
             title: t('Profile'),

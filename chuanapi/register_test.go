@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	paymentmodule "github.com/QuantumNous/new-api/modules/chuanapi/payment"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,12 +32,17 @@ var expectedPaymentModelOrder = []any{
 	&paymentmodule.PaymentOrderBinding{},
 }
 
+var expectedSupportModelOrder = []any{
+	&model.SupportTicket{},
+	&model.SupportTicketMessage{},
+}
+
 func TestRegisterContributesWalletModelsInMigrationOrder(t *testing.T) {
 	reg := extension.NewRegistry()
 	require.NoError(t, Register(reg))
 
 	models := reg.ModelsFor(extension.PhaseAfterCoreModels)
-	require.Len(t, models, len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+len(expectedPaymentModelOrder))
+	require.Len(t, models, len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+len(expectedPaymentModelOrder)+len(expectedSupportModelOrder))
 	for i, expected := range expectedWalletModelOrder {
 		assert.IsType(t, expected, models[i], "wallet model at index %d changed", i)
 	}
@@ -47,8 +53,12 @@ func TestRegisterContributesWalletModelsInMigrationOrder(t *testing.T) {
 		assert.IsType(t, expected, models[len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+i], "payment model at index %d changed", i)
 	}
 
+	for i, expected := range expectedSupportModelOrder {
+		assert.IsType(t, expected, models[len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+len(expectedPaymentModelOrder)+i], "support model at index %d changed", i)
+	}
+
 	sets := reg.ModelSets()
-	require.Len(t, sets, 3)
+	require.Len(t, sets, 4)
 	assert.Equal(t, ExtensionName, sets[0].Extension)
 	assert.Equal(t, WalletModelsName, sets[0].Name)
 	assert.Equal(t, extension.PhaseAfterCoreModels, sets[0].Phase)
@@ -58,6 +68,9 @@ func TestRegisterContributesWalletModelsInMigrationOrder(t *testing.T) {
 	assert.Equal(t, ExtensionName, sets[2].Extension)
 	assert.Equal(t, PaymentModelsName, sets[2].Name)
 	assert.Equal(t, extension.PhaseAfterCoreModels, sets[2].Phase)
+	assert.Equal(t, ExtensionName, sets[3].Extension)
+	assert.Equal(t, SupportModelsName, sets[3].Name)
+	assert.Equal(t, extension.PhaseAfterCoreModels, sets[3].Phase)
 }
 
 // The backfill mutates balances, so it must run only after the wallet schema
@@ -81,7 +94,7 @@ func TestRegisterContributesModuleRoutesBeforePluginSnapshot(t *testing.T) {
 	require.NoError(t, Register(reg))
 
 	sets := reg.RouteSetsFor(extension.PriorityBeforePlugin)
-	require.Len(t, sets, 3)
+	require.Len(t, sets, 4)
 	assert.Equal(t, ExtensionName, sets[0].Extension)
 	assert.Equal(t, WalletPolicyRoutesName, sets[0].Name)
 	require.NotNil(t, sets[0].RegisterScoped)
@@ -91,6 +104,9 @@ func TestRegisterContributesModuleRoutesBeforePluginSnapshot(t *testing.T) {
 	assert.Equal(t, ExtensionName, sets[2].Extension)
 	assert.Equal(t, LlmsRoutesName, sets[2].Name)
 	require.NotNil(t, sets[2].Register)
+	assert.Equal(t, ExtensionName, sets[3].Extension)
+	assert.Equal(t, SupportRoutesName, sets[3].Name)
+	require.NotNil(t, sets[3].Register)
 	assert.Empty(t, reg.RouteSetsFor(extension.PriorityAfterPlugin))
 }
 
@@ -127,7 +143,47 @@ func TestRegisterTwiceIsRejectedWithoutDuplicatingModels(t *testing.T) {
 	require.NoError(t, Register(reg))
 	require.Error(t, Register(reg))
 
-	assert.Len(t, reg.ModelsFor(extension.PhaseAfterCoreModels), len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+len(expectedPaymentModelOrder))
+	assert.Len(t, reg.ModelsFor(extension.PhaseAfterCoreModels), len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+len(expectedPaymentModelOrder)+len(expectedSupportModelOrder))
 	assert.Len(t, reg.StepsFor(extension.PhaseAfterCoreData), 1)
-	assert.Len(t, reg.RouteSetsFor(extension.PriorityBeforePlugin), 3)
+	assert.Len(t, reg.RouteSetsFor(extension.PriorityBeforePlugin), 4)
+}
+
+func TestSupportRouteSetRegistersUserAndAdminTicketAPIs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	reg := extension.NewRegistry()
+	require.NoError(t, Register(reg))
+	sets := reg.RouteSetsFor(extension.PriorityBeforePlugin)
+	require.Len(t, sets, 4)
+
+	engine := gin.New()
+	require.NoError(t, sets[3].Register(engine))
+	routes := make(map[string]struct{})
+	for _, route := range engine.Routes() {
+		routes[route.Method+" "+route.Path] = struct{}{}
+	}
+	for _, expected := range []string{
+		"GET /api/support/tickets",
+		"POST /api/support/tickets",
+		"GET /api/support/tickets/:id",
+		"POST /api/support/tickets/:id/replies",
+		"POST /api/support/tickets/:id/read",
+		"GET /api/admin/support/tickets",
+		"GET /api/admin/support/tickets/:id",
+		"POST /api/admin/support/tickets/:id/replies",
+		"POST /api/admin/support/tickets/:id/read",
+		"PUT /api/admin/support/tickets/:id/status",
+	} {
+		_, ok := routes[expected]
+		assert.True(t, ok, "missing route %s", expected)
+	}
+}
+
+func TestSupportModelsReturnsAFreshSlicePerCall(t *testing.T) {
+	first := SupportModels()
+	second := SupportModels()
+	require.Len(t, first, len(expectedSupportModelOrder))
+	require.Len(t, second, len(expectedSupportModelOrder))
+
+	first[0] = nil
+	assert.IsType(t, expectedSupportModelOrder[0], second[0])
 }

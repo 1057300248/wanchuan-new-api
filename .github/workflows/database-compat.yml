@@ -40,7 +40,7 @@ jobs:
         env:
           TEST_DATABASE_COMPAT: "1"
           TEST_DATABASE_DIALECT: sqlite
-        run: go test ./model -run '^TestDatabaseCompatibilityReal$' -count=1 -v
+        run: go test ./model -run '^(TestDatabaseCompatibilityReal|TestSupportTicketSchemaSQLite)$' -count=1 -v
       - name: Real SQLite payment binding migration and constraints
         env:
           TEST_DATABASE_COMPAT: "1"
@@ -75,13 +75,19 @@ jobs:
           docker exec "${{ job.services.mysql.id }}"
           mysql -uroot -pcompat
           -e "ALTER DATABASE newapi_compat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+      - name: Create independent MySQL log database
+        run: >-
+          docker exec "${{ job.services.mysql.id }}"
+          mysql -uroot -pcompat
+          -e "CREATE DATABASE newapi_compat_log CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
       - name: Real MySQL production migration, CRUD and BIGINT schema
         env:
           TEST_DATABASE_COMPAT: "1"
           TEST_DATABASE_DIALECT: mysql
           TEST_DATABASE_DSN: root:compat@tcp(127.0.0.1:3306)/newapi_compat?charset=utf8mb4&parseTime=true&loc=UTC
+          TEST_LOG_DATABASE_DSN: root:compat@tcp(127.0.0.1:3306)/newapi_compat_log?charset=utf8mb4&parseTime=true&loc=UTC
           TEST_MYSQL_DSN: root:compat@tcp(127.0.0.1:3306)/newapi_compat?charset=utf8mb4&parseTime=true&loc=UTC
-        run: go test ./model -run '^(TestDatabaseCompatibilityReal|TestMoneyColumnsAre64BitOnConfiguredDatabases)$' -count=1 -v
+        run: go test ./model -run '^(TestDatabaseCompatibilityReal|TestMoneyColumnsAre64BitOnConfiguredDatabases|TestSupportTicketSchemaConfiguredDatabases)$' -count=1 -v
       - name: Real MySQL payment binding migration and constraints
         env:
           TEST_DATABASE_COMPAT: "1"
@@ -112,13 +118,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Create independent PostgreSQL log database
+        run: docker exec "${{ job.services.postgres.id }}" createdb -U postgres newapi_compat_log
       - name: Real PostgreSQL production migration, CRUD and BIGINT schema
         env:
           TEST_DATABASE_COMPAT: "1"
           TEST_DATABASE_DIALECT: postgres
           TEST_DATABASE_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat?sslmode=disable
+          TEST_LOG_DATABASE_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat_log?sslmode=disable
           TEST_POSTGRES_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat?sslmode=disable
-        run: go test ./model -run '^(TestDatabaseCompatibilityReal|TestMoneyColumnsAre64BitOnConfiguredDatabases)$' -count=1 -v
+        run: go test ./model -run '^(TestDatabaseCompatibilityReal|TestMoneyColumnsAre64BitOnConfiguredDatabases|TestSupportTicketSchemaConfiguredDatabases)$' -count=1 -v
       - name: Real PostgreSQL payment binding migration and constraints
         env:
           TEST_DATABASE_COMPAT: "1"
