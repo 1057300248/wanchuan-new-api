@@ -25,13 +25,20 @@ import { getSelf } from '@/lib/api'
 
 import {
   calculateAmount,
+  getAffiliateCode,
+  getReferralOverview,
   getTopupInfo,
   getWalletSummary,
   redeemTopupCode,
   requestPayment,
 } from '../api'
 import { Wallet } from '../index'
-import type { TopupInfo, UserWalletData, WalletSummary } from '../types'
+import type {
+  ReferralOverview,
+  TopupInfo,
+  UserWalletData,
+  WalletSummary,
+} from '../types'
 
 vi.mock('@/hooks/use-status', () => ({
   useStatus: () => ({
@@ -61,6 +68,8 @@ vi.mock('../api', async (importOriginal) => ({
   requestPayment: vi.fn(),
   redeemTopupCode: vi.fn(),
   getWalletSummary: vi.fn(),
+  getAffiliateCode: vi.fn(),
+  getReferralOverview: vi.fn(),
 }))
 
 vi.mock('../components/ledger-table', () => ({
@@ -87,6 +96,26 @@ const walletSummary: WalletSummary = {
     referral_bonus_enabled: false,
     referral_bonus_rate: 0,
     referral_bonus_freeze_days: 0,
+  },
+}
+
+const referralOverview: ReferralOverview = {
+  aff_code: 'wallet-aff',
+  inviter_id: 0,
+  invite_count: 2,
+  pending_count: 1,
+  eligible_paid_quota: 200000,
+  pending_bonus_quota: 100000,
+  credited_bonus_quota: 200000,
+  total_bonus_quota: 300000,
+  reward_rate: 0.05,
+  freeze_days: 7,
+  rules: {
+    signup_bonus_enabled: false,
+    signup_bonus_quota: 0,
+    referral_bonus_enabled: true,
+    referral_bonus_rate: 0.05,
+    referral_bonus_freeze_days: 7,
   },
 }
 
@@ -121,6 +150,14 @@ describe('wallet funding flow', () => {
     vi.mocked(getWalletSummary).mockResolvedValue({
       success: true,
       data: walletSummary,
+    })
+    vi.mocked(getAffiliateCode).mockResolvedValue({
+      success: true,
+      data: 'wallet-aff',
+    })
+    vi.mocked(getReferralOverview).mockResolvedValue({
+      success: true,
+      data: referralOverview,
     })
     vi.mocked(calculateAmount).mockResolvedValue({ success: true, data: '73' })
   })
@@ -331,7 +368,7 @@ describe('wallet funding flow', () => {
     ).toBeInTheDocument()
   })
 
-  test('does not render referral rewards or referral history surfaces', async () => {
+  test('embeds the referral rewards card without the legacy standalone referral surfaces', async () => {
     vi.mocked(getTopupInfo).mockResolvedValue({
       success: true,
       data: onlineTopupInfo,
@@ -339,9 +376,13 @@ describe('wallet funding flow', () => {
 
     renderWallet()
 
-    expect(await screen.findByLabelText('Custom Amount')).toBeInTheDocument()
+    expect(await screen.findByText(/first 3 top-ups/)).toHaveTextContent(
+      "For each invited friend's first 3 top-ups, you earn 5.0% of the top-up amount as a reward."
+    )
+    expect(
+      screen.getByDisplayValue(/\/sign-up\?aff=wallet-aff$/)
+    ).toBeInTheDocument()
     expect(screen.queryByText('Referral Rewards')).not.toBeInTheDocument()
     expect(screen.queryByText('Referral History')).not.toBeInTheDocument()
-    expect(screen.queryByText('Referral link')).not.toBeInTheDocument()
   })
 })

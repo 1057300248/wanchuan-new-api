@@ -39,7 +39,5 @@ export type {
 } from './i18n'
 export { extensionPaymentSettingsSection } from './payment-settings'
 export type { PaymentSettingsExtension } from './payment-settings'
-export { extensionReferralsPage } from './referrals'
-export type { ReferralsExtension } from './referrals'
 export { extensionWalletPage } from './wallet'
 export type { WalletExtension, WalletPageProps } from './wallet'

@@ -16,13 +16,14 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatQuota } from '@/lib/format'
 
+import { REFERRAL_REWARD_MAX_TOPUP_EVENTS } from '../constants'
 import type { ReferralOverview } from '../types'
 
 function formatRate(rate: number): string {
   if (!Number.isFinite(rate) || rate <= 0) return '0%'
   const percent = rate * 100
   return Number.isInteger(percent)
-    ? `${percent}%`
+    ? `${percent.toFixed(1)}%`
     : `${percent.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}%`
 }
 
@@ -92,8 +93,13 @@ export function AffiliateRewardsCard(props: {
         </div>
 
         <p className='text-muted-foreground text-xs lg:col-span-3'>
-          {t('Referral reward rate')}:{' '}
-          {formatRate(props.overview?.reward_rate ?? 0)}
+          {t(
+            "For each invited friend's first {{limit}} top-ups, you earn {{rate}} of the top-up amount as a reward.",
+            {
+              limit: REFERRAL_REWARD_MAX_TOPUP_EVENTS,
+              rate: formatRate(props.overview?.reward_rate ?? 0),
+            }
+          )}
           {' · '}
           {t('Freeze days')}: {props.overview?.freeze_days ?? 0}
         </p>

@@ -2467,6 +2467,7 @@
     "footer.defaultCopyright": "All rights reserved.",
     "footer.new\u0061pi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment",
+    "For each invited friend's first {{limit}} top-ups, you earn {{rate}} of the top-up amount as a reward.": "For each invited friend's first {{limit}} top-ups, you earn {{rate}} of the top-up amount as a reward.",
     "For private deployments, format: https://fastgpt.run/api/openapi": "For private deployments, format: https://fastgpt.run/api/openapi",
     "For security, existing access tokens cannot be displayed. Regenerate only when you need a new token.": "For security, existing access tokens cannot be displayed. Regenerate only when you need a new token.",
     "Force a syntactically valid JSON response": "Force a syntactically valid JSON response",

@@ -2467,6 +2467,7 @@
     "footer.defaultCopyright": "すべての権利を留保します。",
     "footer.new\u0061pi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "2025 年 5 月 10 日以降に追加されたチャネルの場合、デプロイ時にモデル名から「.」を削除する必要はありません",
+    "For each invited friend's first {{limit}} top-ups, you earn {{rate}} of the top-up amount as a reward.": "招待した友達の最初の {{limit}} 回のチャージで、チャージ額の {{rate}} を報酬として受け取れます。",
     "For private deployments, format: https://fastgpt.run/api/openapi": "プライベートデプロイメントの場合、形式: https://fastgpt.run/api/openapi",
     "For security, existing access tokens cannot be displayed. Regenerate only when you need a new token.": "セキュリティ上、既存のアクセストークンは再表示できません。新しいトークンが必要な場合のみ再生成してください。",
     "Force a syntactically valid JSON response": "構文的に有効な JSON 応答を強制",

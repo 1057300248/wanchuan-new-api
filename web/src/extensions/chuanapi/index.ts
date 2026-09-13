@@ -22,7 +22,6 @@ import type { BrandExtension } from '../brand'
 import type { HelpExtension } from '../help'
 import type { I18nExtension } from '../i18n'
 import type { PaymentSettingsExtension } from '../payment-settings'
-import type { ReferralsExtension } from '../referrals'
 import type { WalletExtension } from '../wallet'
 import { CHUANAPI_BRAND_LOGO } from './brand'
 import { loadChuanapiI18nOverride } from './i18n'
@@ -32,7 +31,6 @@ import {
   LazyHelpIndex,
   LazyPaymentSettingsRenderer,
   LazyWallet,
-  LazyReferrals,
 } from './lazy-pages'
 
 export { CHUANAPI_PUBLIC_HOME, chuanapiNavigationExtension } from './navigation'
@@ -66,9 +64,4 @@ export const chuanapiPaymentSettingsExtension: PaymentSettingsExtension = {
   id: 'chuanapi/payment-settings',
   render: (settings) =>
     createElement(LazyPaymentSettingsRenderer, { settings }),
-}
-
-export const chuanapiReferralsExtension: ReferralsExtension = {
-  id: 'chuanapi/referrals',
-  page: LazyReferrals,
 }

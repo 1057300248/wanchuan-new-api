@@ -64,3 +64,9 @@ export const DEFAULT_DISCOUNT_RATE = 1.0
  * Default minimum topup amount
  */
 export const DEFAULT_MIN_TOPUP = 1
+
+/**
+ * Successful top-ups per invitee that generate referral rewards.
+ * Mirrors `model.AffiliateRewardMaxTopUpEvents` on the backend.
+ */
+export const REFERRAL_REWARD_MAX_TOPUP_EVENTS = 3
