@@ -25,6 +25,7 @@ import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
 
+import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
 import { LedgerTable } from './components/ledger-table'
@@ -38,6 +39,8 @@ import {
   useTopupInfo,
   useWaffoPancakePayment,
   useWaffoPayment,
+  useAffiliate,
+  useReferralOverview,
   useWalletSummary,
 } from './hooks'
 import {
@@ -78,6 +81,9 @@ export function Wallet(_props: WalletProps) {
   const { status } = useStatus()
   const { currency } = useSystemConfig()
   const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
+  const { affiliateLink, loading: affiliateLoading } = useAffiliate()
+  const { overview: referralOverview, loading: referralLoading } =
+    useReferralOverview()
   const {
     summary,
     loading: walletLoading,
@@ -310,6 +316,11 @@ export function Wallet(_props: WalletProps) {
               waffoMinTopup={topupInfo?.waffo_min_topup}
               onWaffoMethodSelect={handleWaffoMethodSelect}
               enableWaffoPancakeTopup={topupInfo?.enable_waffo_pancake_topup}
+            />
+            <AffiliateRewardsCard
+              overview={referralOverview}
+              affiliateLink={affiliateLink}
+              loading={affiliateLoading || referralLoading}
             />
             <LedgerTable />
           </div>

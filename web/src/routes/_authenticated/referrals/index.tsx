@@ -16,14 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute } from '@tanstack/react-router'
-
-import { extensionReferralsPage } from '@/extensions'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_authenticated/referrals/')({
-  component: ReferralsRoute,
+  beforeLoad: () => {
+    throw redirect({ to: '/wallet' })
+  },
 })
-function ReferralsRoute() {
-  const Page = extensionReferralsPage().page
-  return <Page />
-}

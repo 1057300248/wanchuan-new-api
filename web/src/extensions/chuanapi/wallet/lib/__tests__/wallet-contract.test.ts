@@ -31,12 +31,17 @@ function source(relativePath: string): string {
 describe('ChuanAPI wallet surface contract', () => {
   test('wallet page composes the supported funding surfaces', () => {
     const wallet = source('index.tsx')
-    const required = ['WalletStatsCard', 'RechargeFormCard', 'LedgerTable']
+    const required = [
+      'WalletStatsCard',
+      'RechargeFormCard',
+      'AffiliateRewardsCard',
+      'LedgerTable',
+    ]
     for (const component of required) {
       expect(wallet).toMatch(new RegExp(`<${component}`))
     }
     expect(wallet).not.toMatch(
-      /WalletAccountsCard|RedemptionCard|SubscriptionPlansCard|AffiliateRewardsCard|BillingHistoryDialog|TransferDialog|ReferralRewardsCard|ReferralHistoryCard/
+      /WalletAccountsCard|RedemptionCard|SubscriptionPlansCard|BillingHistoryDialog|TransferDialog|ReferralRewardsCard|ReferralHistoryCard/
     )
   })
 

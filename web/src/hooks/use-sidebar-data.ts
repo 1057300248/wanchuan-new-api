@@ -22,7 +22,6 @@ import {
   ClipboardList,
   CreditCard,
   FileText,
-  Gift,
   FlaskConical,
   Image as ImageIcon,
   Key,
@@ -123,11 +122,6 @@ export function useSidebarData(): SidebarData {
             title: t('Wallet'),
             url: '/wallet',
             icon: Wallet,
-          },
-          {
-            title: t('Referral Program'),
-            url: '/referrals',
-            icon: Gift,
           },
           {
             title: t('Support Center'),
