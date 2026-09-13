@@ -1,7 +1,6 @@
 package model
 
 import (
-	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -232,26 +231,6 @@ func validateOptionValue(key string, value string) error {
 		_, err := setting.NormalizeWaffoPancakeEnvironment(value)
 		return err
 	}
-	return rejectRetiredAffiliateReward(key, value)
-}
-
-// errAffiliateRewardRetired 表示对已永久下线推荐返利的再次启用尝试。
-var errAffiliateRewardRetired = errors.New(
-	"AffiliateRewardEnabled is permanently disabled: referral rewards are offline",
-)
-
-// rejectRetiredAffiliateReward 是已下线推荐返利的共享窄守卫：仅在
-// AffiliateRewardEnabled 被置为任何 ParseBool 为 true 的值时报错，false 与
-// 无法解析的值保持既有语义。validateOptionValue（UpdateOption/UpdateOptionsBulk
-// 持久化前）与 updateOptionMap（写内存前，覆盖 startup/SyncOptions 加载历史
-// 记录的路径）共用此守卫；不要把它扩展为对其他选项的通用 revalidation。
-func rejectRetiredAffiliateReward(key string, value string) error {
-	if key != "AffiliateRewardEnabled" {
-		return nil
-	}
-	if enabled, parseErr := strconv.ParseBool(value); parseErr == nil && enabled {
-		return errAffiliateRewardRetired
-	}
 	return nil
 }
 
@@ -321,13 +300,6 @@ func updateOptionMap(key string, value string) (err error) {
 		delete(common.OptionMap, key)
 		common.OptionMapRWMutex.Unlock()
 		return nil
-	}
-	// updateOptionMap 会被两条路径直接调用：UpdateOption 持久化之后、以及
-	// 启动/SyncOptions 时 loadOptionsFromDatabase 读取历史数据库记录。此处只对
-	// 已下线的 AffiliateRewardEnabled 做窄拦截，并在写 common.OptionMap 与任何
-	// 全局变量之前生效，防止历史 true 值污染内存；其余选项不在启动路径上重新校验。
-	if err := rejectRetiredAffiliateReward(key, value); err != nil {
-		return err
 	}
 	if key == "WaffoPancakeEnvironment" {
 		normalized, normalizeErr := setting.NormalizeWaffoPancakeEnvironment(value)

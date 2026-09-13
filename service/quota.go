@@ -252,11 +252,9 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
 	attachQuotaSaturation(ctx, relayInfo, other)
-	// P1-2：钱包净份额记录与推荐返利（仅结算成功且 paid 净消费 > 0）
+	// P1-2：钱包净份额记录（仅结算成功）
 	if relayInfo.BillingSource == BillingSourceWallet && settleErr == nil {
-		if paidNet := FillWalletCostLogInfo(other, relayInfo.UserId, RelayWalletCostRefs(relayInfo)); paidNet > 0 {
-			recordAffiliateRewardOrLog(relayInfo.UserId, paidNet, "relay", relayInfo.RequestId)
-		}
+		FillWalletCostLogInfo(other, relayInfo.UserId, RelayWalletCostRefs(relayInfo))
 	}
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
@@ -392,11 +390,9 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
 	attachQuotaSaturation(ctx, relayInfo, other)
-	// P1-2：钱包净份额记录与推荐返利（仅结算成功且 paid 净消费 > 0）
+	// P1-2：钱包净份额记录（仅结算成功）
 	if relayInfo.BillingSource == BillingSourceWallet && settleErr == nil {
-		if paidNet := FillWalletCostLogInfo(other, relayInfo.UserId, RelayWalletCostRefs(relayInfo)); paidNet > 0 {
-			recordAffiliateRewardOrLog(relayInfo.UserId, paidNet, "relay", relayInfo.RequestId)
-		}
+		FillWalletCostLogInfo(other, relayInfo.UserId, RelayWalletCostRefs(relayInfo))
 	}
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,

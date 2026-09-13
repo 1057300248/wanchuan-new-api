@@ -5,10 +5,11 @@ import (
 	"sync"
 )
 
-// RewardService owns ChuanAPI-specific referral reward policy. Core billing and
-// controller packages call this narrow port instead of importing the module.
+// RewardService owns the referral reward lifecycle. Core billing and controller
+// packages call this narrow port instead of importing the module. New rewards
+// are created inside the top-up settlement transaction; this port only matures
+// frozen rewards.
 type RewardService interface {
-	Record(sourceUserID, paidQuota int, referenceType, referenceID string) (bool, error)
 	Mature(userID int) (int, error)
 }
 

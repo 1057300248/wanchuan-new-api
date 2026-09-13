@@ -132,13 +132,13 @@ var QuotaForNewUser = 0
 // （安全默认：不发放），生产由主代理按需设置。
 //
 // AffiliateRewardEnabled 关闭时不产生新的推荐赠金。
-// AffiliateRewardRate 为实际 paid 消费的奖励比例（默认 5%），仅限每位受邀用户前三次充值。
+// AffiliateRewardRate 为成功充值金额的奖励比例（默认 5%），每位受邀用户仅前
+// 三次成功充值产生返利。
 // AffiliateRewardFreezeDays 为模型赠金冻结天数（默认 7 天）。
 // ---------------------------------------------------------------------------
 var SignupBonusEnabled = false
 var QuotaForSignupBonus = 0
 
-// Deprecated configuration placeholders retained for persisted option compatibility.
 var AffiliateRewardEnabled = false
 var AffiliateRewardRate = 0.05
 var AffiliateRewardFreezeDays = 7

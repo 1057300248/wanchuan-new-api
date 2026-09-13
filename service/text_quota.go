@@ -491,11 +491,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		other.SetAdmin("reject_reason", adminRejectReason)
 	}
 	// P1-2：钱包计费请求在日志 other 记录实际账户净份额（paid_cost/bonus_cost，
-	// quota units），并生成推荐返利（仅结算成功且 paid 净消费 > 0 时）。
+	// quota units）。
 	if relayInfo.BillingSource == BillingSourceWallet && settleErr == nil {
-		if paidNet := FillWalletCostLogInfo(other, relayInfo.UserId, RelayWalletCostRefs(relayInfo)); paidNet > 0 {
-			recordAffiliateRewardOrLog(relayInfo.UserId, paidNet, "relay", relayInfo.RequestId)
-		}
+		FillWalletCostLogInfo(other, relayInfo.UserId, RelayWalletCostRefs(relayInfo))
 	}
 	if summary.ImageTokens != 0 {
 		other.SetPublic("image", true)

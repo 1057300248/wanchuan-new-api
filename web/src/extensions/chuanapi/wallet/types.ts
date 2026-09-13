@@ -352,3 +352,21 @@ export interface AffiliateRewardPage {
   items: AffiliateRewardItem[]
   total: number
 }
+
+/**
+ * Privacy-filtered invitee row for the referral invitee list
+ */
+export interface ReferralInvitee {
+  user_id: number
+  username: string
+  status: number
+  created_at: number
+  eligible_paid_quota: number
+  reward_quota: number
+  reward_status: '' | 'pending' | 'credited' | 'cancelled'
+}
+
+export interface ReferralInviteePage {
+  items: ReferralInvitee[]
+  total: number
+}

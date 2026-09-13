@@ -1,21 +1,20 @@
 package service
 
 import (
-	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	affiliatemodule "github.com/QuantumNous/new-api/modules/chuanapi/affiliate"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
-// 推荐返利：创建、幂等、成熟
+// 推荐返利：每位受邀用户前三次成功充值各 5%，第四次及以后不再生成
 // ---------------------------------------------------------------------------
 
 func seedAffiliateUser(t *testing.T, id int, inviterId int) {
@@ -53,6 +52,29 @@ func countAffiliateRewards(t *testing.T, inviterId int) int64 {
 	return count
 }
 
+// seedPendingTopUp 创建一笔待支付的在线充值订单。
+func seedPendingTopUp(t *testing.T, userId int, amount int64, tradeNo string) {
+	t.Helper()
+	topUp := &model.TopUp{
+		UserId:          userId,
+		Amount:          amount,
+		Money:           float64(amount),
+		TradeNo:         tradeNo,
+		PaymentProvider: model.PaymentProviderEpay,
+		CreateTime:      common.GetTimestamp(),
+		Status:          common.TopUpStatusPending,
+	}
+	require.NoError(t, model.DB.Create(topUp).Error)
+}
+
+// settleTopUp 走真实易支付回调完成充值。
+func settleTopUp(t *testing.T, tradeNo string, amount int64) {
+	t.Helper()
+	alreadyDone, err := model.RechargeEpay(tradeNo, "alipay", strconv.FormatFloat(float64(amount), 'f', 2, 64), "127.0.0.1")
+	require.NoError(t, err)
+	require.False(t, alreadyDone)
+}
+
 func seedAffiliatePaidCost(t *testing.T, sourceUserId, inviterId, quota int, referenceId string) {
 	t.Helper()
 	seedAffiliateUser(t, sourceUserId, inviterId)
@@ -77,171 +99,258 @@ func seedAffiliatePaidCost(t *testing.T, sourceUserId, inviterId, quota int, ref
 	require.NoError(t, err)
 }
 
-func TestRecordAffiliateRewardPaidConsumptionCreatesReward(t *testing.T) {
+func TestReferralRewardFirstThreeTopUpsGetFivePercent(t *testing.T) {
 	truncate(t)
-	seedAffiliateRewardConfig(t, true, 0.2)
+	seedAffiliateRewardConfig(t, true, 0.05)
 	seedAffiliateUser(t, 601, 0) // inviter
 	seedAffiliateUser(t, 602, 601)
 
-	created, err := RecordAffiliateRewardForRequest(602, 1000, "relay", "REQ-paid")
-	require.NoError(t, err)
-	require.True(t, created)
+	tradeNos := []string{"REF-TOPUP-1", "REF-TOPUP-2", "REF-TOPUP-3", "REF-TOPUP-4"}
+	for _, tradeNo := range tradeNos {
+		seedPendingTopUp(t, 602, 2, tradeNo)
+		settleTopUp(t, tradeNo, 2)
+	}
 
-	var reward model.AffiliateReward
-	require.NoError(t, model.DB.Where("user_id = ? AND source_user_id = ?", 601, 602).First(&reward).Error)
-	assert.Equal(t, 1000, reward.EligiblePaidQuota)
-	assert.Equal(t, 200, reward.RewardQuota) // 20%
-	assert.Equal(t, string(model.AffiliateRewardPending), reward.Status)
-	assert.Equal(t, "REQ-paid", reward.ReferenceId)
-	assert.Greater(t, reward.UnlockAt, common.GetTimestamp())
+	var rewards []model.AffiliateReward
+	require.NoError(t, model.DB.Where("user_id = ? AND source_user_id = ?", 601, 602).Order("id asc").Find(&rewards).Error)
+	require.Len(t, rewards, 3, "只有前三次充值产生返利")
+	for i, reward := range rewards {
+		assert.Equal(t, 1000000, reward.EligiblePaidQuota)
+		assert.Equal(t, 50000, reward.RewardQuota, "第 %d 次充值返利应为 5%%", i+1)
+		assert.Equal(t, tradeNos[i], reward.ReferenceId)
+		assert.Equal(t, model.AffiliateReferenceTopUp, reward.ReferenceType)
+		assert.Equal(t, string(model.AffiliateRewardPending), reward.Status)
+	}
+
+	var fourth int64
+	require.NoError(t, model.DB.Model(&model.AffiliateReward{}).
+		Where("user_id = ? AND reference_id = ?", 601, tradeNos[3]).Count(&fourth).Error)
+	assert.Zero(t, fourth, "第四次充值不得生成返利记录")
+
+	// pending 奖励不解锁前不产生余额变动。
+	assert.Zero(t, getUserBalances(t, 601).QuotaBonus)
+	assertQuotaInvariant(t, getUserBalances(t, 601))
 }
 
-func TestRecordAffiliateRewardExcludesDisabledAndUninvitedUsers(t *testing.T) {
+func TestReferralRewardRepeatedTopUpCallbackIsIdempotent(t *testing.T) {
 	truncate(t)
-	seedAffiliateRewardConfig(t, true, 0.2)
+	seedAffiliateRewardConfig(t, true, 0.05)
 	seedAffiliateUser(t, 603, 0)
+	seedAffiliateUser(t, 604, 603)
 
-	// 源用户无邀请人：不产生返利
-	seedAffiliateUser(t, 604, 0)
-	created, err := RecordAffiliateRewardForRequest(604, 1000, "relay", "REQ-no-inviter")
+	seedPendingTopUp(t, 604, 2, "REF-REPEAT-1")
+	settleTopUp(t, "REF-REPEAT-1", 2)
+
+	alreadyDone, err := model.RechargeEpay("REF-REPEAT-1", "alipay", "2.00", "127.0.0.1")
 	require.NoError(t, err)
-	require.False(t, created)
-
-	// 禁用源用户：不产生返利
-	seedAffiliateUser(t, 605, 603)
-	disabled := getUserBalances(t, 605)
-	disabled.Status = common.UserStatusDisabled
-	require.NoError(t, model.DB.Save(&disabled).Error)
-	created, err = RecordAffiliateRewardForRequest(605, 1000, "relay", "REQ-disabled-source")
-	require.NoError(t, err)
-	require.False(t, created)
-
-	// 禁用邀请人：不产生返利
-	seedAffiliateUser(t, 606, 603)
-	inviter := getUserBalances(t, 603)
-	inviter.Status = common.UserStatusDisabled
-	require.NoError(t, model.DB.Save(&inviter).Error)
-	created, err = RecordAffiliateRewardForRequest(606, 1000, "relay", "REQ-disabled-inviter")
-	require.NoError(t, err)
-	require.False(t, created)
-
-	assert.Zero(t, countAffiliateRewards(t, 603))
+	assert.True(t, alreadyDone, "重复回调应是幂等的已完成状态")
+	assert.Equal(t, int64(1), countAffiliateRewards(t, 603))
 }
 
-func TestRecordAffiliateRewardDisabledSwitchAndZeroPaid(t *testing.T) {
+func TestReferralRewardConcurrentTopUpsStillCapAtThree(t *testing.T) {
 	truncate(t)
-	seedAffiliateRewardConfig(t, false, 0.2)
-	seedAffiliateUser(t, 607, 0)
-	seedAffiliateUser(t, 608, 607)
+	seedAffiliateRewardConfig(t, true, 0.05)
+	seedAffiliateUser(t, 605, 0)
+	seedAffiliateUser(t, 606, 605)
 
-	// 功能开关关闭：不产生返利
-	created, err := RecordAffiliateRewardForRequest(608, 1000, "relay", "REQ-disabled")
-	require.NoError(t, err)
-	require.False(t, created)
-	assert.Zero(t, countAffiliateRewards(t, 607))
+	const events = 5
+	for i := range events {
+		seedPendingTopUp(t, 606, 1, fmt.Sprintf("REF-CONCURRENT-%d", i))
+	}
 
-	// paid 净消费为 0（纯 bonus 消费 / 已全额退款）：不产生返利
-	seedAffiliateRewardConfig(t, true, 0.2)
-	created, err = RecordAffiliateRewardForRequest(608, 0, "relay", "REQ-zero-paid")
-	require.NoError(t, err)
-	require.False(t, created)
-	assert.Zero(t, countAffiliateRewards(t, 607))
-}
-
-func TestRecordAffiliateRewardConcurrentIdempotent(t *testing.T) {
-	truncate(t)
-	seedAffiliateRewardConfig(t, true, 0.2)
-	seedAffiliateUser(t, 609, 0)
-	seedAffiliateUser(t, 610, 609)
-
-	const workers = 8
 	var wg sync.WaitGroup
-	errs := make([]error, workers)
-	createdFlags := make([]bool, workers)
-	for i := 0; i < workers; i++ {
+	errs := make([]error, events)
+	for i := range events {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			createdFlags[index], errs[index] = RecordAffiliateRewardForRequest(610, 1000, "relay", "REQ-concurrent")
+			_, errs[index] = model.RechargeEpay(
+				fmt.Sprintf("REF-CONCURRENT-%d", index), "alipay", "1.00", "127.0.0.1")
 		}(i)
 	}
 	wg.Wait()
-	for _, err := range errs {
-		require.NoError(t, err)
+	for i, err := range errs {
+		require.NoError(t, err, "并发充值 %d 失败", i)
 	}
 
-	// 同一源请求只创建一条奖励。
-	assert.Equal(t, int64(1), countAffiliateRewards(t, 609))
-	successful := 0
-	for _, created := range createdFlags {
-		if created {
-			successful++
-		}
-	}
-	assert.Equal(t, 1, successful, "exactly one goroutine should create the reward")
+	assert.Equal(t, int64(3), countAffiliateRewards(t, 605), "并发下第四次及以后不得生成返利")
 }
 
-func TestMatureAffiliateRewardsSevenDayFreeze(t *testing.T) {
+func TestReferralRewardRedemptionCountsTowardTopUpCap(t *testing.T) {
 	truncate(t)
-	seedAffiliateRewardConfig(t, true, 0.2)
+	seedAffiliateRewardConfig(t, true, 0.05)
+	seedAffiliateUser(t, 607, 0)
+	seedAffiliateUser(t, 608, 607)
+
+	for i := range 2 {
+		tradeNo := fmt.Sprintf("REF-REDEEM-TOPUP-%d", i)
+		seedPendingTopUp(t, 608, 2, tradeNo)
+		settleTopUp(t, tradeNo, 2)
+	}
+
+	first := &model.Redemption{Key: "ref-redeem-1", Status: common.RedemptionCodeStatusEnabled, Quota: 400000}
+	require.NoError(t, model.DB.Create(first).Error)
+	quota, err := model.Redeem(first.Key, 608)
+	require.NoError(t, err)
+	assert.Equal(t, 400000, quota)
+
+	second := &model.Redemption{Key: "ref-redeem-2", Status: common.RedemptionCodeStatusEnabled, Quota: 400000}
+	require.NoError(t, model.DB.Create(second).Error)
+	_, err = model.Redeem(second.Key, 608)
+	require.NoError(t, err)
+
+	require.Equal(t, int64(3), countAffiliateRewards(t, 607), "兑换码计入充值次数，第四次不再生成")
+
+	var redemptionReward model.AffiliateReward
+	require.NoError(t, model.DB.Where("user_id = ? AND reference_type = ?", 607, model.AffiliateReferenceRedemption).
+		First(&redemptionReward).Error)
+	assert.Equal(t, 400000, redemptionReward.EligiblePaidQuota)
+	assert.Equal(t, 20000, redemptionReward.RewardQuota)
+
+	var fourth int64
+	require.NoError(t, model.DB.Model(&model.AffiliateReward{}).
+		Where("user_id = ? AND reference_id = ?", 607, strconv.Itoa(second.Id)).Count(&fourth).Error)
+	assert.Zero(t, fourth)
+}
+
+func TestReferralRewardSubscriptionAndBalancePurchaseCounting(t *testing.T) {
+	truncate(t)
+	seedAffiliateRewardConfig(t, true, 0.05)
+	seedAffiliateUser(t, 609, 0)
+	seedAffiliateUser(t, 610, 609)
+
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", 610).
+		Updates(map[string]any{"quota": 5000000, "quota_paid": 5000000}).Error)
+
+	plan := &model.SubscriptionPlan{
+		Title:         "Pro",
+		PriceAmount:   10,
+		Currency:      "USD",
+		DurationUnit:  model.SubscriptionDurationMonth,
+		DurationValue: 1,
+		Enabled:       true,
+		TotalAmount:   1000000,
+	}
+	require.NoError(t, model.DB.Create(plan).Error)
+
+	// 余额购买订阅不是充值事件：不计次、不生成返利。
+	require.NoError(t, model.PurchaseSubscriptionWithBalance(610, plan.Id))
+	assert.Zero(t, countAffiliateRewards(t, 609))
+
+	// 外部订阅支付各计一次，返利基数为实付金额折算的额度。
+	for i := range 3 {
+		tradeNo := fmt.Sprintf("REF-SUB-%d", i)
+		order := &model.SubscriptionOrder{
+			UserId:          610,
+			PlanId:          plan.Id,
+			Money:           plan.PriceAmount,
+			TradeNo:         tradeNo,
+			PaymentProvider: model.PaymentProviderEpay,
+			CreateTime:      common.GetTimestamp(),
+			Status:          common.TopUpStatusPending,
+		}
+		require.NoError(t, model.DB.Create(order).Error)
+		require.NoError(t, model.CompleteSubscriptionOrder(tradeNo, "", model.PaymentProviderEpay, ""))
+	}
+
+	require.Equal(t, int64(3), countAffiliateRewards(t, 609))
+	var rewards []model.AffiliateReward
+	require.NoError(t, model.DB.Where("user_id = ?", 609).Find(&rewards).Error)
+	for _, reward := range rewards {
+		assert.Equal(t, model.AffiliateReferenceSubscriptionOrder, reward.ReferenceType)
+		assert.Equal(t, 5000000, reward.EligiblePaidQuota)
+		assert.Equal(t, 250000, reward.RewardQuota)
+	}
+}
+
+func TestMatureAffiliateRewardsCreditsDueTopUpRewardOnce(t *testing.T) {
+	truncate(t)
+	seedAffiliateRewardConfig(t, true, 0.05)
 	seedAffiliateUser(t, 611, 0)
-	seedAffiliatePaidCost(t, 612, 611, 1000, "REQ-future")
-	seedAffiliatePaidCost(t, 613, 611, 500, "REQ-due")
+	seedAffiliateUser(t, 612, 611)
 
-	now := common.GetTimestamp()
-	// 未到期（未来解锁）：保持 pending，不转入余额
-	future := &model.AffiliateReward{
-		UserId: 611, SourceUserId: 612, EligiblePaidQuota: 1000, RewardQuota: 200,
-		Status: string(model.AffiliateRewardPending), UnlockAt: now + 7*86400,
-		ReferenceType: "relay", ReferenceId: "REQ-future",
-		IdempotencyKey: "affiliate_reward:relay:REQ-future", CreatedAt: now,
-	}
-	require.NoError(t, model.CreateAffiliateReward(future))
-	// 已到期：应成熟
-	due := &model.AffiliateReward{
-		UserId: 611, SourceUserId: 613, EligiblePaidQuota: 500, RewardQuota: 100,
-		Status: string(model.AffiliateRewardPending), UnlockAt: now - 1,
-		ReferenceType: "relay", ReferenceId: "REQ-due",
-		IdempotencyKey: "affiliate_reward:relay:REQ-due", CreatedAt: now,
-	}
-	require.NoError(t, model.CreateAffiliateReward(due))
+	seedPendingTopUp(t, 612, 2, "REF-MATURE-1")
+	settleTopUp(t, "REF-MATURE-1", 2)
+	require.NoError(t, model.DB.Model(&model.AffiliateReward{}).
+		Where("user_id = ?", 611).
+		Update("unlock_at", common.GetTimestamp()-1).Error)
 
-	matured, err := MatureAffiliateRewards(611)
+	matured, err := model.MatureAffiliateRewards(611)
 	require.NoError(t, err)
 	assert.Equal(t, 1, matured)
 
 	user := getUserBalances(t, 611)
-	assert.Equal(t, 100, user.QuotaBonus)
-	assert.Equal(t, 100, user.Quota)
+	assert.Equal(t, 50000, user.QuotaBonus)
+	assert.Equal(t, 50000, user.Quota)
 	assertQuotaInvariant(t, user)
 
-	var dueRow model.AffiliateReward
-	require.NoError(t, model.DB.Where("id = ?", due.Id).First(&dueRow).Error)
-	assert.Equal(t, string(model.AffiliateRewardCredited), dueRow.Status)
-	assert.Equal(t, now, dueRow.UnlockedAt)
-
-	var futureRow model.AffiliateReward
-	require.NoError(t, model.DB.Where("id = ?", future.Id).First(&futureRow).Error)
-	assert.Equal(t, string(model.AffiliateRewardPending), futureRow.Status)
-
-	// 幂等：再次成熟不重复入账
-	matured, err = MatureAffiliateRewards(611)
+	matured, err = model.MatureAffiliateRewards(611)
 	require.NoError(t, err)
-	assert.Zero(t, matured)
-	user = getUserBalances(t, 611)
-	assert.Equal(t, 100, user.QuotaBonus)
-	assertQuotaInvariant(t, user)
+	assert.Zero(t, matured, "重复成熟不得再次入账")
+	assert.Equal(t, 50000, getUserBalances(t, 611).QuotaBonus)
 }
 
-func TestMatureAffiliateRewardsRecalculatesAfterPartialRefund(t *testing.T) {
+func TestMatureAffiliateRewardsCancelsMissingTopUp(t *testing.T) {
 	truncate(t)
-	seedAffiliateRewardConfig(t, true, 0.2)
+	seedAffiliateRewardConfig(t, true, 0.05)
+	seedAffiliateUser(t, 613, 0)
+	seedAffiliateUser(t, 614, 613)
+
+	now := common.GetTimestamp()
+	reward := &model.AffiliateReward{
+		UserId: 613, SourceUserId: 614, EligiblePaidQuota: 1000000, RewardQuota: 50000,
+		Status: string(model.AffiliateRewardPending), UnlockAt: now - 1,
+		ReferenceType: model.AffiliateReferenceTopUp, ReferenceId: "REF-MISSING-TOPUP",
+		IdempotencyKey: "affiliate_reward:topup:REF-MISSING-TOPUP", CreatedAt: now,
+	}
+	require.NoError(t, model.CreateAffiliateReward(reward))
+
+	matured, err := model.MatureAffiliateRewards(613)
+	require.NoError(t, err)
+	assert.Zero(t, matured)
+	assert.Zero(t, getUserBalances(t, 613).QuotaBonus)
+
+	var row model.AffiliateReward
+	require.NoError(t, model.DB.First(&row, reward.Id).Error)
+	assert.Equal(t, string(model.AffiliateRewardCancelled), row.Status)
+	assert.Equal(t, "topup_missing", row.CancelReason)
+}
+
+func TestMatureAffiliateRewardsCancelsDisabledSource(t *testing.T) {
+	truncate(t)
+	seedAffiliateRewardConfig(t, true, 0.05)
+	seedAffiliateUser(t, 652, 0)
+	seedAffiliateUser(t, 653, 652)
+	seedPendingTopUp(t, 653, 1, "REF-DISABLED-SOURCE")
+	settleTopUp(t, "REF-DISABLED-SOURCE", 1)
+
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", 653).
+		Update("status", common.UserStatusDisabled).Error)
+	require.NoError(t, model.DB.Model(&model.AffiliateReward{}).
+		Where("user_id = ?", 652).
+		Update("unlock_at", common.GetTimestamp()-1).Error)
+
+	matured, err := model.MatureAffiliateRewards(652)
+	require.NoError(t, err)
+	assert.Zero(t, matured)
+	assert.Zero(t, getUserBalances(t, 652).QuotaBonus)
+
+	var row model.AffiliateReward
+	require.NoError(t, model.DB.Where("user_id = ?", 652).First(&row).Error)
+	assert.Equal(t, string(model.AffiliateRewardCancelled), row.Status)
+	assert.Equal(t, "source_disabled", row.CancelReason)
+}
+
+// 旧历史（relay/task 消费引用）仍需按成本复核成熟：部分退款后按比例调整。
+func TestMatureAffiliateRewardsLegacyRelayRecalculatesAfterPartialRefund(t *testing.T) {
+	truncate(t)
+	seedAffiliateRewardConfig(t, true, 0.05)
 	seedAffiliateUser(t, 650, 0)
 	seedAffiliatePaidCost(t, 651, 650, 1000, "REQ-partial-refund")
 
 	now := common.GetTimestamp()
 	reward := &model.AffiliateReward{
-		UserId: 650, SourceUserId: 651, EligiblePaidQuota: 1000, RewardQuota: 200,
+		UserId: 650, SourceUserId: 651, EligiblePaidQuota: 1000, RewardQuota: 50,
 		Status: string(model.AffiliateRewardPending), UnlockAt: now - 1,
 		ReferenceType: "relay", ReferenceId: "REQ-partial-refund",
 		IdempotencyKey: "affiliate_reward:relay:REQ-partial-refund", CreatedAt: now,
@@ -258,89 +367,17 @@ func TestMatureAffiliateRewardsRecalculatesAfterPartialRefund(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	matured, err := MatureAffiliateRewards(650)
+	matured, err := model.MatureAffiliateRewards(650)
 	require.NoError(t, err)
 	assert.Equal(t, 1, matured)
 
 	user := getUserBalances(t, 650)
-	assert.Equal(t, 100, user.QuotaBonus)
+	assert.Equal(t, 25, user.QuotaBonus)
 	var row model.AffiliateReward
 	require.NoError(t, model.DB.First(&row, reward.Id).Error)
 	assert.Equal(t, 500, row.EligiblePaidQuota)
-	assert.Equal(t, 100, row.RewardQuota)
+	assert.Equal(t, 25, row.RewardQuota)
 	assert.Equal(t, string(model.AffiliateRewardCredited), row.Status)
-}
-
-func TestMatureAffiliateRewardsCancelsDisabledSource(t *testing.T) {
-	truncate(t)
-	seedAffiliateRewardConfig(t, true, 0.2)
-	seedAffiliateUser(t, 652, 0)
-	seedAffiliatePaidCost(t, 653, 652, 500, "REQ-disabled-at-maturity")
-
-	now := common.GetTimestamp()
-	reward := &model.AffiliateReward{
-		UserId: 652, SourceUserId: 653, EligiblePaidQuota: 500, RewardQuota: 100,
-		Status: string(model.AffiliateRewardPending), UnlockAt: now - 1,
-		ReferenceType: "relay", ReferenceId: "REQ-disabled-at-maturity",
-		IdempotencyKey: "affiliate_reward:relay:REQ-disabled-at-maturity", CreatedAt: now,
-	}
-	require.NoError(t, model.CreateAffiliateReward(reward))
-	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", 653).
-		Update("status", common.UserStatusDisabled).Error)
-
-	matured, err := MatureAffiliateRewards(652)
-	require.NoError(t, err)
-	assert.Zero(t, matured)
-	assert.Zero(t, getUserBalances(t, 652).QuotaBonus)
-
-	var row model.AffiliateReward
-	require.NoError(t, model.DB.First(&row, reward.Id).Error)
-	assert.Equal(t, string(model.AffiliateRewardCancelled), row.Status)
-	assert.Equal(t, "source_disabled", row.CancelReason)
-	assert.Equal(t, now, row.CancelledAt)
-}
-
-func TestAffiliateLedgerReconciliationCreatesDurableReward(t *testing.T) {
-	truncate(t)
-	seedAffiliateRewardConfig(t, true, 0.2)
-	seedAffiliateUser(t, 654, 0)
-	seedAffiliatePaidCost(t, 655, 654, 750, "REQ-reconcile")
-	require.NoError(t, model.DB.Model(&model.BalanceLedger{}).
-		Where("user_id = ? AND reference_type = ? AND reference_id = ?", 655, "relay", "REQ-reconcile").
-		Update("created_at", common.GetTimestamp()-180).Error)
-
-	candidates, err := model.ListAffiliatePaidCostCandidates(common.GetTimestamp()+1, 10)
-	require.NoError(t, err)
-	require.Len(t, candidates, 1)
-	handler := affiliatemodule.MaintenanceHandler{}
-	task, err := model.CreateSystemTask(handler.Type(), nil, nil)
-	require.NoError(t, err)
-	claimed, ok, err := model.ClaimSystemTask(task.ID, handler.Type(), "affiliate-reconcile-test", common.GetTimestamp()+60)
-	require.NoError(t, err)
-	require.True(t, ok)
-	handler.Run(context.Background(), claimed, "affiliate-reconcile-test")
-
-	var reward model.AffiliateReward
-	require.NoError(t, model.DB.Where(
-		"source_user_id = ? AND reference_type = ? AND reference_id = ?",
-		655, "relay", "REQ-reconcile",
-	).First(&reward).Error)
-	assert.Equal(t, 750, reward.EligiblePaidQuota)
-	assert.Equal(t, 150, reward.RewardQuota)
-
-	var state model.AffiliateRewardReconcileState
-	require.NoError(t, model.DB.Where(
-		"source_user_id = ? AND reference_type = ? AND reference_id = ?",
-		655, "relay", "REQ-reconcile",
-	).First(&state).Error)
-	assert.Equal(t, model.AffiliateReconcileProcessed, state.Status)
-	assert.Equal(t, "relay", state.CanonicalReferenceType)
-	assert.Equal(t, "REQ-reconcile", state.CanonicalReferenceId)
-	assert.Equal(t, 1, state.AttemptCount)
-
-	remaining, err := model.ListAffiliatePaidCostCandidates(common.GetTimestamp()+1, 10)
-	require.NoError(t, err)
-	assert.Empty(t, remaining)
 }
 
 func TestFillWalletCostLogInfoNetSharesAfterRefund(t *testing.T) {
@@ -375,16 +412,16 @@ func TestFillWalletCostLogInfoNetSharesAfterRefund(t *testing.T) {
 
 func TestAffiliateOverviewAggregates(t *testing.T) {
 	truncate(t)
-	seedAffiliateRewardConfig(t, true, 0.2)
+	seedAffiliateRewardConfig(t, true, 0.05)
 	seedAffiliateUser(t, 617, 0)
 
 	now := common.GetTimestamp()
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		reward := &model.AffiliateReward{
-			UserId: 617, SourceUserId: 618, EligiblePaidQuota: 1000, RewardQuota: 200,
+			UserId: 617, SourceUserId: 618, EligiblePaidQuota: 1000000, RewardQuota: 50000,
 			Status: string(model.AffiliateRewardPending), UnlockAt: now + 86400,
-			ReferenceType: "relay", ReferenceId: fmt.Sprintf("REQ-p%d", i),
-			IdempotencyKey: fmt.Sprintf("affiliate_reward:relay:REQ-p%d", i), CreatedAt: now,
+			ReferenceType: model.AffiliateReferenceTopUp, ReferenceId: fmt.Sprintf("REF-p%d", i),
+			IdempotencyKey: fmt.Sprintf("affiliate_reward:topup:REF-p%d", i), CreatedAt: now,
 		}
 		require.NoError(t, model.CreateAffiliateReward(reward))
 	}
@@ -392,8 +429,8 @@ func TestAffiliateOverviewAggregates(t *testing.T) {
 	overview, err := model.GetAffiliateOverview(617)
 	require.NoError(t, err)
 	assert.Equal(t, 3, overview.PendingCount)
-	assert.Equal(t, 3000, overview.EligiblePaidQuota)
-	assert.Equal(t, 600, overview.PendingBonusQuota)
+	assert.Equal(t, 3000000, overview.EligiblePaidQuota)
+	assert.Equal(t, 150000, overview.PendingBonusQuota)
 	assert.Zero(t, overview.CreditedBonusQuota)
-	assert.Equal(t, 600, overview.TotalBonusQuota)
+	assert.Equal(t, 150000, overview.TotalBonusQuota)
 }

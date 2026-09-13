@@ -36,6 +36,7 @@ func registerRoutes(scopes extension.RouteScopes) error {
 	scopes.UserSelf.GET("/wallet/ledger", walletmodule.GetWalletLedger)
 	scopes.UserSelf.GET("/referral/overview", walletmodule.GetReferralOverview)
 	scopes.UserSelf.GET("/referral/rewards", walletmodule.GetReferralRewards)
+	scopes.UserSelf.GET("/referral/invitees", walletmodule.GetReferralInvitees)
 
 	scopes.AdminModels.GET("/bonus_eligible/audits", walletmodule.GetModelBonusEligibleAudits)
 	scopes.AdminModels.POST("/bonus_eligible/batch", walletmodule.BatchUpdateModelBonusEligible)

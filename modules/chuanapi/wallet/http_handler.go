@@ -176,6 +176,22 @@ func GetReferralRewards(c *gin.Context) {
 	})
 }
 
+// GetReferralInvitees lists the current user's direct invitees with their
+// aggregate referral reward progress. Email and balance fields stay private.
+func GetReferralInvitees(c *gin.Context) {
+	userId := c.GetInt("id")
+	invitees, total, err := model.ListReferralInvitees(userId, getPageParam(c), getPageSizeParam(c))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    gin.H{"items": invitees, "total": total},
+	})
+}
+
 func getPageParam(c *gin.Context) int {
 	page, err := strconv.Atoi(c.DefaultQuery("p", "1"))
 	if err != nil || page <= 0 {

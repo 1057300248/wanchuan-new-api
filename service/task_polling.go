@@ -648,14 +648,7 @@ func truncateBase64(s string) string {
 // 返回 true 表示用量结算路径已接管最终计费；失败任务仅在返回 false 时补做全额退款。
 // 优先级：1. tiered snapshot → 2. adaptor 调整 → 3. token 重算。
 // 表达式求值失败会保留预扣额度，因此也视为已接管，避免错误全退。
-// 成功任务在最终额度落定后基于账本净 paid 份额创建一次幂等返利。
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) bool {
-	defer func() {
-		if task != nil && task.Status == model.TaskStatusSuccess {
-			recordTaskAffiliateReward(ctx, task)
-		}
-	}()
-
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.TieredSnapshot != nil {
 		// 用量表达式结算只适用于成功任务；失败任务由调用方全额退款。
 		if task.Status == model.TaskStatusFailure {
@@ -708,30 +701,6 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		return RecalculateTaskQuotaByTokens(ctx, task, tokens)
 	}
 	return false
-}
-
-// recordTaskAffiliateReward 任务成功结算后,依据账本净份额为邀请人创建返利。
-// 仅钱包计费且 paid 净消费 > 0 时生效;订阅计费与失败退款任务不产生返利。
-func recordTaskAffiliateReward(ctx context.Context, task *model.Task) {
-	if task == nil || task.Status != model.TaskStatusSuccess || taskIsSubscription(task) || task.UserId <= 0 {
-		return
-	}
-	refs := TaskWalletCostRefs(task)
-	if len(refs) == 0 {
-		return
-	}
-	cost, err := model.NetCostByReferences(task.UserId, refs)
-	if err != nil {
-		logger.LogWarn(ctx, fmt.Sprintf("查询任务钱包净成本失败 task %s: %s", task.TaskID, err.Error()))
-		return
-	}
-	paidNet := -cost[model.AccountPaid]
-	if paidNet <= 0 {
-		return
-	}
-	if _, err := RecordAffiliateRewardForRequest(task.UserId, paidNet, "task", task.TaskID); err != nil {
-		logger.LogWarn(ctx, fmt.Sprintf("创建任务返利失败 task %s: %s", task.TaskID, err.Error()))
-	}
 }
 
 func classifyPollHTTP(statusCode int) string {

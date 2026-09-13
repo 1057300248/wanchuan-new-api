@@ -114,7 +114,7 @@ func TestGetWalletSummaryAndLedger(t *testing.T) {
 	assert.Contains(t, body, `"paid":1000`)
 	assert.Contains(t, body, `"bonus":300`)
 	assert.NotContains(t, body, `"affiliate"`)
-	assert.Contains(t, body, `"referral_bonus_rate":0.2`)
+	assert.Contains(t, body, `"referral_bonus_rate":0.05`)
 
 	c, recorder = performWalletRequest(t, http.MethodGet, "/api/user/wallet/ledger?p=1&page_size=10", "", user.Id, common.RoleCommonUser)
 	GetWalletLedger(c)

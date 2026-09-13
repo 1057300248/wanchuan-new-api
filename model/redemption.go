@@ -191,6 +191,10 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if err != nil {
 			return err
 		}
+		// 推荐返利：兑换码成功入账计入充值次数（前三次）。
+		if err := recordAffiliateRewardForTopUpEventTx(tx, userId, redemption.Quota, AffiliateReferenceRedemption, strconv.Itoa(redemption.Id)); err != nil {
+			return err
+		}
 		replayTotalAfter = ledgerResult.TotalAfter
 		ledgerApplied = true
 		return nil

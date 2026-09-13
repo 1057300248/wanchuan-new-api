@@ -65,6 +65,9 @@ func TestMain(m *testing.M) {
 		&model.ModelBonusEligibleAudit{},
 		&model.AffiliateReward{},
 		&model.AffiliateRewardReconcileState{},
+		&model.Redemption{},
+		&model.SubscriptionPlan{},
+		&model.SubscriptionOrder{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -108,6 +111,9 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM channels")
 		model.DB.Exec("DELETE FROM midjourneys")
 		model.DB.Exec("DELETE FROM top_ups")
+		model.DB.Exec("DELETE FROM redemptions")
+		model.DB.Exec("DELETE FROM subscription_orders")
+		model.DB.Exec("DELETE FROM subscription_plans")
 		model.DB.Exec("DELETE FROM user_subscriptions")
 		model.DB.Exec("DELETE FROM system_task_locks")
 		model.DB.Exec("DELETE FROM system_tasks")

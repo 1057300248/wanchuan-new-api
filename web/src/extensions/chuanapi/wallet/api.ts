@@ -41,6 +41,7 @@ import type {
   WalletLedgerPage,
   ReferralOverview,
   AffiliateRewardPage,
+  ReferralInviteePage,
 } from './types'
 
 // ============================================================================
@@ -293,6 +294,19 @@ export async function getReferralRewards(
 ): Promise<ApiResponse<AffiliateRewardPage>> {
   const res = await api.get(
     `/api/user/referral/rewards?p=${p}&page_size=${page_size}`
+  )
+  return res.data
+}
+
+/**
+ * Get paginated direct invitees with their reward progress
+ */
+export async function getReferralInvitees(
+  p: number,
+  page_size: number
+): Promise<ApiResponse<ReferralInviteePage>> {
+  const res = await api.get(
+    `/api/user/referral/invitees?p=${p}&page_size=${page_size}`
   )
   return res.data
 }
