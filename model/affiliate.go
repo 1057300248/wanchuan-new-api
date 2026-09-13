@@ -41,7 +41,12 @@ type AffiliateReward struct {
 
 func (AffiliateReward) TableName() string { return "affiliate_rewards" }
 
-var ErrAffiliateRewardExists = errors.New("affiliate reward already recorded")
+var (
+	ErrAffiliateRewardExists        = errors.New("affiliate reward already recorded")
+	ErrAffiliateRewardLimitExceeded = errors.New("affiliate reward limit exceeded")
+)
+
+const maxAffiliateRewardsPerSourceUser = 3
 
 // CreateAffiliateReward 幂等创建奖励；同一消费引用只生成一次记录。
 func CreateAffiliateReward(reward *AffiliateReward) error {
@@ -59,14 +64,24 @@ func CreateAffiliateReward(reward *AffiliateReward) error {
 	if reward.CreatedAt == 0 {
 		reward.CreatedAt = common.GetTimestamp()
 	}
-	err := DB.Clauses(clause.OnConflict{DoNothing: true}).Create(reward).Error
-	if err != nil {
-		return err
-	}
-	if reward.Id == 0 {
-		return ErrAffiliateRewardExists
-	}
-	return nil
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var existingRewards []AffiliateReward
+		if err := lockForUpdate(tx).
+			Where("source_user_id = ? AND status <> ?", reward.SourceUserId, string(AffiliateRewardCancelled)).
+			Find(&existingRewards).Error; err != nil {
+			return err
+		}
+		if len(existingRewards) >= maxAffiliateRewardsPerSourceUser {
+			return fmt.Errorf("%w: source user %d", ErrAffiliateRewardLimitExceeded, reward.SourceUserId)
+		}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(reward).Error; err != nil {
+			return err
+		}
+		if reward.Id == 0 {
+			return ErrAffiliateRewardExists
+		}
+		return nil
+	})
 }
 
 // MatureAffiliateRewards 幂等处理该用户所有到期奖励，成熟后直接进入 bonus。
