@@ -54,9 +54,9 @@ const quotaSchema = z.object({
   PreConsumedQuota: z.coerce.number().min(0),
   SignupBonusEnabled: z.boolean(),
   QuotaForSignupBonus: z.coerce.number().min(0),
-  ReferralCoinEnabled: z.boolean(),
-  ReferralCoinRate: z.coerce.number().min(0).max(1),
-  ReferralCoinFreezeDays: z.coerce.number().int().min(0).max(3650),
+  AffiliateRewardEnabled: z.boolean(),
+  AffiliateRewardRate: z.coerce.number().min(0).max(1),
+  AffiliateRewardFreezeDays: z.coerce.number().int().min(0).max(3650),
   TopUpLink: z.string(),
   general_setting: z.object({
     docs_link: z.string(),
@@ -224,11 +224,11 @@ export function QuotaSettingsSection({
 
             <FormField
               control={form.control}
-              name='ReferralCoinEnabled'
+              name='AffiliateRewardEnabled'
               render={({ field }) => (
                 <SettingsSwitchItem>
                   <SettingsSwitchContent>
-                    <FormLabel>{t('Referral Coin Rewards')}</FormLabel>
+                    <FormLabel>{t('Referral Rewards')}</FormLabel>
                     <FormDescription>
                       {t(
                         'Reward inviters with Coins when referred users complete paid top-ups'
@@ -247,10 +247,10 @@ export function QuotaSettingsSection({
 
             <FormField
               control={form.control}
-              name='ReferralCoinRate'
+              name='AffiliateRewardRate'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('Referral Coin Rate')}</FormLabel>
+                  <FormLabel>{t('Referral Reward Rate')}</FormLabel>
                   <FormControl>
                     <Input
                       type='number'
@@ -265,7 +265,7 @@ export function QuotaSettingsSection({
                     />
                   </FormControl>
                   <FormDescription>
-                    {t('Share of paid top-ups credited as referral Coins')}
+                    {t('Share of paid top-ups credited as referral rewards')}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -274,10 +274,10 @@ export function QuotaSettingsSection({
 
             <FormField
               control={form.control}
-              name='ReferralCoinFreezeDays'
+              name='AffiliateRewardFreezeDays'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('Referral Coin Freeze Days')}</FormLabel>
+                  <FormLabel>{t('Referral Reward Freeze Days')}</FormLabel>
                   <FormControl>
                     <Input
                       type='number'

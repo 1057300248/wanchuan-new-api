@@ -17,8 +17,6 @@ func Models() []any {
 	return []any{
 		&model.AffiliateReward{},
 		&model.AffiliateRewardReconcileState{},
-		&model.ReferralCoinReward{},
-		&model.ReferralCoinLedger{},
 	}
 }
 

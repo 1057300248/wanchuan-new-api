@@ -64,9 +64,9 @@ const BILLING_SECTIONS = [
           PreConsumedQuota: settings.PreConsumedQuota,
           SignupBonusEnabled: settings.SignupBonusEnabled ?? false,
           QuotaForSignupBonus: settings.QuotaForSignupBonus ?? 0,
-          ReferralCoinEnabled: settings.ReferralCoinEnabled ?? false,
-          ReferralCoinRate: settings.ReferralCoinRate ?? 0.01,
-          ReferralCoinFreezeDays: settings.ReferralCoinFreezeDays ?? 7,
+          AffiliateRewardEnabled: settings.AffiliateRewardEnabled ?? false,
+          AffiliateRewardRate: settings.AffiliateRewardRate ?? 0.05,
+          AffiliateRewardFreezeDays: settings.AffiliateRewardFreezeDays ?? 7,
           TopUpLink: settings.TopUpLink,
           general_setting: {
             docs_link: settings['general_setting.docs_link'],

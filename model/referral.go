@@ -14,8 +14,6 @@ type ReferralInvitee struct {
 	EligiblePaidQuota int    `json:"eligible_paid_quota"`
 	RewardQuota       int    `json:"reward_quota"`
 	RewardStatus      string `json:"reward_status"`
-	CoinAmount        int    `json:"coin_amount"`
-	CoinStatus        string `json:"coin_status"`
 }
 
 // ListReferralInvitees returns the users directly invited by inviterId and
@@ -49,10 +47,6 @@ func ListReferralInvitees(inviterId, page, pageSize int) ([]ReferralInvitee, int
 	if err := DB.Where("user_id = ? AND source_user_id IN ? AND status <> ?", inviterId, ids, string(AffiliateRewardCancelled)).Find(&rewards).Error; err != nil {
 		return nil, 0, err
 	}
-	var coinRewards []ReferralCoinReward
-	if err := DB.Where("user_id = ? AND source_user_id IN ? AND status <> ?", inviterId, ids, ReferralCoinCancelled).Find(&coinRewards).Error; err != nil {
-		return nil, 0, err
-	}
 	totals := make(map[int]*ReferralInvitee, len(users))
 	result := make([]ReferralInvitee, 0, len(users))
 	for _, user := range users {
@@ -66,26 +60,13 @@ func ListReferralInvitees(inviterId, page, pageSize int) ([]ReferralInvitee, int
 			continue
 		}
 		if reward.EligiblePaidQuota < 0 || reward.EligiblePaidQuota > common.MaxWalletQuota || item.EligiblePaidQuota > common.MaxWalletQuota-reward.EligiblePaidQuota || reward.RewardQuota < 0 || reward.RewardQuota > common.MaxWalletQuota || item.RewardQuota > common.MaxWalletQuota-reward.RewardQuota {
-			return nil, 0, ErrReferralCoinBalanceRange
+			return nil, 0, ErrLedgerInvalidEntry
 		}
 		item.EligiblePaidQuota += reward.EligiblePaidQuota
 		item.RewardQuota += reward.RewardQuota
 		// A credited row takes precedence over pending when a source has both.
 		if item.RewardStatus == "" || reward.Status == string(AffiliateRewardCredited) {
 			item.RewardStatus = reward.Status
-		}
-	}
-	for _, reward := range coinRewards {
-		item := totals[reward.SourceUserId]
-		if item == nil {
-			continue
-		}
-		if reward.CoinAmount < 0 || reward.CoinAmount > common.MaxWalletQuota || item.CoinAmount > common.MaxWalletQuota-reward.CoinAmount {
-			return nil, 0, ErrReferralCoinBalanceRange
-		}
-		item.CoinAmount += reward.CoinAmount
-		if item.CoinStatus == "" || reward.Status == ReferralCoinCredited {
-			item.CoinStatus = reward.Status
 		}
 	}
 	return result, total, nil

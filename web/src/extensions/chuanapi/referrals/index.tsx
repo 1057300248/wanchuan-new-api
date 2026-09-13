@@ -6,10 +6,10 @@ it under the terms of the GNU Affero General Public License as
 published by the Free Software Foundation, either version 3 of the
 License, or (at your option) any later version.
 */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CalendarDays, Gift, Link2, Users } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Gift, Link2, Users } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
@@ -25,26 +25,20 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatQuota } from '@/lib/format'
-import { handleServerError } from '@/lib/handle-server-error'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
-  getReferralCoins,
-  getReferralCoinRewards,
+  getReferralInvitees,
   getReferralOverview,
   getReferralRewards,
-  redeemReferralCoins,
 } from '../wallet/api'
 import { useAffiliate } from '../wallet/hooks'
-import type {
-  AffiliateRewardItem,
-  ReferralCoinRewardItem,
-  ReferralCoinRedeemRequest,
-} from '../wallet/types'
-import { formatCoinAmount, parseCoinAmount } from './coin-amount'
+import type { AffiliateRewardItem, ReferralInvitee } from '../wallet/types'
+import { PromoCopyPanel } from './components/promo-copy-panel'
+import { ReferralPosterCard } from './components/referral-poster-card'
 
 const PAGE_SIZE = 8
 
@@ -68,6 +62,12 @@ function formatDate(value: number): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(
     new Date(value * 1000)
   )
+}
+
+function formatRate(rate: number): string {
+  if (!Number.isFinite(rate) || rate <= 0) return '-'
+  const percent = rate * 100
+  return Number.isInteger(percent) ? `${percent}%` : `${percent.toFixed(2)}%`
 }
 
 function StatCard(props: {
@@ -97,49 +97,58 @@ function StatCard(props: {
   )
 }
 
-function CoinRewardRows(props: {
+function InviteeRows(props: {
   loading: boolean
-  rewards: ReferralCoinRewardItem[]
-  scale: number
+  invitees: ReferralInvitee[]
   t: (key: string) => string
 }) {
-  if (props.loading && props.rewards.length === 0) {
+  if (props.loading && props.invitees.length === 0) {
     return (
       <tr>
-        <td colSpan={4} className='px-4 py-8 text-center'>
+        <td colSpan={5} className='px-4 py-10 text-center'>
           <Skeleton className='mx-auto h-5 w-40' />
         </td>
       </tr>
     )
   }
-  if (props.rewards.length === 0) {
+  if (props.invitees.length === 0) {
     return (
       <tr>
-        <td colSpan={4} className='text-muted-foreground px-4 py-8 text-center'>
-          {props.t('No Coin rewards yet')}
+        <td
+          colSpan={5}
+          className='text-muted-foreground px-4 py-10 text-center'
+        >
+          {props.t('Your invitees will appear here')}
         </td>
       </tr>
     )
   }
-  return props.rewards.map((item) => (
-    <tr key={item.id} className='hover:bg-muted/30 transition-colors'>
+  return props.invitees.map((invitee) => (
+    <tr key={invitee.user_id} className='hover:bg-muted/30 transition-colors'>
+      <td className='px-4 py-3 font-medium'>{invitee.username}</td>
       <td className='text-muted-foreground px-4 py-3'>
-        {formatDate(item.created_at)}
+        {formatDate(invitee.created_at)}
       </td>
-      <td className='px-4 py-3 font-mono'>{formatQuota(item.paid_amount)}</td>
+      <td className='px-4 py-3 font-mono'>
+        {formatQuota(invitee.eligible_paid_quota)}
+      </td>
       <td className='px-4 py-3 font-mono font-medium'>
-        {formatCoinAmount(item.coin_amount, props.scale)}
+        {formatQuota(invitee.reward_quota)}
       </td>
       <td className='px-4 py-3'>
-        <Badge variant={statusVariant(item.status)}>
-          {statusLabel(item.status, props.t)}
-        </Badge>
+        {invitee.reward_status ? (
+          <Badge variant={statusVariant(invitee.reward_status)}>
+            {statusLabel(invitee.reward_status, props.t)}
+          </Badge>
+        ) : (
+          <span className='text-muted-foreground'>-</span>
+        )}
       </td>
     </tr>
   ))
 }
 
-function ReferralRewardRows(props: {
+function RewardRows(props: {
   loading: boolean
   rewards: AffiliateRewardItem[]
   t: (key: string) => string
@@ -193,128 +202,57 @@ export function Referrals() {
   const { affiliateLink, loading: affiliateLoading } = useAffiliate()
   const userId = useAuthStore((state) => state.auth.user?.id)
   const queryClient = useQueryClient()
-  const [pagination, setPagination] = useState({
+  const [inviteePagination, setInviteePagination] = useState({
     pageIndex: 0,
     pageSize: PAGE_SIZE,
   })
-  const [coinPagination, setCoinPagination] = useState({
+  const [rewardPagination, setRewardPagination] = useState({
     pageIndex: 0,
     pageSize: PAGE_SIZE,
   })
-  const [redeemAmount, setRedeemAmount] = useState('')
-  const pendingRequest = useRef<{
-    userId: number | undefined
-    coins: number
-    request_id: string
-  } | null>(null)
-  const inFlight = useRef(false)
   const overviewQuery = useQuery({
     queryKey: ['referrals', userId, 'overview'],
     queryFn: getReferralOverview,
   })
+  const inviteesQuery = useQuery({
+    queryKey: ['referrals', userId, 'invitees', inviteePagination],
+    queryFn: () =>
+      getReferralInvitees(
+        inviteePagination.pageIndex + 1,
+        inviteePagination.pageSize
+      ),
+  })
   const rewardsQuery = useQuery({
-    queryKey: ['referrals', userId, 'legacy', pagination],
+    queryKey: ['referrals', userId, 'rewards', rewardPagination],
     queryFn: () =>
-      getReferralRewards(pagination.pageIndex + 1, pagination.pageSize),
-  })
-  const coinsQuery = useQuery({
-    queryKey: ['referrals', userId, 'coins'],
-    queryFn: getReferralCoins,
-  })
-  const coinRewardsQuery = useQuery({
-    queryKey: ['referrals', userId, 'coin-history', coinPagination],
-    queryFn: () =>
-      getReferralCoinRewards(
-        coinPagination.pageIndex + 1,
-        coinPagination.pageSize
+      getReferralRewards(
+        rewardPagination.pageIndex + 1,
+        rewardPagination.pageSize
       ),
   })
   const overview = overviewQuery.data?.success ? overviewQuery.data.data : null
-  const coinSummary =
-    coinsQuery.data?.success && !coinsQuery.isError
-      ? coinsQuery.data.data
-      : null
+  const invitees = inviteesQuery.data?.data?.items ?? []
   const rewards = rewardsQuery.data?.data?.items ?? []
-  const coinRewards = coinRewardsQuery.data?.data?.items ?? []
-  const loading =
-    overviewQuery.isPending || rewardsQuery.isPending || coinsQuery.isPending
-  const failed = [
-    overviewQuery,
-    rewardsQuery,
-    coinsQuery,
-    coinRewardsQuery,
-  ].some((query) => query.isError || query.data?.success === false)
-  const { table: legacyTable } = useDataTable({
+  const loading = overviewQuery.isPending
+  const failed = [overviewQuery, inviteesQuery, rewardsQuery].some(
+    (query) => query.isError || query.data?.success === false
+  )
+  const { table: inviteeTable } = useDataTable({
+    data: invitees,
+    columns: [],
+    totalCount: inviteesQuery.data?.data?.total ?? 0,
+    manualPagination: true,
+    pagination: inviteePagination,
+    onPaginationChange: setInviteePagination,
+  })
+  const { table: rewardTable } = useDataTable({
     data: rewards,
     columns: [],
     totalCount: rewardsQuery.data?.data?.total ?? 0,
     manualPagination: true,
-    pagination,
-    onPaginationChange: setPagination,
+    pagination: rewardPagination,
+    onPaginationChange: setRewardPagination,
   })
-  const { table: coinTable } = useDataTable({
-    data: coinRewards,
-    columns: [],
-    totalCount: coinRewardsQuery.data?.data?.total ?? 0,
-    manualPagination: true,
-    pagination: coinPagination,
-    onPaginationChange: setCoinPagination,
-  })
-  const rewardRate = coinSummary
-    ? `${(coinSummary.rate * 100).toFixed(2)}%`
-    : '-'
-  const displayedCoins = coinSummary
-    ? formatCoinAmount(coinSummary.balance, coinSummary.scale)
-    : '-'
-  const redeemEnabled = Boolean(coinSummary && coinSummary.balance > 0)
-  const microcoins = coinSummary
-    ? parseCoinAmount(redeemAmount, coinSummary.scale)
-    : null
-  const validAmount =
-    microcoins !== null &&
-    coinSummary &&
-    microcoins <= coinSummary.balance &&
-    microcoins % coinSummary.redemption_step === 0
-  const mutation = useMutation({
-    mutationFn: (request: ReferralCoinRedeemRequest) =>
-      redeemReferralCoins(request),
-  })
-  const redeeming = mutation.isPending
-
-  const handleRedeem = async () => {
-    if (!validAmount || microcoins === null || inFlight.current) return
-    inFlight.current = true
-    if (
-      !pendingRequest.current ||
-      pendingRequest.current.coins !== microcoins ||
-      pendingRequest.current.userId !== userId
-    ) {
-      pendingRequest.current = {
-        userId,
-        coins: microcoins,
-        request_id: crypto.randomUUID(),
-      }
-    }
-    const request = pendingRequest.current
-    try {
-      const response = await mutation.mutateAsync({
-        coins: request.coins,
-        request_id: request.request_id,
-      })
-      if (response.success) {
-        pendingRequest.current = null
-        setRedeemAmount('')
-        await queryClient.invalidateQueries({ queryKey: ['referrals', userId] })
-      } else {
-        handleServerError(response)
-      }
-    } catch (error) {
-      // Keep the key after an uncertain network result so Retry is idempotent.
-      handleServerError(error)
-    } finally {
-      inFlight.current = false
-    }
-  }
 
   return (
     <SectionPageLayout>
@@ -341,7 +279,9 @@ export function Referrals() {
                     {t('Your Referral Link')}
                   </h2>
                   <p className='text-muted-foreground mt-2 max-w-xl text-sm'>
-                    {t('Rewards will be added directly to your balance')}
+                    {t(
+                      'Earn 5% of each of your invitees’ first three top-ups; later top-ups earn nothing.'
+                    )}
                   </p>
                 </div>
                 <div className='flex max-w-2xl items-center gap-2'>
@@ -389,6 +329,8 @@ export function Referrals() {
             </CardContent>
           </Card>
 
+          <ReferralPosterCard link={affiliateLink} loading={affiliateLoading} />
+
           <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-4'>
             <StatCard
               icon={Users}
@@ -413,158 +355,129 @@ export function Referrals() {
               description={t('Total invitation revenue')}
             />
             <StatCard
-              icon={CalendarDays}
+              icon={Gift}
               label={t('Reward rate')}
-              value={loading ? '—' : rewardRate}
-              description={`${t('Freeze days')}: ${coinSummary?.freeze_days ?? 0}`}
+              value={loading ? '—' : formatRate(overview?.reward_rate ?? 0)}
+              description={t(
+                'Applies to the first three top-ups of each invitee'
+              )}
             />
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('Referral Coin')}</CardTitle>
-              <CardDescription>
-                {coinSummary?.enabled
-                  ? t('Redeem unlocked referral Coins into bonus credits.')
-                  : t('Coin rewards are currently disabled.')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className='flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between'>
-              <div className='grid grid-cols-2 gap-5'>
-                <div>
-                  <p className='text-muted-foreground text-xs'>
-                    {t('Available Coins')}
-                  </p>
-                  <p className='mt-1 text-xl font-semibold tabular-nums'>
-                    {displayedCoins}
-                  </p>
-                </div>
-                <div>
-                  <p className='text-muted-foreground text-xs'>
-                    {t('Pending Coins')}
-                  </p>
-                  <p className='mt-1 text-xl font-semibold tabular-nums'>
-                    {coinSummary
-                      ? formatCoinAmount(coinSummary.pending, coinSummary.scale)
-                      : '-'}
-                  </p>
-                </div>
-              </div>
-              <div className='flex w-full max-w-sm flex-col gap-2'>
-                {coinSummary && (
-                  <p className='text-muted-foreground text-xs'>
-                    {t('Minimum redemption: {{amount}} Coin', {
-                      amount: formatCoinAmount(
-                        coinSummary.redemption_step,
-                        coinSummary.scale
-                      ),
-                    })}
-                  </p>
-                )}
-                <div className='flex gap-2'>
-                  <Input
-                    aria-label={t('Coin units')}
-                    inputMode='decimal'
-                    placeholder={t('Coin units')}
-                    value={redeemAmount}
-                    onChange={(event) => setRedeemAmount(event.target.value)}
-                    disabled={!redeemEnabled || redeeming}
-                  />
-                  <Button
-                    type='button'
-                    onClick={() => void handleRedeem()}
-                    disabled={!redeemEnabled || redeeming || !validAmount}
-                  >
-                    {redeeming ? t('Loading...') : t('Redeem')}
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <Tabs defaultValue='invitees'>
+            <TabsList>
+              <TabsTrigger value='invitees'>{t('Invitees')}</TabsTrigger>
+              <TabsTrigger value='rewards'>{t('Reward history')}</TabsTrigger>
+              <TabsTrigger value='promotion'>{t('Promotion copy')}</TabsTrigger>
+            </TabsList>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('Invite Info')}</CardTitle>
-              <CardDescription>
-                {t('Track referral rewards and their unlock status.')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className='p-0'>
-              <div className='overflow-x-auto'>
-                <table className='w-full text-sm'>
-                  <thead className='bg-muted/40 text-muted-foreground border-y text-left text-xs'>
-                    <tr>
-                      <th className='px-4 py-3 font-medium'>{t('Date')}</th>
-                      <th className='px-4 py-3 font-medium'>
-                        {t('Eligible quota')}
-                      </th>
-                      <th className='px-4 py-3 font-medium'>{t('Reward')}</th>
-                      <th className='px-4 py-3 font-medium'>{t('Status')}</th>
-                      <th className='px-4 py-3 font-medium'>
-                        {t('Unlock date')}
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className='divide-y'>
-                    <ReferralRewardRows
-                      loading={loading}
-                      rewards={rewards}
-                      t={t}
-                    />
-                  </tbody>
-                </table>
-              </div>
-              {legacyTable.getPageCount() > 1 && (
-                <div
-                  className='border-t px-4 py-3'
-                  aria-label={t('Invite Info')}
-                >
-                  <DataTablePagination table={legacyTable} />
-                </div>
-              )}
-            </CardContent>
-          </Card>
+            <TabsContent value='invitees'>
+              <Card>
+                <CardHeader>
+                  <CardTitle>{t('Invitees')}</CardTitle>
+                  <CardDescription>
+                    {t('Users who signed up with your referral link.')}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className='p-0'>
+                  <div className='overflow-x-auto'>
+                    <table className='w-full text-sm'>
+                      <thead className='bg-muted/40 text-muted-foreground border-y text-left text-xs'>
+                        <tr>
+                          <th className='px-4 py-3 font-medium'>
+                            {t('Username')}
+                          </th>
+                          <th className='px-4 py-3 font-medium'>
+                            {t('Joined')}
+                          </th>
+                          <th className='px-4 py-3 font-medium'>
+                            {t('Eligible quota')}
+                          </th>
+                          <th className='px-4 py-3 font-medium'>
+                            {t('Reward')}
+                          </th>
+                          <th className='px-4 py-3 font-medium'>
+                            {t('Status')}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className='divide-y'>
+                        <InviteeRows
+                          loading={inviteesQuery.isPending}
+                          invitees={invitees}
+                          t={t}
+                        />
+                      </tbody>
+                    </table>
+                  </div>
+                  {inviteeTable.getPageCount() > 1 && (
+                    <div
+                      className='border-t px-4 py-3'
+                      aria-label={t('Invitees')}
+                    >
+                      <DataTablePagination table={inviteeTable} />
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('Coin reward history')}</CardTitle>
-              <CardDescription>
-                {t('Paid top-up commissions and their unlock status.')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className='p-0'>
-              <div className='overflow-x-auto'>
-                <table className='w-full text-sm'>
-                  <thead className='bg-muted/40 text-muted-foreground border-y text-left text-xs'>
-                    <tr>
-                      <th className='px-4 py-3 font-medium'>{t('Date')}</th>
-                      <th className='px-4 py-3 font-medium'>
-                        {t('Paid quota')}
-                      </th>
-                      <th className='px-4 py-3 font-medium'>{t('Coins')}</th>
-                      <th className='px-4 py-3 font-medium'>{t('Status')}</th>
-                    </tr>
-                  </thead>
-                  <tbody className='divide-y'>
-                    <CoinRewardRows
-                      loading={coinRewardsQuery.isPending}
-                      rewards={coinRewards}
-                      scale={coinSummary?.scale ?? 1000000}
-                      t={t}
-                    />
-                  </tbody>
-                </table>
-              </div>
-              {coinTable.getPageCount() > 1 && (
-                <div
-                  className='border-t px-4 py-3'
-                  aria-label={t('Coin reward history')}
-                >
-                  <DataTablePagination table={coinTable} />
-                </div>
-              )}
-            </CardContent>
-          </Card>
+            <TabsContent value='rewards'>
+              <Card>
+                <CardHeader>
+                  <CardTitle>{t('Reward history')}</CardTitle>
+                  <CardDescription>
+                    {t('Track referral rewards and their unlock status.')}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className='p-0'>
+                  <div className='overflow-x-auto'>
+                    <table className='w-full text-sm'>
+                      <thead className='bg-muted/40 text-muted-foreground border-y text-left text-xs'>
+                        <tr>
+                          <th className='px-4 py-3 font-medium'>{t('Date')}</th>
+                          <th className='px-4 py-3 font-medium'>
+                            {t('Eligible quota')}
+                          </th>
+                          <th className='px-4 py-3 font-medium'>
+                            {t('Reward')}
+                          </th>
+                          <th className='px-4 py-3 font-medium'>
+                            {t('Status')}
+                          </th>
+                          <th className='px-4 py-3 font-medium'>
+                            {t('Unlock date')}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className='divide-y'>
+                        <RewardRows
+                          loading={rewardsQuery.isPending}
+                          rewards={rewards}
+                          t={t}
+                        />
+                      </tbody>
+                    </table>
+                  </div>
+                  {rewardTable.getPageCount() > 1 && (
+                    <div
+                      className='border-t px-4 py-3'
+                      aria-label={t('Reward history')}
+                    >
+                      <DataTablePagination table={rewardTable} />
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value='promotion'>
+              <PromoCopyPanel
+                link={affiliateLink}
+                rate={overview?.reward_rate ?? 0}
+              />
+            </TabsContent>
+          </Tabs>
         </div>
       </SectionPageLayout.Content>
     </SectionPageLayout>
