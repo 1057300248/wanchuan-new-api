@@ -47,7 +47,7 @@ func TestTokenMixP1RoutesRegistered(t *testing.T) {
 		http.MethodGet + " /api/user/wallet",
 		http.MethodGet + " /api/user/wallet/ledger",
 		http.MethodGet + " /api/user/referral/overview",
-		http.MethodGet + " /api/user/referral/rewards",
+		http.MethodGet + " /api/user/referral/invitees",
 		http.MethodPost + " /api/token/:id/key",
 		http.MethodPost + " /api/token/batch/keys",
 	}
