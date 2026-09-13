@@ -35,7 +35,7 @@ func NewFunding(request moneyport.FactoryRequest) (*Funding, error) {
 	for _, raw := range request.AccountOrder {
 		account := model.LedgerAccount(raw)
 		switch account {
-		case model.AccountBonus, model.AccountPaid, model.AccountAffiliate:
+		case model.AccountBonus, model.AccountReward, model.AccountPaid:
 			order = append(order, account)
 		default:
 			return nil, fmt.Errorf("chuanapi wallet: unsupported account %q", raw)

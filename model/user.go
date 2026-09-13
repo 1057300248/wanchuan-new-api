@@ -94,16 +94,16 @@ type User struct {
 	VerificationCode     string                     `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
 	AccessToken          *string                    `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
 	Quota                int                        `json:"quota" gorm:"type:bigint;default:0"`
-	QuotaPaid            int                        `json:"quota_paid" gorm:"type:bigint;default:0;column:quota_paid"`   // 付费账户余额（quota units），quota 为三账户合计的兼容镜像
-	QuotaBonus           int                        `json:"quota_bonus" gorm:"type:bigint;default:0;column:quota_bonus"` // 赠金账户余额（本阶段仅建账户与账本）
-	QuotaAffiliate       int                        `json:"-" gorm:"type:bigint;default:0;column:quota_affiliate"`       // 仅保留给历史迁移与对账
-	UsedQuota            int                        `json:"used_quota" gorm:"type:bigint;default:0;column:used_quota"`   // used quota
-	RequestCount         int                        `json:"request_count" gorm:"type:int;default:0;"`                    // request number
+	QuotaPaid            int                        `json:"quota_paid" gorm:"type:bigint;default:0;column:quota_paid"`     // 付费账户余额（quota units），quota 为三账户合计的兼容镜像
+	QuotaBonus           int                        `json:"quota_bonus" gorm:"type:bigint;default:0;column:quota_bonus"`   // 赠金账户余额（仅 bonus_eligible 模型可用）
+	QuotaReward          int                        `json:"quota_reward" gorm:"type:bigint;default:0;column:quota_reward"` // 邀请奖励余额（由 aff_quota 划转而来，全部模型可用）
+	UsedQuota            int                        `json:"used_quota" gorm:"type:bigint;default:0;column:used_quota"`     // used quota
+	RequestCount         int                        `json:"request_count" gorm:"type:int;default:0;"`                      // request number
 	Group                string                     `json:"group" gorm:"type:varchar(64);default:'default'"`
 	AffCode              string                     `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
 	AffCount             int                        `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
-	AffQuota             int                        `json:"-" gorm:"type:bigint;default:0;column:aff_quota"`   // 仅保留给历史迁移
-	AffHistoryQuota      int                        `json:"-" gorm:"type:bigint;default:0;column:aff_history"` // 仅保留给历史审计
+	AffQuota             int                        `json:"aff_quota" gorm:"type:bigint;default:0;column:aff_quota"`           // 待使用邀请奖励（quota units）
+	AffHistoryQuota      int                        `json:"aff_history_quota" gorm:"type:bigint;default:0;column:aff_history"` // 邀请奖励累计值（不因划转减少）
 	InviterId            int                        `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
 	DeletedAt            gorm.DeletedAt             `gorm:"index"`
 	LinuxDOId            string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`
@@ -563,6 +563,22 @@ func GetUserIdByAffCode(affCode string) (int, error) {
 	return user.Id, err
 }
 
+// GetUsernamesByIds 批量读取用户名（id -> username），用于邀请返佣记录的脱敏展示。
+func GetUsernamesByIds(ids []int) (map[int]string, error) {
+	result := make(map[int]string, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	var users []User
+	if err := DB.Select("id", "username").Where("id IN ?", ids).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	for _, user := range users {
+		result[user.Id] = user.Username
+	}
+	return result, nil
+}
+
 func DeleteUserById(id int) (err error) {
 	if id == 0 {
 		return errors.New("id 为空！")
@@ -656,7 +672,7 @@ func (user *User) Insert(inviterId int) error {
 			// CreditQuotaTx 各加一次造成注册赠额翻倍。
 			user.QuotaPaid = 0
 			user.QuotaBonus = 0
-			user.QuotaAffiliate = 0
+			user.QuotaReward = 0
 			user.Quota = 0
 			user.AffCode = common.GetRandomString(4)
 
@@ -729,7 +745,7 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 		initialQuota := signupBonusQuota()
 		user.QuotaPaid = 0
 		user.QuotaBonus = 0
-		user.QuotaAffiliate = 0
+		user.QuotaReward = 0
 		user.Quota = 0
 		user.AffCode = common.GetRandomString(4)
 
@@ -866,7 +882,7 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 			return err
 		}
 	}
-	if err = tx.Model(&current).Omit("quota", "quota_paid", "quota_bonus", "quota_affiliate", "used_quota", "request_count", "access_token", "aff_count", "aff_quota", "aff_history", "auth_version").Updates(newUser).Error; err != nil {
+	if err = tx.Model(&current).Omit("quota", "quota_paid", "quota_bonus", "quota_reward", "used_quota", "request_count", "access_token", "aff_count", "aff_quota", "aff_history", "auth_version").Updates(newUser).Error; err != nil {
 		return err
 	}
 	return tx.First(user, user.Id).Error
@@ -1264,14 +1280,15 @@ func ValidateAccessToken(token string) (*User, error) {
 	return user, nil
 }
 
-// GetUserAccountBalances 返回用户三账户余额（数据库权威值）。
-// 供钱包计费按账户做预扣前校验（赠金资格只影响 bonus/paid 顺序）。
-func GetUserAccountBalances(id int) (paid int, bonus int, affiliate int, err error) {
+// GetUserAccountBalances 返回用户钱包三账户余额（数据库权威值）。
+// 供钱包计费按账户做预扣前校验（赠金资格只影响 bonus 顺序；reward 在所有
+// 允许的模型上可用）。
+func GetUserAccountBalances(id int) (paid int, bonus int, reward int, err error) {
 	var user User
-	if err := DB.Select("quota_paid", "quota_bonus", "quota_affiliate").Where("id = ?", id).First(&user).Error; err != nil {
+	if err := DB.Select("quota_paid", "quota_bonus", "quota_reward").Where("id = ?", id).First(&user).Error; err != nil {
 		return 0, 0, 0, err
 	}
-	return user.QuotaPaid, user.QuotaBonus, user.QuotaAffiliate, nil
+	return user.QuotaPaid, user.QuotaBonus, user.QuotaReward, nil
 }
 
 // GetUserQuota gets quota from Redis first, falls back to DB if needed.

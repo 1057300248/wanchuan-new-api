@@ -17,9 +17,10 @@ func (Policy) BonusEligible(billingModel string) bool {
 
 func (p Policy) AccountOrder(billingModel string) []string {
 	if p.BonusEligible(billingModel) {
-		return []string{walletport.AccountBonus, walletport.AccountPaid}
+		return []string{walletport.AccountBonus, walletport.AccountReward, walletport.AccountPaid}
 	}
-	return []string{walletport.AccountPaid}
+	// 非赠金模型：邀请奖励可全模型消费，顺序 reward -> paid。
+	return []string{walletport.AccountReward, walletport.AccountPaid}
 }
 
 func RegisterRuntime() error {

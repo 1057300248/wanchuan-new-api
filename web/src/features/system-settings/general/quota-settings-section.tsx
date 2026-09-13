@@ -56,7 +56,6 @@ const quotaSchema = z.object({
   QuotaForSignupBonus: z.coerce.number().min(0),
   AffiliateRewardEnabled: z.boolean(),
   AffiliateRewardRate: z.coerce.number().min(0).max(1),
-  AffiliateRewardFreezeDays: z.coerce.number().int().min(0).max(3650),
   TopUpLink: z.string(),
   general_setting: z.object({
     docs_link: z.string(),
@@ -231,7 +230,7 @@ export function QuotaSettingsSection({
                     <FormLabel>{t('Referral Rewards')}</FormLabel>
                     <FormDescription>
                       {t(
-                        'Reward inviters with Coins when referred users complete paid top-ups'
+                        'Reward inviters when referred users complete their first three online balance top-ups'
                       )}
                     </FormDescription>
                   </SettingsSwitchContent>
@@ -265,34 +264,9 @@ export function QuotaSettingsSection({
                     />
                   </FormControl>
                   <FormDescription>
-                    {t('Share of paid top-ups credited as referral rewards')}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name='AffiliateRewardFreezeDays'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Referral Reward Freeze Days')}</FormLabel>
-                  <FormControl>
-                    <Input
-                      type='number'
-                      min={0}
-                      max={3650}
-                      step={1}
-                      value={field.value ?? ''}
-                      onChange={handleNumberChange(field.onChange)}
-                      name={field.name}
-                      onBlur={field.onBlur}
-                      ref={field.ref}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    {t('Days before a referral Coin reward is unlocked')}
+                    {t(
+                      'Share of each qualifying online balance top-up credited as a pending referral reward'
+                    )}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

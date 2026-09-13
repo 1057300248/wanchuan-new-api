@@ -23,8 +23,7 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 			&BalanceLedgerOperation{},
 			&BalanceLedger{},
 			&ModelBonusEligibleAudit{},
-			&AffiliateReward{},
-			&AffiliateRewardReconcileState{},
+			&ReferralCommission{},
 		},
 	}))
 
@@ -68,8 +67,7 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 		&BalanceLedgerOperation{},
 		&BalanceLedger{},
 		&ModelBonusEligibleAudit{},
-		&AffiliateReward{},
-		&AffiliateRewardReconcileState{},
+		&ReferralCommission{},
 	}
 
 	require.Len(t, models, len(expected))

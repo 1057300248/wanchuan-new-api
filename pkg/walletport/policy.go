@@ -6,8 +6,9 @@ import (
 )
 
 const (
-	AccountPaid  = "paid"
-	AccountBonus = "bonus"
+	AccountPaid   = "paid"
+	AccountBonus  = "bonus"
+	AccountReward = "reward"
 )
 
 // Policy owns wallet-specific commercial decisions that should not live in the

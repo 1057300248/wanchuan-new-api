@@ -66,8 +66,12 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
     {
       key: 'bonus',
       label: t('Bonus Balance'),
-      value: formatWalletQuota(props.summary?.bonus ?? 0),
-      description: t('Signup and referral bonuses'),
+      value: formatWalletQuota(
+        (props.summary?.bonus ?? 0) + (props.summary?.reward ?? 0)
+      ),
+      description: t(
+        'Signup bonus applies to eligible models; invitation rewards apply to all models'
+      ),
       icon: Gift,
       tone: 'chart-2',
       loading: props.summaryLoading === true,

@@ -13,7 +13,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	affiliatemodule "github.com/QuantumNous/new-api/modules/chuanapi/affiliate"
 	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
@@ -63,8 +62,7 @@ func TestMain(m *testing.M) {
 		&model.Model{},
 		&model.Vendor{},
 		&model.ModelBonusEligibleAudit{},
-		&model.AffiliateReward{},
-		&model.AffiliateRewardReconcileState{},
+		&model.ReferralCommission{},
 		&model.Redemption{},
 		&model.SubscriptionPlan{},
 		&model.SubscriptionOrder{},
@@ -72,9 +70,6 @@ func TestMain(m *testing.M) {
 		panic("failed to migrate: " + err.Error())
 	}
 
-	if err := affiliatemodule.RegisterRuntime(); err != nil {
-		panic("failed to register affiliate runtime: " + err.Error())
-	}
 	if err := walletmodule.RegisterRuntime(); err != nil {
 		panic("failed to register wallet policy runtime: " + err.Error())
 	}
@@ -102,8 +97,7 @@ func truncate(t *testing.T) {
 	t.Cleanup(func() {
 		model.DB.Exec("DELETE FROM balance_ledger")
 		model.DB.Exec("DELETE FROM balance_ledger_operations")
-		model.DB.Exec("DELETE FROM affiliate_rewards")
-		model.DB.Exec("DELETE FROM affiliate_reward_reconcile_states")
+		model.DB.Exec("DELETE FROM referral_commissions")
 		model.DB.Exec("DELETE FROM tasks")
 		model.DB.Exec("DELETE FROM users")
 		model.DB.Exec("DELETE FROM tokens")

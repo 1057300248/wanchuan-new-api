@@ -126,7 +126,7 @@ func TestTryReserveUserQuotaContractViaLedger(t *testing.T) {
 	got := getUserBalances(t, user.Id)
 	assert.Equal(t, 40, got.QuotaPaid)
 	assert.Equal(t, 0, got.QuotaBonus)
-	assert.Equal(t, 0, got.QuotaAffiliate)
+	assert.Equal(t, 0, got.QuotaReward)
 	assert.Equal(t, 40, got.Quota)
 	assertQuotaInvariant(t, got)
 

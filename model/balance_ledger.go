@@ -17,21 +17,21 @@ import (
 // ---------------------------------------------------------------------------
 // 用户资金账本（TokenMix P0-4）
 //
-// 用户运行时资金拆分为 paid / bonus 两个账户（quota units，整数）。
-// affiliate 仅保留为迁移期历史列；生产迁移会清零，业务代码不再入账。
-// users.quota 保留为余额合计的兼容镜像。任何余额变更都必须通过本文件的
-// 统一事务入口（CreditQuota / DebitQuota / OverrideQuota / TransferQuota），
-// 在同一事务内维护余额列与镜像列，并写入 balance_ledger 明细；任一步失败
-// 则整体回滚。数据库唯一约束保证幂等键不会重复入账。
+// 用户运行时资金拆分为 paid / bonus / reward 三个账户（quota units，整数）。
+// reward 为邀请奖励划转入账后的可消费余额。users.quota 保留为余额合计的
+// 兼容镜像。任何余额变更都必须通过本文件的统一事务入口（CreditQuota /
+// DebitQuota / OverrideQuota / TransferQuota），在同一事务内维护余额列与镜像
+// 列，并写入 balance_ledger 明细；任一步失败则整体回滚。数据库唯一约束保证
+// 幂等键不会重复入账。
 // ---------------------------------------------------------------------------
 
 // LedgerAccount 用户资金账户标识。
 type LedgerAccount string
 
 const (
-	AccountPaid      LedgerAccount = "paid"      // 充值/付费账户
-	AccountBonus     LedgerAccount = "bonus"     // 注册赠金、邀请赠金
-	AccountAffiliate LedgerAccount = "affiliate" // 仅供历史迁移与旧账对账
+	AccountPaid   LedgerAccount = "paid"   // 充值/付费账户
+	AccountBonus  LedgerAccount = "bonus"  // 注册赠金（仅 bonus_eligible 模型可用）
+	AccountReward LedgerAccount = "reward" // 邀请奖励划转入账（全部模型可用）
 )
 
 // 账本 reason 常量。写入 balance_ledger.reason，用于审计与对账。
@@ -52,7 +52,7 @@ const (
 	LedgerReasonTaskRefund           = "task_refund"           // 异步任务失败退款
 	LedgerReasonNewUserGift          = "new_user_gift"         // 新用户注册赠额（旧 reason，兼容历史数据）
 	LedgerReasonSignupBonus          = "signup_bonus"          // 新用户注册赠金（P1-1，进入 bonus 账户）
-	LedgerReasonReferralBonus        = "referral_bonus"        // 推荐奖励成熟入账（进入 bonus 账户）
+	LedgerReasonReferralTransfer     = "referral_transfer"     // 邀请奖励从 aff_quota 划转到 reward 账户
 	LedgerReasonLegacyBackfill       = "legacy_backfill"       // 旧 quota 向 paid 账户迁移（不改变总余额）
 	LedgerReasonRc24Reconcile        = "rc24_reconcile"        // 纯 rc.24 期间用量补记到账本
 	LedgerReasonSystem               = "system"                // 系统内部调整
@@ -68,9 +68,9 @@ var (
 
 // ledgerAccountColumn 账户标识到 users 表余额列的映射。
 var ledgerAccountColumn = map[LedgerAccount]string{
-	AccountPaid:      "quota_paid",
-	AccountBonus:     "quota_bonus",
-	AccountAffiliate: "quota_affiliate",
+	AccountPaid:   "quota_paid",
+	AccountBonus:  "quota_bonus",
+	AccountReward: "quota_reward",
 }
 
 // BalanceLedgerOperation 记录一次资金操作的全局幂等头。
@@ -175,8 +175,8 @@ func (u *User) AccountBalance(account LedgerAccount) int {
 		return u.QuotaPaid
 	case AccountBonus:
 		return u.QuotaBonus
-	case AccountAffiliate:
-		return u.QuotaAffiliate
+	case AccountReward:
+		return u.QuotaReward
 	}
 	return 0
 }
@@ -671,7 +671,7 @@ func verifyReplay(operation *BalanceLedgerOperation, entry LedgerEntry, op ledge
 // normalizeLegacyQuotaTx 兼容尚未执行启动迁移的夹具/滚动节点：若只有旧 quota
 // 有值，则在当前事务内完成 paid 回填并留下迁移账本，不改变总余额。
 func normalizeLegacyQuotaTx(tx *gorm.DB, user *User) error {
-	if user.Quota == 0 || user.QuotaPaid != 0 || user.QuotaBonus != 0 || user.QuotaAffiliate != 0 {
+	if user.Quota == 0 || user.QuotaPaid != 0 || user.QuotaBonus != 0 || user.QuotaReward != 0 {
 		return nil
 	}
 	key := fmt.Sprintf("migration:legacy_quota:%d", user.Id)
@@ -757,7 +757,7 @@ func applyLedgerTx(tx *gorm.DB, entry LedgerEntry, key string, op ledgerOpKind, 
 		return nil, err
 	}
 
-	totalBefore := user.QuotaPaid + user.QuotaBonus + user.QuotaAffiliate
+	totalBefore := user.QuotaPaid + user.QuotaBonus + user.QuotaReward
 	totalAfter := totalBefore
 	updates := map[string]interface{}{}
 	balanceBefore := map[LedgerAccount]int{}
@@ -880,7 +880,7 @@ func BackfillLegacyQuotaAccounts() (int64, error) {
 }
 
 // BackfillLegacyQuotaAccountsWithDB 将旧版 users.quota 余额一次性回填到 paid 账户：
-// 仅处理三个账户均为 0 且 quota 非 0 的存量用户，bonus/affiliate 保持 0。
+// 仅处理三个账户均为 0 且 quota 非 0 的存量用户，bonus/reward 保持 0。
 // 每个用户在同一事务内写 migration operation + ledger 明细 + paid 余额，重复执行
 // 无副作用（已回填用户不再满足条件，幂等头也有全局唯一键）。
 //
@@ -892,8 +892,8 @@ func BackfillLegacyQuotaAccountsWithDB(db *gorm.DB) (int64, error) {
 		return 0, errors.New("backfill legacy quota accounts: database must not be nil")
 	}
 	var candidates []User
-	if err := db.Select("id", "quota", "quota_paid", "quota_bonus", "quota_affiliate").
-		Where("quota_paid = 0 AND quota_bonus = 0 AND quota_affiliate = 0 AND quota <> 0").
+	if err := db.Select("id", "quota", "quota_paid", "quota_bonus", "quota_reward").
+		Where("quota_paid = 0 AND quota_bonus = 0 AND quota_reward = 0 AND quota <> 0").
 		Order("id asc").Find(&candidates).Error; err != nil {
 		return 0, err
 	}
@@ -905,7 +905,7 @@ func BackfillLegacyQuotaAccountsWithDB(db *gorm.DB) (int64, error) {
 			if err := lockForUpdate(tx).Where("id = ?", candidate.Id).First(&user).Error; err != nil {
 				return err
 			}
-			if user.Quota == 0 || user.QuotaPaid != 0 || user.QuotaBonus != 0 || user.QuotaAffiliate != 0 {
+			if user.Quota == 0 || user.QuotaPaid != 0 || user.QuotaBonus != 0 || user.QuotaReward != 0 {
 				return nil
 			}
 			if err := normalizeLegacyQuotaTx(tx, &user); err != nil {
@@ -927,8 +927,8 @@ func BackfillLegacyQuotaAccountsWithDB(db *gorm.DB) (int64, error) {
 // FindQuotaAccountMismatches 返回 quota 与三账户合计不一致的用户（对账/诊断用）。
 func FindQuotaAccountMismatches() ([]User, error) {
 	var users []User
-	err := DB.Select("id", "username", "quota", "quota_paid", "quota_bonus", "quota_affiliate").
-		Where("quota <> quota_paid + quota_bonus + quota_affiliate").
+	err := DB.Select("id", "username", "quota", "quota_paid", "quota_bonus", "quota_reward").
+		Where("quota <> quota_paid + quota_bonus + quota_reward").
 		Find(&users).Error
 	if err != nil {
 		return nil, err
@@ -937,7 +937,7 @@ func FindQuotaAccountMismatches() ([]User, error) {
 }
 
 // ReconcileQuotaAccounts 修复 quota 镜像与三账户合计不一致的行：quota 是
-// 派生镜像，向合计对齐（quota = paid + bonus + affiliate）。返回修复行数。
+// 派生镜像，向合计对齐（quota = paid + bonus + reward）。返回修复行数。
 func ReconcileQuotaAccounts() (int64, error) {
 	users, err := FindQuotaAccountMismatches()
 	if err != nil {
@@ -945,7 +945,7 @@ func ReconcileQuotaAccounts() (int64, error) {
 	}
 	var fixed int64
 	for _, user := range users {
-		total := user.QuotaPaid + user.QuotaBonus + user.QuotaAffiliate
+		total := user.QuotaPaid + user.QuotaBonus + user.QuotaReward
 		if total == user.Quota {
 			continue
 		}
@@ -1030,6 +1030,10 @@ func normalizeLedgerPagination(page, pageSize int) (int, int) {
 	if page <= 0 {
 		page = 1
 	}
+	// 有界回退：超大页码不得让 (page-1)*pageSize 溢出成负偏移。
+	if page > maxWalletPage {
+		page = maxWalletPage
+	}
 	if pageSize <= 0 {
 		pageSize = 20
 	}
@@ -1047,8 +1051,7 @@ func AccountNetCost(userId int, referenceType, referenceId string) (map[LedgerAc
 	return accountNetCostWithDB(DB, userId, referenceType, referenceId)
 }
 
-// AccountNetCostTx is the transactional variant used while validating frozen
-// affiliate rewards immediately before maturity.
+// AccountNetCostTx is the transactional variant used by wallet cost reporting.
 func AccountNetCostTx(tx *gorm.DB, userId int, referenceType, referenceId string) (map[LedgerAccount]int, error) {
 	if tx == nil {
 		return nil, fmt.Errorf("nil database transaction")
@@ -1097,7 +1100,7 @@ func NetCostByReferences(userId int, refs [][2]string) (map[LedgerAccount]int, e
 	return netCostByReferencesWithDB(DB, userId, refs)
 }
 
-// NetCostByReferencesTx is the transactional variant used by reward maturity.
+// NetCostByReferencesTx is the transactional variant used by wallet cost reporting.
 func NetCostByReferencesTx(tx *gorm.DB, userId int, refs [][2]string) (map[LedgerAccount]int, error) {
 	if tx == nil {
 		return nil, fmt.Errorf("nil database transaction")

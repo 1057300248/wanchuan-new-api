@@ -14,9 +14,10 @@ import (
 
 // expectedWalletModelOrder is the migration order the host relied on before the
 // registry took over: the ledger operation header precedes the ledger rows that
-// reference it, and the affiliate reconcile state follows the reward rows it
-// reconciles. Asserting the exact type sequence is what makes an accidental
-// reorder or a dropped model fail here instead of at a customer's AutoMigrate.
+// reference it. The affiliate model set contributes the referral commission
+// voucher schema after the wallet ledger. Asserting the exact type sequence is
+// what makes an accidental reorder or a dropped model fail here instead of at a
+// customer's AutoMigrate.
 var expectedWalletModelOrder = []any{
 	&model.BalanceLedgerOperation{},
 	&model.BalanceLedger{},
@@ -24,8 +25,7 @@ var expectedWalletModelOrder = []any{
 }
 
 var expectedAffiliateModelOrder = []any{
-	&model.AffiliateReward{},
-	&model.AffiliateRewardReconcileState{},
+	&model.ReferralCommission{},
 }
 
 var expectedPaymentModelOrder = []any{

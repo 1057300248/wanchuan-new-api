@@ -3,10 +3,7 @@ package model
 import (
 	"testing"
 
-	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestTaskPrivateData_EffectiveRequestID(t *testing.T) {
@@ -87,44 +84,4 @@ func TestTaskPrivateData_EffectiveRequestID(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
-}
-
-func TestAffiliateRewardCostRefsUsesEffectiveRequestID(t *testing.T) {
-	truncateTables(t)
-
-	user := &User{
-		Username:    "test-aff-ref-user-" + common.GetRandomString(6),
-		Password:    "unused-password-hash",
-		Role:        common.RoleCommonUser,
-		Status:      common.UserStatusEnabled,
-		Group:       "default",
-		AuthVersion: 1,
-		AffCode:     "test-aff-ref-" + common.GetRandomString(8),
-	}
-	require.NoError(t, DB.Create(user).Error)
-
-	task := &Task{
-		UserId:   user.Id,
-		TaskID:   GenerateTaskID(),
-		Platform: constant.TaskPlatformSuno,
-		Action:   "test",
-		Status:   TaskStatusSuccess,
-		PrivateData: TaskPrivateData{
-			Execution: &TaskExecutionSnapshot{RequestID: "req-exec-aff-001"},
-			RequestId: "req-legacy-aff-conflict",
-		},
-	}
-	require.NoError(t, DB.Create(task).Error)
-
-	refs, ready, err := affiliateRewardCostRefsTx(DB, &AffiliateReward{
-		SourceUserId:  user.Id,
-		ReferenceType: "task",
-		ReferenceId:   task.TaskID,
-	})
-	require.NoError(t, err)
-	require.True(t, ready)
-	assert.Equal(t, [][2]string{
-		{"relay", "req-exec-aff-001"},
-		{"task", task.TaskID},
-	}, refs)
 }

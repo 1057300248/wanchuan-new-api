@@ -28,10 +28,15 @@ import { getSelf } from '@/lib/api'
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
+import { TransferDialog } from './components/dialogs/transfer-dialog'
 import { LedgerTable } from './components/ledger-table'
 import { RechargeFormCard } from './components/recharge-form-card'
 import { WalletStatsCard } from './components/wallet-stats-card'
-import { DEFAULT_DISCOUNT_RATE, PAYMENT_TYPES } from './constants'
+import {
+  DEFAULT_DISCOUNT_RATE,
+  PAYMENT_TYPES,
+  REFERRAL_RECORDS_PAGE_SIZE,
+} from './constants'
 import {
   useCreemPayment,
   usePayment,
@@ -40,7 +45,7 @@ import {
   useWaffoPancakePayment,
   useWaffoPayment,
   useAffiliate,
-  useReferralOverview,
+  useReferralRewards,
   useWalletSummary,
 } from './hooks'
 import {
@@ -77,13 +82,25 @@ export function Wallet(_props: WalletProps) {
   const [creemDialogOpen, setCreemDialogOpen] = useState(false)
   const [selectedCreemProduct, setSelectedCreemProduct] =
     useState<CreemProduct | null>(null)
+  const [transferDialogOpen, setTransferDialogOpen] = useState(false)
+  const [recordsPage, setRecordsPage] = useState(1)
 
   const { status } = useStatus()
   const { currency } = useSystemConfig()
   const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
-  const { affiliateLink, loading: affiliateLoading } = useAffiliate()
-  const { overview: referralOverview, loading: referralLoading } =
-    useReferralOverview()
+  const {
+    affiliateLink,
+    loading: affiliateLoading,
+    transferring,
+    transferQuota,
+  } = useAffiliate()
+  const {
+    records: referralRecords,
+    total: referralRecordsTotal,
+    loading: referralRecordsLoading,
+    error: referralRecordsError,
+    refetch: refetchReferralRecords,
+  } = useReferralRewards(recordsPage, REFERRAL_RECORDS_PAGE_SIZE)
   const {
     summary,
     loading: walletLoading,
@@ -230,6 +247,14 @@ export function Wallet(_props: WalletProps) {
     await refreshBalances()
   }
 
+  const handleTransfer = async (quota: number): Promise<boolean> => {
+    const success = await transferQuota(quota)
+    if (!success) return false
+
+    await refreshBalances()
+    return true
+  }
+
   const handleCreemProductSelect = (product: CreemProduct) => {
     setSelectedCreemProduct(product)
     setCreemDialogOpen(true)
@@ -318,9 +343,21 @@ export function Wallet(_props: WalletProps) {
               enableWaffoPancakeTopup={topupInfo?.enable_waffo_pancake_topup}
             />
             <AffiliateRewardsCard
-              overview={referralOverview}
+              user={user}
               affiliateLink={affiliateLink}
-              loading={affiliateLoading || referralLoading}
+              onTransfer={() => setTransferDialogOpen(true)}
+              complianceConfirmed={
+                topupInfo?.payment_compliance_confirmed !== false
+              }
+              referralRate={summary?.rules.referral_bonus_rate ?? 0}
+              records={referralRecords}
+              recordsTotal={referralRecordsTotal}
+              recordsLoading={referralRecordsLoading}
+              recordsError={referralRecordsError}
+              onRecordsRetry={() => void refetchReferralRecords()}
+              recordsPage={recordsPage}
+              onRecordsPageChange={setRecordsPage}
+              loading={affiliateLoading}
             />
             <LedgerTable />
           </div>
@@ -346,6 +383,14 @@ export function Wallet(_props: WalletProps) {
         onConfirm={handleCreemConfirm}
         product={selectedCreemProduct}
         processing={creemProcessing}
+      />
+
+      <TransferDialog
+        open={transferDialogOpen}
+        onOpenChange={setTransferDialogOpen}
+        onConfirm={handleTransfer}
+        availableQuota={user?.aff_quota ?? 0}
+        transferring={transferring}
       />
     </>
   )

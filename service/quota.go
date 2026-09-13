@@ -135,17 +135,17 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	quota, clamp := calculateAudioQuota(quotaInfo)
 	noteQuotaClamp(relayInfo, clamp)
 
-	// P0-5：余额校验按模型赠金资格分账户进行：eligible 检查 bonus+paid；
-	// 非 eligible 仅允许 paid，不足时返回明确错误，不得静默扣减赠金。
-	paid, bonus, _, accountErr := model.GetUserAccountBalances(relayInfo.UserId)
+	// P0-5：余额校验按模型赠金资格分账户进行：eligible 检查 bonus+reward+paid；
+	// 非 eligible 允许 reward+paid（邀请奖励不受赠金限制），不足时返回明确错误。
+	paid, bonus, reward, accountErr := model.GetUserAccountBalances(relayInfo.UserId)
 	if accountErr != nil {
 		return accountErr
 	}
 	if WalletBonusEligible(relayInfo) {
-		if paid+bonus < quota {
-			return fmt.Errorf("user quota is not enough, user quota: %s, need quota: %s", logger.FormatQuota(paid+bonus), logger.FormatQuota(quota))
+		if paid+bonus+reward < quota {
+			return fmt.Errorf("user quota is not enough, user quota: %s, need quota: %s", logger.FormatQuota(paid+bonus+reward), logger.FormatQuota(quota))
 		}
-	} else if paid < quota {
+	} else if paid+reward < quota {
 		return fmt.Errorf("%w, need quota: %s", ErrModelBonusNotSupported, logger.FormatQuota(quota))
 	}
 

@@ -11,13 +11,13 @@ import (
 // ---------------------------------------------------------------------------
 // 钱包成本记录（P1-2）— 日志 other 中反映实际 wallet account split
 //
-// 推荐返利（前三次成功充值各按比例）在充值结算事务内由 model 层生成，
-// 不再依赖消费侧调用；本文件只负责钱包成本日志。
+// 邀请奖励（前三次成功在线充值按比例）在充值结算事务内由 model 层生成，
+// 不依赖消费侧调用；本文件只负责钱包成本日志。
 // ---------------------------------------------------------------------------
 
 // FillWalletCostLogInfo 把该请求钱包账户的最终净份额写入日志 other：
 //   - other["wallet_quota_deducted"] = 净消费总额（quota units）
-//   - other["wallet_cost"] = {"paid": n, "bonus": m}（quota units）
+//   - other["wallet_cost"] = {"paid": n, "bonus": m, "reward": k}（quota units）
 //
 // 净份额从 balance_ledger 汇总（预扣/追扣/结算/退款全部计入），退款后即反映
 // 最终净份额。订阅消费调用方不会走到这里，不伪造钱包成本。
@@ -40,15 +40,22 @@ func FillWalletCostLogInfo(other *model.LogOther, userId int, refs [][2]string) 
 	if bonusNet < 0 {
 		bonusNet = 0
 	}
-	total := paidNet + bonusNet
+	rewardNet := -cost[model.AccountReward]
+	if rewardNet < 0 {
+		rewardNet = 0
+	}
+	total := paidNet + bonusNet + rewardNet
 	other.SetPublic("wallet_quota_deducted", total)
-	if paidNet > 0 || bonusNet > 0 {
+	if paidNet > 0 || bonusNet > 0 || rewardNet > 0 {
 		walletCost := make(map[string]int)
 		if paidNet > 0 {
 			walletCost["paid"] = paidNet
 		}
 		if bonusNet > 0 {
 			walletCost["bonus"] = bonusNet
+		}
+		if rewardNet > 0 {
+			walletCost["reward"] = rewardNet
 		}
 		other.SetPublic("wallet_cost", walletCost)
 	}

@@ -64,6 +64,7 @@ func TestMain(m *testing.M) {
 		&Model{},
 		&Vendor{},
 		&ModelBonusEligibleAudit{},
+		&ReferralCommission{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -101,6 +102,7 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM models")
 		DB.Exec("DELETE FROM vendors")
 		DB.Exec("DELETE FROM model_bonus_eligible_audits")
+		DB.Exec("DELETE FROM referral_commissions")
 		InvalidateModelBonusEligibleCache()
 	})
 }

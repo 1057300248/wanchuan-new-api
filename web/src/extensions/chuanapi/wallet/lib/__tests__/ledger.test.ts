@@ -26,7 +26,9 @@ describe('ledgerReasonLabelKey', () => {
     expect(ledgerReasonLabelKey('billing_pre_consume')).toBe(
       'Billing Pre-consumed'
     )
-    expect(ledgerReasonLabelKey('referral_bonus')).toBe('Referral Bonus')
+    expect(ledgerReasonLabelKey('referral_transfer')).toBe(
+      'Referral Reward Transfer'
+    )
   })
 
   test('passes through unknown reasons for forward compatibility', () => {

@@ -488,21 +488,21 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 		relayInfo.UserQuota = userQuota
 
 		// P0-5：按模型赠金资格决定钱包账户顺序与预扣前校验。
-		// eligible 模型检查 bonus+paid；非 eligible 模型只允许 paid，
-		// paid 不足时返回明确错误，不得静默扣减赠金。
+		// eligible 模型检查 bonus+reward+paid；非 eligible 模型允许 reward+paid
+		//（邀请奖励不受赠金限制），不足时返回明确错误，不得静默扣减赠金。
 		debitOrder := WalletDebitOrder(relayInfo)
-		paid, bonus, _, balanceErr := model.GetUserAccountBalances(relayInfo.UserId)
+		paid, bonus, reward, balanceErr := model.GetUserAccountBalances(relayInfo.UserId)
 		if balanceErr != nil {
 			return nil, types.NewError(balanceErr, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
 		}
 		if WalletBonusEligible(relayInfo) {
-			if paid+bonus < preConsumedQuota {
+			if paid+bonus+reward < preConsumedQuota {
 				return nil, types.NewErrorWithStatusCode(
-					fmt.Errorf("预扣费额度失败, 用户剩余额度: %s, 需要预扣费额度: %s", logger.FormatQuota(paid+bonus), logger.FormatQuota(preConsumedQuota)),
+					fmt.Errorf("预扣费额度失败, 用户剩余额度: %s, 需要预扣费额度: %s", logger.FormatQuota(paid+bonus+reward), logger.FormatQuota(preConsumedQuota)),
 					types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
 					types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 			}
-		} else if paid < preConsumedQuota {
+		} else if paid+reward < preConsumedQuota {
 			return nil, types.NewErrorWithStatusCode(
 				ErrModelBonusNotSupported,
 				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,

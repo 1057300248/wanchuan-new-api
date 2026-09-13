@@ -35,8 +35,8 @@ func getUserBalances(t *testing.T, id int) model.User {
 
 func assertQuotaInvariant(t *testing.T, user model.User) {
 	t.Helper()
-	assert.Equal(t, user.QuotaPaid+user.QuotaBonus+user.QuotaAffiliate, user.Quota,
-		"quota must equal paid+bonus+affiliate")
+	assert.Equal(t, user.QuotaPaid+user.QuotaBonus+user.QuotaReward, user.Quota,
+		"quota must equal paid+bonus+reward")
 }
 
 // ---------------------------------------------------------------------------
@@ -106,12 +106,12 @@ func walletInfoFor(t *testing.T, userId int, modelName string) *relaycommon.Rela
 	return &relaycommon.RelayInfo{UserId: userId, RequestId: fmt.Sprintf("req-%d-%s", userId, modelName), OriginModelName: modelName, IsPlayground: true}
 }
 
-func assertUserBalances(t *testing.T, id int, bonus, paid, affiliate int) {
+func assertUserBalances(t *testing.T, id int, bonus, paid, reward int) {
 	t.Helper()
 	u := getUserBalances(t, id)
 	assert.Equal(t, paid, u.QuotaPaid, "paid balance")
 	assert.Equal(t, bonus, u.QuotaBonus, "bonus balance")
-	assert.Equal(t, affiliate, u.QuotaAffiliate, "affiliate balance")
+	assert.Equal(t, reward, u.QuotaReward, "reward balance")
 	assertQuotaInvariant(t, u)
 }
 
@@ -300,9 +300,9 @@ func TestWalletFinancialIdentityMatrix(t *testing.T) {
 
 			order := WalletDebitOrder(relayInfo)
 			if tc.bonusFirst {
-				assert.Equal(t, []model.LedgerAccount{model.AccountBonus, model.AccountPaid}, order, tc.description)
+				assert.Equal(t, []model.LedgerAccount{model.AccountBonus, model.AccountReward, model.AccountPaid}, order, tc.description)
 			} else {
-				assert.Equal(t, []model.LedgerAccount{model.AccountPaid}, order, tc.description)
+				assert.Equal(t, []model.LedgerAccount{model.AccountReward, model.AccountPaid}, order, tc.description)
 			}
 			assert.Equal(t, tc.bonusFirst, WalletBonusEligible(relayInfo),
 				"WalletBonusEligible 必须与 WalletDebitOrder 同源")
@@ -311,7 +311,7 @@ func TestWalletFinancialIdentityMatrix(t *testing.T) {
 }
 
 func TestWalletDebitOrderAndBonusEligibleHandleNilRelayInfo(t *testing.T) {
-	assert.Equal(t, []model.LedgerAccount{model.AccountPaid}, WalletDebitOrder(nil))
+	assert.Equal(t, []model.LedgerAccount{model.AccountReward, model.AccountPaid}, WalletDebitOrder(nil))
 	assert.False(t, WalletBonusEligible(nil))
 }
 
@@ -464,7 +464,6 @@ func TestWalletFundingConcurrentNoOvercharge(t *testing.T) {
 	seedBonusEligibleModel(t, "concurrent-model", boolPtr(true))
 	const userID = 916
 	seedBonusUser(t, userID, 100_000, 100_000)
-
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
@@ -488,4 +487,78 @@ func TestWalletFundingConcurrentNoOvercharge(t *testing.T) {
 	var ledgerCount int64
 	require.NoError(t, model.DB.Model(&model.BalanceLedger{}).Count(&ledgerCount).Error)
 	assert.GreaterOrEqual(t, ledgerCount, int64(8*2), "每个并发请求应有独立的预扣/退款账本记录")
+}
+
+// ---------------------------------------------------------------------------
+// 邀请奖励（reward）参与计费：eligible 模型 bonus -> reward -> paid；
+// 非 eligible 模型 reward -> paid（reward 不受赠金资格限制）。
+// ---------------------------------------------------------------------------
+
+func seedRewardUser(t *testing.T, id int, bonus, reward, paid int) {
+	t.Helper()
+	user := &model.User{
+		Id: id, Username: fmt.Sprintf("reward-user-%d", id), AffCode: fmt.Sprintf("reward-aff-%d", id),
+		Quota: bonus + reward + paid, QuotaBonus: bonus, QuotaReward: reward, QuotaPaid: paid,
+		Status: common.UserStatusEnabled,
+	}
+	require.NoError(t, model.DB.Create(user).Error)
+}
+
+func TestWalletFundingEligibleOrderSpendsBonusThenRewardThenPaid(t *testing.T) {
+	truncate(t)
+	seedBonusEligibleModel(t, "reward-eligible-model", boolPtr(true))
+	const userID = 918
+	seedRewardUser(t, userID, 300, 500, 1000)
+
+	funding := &WalletFunding{userId: userID, requestId: "reward-eligible-1", debitOrder: WalletDebitOrder(walletInfoFor(t, userID, "reward-eligible-model"))}
+	require.NoError(t, funding.PreConsume(1000))
+
+	assertUserBalances(t, userID, 0, 800, 0)
+	assert.Equal(t, []moneyport.AccountShare{
+		{Account: string(model.AccountBonus), Amount: 300},
+		{Account: string(model.AccountReward), Amount: 500},
+		{Account: string(model.AccountPaid), Amount: 200},
+	}, funding.Receipt())
+
+	require.NoError(t, funding.Settle(-400)) // 实际 600：退 bonus 120 / reward 200 / paid 80
+	assertUserBalances(t, userID, 120, 880, 200)
+
+	// 新请求全额退款：精确退回各原始账户，reward 不得洗成 paid。
+	funding2 := &WalletFunding{userId: userID, requestId: "reward-eligible-refund", debitOrder: WalletDebitOrder(walletInfoFor(t, userID, "reward-eligible-model"))}
+	require.NoError(t, funding2.PreConsume(280))
+	assertUserBalances(t, userID, 0, 880, 40)
+	require.NoError(t, funding2.Refund())
+	assertUserBalances(t, userID, 120, 880, 200)
+}
+
+func TestWalletFundingIneligibleModelSpendsRewardBeforePaid(t *testing.T) {
+	truncate(t)
+	seedBonusEligibleModel(t, "reward-ineligible-model", boolPtr(false))
+	const userID = 919
+	seedRewardUser(t, userID, 9999, 400, 100)
+
+	funding := &WalletFunding{userId: userID, requestId: "reward-ineligible-1", debitOrder: WalletDebitOrder(walletInfoFor(t, userID, "reward-ineligible-model"))}
+	require.NoError(t, funding.PreConsume(450))
+
+	assertUserBalances(t, userID, 9999, 50, 0)
+	assert.Equal(t, []moneyport.AccountShare{
+		{Account: string(model.AccountReward), Amount: 400},
+		{Account: string(model.AccountPaid), Amount: 50},
+	}, funding.Receipt())
+
+	require.NoError(t, funding.Refund())
+	assertUserBalances(t, userID, 9999, 100, 400)
+}
+
+func TestNewBillingSessionIneligibleModelAcceptsRewardOnly(t *testing.T) {
+	truncate(t)
+	seedBonusEligibleModel(t, "session-reward-only", boolPtr(false))
+	const userID = 920
+	seedRewardUser(t, userID, 0, 1000, 0)
+
+	relayInfo := &relaycommon.RelayInfo{UserId: userID, RequestId: "session-reward-1", OriginModelName: "session-reward-only", IsPlayground: true}
+	session, apiErr := NewBillingSession(testGinContext(t), relayInfo, 800)
+	require.Nil(t, apiErr)
+	require.NotNil(t, session)
+	assertUserBalances(t, userID, 0, 0, 200)
 }

@@ -66,7 +66,6 @@ const BILLING_SECTIONS = [
           QuotaForSignupBonus: settings.QuotaForSignupBonus ?? 0,
           AffiliateRewardEnabled: settings.AffiliateRewardEnabled ?? false,
           AffiliateRewardRate: settings.AffiliateRewardRate ?? 0.05,
-          AffiliateRewardFreezeDays: settings.AffiliateRewardFreezeDays ?? 7,
           TopUpLink: settings.TopUpLink,
           general_setting: {
             docs_link: settings['general_setting.docs_link'],

@@ -288,7 +288,6 @@ export type BillingSettings = {
   QuotaForSignupBonus: number
   AffiliateRewardEnabled: boolean
   AffiliateRewardRate: number
-  AffiliateRewardFreezeDays: number
   TopUpLink: string
   'general_setting.docs_link': string
   'quota_setting.enable_free_model_pre_consume': boolean

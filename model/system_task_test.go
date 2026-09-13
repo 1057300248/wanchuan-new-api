@@ -359,14 +359,6 @@ func TestUpdateSystemTaskStateIdenticalPayloadDoesNotLoseLock(t *testing.T) {
 	runUpdateSystemTaskStateIdenticalPayloadKeepsLock(t, SystemTaskTypeLogCleanup)
 }
 
-func TestUpdateSystemTaskStateIdenticalPayloadKeepsLockForAffiliateMaintenance(t *testing.T) {
-	// Affiliate reward maintenance writes its reconcile progress every poll
-	// tick; a run that makes no progress persists the identical state and must
-	// not be misread as lease loss (the #7135 MySQL no-op UPDATE regression).
-	truncateTables(t)
-	runUpdateSystemTaskStateIdenticalPayloadKeepsLock(t, SystemTaskTypeAffiliateRewardMaintenance)
-}
-
 func runUpdateSystemTaskStateIdenticalPayloadKeepsLock(t *testing.T, taskType string) {
 	t.Helper()
 	// Two persists in the same second so MySQL's unchanged-row UPDATE returns 0.

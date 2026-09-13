@@ -131,17 +131,16 @@ var QuotaForNewUser = 0
 // 赠额），历史记录仍可查询。QuotaForSignupBonus 以 quota units 计，默认 0
 // （安全默认：不发放），生产由主代理按需设置。
 //
-// AffiliateRewardEnabled 关闭时不产生新的推荐赠金。
-// AffiliateRewardRate 为成功充值金额的奖励比例（默认 5%），每位受邀用户仅前
-// 三次成功充值产生返利。
-// AffiliateRewardFreezeDays 为模型赠金冻结天数（默认 7 天）。
+// AffiliateRewardEnabled 关闭时不产生新的邀请奖励。
+// AffiliateRewardRate 为成功在线余额充值金额的奖励比例（默认 5%），每位受邀
+// 用户仅前三次成功充值产生奖励。奖励先进入待使用收益 aff_quota，用户手动
+// 划转后才成为可消费的 reward 余额。
 // ---------------------------------------------------------------------------
 var SignupBonusEnabled = false
 var QuotaForSignupBonus = 0
 
 var AffiliateRewardEnabled = false
 var AffiliateRewardRate = 0.05
-var AffiliateRewardFreezeDays = 7
 
 var ChannelDisableThreshold = 5.0
 var AutomaticDisableChannelEnabled = false

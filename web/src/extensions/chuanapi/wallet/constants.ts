@@ -67,6 +67,11 @@ export const DEFAULT_MIN_TOPUP = 1
 
 /**
  * Successful top-ups per invitee that generate referral rewards.
- * Mirrors `model.AffiliateRewardMaxTopUpEvents` on the backend.
+ * Mirrors `model.ReferralCommissionMaxTopUpEvents` on the backend.
  */
 export const REFERRAL_REWARD_MAX_TOPUP_EVENTS = 3
+
+/**
+ * Page size of the commission records list in the invite rewards card.
+ */
+export const REFERRAL_RECORDS_PAGE_SIZE = 5

@@ -17,24 +17,36 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { createInstance } from 'i18next'
+import { I18nextProvider } from 'react-i18next'
+import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 
+import en from '@/i18n/locales/en.json'
 import { getSelf } from '@/lib/api'
 
 import {
   calculateAmount,
   getAffiliateCode,
-  getReferralOverview,
+  getReferralRewards,
   getTopupInfo,
   getWalletSummary,
   redeemTopupCode,
   requestPayment,
+  transferAffiliateQuota,
 } from '../api'
 import { Wallet } from '../index'
 import type {
-  ReferralOverview,
+  AffiliateTransferResponse,
+  ReferralCommissionPage,
   TopupInfo,
   UserWalletData,
   WalletSummary,
@@ -69,7 +81,8 @@ vi.mock('../api', async (importOriginal) => ({
   redeemTopupCode: vi.fn(),
   getWalletSummary: vi.fn(),
   getAffiliateCode: vi.fn(),
-  getReferralOverview: vi.fn(),
+  getReferralRewards: vi.fn(),
+  transferAffiliateQuota: vi.fn(),
 }))
 
 vi.mock('../components/ledger-table', () => ({
@@ -82,41 +95,38 @@ const walletUser: UserWalletData = {
   quota: 1_000_000,
   used_quota: 250_000,
   request_count: 42,
-  aff_count: 0,
+  aff_count: 2,
+  aff_quota: 1_000_000,
+  aff_history_quota: 3_000_000,
   group: 'default',
 }
 
 const walletSummary: WalletSummary = {
-  total: 1_000_000,
+  total: 1_200_000,
   paid: 800_000,
   bonus: 200_000,
-  rules: {
-    signup_bonus_enabled: false,
-    signup_bonus_quota: 0,
-    referral_bonus_enabled: false,
-    referral_bonus_rate: 0,
-    referral_bonus_freeze_days: 0,
-  },
-}
-
-const referralOverview: ReferralOverview = {
-  aff_code: 'wallet-aff',
-  inviter_id: 0,
-  invite_count: 2,
-  pending_count: 1,
-  eligible_paid_quota: 200000,
-  pending_bonus_quota: 100000,
-  credited_bonus_quota: 200000,
-  total_bonus_quota: 300000,
-  reward_rate: 0.05,
-  freeze_days: 7,
+  reward: 200_000,
   rules: {
     signup_bonus_enabled: false,
     signup_bonus_quota: 0,
     referral_bonus_enabled: true,
     referral_bonus_rate: 0.05,
-    referral_bonus_freeze_days: 7,
   },
+}
+
+const referralRewards: ReferralCommissionPage = {
+  items: [
+    {
+      id: 1,
+      source_user_id: 9,
+      source_name: 'a***',
+      paid_quota: 1_000_000,
+      reward_quota: 50_000,
+      rate: 0.05,
+      created_at: 1735689600,
+    },
+  ],
+  total: 1,
 }
 
 const onlineTopupInfo: TopupInfo = {
@@ -133,14 +143,27 @@ const onlineTopupInfo: TopupInfo = {
   discount: {},
 }
 
+const testI18n = createInstance()
+
+beforeAll(async () => {
+  await testI18n.init({
+    lng: 'en',
+    fallbackLng: 'en',
+    resources: { en: { translation: en.translation } },
+    interpolation: { escapeValue: false },
+  })
+})
+
 function renderWallet() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   return render(
-    <QueryClientProvider client={queryClient}>
-      <Wallet />
-    </QueryClientProvider>
+    <I18nextProvider i18n={testI18n}>
+      <QueryClientProvider client={queryClient}>
+        <Wallet />
+      </QueryClientProvider>
+    </I18nextProvider>
   )
 }
 
@@ -155,9 +178,9 @@ describe('wallet funding flow', () => {
       success: true,
       data: 'wallet-aff',
     })
-    vi.mocked(getReferralOverview).mockResolvedValue({
+    vi.mocked(getReferralRewards).mockResolvedValue({
       success: true,
-      data: referralOverview,
+      data: referralRewards,
     })
     vi.mocked(calculateAmount).mockResolvedValue({ success: true, data: '73' })
   })
@@ -368,7 +391,224 @@ describe('wallet funding flow', () => {
     ).toBeInTheDocument()
   })
 
-  test('embeds the referral rewards card without the legacy standalone referral surfaces', async () => {
+  test('transfers pending rewards with an idempotency key and refreshes balances', async () => {
+    vi.mocked(getTopupInfo).mockResolvedValue({
+      success: true,
+      data: onlineTopupInfo,
+    })
+    vi.mocked(transferAffiliateQuota).mockResolvedValue({
+      success: true,
+      message: 'Transfer successful',
+    })
+
+    renderWallet()
+
+    const transferButton = await screen.findByRole('button', {
+      name: 'Transfer to Balance',
+    })
+    await userEvent.setup().click(transferButton)
+
+    const dialog = await screen.findByRole('dialog')
+    const selfCallsBeforeTransfer = vi.mocked(getSelf).mock.calls.length
+    const summaryCallsBeforeTransfer =
+      vi.mocked(getWalletSummary).mock.calls.length
+
+    await userEvent
+      .setup()
+      .click(within(dialog).getByRole('button', { name: 'Transfer' }))
+
+    await waitFor(() => {
+      expect(transferAffiliateQuota).toHaveBeenCalledTimes(1)
+      const [request, idempotencyKey] = vi.mocked(transferAffiliateQuota).mock
+        .calls[0]
+      expect(request).toEqual({ quota: 500000 })
+      expect(typeof idempotencyKey).toBe('string')
+      expect(idempotencyKey.length).toBeGreaterThan(0)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(vi.mocked(getSelf).mock.calls.length).toBeGreaterThan(
+        selfCallsBeforeTransfer
+      )
+      expect(vi.mocked(getWalletSummary).mock.calls.length).toBeGreaterThan(
+        summaryCallsBeforeTransfer
+      )
+    })
+  })
+
+  test('keeps the transfer dialog open when the transfer request fails', async () => {
+    vi.mocked(getTopupInfo).mockResolvedValue({
+      success: true,
+      data: onlineTopupInfo,
+    })
+    vi.mocked(transferAffiliateQuota).mockResolvedValue({
+      success: false,
+      message: '待使用邀请奖励不足',
+    })
+
+    renderWallet()
+
+    const transferButton = await screen.findByRole('button', {
+      name: 'Transfer to Balance',
+    })
+    await userEvent.setup().click(transferButton)
+
+    const dialog = await screen.findByRole('dialog')
+    await userEvent
+      .setup()
+      .click(within(dialog).getByRole('button', { name: 'Transfer' }))
+
+    await waitFor(() => {
+      expect(transferAffiliateQuota).toHaveBeenCalledTimes(1)
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
+  })
+
+  test('retries the same amount with the same idempotency key after a lost response', async () => {
+    vi.mocked(getTopupInfo).mockResolvedValue({
+      success: true,
+      data: onlineTopupInfo,
+    })
+    vi.mocked(transferAffiliateQuota)
+      .mockRejectedValueOnce(new Error('connection lost'))
+      .mockResolvedValueOnce({ success: true, message: 'Transfer successful' })
+
+    renderWallet()
+
+    const user = userEvent.setup()
+    await user.click(
+      await screen.findByRole('button', { name: 'Transfer to Balance' })
+    )
+    const dialog = await screen.findByRole('dialog')
+
+    await user.click(within(dialog).getByRole('button', { name: 'Transfer' }))
+    await waitFor(() => expect(transferAffiliateQuota).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Transfer' }))
+    await waitFor(() => expect(transferAffiliateQuota).toHaveBeenCalledTimes(2))
+
+    const [firstCall, secondCall] = vi.mocked(transferAffiliateQuota).mock.calls
+    expect(firstCall[0]).toEqual({ quota: 500000 })
+    expect(secondCall[0]).toEqual({ quota: 500000 })
+    expect(firstCall[1]).toBe(secondCall[1])
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+  })
+
+  test('uses a new idempotency key when the transfer amount changes after a failure', async () => {
+    vi.mocked(getTopupInfo).mockResolvedValue({
+      success: true,
+      data: onlineTopupInfo,
+    })
+    vi.mocked(transferAffiliateQuota)
+      .mockRejectedValueOnce(new Error('connection lost'))
+      .mockResolvedValueOnce({ success: true, message: 'Transfer successful' })
+
+    renderWallet()
+
+    const user = userEvent.setup()
+    await user.click(
+      await screen.findByRole('button', { name: 'Transfer to Balance' })
+    )
+    const dialog = await screen.findByRole('dialog')
+
+    await user.click(within(dialog).getByRole('button', { name: 'Transfer' }))
+    await waitFor(() => expect(transferAffiliateQuota).toHaveBeenCalledTimes(1))
+
+    const amountInput = within(dialog).getByLabelText('Transfer Amount')
+    await user.clear(amountInput)
+    await user.type(amountInput, '2')
+    await user.click(within(dialog).getByRole('button', { name: 'Transfer' }))
+
+    await waitFor(() => expect(transferAffiliateQuota).toHaveBeenCalledTimes(2))
+    const [firstCall, secondCall] = vi.mocked(transferAffiliateQuota).mock.calls
+    expect(firstCall[0]).toEqual({ quota: 500000 })
+    expect(secondCall[0]).toEqual({ quota: 1000000 })
+    expect(firstCall[1]).not.toBe(secondCall[1])
+  })
+
+  test('disables the transfer dialog while the transfer request is pending', async () => {
+    vi.mocked(getTopupInfo).mockResolvedValue({
+      success: true,
+      data: onlineTopupInfo,
+    })
+    let resolveTransfer: (value: AffiliateTransferResponse) => void = () =>
+      undefined
+    vi.mocked(transferAffiliateQuota).mockImplementation(
+      () =>
+        new Promise<AffiliateTransferResponse>((resolve) => {
+          resolveTransfer = resolve
+        })
+    )
+
+    renderWallet()
+
+    const user = userEvent.setup()
+    await user.click(
+      await screen.findByRole('button', { name: 'Transfer to Balance' })
+    )
+    const dialog = await screen.findByRole('dialog')
+    const transferButton = within(dialog).getByRole('button', {
+      name: 'Transfer',
+    })
+
+    await user.click(transferButton)
+    await waitFor(() => expect(transferButton).toBeDisabled())
+    await user.click(transferButton)
+    expect(transferAffiliateQuota).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveTransfer({ success: true, message: 'Transfer successful' })
+    })
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+  })
+
+  test('bounds the transfer amount between the minimum and the available quota', async () => {
+    vi.mocked(getTopupInfo).mockResolvedValue({
+      success: true,
+      data: onlineTopupInfo,
+    })
+    vi.mocked(transferAffiliateQuota).mockResolvedValue({
+      success: true,
+      message: 'Transfer successful',
+    })
+
+    renderWallet()
+
+    const user = userEvent.setup()
+    await user.click(
+      await screen.findByRole('button', { name: 'Transfer to Balance' })
+    )
+    const dialog = await screen.findByRole('dialog')
+    const amountInput = within(dialog).getByLabelText('Transfer Amount')
+    const transferButton = within(dialog).getByRole('button', {
+      name: 'Transfer',
+    })
+
+    expect(amountInput).toHaveAttribute('min', '1')
+    expect(amountInput).toHaveAttribute('max', '2')
+
+    fireEvent.change(amountInput, { target: { value: '0.5' } })
+    expect(transferButton).toBeDisabled()
+
+    fireEvent.change(amountInput, { target: { value: '3' } })
+    expect(transferButton).toBeDisabled()
+
+    fireEvent.change(amountInput, { target: { value: '2' } })
+    expect(transferButton).toBeEnabled()
+
+    await user.click(transferButton)
+    await waitFor(() =>
+      expect(transferAffiliateQuota).toHaveBeenCalledWith(
+        { quota: 1000000 },
+        expect.any(String)
+      )
+    )
+  })
+
+  test('copies the real sign-up link generated from the affiliate code', async () => {
     vi.mocked(getTopupInfo).mockResolvedValue({
       success: true,
       data: onlineTopupInfo,
@@ -376,13 +616,61 @@ describe('wallet funding flow', () => {
 
     renderWallet()
 
-    expect(await screen.findByText(/first 3 top-ups/)).toHaveTextContent(
-      "For each invited friend's first 3 top-ups, you earn 5.0% of the top-up amount as a reward."
+    const user = userEvent.setup()
+    await user.click(
+      await screen.findByRole('button', { name: 'Copy referral link' })
     )
+
+    expect(await navigator.clipboard.readText()).toBe(
+      `${window.location.origin}/sign-up?aff=wallet-aff`
+    )
+  })
+
+  test('shows the commission records error state and recovers on retry', async () => {
+    vi.mocked(getTopupInfo).mockResolvedValue({
+      success: true,
+      data: onlineTopupInfo,
+    })
+    vi.mocked(getReferralRewards)
+      .mockResolvedValueOnce({ success: false, message: 'records unavailable' })
+      .mockResolvedValue({ success: true, data: referralRewards })
+
+    renderWallet()
+
+    expect(
+      await screen.findByText('Oops! Something went wrong')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(
+        'No commission records yet. Invite friends to recharge and they will appear here.'
+      )
+    ).not.toBeInTheDocument()
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Retry' }))
+
+    expect(await screen.findByText('a***')).toBeInTheDocument()
+    expect(vi.mocked(getReferralRewards).mock.calls.length).toBeGreaterThan(1)
+  })
+
+  test('embeds the native invitation rewards card without legacy standalone referral surfaces', async () => {
+    vi.mocked(getTopupInfo).mockResolvedValue({
+      success: true,
+      data: onlineTopupInfo,
+    })
+
+    renderWallet()
+
+    expect(await screen.findByText('Invitation Rewards')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /For the first 3 recharges of an invited friend, you will receive 5\.0% of the recharge amount as a reward\./
+      )
+    ).toBeInTheDocument()
     expect(
       screen.getByDisplayValue(/\/sign-up\?aff=wallet-aff$/)
     ).toBeInTheDocument()
-    expect(screen.queryByText('Referral Rewards')).not.toBeInTheDocument()
+    expect(await screen.findByText('a***')).toBeInTheDocument()
+    expect(screen.queryByText('Referral Program')).not.toBeInTheDocument()
     expect(screen.queryByText('Referral History')).not.toBeInTheDocument()
   })
 })

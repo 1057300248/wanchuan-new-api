@@ -126,7 +126,6 @@ export interface SystemStatus {
     signup_bonus_quota?: number
     referral_bonus_enabled?: boolean
     referral_bonus_rate?: number
-    referral_bonus_freeze_days?: number
     quota_display_type?: string
     usd_exchange_rate?: number
     custom_currency_symbol?: string
@@ -178,7 +177,6 @@ export interface SystemStatus {
   signup_bonus_quota?: number
   referral_bonus_enabled?: boolean
   referral_bonus_rate?: number
-  referral_bonus_freeze_days?: number
   quota_display_type?: string
   usd_exchange_rate?: number
   custom_currency_symbol?: string

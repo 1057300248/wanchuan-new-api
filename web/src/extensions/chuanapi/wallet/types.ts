@@ -44,6 +44,7 @@ export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
 }
 export type StripePaymentResponse = ApiResponse<{ pay_link: string }>
 export type AffiliateCodeResponse = ApiResponse<string>
+export type AffiliateTransferResponse = ApiResponse
 export type CreemPaymentResponse = ApiResponse<{ checkout_url: string }>
 export type WaffoPaymentResponse = ApiResponse<
   { payment_url?: string } | string
@@ -215,6 +216,10 @@ export interface UserWalletData {
   request_count: number
   /** Number of successful affiliate invites */
   aff_count: number
+  /** Pending invitation rewards (quota units, transferable to the balance) */
+  aff_quota?: number
+  /** Total invitation rewards earned (quota units, never decreases on transfer) */
+  aff_history_quota?: number
   /** User group */
   group: string
   /** User role: 1=user, 10=admin, 100=root */
@@ -277,16 +282,16 @@ export interface WalletRules {
   signup_bonus_quota: number
   referral_bonus_enabled: boolean
   referral_bonus_rate: number
-  referral_bonus_freeze_days: number
 }
 
 /**
- * Wallet account summary (paid / bonus)
+ * Wallet account summary (paid / bonus / reward)
  */
 export interface WalletSummary {
   total: number
   paid: number
   bonus: number
+  reward: number
   rules: WalletRules
 }
 
@@ -295,7 +300,7 @@ export interface WalletSummary {
  */
 export interface WalletLedgerRow {
   id: number
-  account: 'paid' | 'bonus'
+  account: 'paid' | 'bonus' | 'reward'
   delta: number
   before: number
   after: number
@@ -315,58 +320,28 @@ export interface WalletLedgerPage {
 }
 
 /**
- * Referral overview
+ * Referral transfer request: amount in quota units to move from aff_quota
+ * into the spendable reward account.
  */
-export interface ReferralOverview {
-  aff_code: string
-  inviter_id: number
-  invite_count: number
-  pending_count: number
-  eligible_paid_quota: number
-  pending_bonus_quota: number
-  credited_bonus_quota: number
-  total_bonus_quota: number
-  reward_rate: number
-  freeze_days: number
-  rules: WalletRules
+export interface AffiliateTransferRequest {
+  quota: number
 }
 
 /**
- * Affiliate reward record
+ * One commission voucher created by a successful online balance top-up.
+ * The source friend is masked by the backend.
  */
-export interface AffiliateRewardItem {
+export interface ReferralCommissionItem {
   id: number
-  user_id: number
   source_user_id: number
-  eligible_paid_quota: number
+  source_name: string
+  paid_quota: number
   reward_quota: number
-  status: 'pending' | 'credited' | 'cancelled'
-  unlock_at: number
-  reference_type: string
-  reference_id: string
+  rate: number
   created_at: number
-  unlocked_at: number
 }
 
-export interface AffiliateRewardPage {
-  items: AffiliateRewardItem[]
-  total: number
-}
-
-/**
- * Privacy-filtered invitee row for the referral invitee list
- */
-export interface ReferralInvitee {
-  user_id: number
-  username: string
-  status: number
-  created_at: number
-  eligible_paid_quota: number
-  reward_quota: number
-  reward_status: '' | 'pending' | 'credited' | 'cancelled'
-}
-
-export interface ReferralInviteePage {
-  items: ReferralInvitee[]
+export interface ReferralCommissionPage {
+  items: ReferralCommissionItem[]
   total: number
 }

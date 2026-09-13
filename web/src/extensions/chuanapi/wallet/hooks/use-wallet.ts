@@ -20,8 +20,8 @@ import { useQuery } from '@tanstack/react-query'
 
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import { getReferralOverview, getWalletSummary } from '../api'
-import type { ReferralOverview, WalletSummary } from '../types'
+import { getReferralRewards, getWalletSummary } from '../api'
+import type { ReferralCommissionPage, WalletSummary } from '../types'
 
 // ============================================================================
 // Wallet / Referral Data Hook (TokenMix P1)
@@ -45,18 +45,21 @@ export function useWalletSummary() {
   }
 }
 
-export function useReferralOverview() {
+export function useReferralRewards(page: number, pageSize: number) {
   const query = useQuery({
-    queryKey: ['wallet', 'referral-overview'],
-    queryFn: async (): Promise<ReferralOverview> => {
-      const response = requireServerSuccess(await getReferralOverview())
-      if (!response.data) throw new Error('Referral overview is unavailable')
+    queryKey: ['wallet', 'referral-rewards', page, pageSize],
+    queryFn: async (): Promise<ReferralCommissionPage> => {
+      const response = requireServerSuccess(
+        await getReferralRewards(page, pageSize)
+      )
+      if (!response.data) throw new Error('Referral rewards are unavailable')
       return response.data
     },
   })
 
   return {
-    overview: query.data ?? null,
+    records: query.data?.items ?? [],
+    total: query.data?.total ?? 0,
     loading: query.isFetching,
     error: query.error,
     refetch: query.refetch,

@@ -293,7 +293,7 @@ var userQuotaColumns = []string{"quota", "used_quota", "aff_quota", "aff_history
 // （chuanapi -> BackfillLegacyQuotaAccountsWithDB）每次启动都会把 64 位
 // users.quota 回填进 quota_paid，32 位列会在非严格模式下静默截断。因此这三列的
 // 检查不受 SKIP_64BIT_QUOTA_SCHEMA_CHECK 影响，不提供任何绕过方式。
-var chuanapiWalletQuotaColumns = []string{"quota_paid", "quota_bonus", "quota_affiliate"}
+var chuanapiWalletQuotaColumns = []string{"quota_paid", "quota_bonus", "quota_reward"}
 
 // ensureUserQuotaColumns rejects a legacy 32-bit wallet schema before any
 // migrations run. The 64-bit-only build intentionally does not auto-upgrade

@@ -39,9 +39,9 @@ import type {
   WaffoPancakePaymentResponse,
   WalletSummary,
   WalletLedgerPage,
-  ReferralOverview,
-  AffiliateRewardPage,
-  ReferralInviteePage,
+  ReferralCommissionPage,
+  AffiliateTransferRequest,
+  AffiliateTransferResponse,
 } from './types'
 
 // ============================================================================
@@ -276,22 +276,12 @@ export async function getWalletLedger(params: {
 }
 
 /**
- * Get referral overview (pending / credited bonus)
- */
-export async function getReferralOverview(): Promise<
-  ApiResponse<ReferralOverview>
-> {
-  const res = await api.get('/api/user/referral/overview')
-  return res.data
-}
-
-/**
- * Get paginated affiliate reward records
+ * Get paginated commission records for the current user
  */
 export async function getReferralRewards(
   p: number,
   page_size: number
-): Promise<ApiResponse<AffiliateRewardPage>> {
+): Promise<ApiResponse<ReferralCommissionPage>> {
   const res = await api.get(
     `/api/user/referral/rewards?p=${p}&page_size=${page_size}`
   )
@@ -299,14 +289,15 @@ export async function getReferralRewards(
 }
 
 /**
- * Get paginated direct invitees with their reward progress
+ * Transfer pending invitation rewards into the spendable reward balance.
+ * The client MUST send a stable Idempotency-Key so a retry cannot debit twice.
  */
-export async function getReferralInvitees(
-  p: number,
-  page_size: number
-): Promise<ApiResponse<ReferralInviteePage>> {
-  const res = await api.get(
-    `/api/user/referral/invitees?p=${p}&page_size=${page_size}`
-  )
+export async function transferAffiliateQuota(
+  request: AffiliateTransferRequest,
+  idempotencyKey: string
+): Promise<AffiliateTransferResponse> {
+  const res = await api.post('/api/user/aff_transfer', request, {
+    headers: { 'Idempotency-Key': idempotencyKey },
+  })
   return res.data
 }

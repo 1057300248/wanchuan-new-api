@@ -33,15 +33,15 @@ const user: UserWalletData = {
 }
 
 const summary: WalletSummary = {
-  total: 1_500_000,
+  total: 2_000_000,
   paid: 1_000_000,
   bonus: 500_000,
+  reward: 500_000,
   rules: {
     signup_bonus_enabled: true,
     signup_bonus_quota: 500_000,
     referral_bonus_enabled: true,
-    referral_bonus_rate: 0.2,
-    referral_bonus_freeze_days: 7,
+    referral_bonus_rate: 0.05,
   },
 }
 
@@ -72,7 +72,10 @@ describe('wallet stats card', () => {
     expect(getStat(container, 'paid')).toHaveTextContent('Paid Balance')
     expect(getStat(container, 'paid')).toHaveTextContent('$2.00')
     expect(getStat(container, 'bonus')).toHaveTextContent('Bonus Balance')
-    expect(getStat(container, 'bonus')).toHaveTextContent('$1.00')
+    expect(getStat(container, 'bonus')).toHaveTextContent('$2.00')
+    expect(getStat(container, 'bonus')).toHaveTextContent(
+      'Signup bonus applies to eligible models; invitation rewards apply to all models'
+    )
     expect(getStat(container, 'usage')).toHaveTextContent('Total Usage')
     expect(getStat(container, 'usage')).toHaveTextContent('$3.00')
     expect(getStat(container, 'requests')).toHaveTextContent('API Requests')
@@ -110,7 +113,7 @@ describe('wallet stats card', () => {
     )
 
     expect(getStat(container, 'paid')).toHaveTextContent('$2.00')
-    expect(getStat(container, 'bonus')).toHaveTextContent('$1.00')
+    expect(getStat(container, 'bonus')).toHaveTextContent('$2.00')
     expect(
       getStat(container, 'usage').querySelectorAll('[data-slot="skeleton"]')
     ).toHaveLength(3)

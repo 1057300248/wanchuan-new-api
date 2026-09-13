@@ -51,13 +51,7 @@ func SupportModels() []any { return supportmodule.Models() }
 
 // RegisterRuntimeServices composes ChuanAPI-owned runtime policy services.
 func RegisterRuntimeServices() error {
-	if err := walletmodule.RegisterRuntime(); err != nil {
-		return err
-	}
-	if err := affiliatemodule.RegisterRuntime(); err != nil {
-		return err
-	}
-	return nil
+	return walletmodule.RegisterRuntime()
 }
 
 // RegisterPaymentProviders composes ChuanAPI-owned provider catalogues into the

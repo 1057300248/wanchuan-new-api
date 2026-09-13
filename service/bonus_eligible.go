@@ -13,9 +13,10 @@ import (
 // 钱包计费账户顺序（TokenMix P0-5）
 //
 // 规则（fail-closed）：只有模型元数据显式 bonus_eligible=true 时才允许使用
-// 赠金，扣减顺序 bonus -> paid；其余模型（false/null/缺失）只允许 paid。
-// 预扣、追扣（reserve）、结算差额补扣、异步任务、PostConsume 回退路径都必须
-// 使用同一套顺序；退款必须精确退回本次原始扣款账户。
+// 赠金，扣减顺序 bonus -> reward -> paid；其余模型（false/null/缺失）顺序为
+// reward -> paid（邀请奖励不受 bonus 限制）。预扣、追扣（reserve）、结算差额
+// 补扣、异步任务、PostConsume 回退路径都必须使用同一套顺序；退款必须精确退回
+// 本次原始扣款账户。
 // ---------------------------------------------------------------------------
 
 // ErrModelBonusNotSupported 表示请求模型不支持赠金支付且付费余额不足。
@@ -39,7 +40,7 @@ func WalletDebitOrder(relayInfo *relaycommon.RelayInfo) []model.LedgerAccount {
 	for _, raw := range rawOrder {
 		account := model.LedgerAccount(raw)
 		switch account {
-		case model.AccountBonus, model.AccountPaid, model.AccountAffiliate:
+		case model.AccountBonus, model.AccountReward, model.AccountPaid:
 			order = append(order, account)
 		}
 	}

@@ -46,9 +46,8 @@ func TestTokenMixP1RoutesRegistered(t *testing.T) {
 	expected := []string{
 		http.MethodGet + " /api/user/wallet",
 		http.MethodGet + " /api/user/wallet/ledger",
-		http.MethodGet + " /api/user/referral/overview",
 		http.MethodGet + " /api/user/referral/rewards",
-		http.MethodGet + " /api/user/referral/invitees",
+		http.MethodPost + " /api/user/aff_transfer",
 		http.MethodPost + " /api/token/:id/key",
 		http.MethodPost + " /api/token/batch/keys",
 	}
@@ -56,7 +55,8 @@ func TestTokenMixP1RoutesRegistered(t *testing.T) {
 		require.True(t, paths[path], "route not registered: %s", path)
 	}
 	removed := []string{
-		http.MethodPost + " /api/user/aff_transfer",
+		http.MethodGet + " /api/user/referral/overview",
+		http.MethodGet + " /api/user/referral/invitees",
 		http.MethodPost + " /api/user/referral/mature",
 		http.MethodGet + " /api/user/referral/withdrawals",
 		http.MethodPost + " /api/user/referral/withdrawals",

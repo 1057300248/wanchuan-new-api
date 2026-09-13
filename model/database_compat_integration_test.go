@@ -32,8 +32,7 @@ func installDatabaseCompatRegistry(t *testing.T) {
 			&BalanceLedgerOperation{},
 			&BalanceLedger{},
 			&ModelBonusEligibleAudit{},
-			&AffiliateReward{},
-			&AffiliateRewardReconcileState{},
+			&ReferralCommission{},
 		},
 	}))
 	require.NoError(t, reg.RegisterModelSet(extension.ModelSet{
@@ -172,7 +171,7 @@ func TestDatabaseCompatibilityReal(t *testing.T) {
 	require.NoError(t, DB.First(&stored, user.Id).Error)
 	require.Equal(t, largeQuota, stored.Quota)
 	require.Equal(t, largeQuota, stored.QuotaPaid)
-	require.Equal(t, stored.QuotaPaid+stored.QuotaBonus+stored.QuotaAffiliate, stored.Quota)
+	require.Equal(t, stored.QuotaPaid+stored.QuotaBonus+stored.QuotaReward, stored.Quota)
 
 	// Exercise the quota_data write/update/group-by path, which is sensitive to
 	// SQL dialect differences and is used by the dashboard/export flow.

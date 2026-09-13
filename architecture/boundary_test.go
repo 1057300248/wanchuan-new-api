@@ -283,8 +283,8 @@ func TestWalletAndAffiliateRuntimeOwnershipStaysInModules(t *testing.T) {
 	for _, path := range []string{
 		`"/wallet"`,
 		`"/wallet/ledger"`,
-		`"/referral/overview"`,
 		`"/referral/rewards"`,
+		`"/aff_transfer"`,
 	} {
 		assert.NotContains(t, string(apiRouter), path,
 			"Wallet/Affiliate user route %s belongs to modules/chuanapi/wallet/routes", path)

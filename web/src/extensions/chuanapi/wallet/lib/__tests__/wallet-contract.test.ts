@@ -29,19 +29,20 @@ function source(relativePath: string): string {
 }
 
 describe('ChuanAPI wallet surface contract', () => {
-  test('wallet page composes the supported funding surfaces', () => {
+  test('wallet page composes the supported funding surfaces and the native transfer dialog', () => {
     const wallet = source('index.tsx')
     const required = [
       'WalletStatsCard',
       'RechargeFormCard',
       'AffiliateRewardsCard',
       'LedgerTable',
+      'TransferDialog',
     ]
     for (const component of required) {
       expect(wallet).toMatch(new RegExp(`<${component}`))
     }
     expect(wallet).not.toMatch(
-      /WalletAccountsCard|RedemptionCard|SubscriptionPlansCard|BillingHistoryDialog|TransferDialog|ReferralRewardsCard|ReferralHistoryCard/
+      /WalletAccountsCard|RedemptionCard|SubscriptionPlansCard|BillingHistoryDialog|ReferralRewardsCard|ReferralHistoryCard/
     )
   })
 
@@ -51,7 +52,7 @@ describe('ChuanAPI wallet surface contract', () => {
     expect(form).not.toMatch(/enable_redemption !== false/)
   })
 
-  test('wallet summary exposes only paid, bonus, usage, and request metrics', () => {
+  test('wallet summary combines bonus and reward with a scope hint', () => {
     const stats = source('components/wallet-stats-card.tsx')
     for (const label of [
       'Paid Balance',
@@ -61,10 +62,14 @@ describe('ChuanAPI wallet surface contract', () => {
     ]) {
       expect(stats).toContain(`t('${label}')`)
     }
+    expect(stats).toMatch(/summary\?\.reward/)
+    expect(stats).toContain(
+      "'Signup bonus applies to eligible models; invitation rewards apply to all models'"
+    )
     expect(stats).not.toMatch(/t\('(Current Balance|Total Balance)'\)/)
   })
 
-  test('ledger filters expose paid and bonus but never affiliate', () => {
+  test('ledger filters expose paid, bonus, and reward but never affiliate', () => {
     const ledger = source('components/ledger-table.tsx')
     expect(ledger).toMatch(/value: 'paid'/)
     expect(ledger).toMatch(/value: 'bonus'/)

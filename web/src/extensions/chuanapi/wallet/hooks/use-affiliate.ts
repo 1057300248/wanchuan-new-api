@@ -16,24 +16,41 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState, useEffect, useCallback } from 'react'
+import i18next from 'i18next'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { toast } from 'sonner'
 
-import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import { getAffiliateCode } from '../api'
+import { getAffiliateCode, transferAffiliateQuota } from '../api'
 import { generateAffiliateLink } from '../lib'
 
 // ============================================================================
 // Affiliate Hook
 // ============================================================================
 
+/**
+ * Build a stable idempotency key for one transfer attempt. The backend treats
+ * the same key + same amount as a replay, so a retry after a lost response
+ * cannot debit the pending reward twice.
+ */
+function createTransferIdempotencyKey(): string {
+  if (
+    typeof crypto !== 'undefined' &&
+    typeof crypto.randomUUID === 'function'
+  ) {
+    return crypto.randomUUID()
+  }
+  return `transfer-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 export function useAffiliate() {
   const [affiliateCode, setAffiliateCode] = useState<string>('')
   const [affiliateLink, setAffiliateLink] = useState<string>('')
   const [loading, setLoading] = useState(true)
-  const { copyToClipboard } = useCopyToClipboard()
+  const [transferring, setTransferring] = useState(false)
+  const pendingTransferRef = useRef<{ quota: number; key: string } | null>(null)
 
   // Fetch affiliate code
   const fetchAffiliateCode = useCallback(async () => {
@@ -53,10 +70,36 @@ export function useAffiliate() {
     }
   }, [])
 
-  // Copy affiliate link
-  const copyAffiliateLink = useCallback(() => {
-    copyToClipboard(affiliateLink)
-  }, [affiliateLink, copyToClipboard])
+  const transferQuota = useCallback(async (quota: number): Promise<boolean> => {
+    if (!Number.isFinite(quota) || quota <= 0) {
+      toast.error(i18next.t('Transfer failed'))
+      return false
+    }
+    let idempotencyKey =
+      pendingTransferRef.current?.quota === quota
+        ? pendingTransferRef.current.key
+        : ''
+    if (!idempotencyKey) {
+      idempotencyKey = createTransferIdempotencyKey()
+      pendingTransferRef.current = { quota, key: idempotencyKey }
+    }
+    try {
+      setTransferring(true)
+      const response = await transferAffiliateQuota({ quota }, idempotencyKey)
+      if (response.success) {
+        pendingTransferRef.current = null
+        toast.success(response.message || i18next.t('Transfer successful'))
+        return true
+      }
+      handleServerError(response, i18next.t('Transfer failed'))
+      return false
+    } catch (_error) {
+      handleServerError(_error, i18next.t('Transfer failed'))
+      return false
+    } finally {
+      setTransferring(false)
+    }
+  }, [])
 
   useEffect(() => {
     fetchAffiliateCode()
@@ -66,7 +109,8 @@ export function useAffiliate() {
     affiliateCode,
     affiliateLink,
     loading,
-    copyAffiliateLink,
+    transferring,
+    transferQuota,
     refetch: fetchAffiliateCode,
   }
 }

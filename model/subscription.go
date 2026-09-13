@@ -593,7 +593,7 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		if order.Status != common.TopUpStatusPending {
 			return ErrSubscriptionOrderStatusInvalid
 		}
-		plan, err := GetSubscriptionPlanById(order.PlanId)
+		plan, err := getSubscriptionPlanByIdTx(tx, order.PlanId)
 		if err != nil {
 			return err
 		}
@@ -614,15 +614,6 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 			upgradeGroup = strings.TrimSpace(subscription.UpgradeGroup)
 		}
 		if err := upsertSubscriptionTopUpTx(tx, &order); err != nil {
-			return err
-		}
-		// 推荐返利：外部订阅支付计入充值次数（前三次），按套餐实付金额折算。
-		// 余额购买订阅不经过本函数，因此不会重复计次。
-		rewardBaseQuota, err := calcSubscriptionBalanceQuota(order.Money)
-		if err != nil {
-			return err
-		}
-		if err := recordAffiliateRewardForTopUpEventTx(tx, order.UserId, rewardBaseQuota, AffiliateReferenceSubscriptionOrder, order.TradeNo); err != nil {
 			return err
 		}
 		order.Status = common.TopUpStatusSuccess

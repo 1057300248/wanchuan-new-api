@@ -5,7 +5,6 @@ import (
 
 	"github.com/QuantumNous/new-api/extension"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/pkg/affiliateport"
 )
 
 const (
@@ -13,16 +12,14 @@ const (
 	ModelsName    = "affiliate_models"
 )
 
+// Models is the ChuanAPI-owned invite/reward schema: one commission voucher per
+// successful online balance top-up (first three per invited user).
 func Models() []any {
 	return []any{
-		&model.AffiliateReward{},
-		&model.AffiliateRewardReconcileState{},
+		&model.ReferralCommission{},
 	}
 }
 
-// RegisterSchema owns Affiliate's AutoMigrate contribution. The concrete root
-// model types remain a temporary data-ownership boundary, but they are no longer
-// grouped under the Wallet descriptor.
 func RegisterSchema(reg *extension.Registry) error {
 	if reg == nil {
 		return fmt.Errorf("chuanapi affiliate: registry must not be nil")
@@ -33,9 +30,4 @@ func RegisterSchema(reg *extension.Registry) error {
 		Phase:     extension.PhaseAfterCoreModels,
 		Models:    Models(),
 	})
-}
-
-// RegisterRuntime installs ChuanAPI's reward policy behind a generic port.
-func RegisterRuntime() error {
-	return affiliateport.SetDefault(NewRewardService())
 }

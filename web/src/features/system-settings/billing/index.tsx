@@ -31,7 +31,6 @@ const defaultBillingSettings: BillingSettings = {
   QuotaForSignupBonus: 0,
   AffiliateRewardEnabled: false,
   AffiliateRewardRate: 0.05,
-  AffiliateRewardFreezeDays: 7,
   TopUpLink: '',
   'general_setting.docs_link': '',
   'quota_setting.enable_free_model_pre_consume': true,
