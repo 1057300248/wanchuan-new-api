@@ -50,7 +50,6 @@ func TestAffiliateRewardMaintenanceSystemTaskRecordsSuccessfulRun(t *testing.T) 
 	assert.Empty(t, finished.Error)
 	var result affiliatemodule.AffiliateRewardMaintenanceResult
 	require.NoError(t, json.Unmarshal([]byte(finished.Result), &result))
-	assert.Zero(t, result.ReconcileCandidates)
 	assert.Zero(t, result.MaturedUsers)
 	assert.Zero(t, result.MaturedRewards)
 }
@@ -71,12 +70,12 @@ func TestAffiliateRewardMaintenanceSystemTaskPersistsFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	// The reconciliation query depends on balance_ledgers. Removing only that
-	// table leaves system_tasks writable, allowing the handler to persist the
-	// failure instead of merely emitting a process log as the legacy goroutine did.
-	require.NoError(t, model.DB.Migrator().DropTable(&model.BalanceLedger{}))
+	// The maturity query depends on affiliate_rewards. Removing only that table
+	// leaves system_tasks writable, allowing the handler to persist the failure
+	// instead of merely emitting a process log.
+	require.NoError(t, model.DB.Migrator().DropTable(&model.AffiliateReward{}))
 	t.Cleanup(func() {
-		require.NoError(t, model.DB.AutoMigrate(&model.BalanceLedger{}))
+		require.NoError(t, model.DB.AutoMigrate(&model.AffiliateReward{}))
 	})
 
 	handler.Run(context.Background(), claimed, "affiliate-failure-runner")
@@ -85,5 +84,5 @@ func TestAffiliateRewardMaintenanceSystemTaskPersistsFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, finished)
 	assert.Equal(t, model.SystemTaskStatusFailed, finished.Status)
-	assert.Contains(t, finished.Error, "affiliate reward reconciliation query failed")
+	assert.Contains(t, finished.Error, "affiliate reward maturity query failed")
 }

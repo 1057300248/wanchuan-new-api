@@ -21,7 +21,8 @@ const (
 	AffiliateRewardCancelled AffiliateRewardStatus = "cancelled"
 )
 
-// AffiliateReward 记录下级实际 paid 消费产生的模型赠金。
+// AffiliateReward 记录受邀用户成功充值产生的模型赠金（每人前三次充值），
+// 冻结期结束后解锁进入邀请人的 bonus 账户。
 type AffiliateReward struct {
 	Id                int    `json:"id" gorm:"primaryKey;autoIncrement"`
 	UserId            int    `json:"user_id" gorm:"not null;index:idx_reward_user_status,priority:1"`
@@ -41,14 +42,32 @@ type AffiliateReward struct {
 
 func (AffiliateReward) TableName() string { return "affiliate_rewards" }
 
-var (
-	ErrAffiliateRewardExists        = errors.New("affiliate reward already recorded")
-	ErrAffiliateRewardLimitExceeded = errors.New("affiliate reward limit exceeded")
+var ErrAffiliateRewardExists = errors.New("affiliate reward already recorded")
+
+// AffiliateRewardMaxTopUpEvents 是每位受邀用户产生返利的成功充值次数上限：
+// 前三次充值按比例返利，第四次及以后不再生成奖励记录，也不产生余额变动。
+const AffiliateRewardMaxTopUpEvents = 3
+
+// 计入充值次数的引用类型。topup 覆盖在线充值（含易支付/Stripe/Creem/
+// Waffo/Waffo Pancake）与外部订阅支付；redemption 覆盖兑换码充值；
+// subscription_order 标记外部订阅订单（用于解锁时复核）。
+const (
+	AffiliateReferenceTopUp             = "topup"
+	AffiliateReferenceRedemption        = "redemption"
+	AffiliateReferenceSubscriptionOrder = "subscription_order"
 )
 
-const maxAffiliateRewardsPerSourceUser = 3
+// isAffiliateTopUpEventReference 判断奖励引用是否属于充值事件口径。
+func isAffiliateTopUpEventReference(referenceType string) bool {
+	switch referenceType {
+	case AffiliateReferenceTopUp, AffiliateReferenceRedemption, AffiliateReferenceSubscriptionOrder:
+		return true
+	default:
+		return false
+	}
+}
 
-// CreateAffiliateReward 幂等创建奖励；同一消费引用只生成一次记录。
+// CreateAffiliateReward 幂等创建奖励；同一充值引用只生成一次记录。
 func CreateAffiliateReward(reward *AffiliateReward) error {
 	if reward == nil || reward.UserId <= 0 || reward.SourceUserId <= 0 ||
 		reward.RewardQuota <= 0 || reward.IdempotencyKey == "" ||
@@ -64,24 +83,167 @@ func CreateAffiliateReward(reward *AffiliateReward) error {
 	if reward.CreatedAt == 0 {
 		reward.CreatedAt = common.GetTimestamp()
 	}
-	return DB.Transaction(func(tx *gorm.DB) error {
-		var existingRewards []AffiliateReward
-		if err := lockForUpdate(tx).
-			Where("source_user_id = ? AND status <> ?", reward.SourceUserId, string(AffiliateRewardCancelled)).
-			Find(&existingRewards).Error; err != nil {
-			return err
-		}
-		if len(existingRewards) >= maxAffiliateRewardsPerSourceUser {
-			return fmt.Errorf("%w: source user %d", ErrAffiliateRewardLimitExceeded, reward.SourceUserId)
-		}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(reward).Error; err != nil {
-			return err
-		}
-		if reward.Id == 0 {
-			return ErrAffiliateRewardExists
-		}
+	if err := DB.Clauses(clause.OnConflict{DoNothing: true}).Create(reward).Error; err != nil {
+		return err
+	}
+	if reward.Id == 0 {
+		return ErrAffiliateRewardExists
+	}
+	return nil
+}
+
+// countReferralTopUpEventsTx 统计受邀用户已完成的成功充值次数：top_ups 中
+// 状态为 success 的在线充值与外部订阅订单，加上已使用的兑换码。计数在调用方
+// 的结算事务内进行，且调用方已持有该用户的行锁，因此并发回调串行化。
+func countReferralTopUpEventsTx(tx *gorm.DB, sourceUserId int) (int, error) {
+	if tx == nil || sourceUserId <= 0 {
+		return 0, fmt.Errorf("%w: missing source user", ErrLedgerInvalidEntry)
+	}
+	var topUpCount int64
+	if err := tx.Model(&TopUp{}).
+		Where("user_id = ? AND status = ?", sourceUserId, common.TopUpStatusSuccess).
+		Count(&topUpCount).Error; err != nil {
+		return 0, err
+	}
+	var redemptionCount int64
+	if err := tx.Model(&Redemption{}).
+		Where("used_user_id = ? AND status = ?", sourceUserId, common.RedemptionCodeStatusUsed).
+		Count(&redemptionCount).Error; err != nil {
+		return 0, err
+	}
+	return int(topUpCount + redemptionCount), nil
+}
+
+// recordAffiliateRewardForTopUpEventTx 在一次成功充值结算事务内为邀请人创建
+// 返利记录（前三次充值各按 AffiliateRewardRate 计算）。重复回调由引用幂等键
+// 去重；余额购买订阅不经过该入口，因此不会重复计次。返回错误会回滚整笔充值，
+// 不会留下悬空的返利记录。
+func recordAffiliateRewardForTopUpEventTx(tx *gorm.DB, sourceUserId, topUpQuota int, referenceType, referenceId string) error {
+	if tx == nil || sourceUserId <= 0 || topUpQuota <= 0 || referenceType == "" || referenceId == "" {
 		return nil
-	})
+	}
+	if !common.AffiliateRewardEnabled || common.AffiliateRewardRate <= 0 || common.AffiliateRewardFreezeDays < 0 {
+		return nil
+	}
+	if !isAffiliateTopUpEventReference(referenceType) {
+		return nil
+	}
+
+	var source User
+	if err := lockForUpdate(tx).Select("id, status, inviter_id").Where("id = ?", sourceUserId).First(&source).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if source.Status != common.UserStatusEnabled || source.InviterId <= 0 || source.InviterId == sourceUserId {
+		return nil
+	}
+	var inviter User
+	if err := tx.Select("id, status").Where("id = ?", source.InviterId).First(&inviter).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if inviter.Status != common.UserStatusEnabled {
+		return nil
+	}
+
+	topUpEvents, err := countReferralTopUpEventsTx(tx, sourceUserId)
+	if err != nil {
+		return err
+	}
+	if topUpEvents > AffiliateRewardMaxTopUpEvents {
+		return nil
+	}
+
+	rewardQuota, clamp := common.QuotaFromFloatChecked(float64(topUpQuota) * common.AffiliateRewardRate)
+	if clamp != nil {
+		common.SysError(fmt.Sprintf("affiliate reward quota saturated: source=%d inviter=%d topup=%d rate=%g clamped=%d",
+			sourceUserId, inviter.Id, topUpQuota, common.AffiliateRewardRate, rewardQuota))
+	}
+	if rewardQuota <= 0 {
+		return nil
+	}
+
+	reward := &AffiliateReward{
+		UserId: inviter.Id, SourceUserId: sourceUserId, EligiblePaidQuota: topUpQuota,
+		RewardQuota: rewardQuota, Status: string(AffiliateRewardPending),
+		UnlockAt:      common.GetTimestamp() + int64(common.AffiliateRewardFreezeDays)*86400,
+		ReferenceType: referenceType, ReferenceId: referenceId,
+		IdempotencyKey: fmt.Sprintf("affiliate_reward:%s:%s", referenceType, referenceId),
+	}
+	result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(reward)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil
+	}
+	common.SysLog(fmt.Sprintf("affiliate reward created: inviter=%d source=%d topup=%d reward=%d ref=%s/%s unlock_at=%d",
+		inviter.Id, sourceUserId, topUpQuota, rewardQuota, referenceType, referenceId, reward.UnlockAt))
+	return nil
+}
+
+// affiliateTopUpEventValidityTx 在奖励解锁时复核充值事件是否仍然成立。
+func affiliateTopUpEventValidityTx(tx *gorm.DB, reward *AffiliateReward) (bool, string, error) {
+	if tx == nil || reward == nil {
+		return false, "", fmt.Errorf("%w: invalid reward", ErrLedgerInvalidEntry)
+	}
+	switch reward.ReferenceType {
+	case AffiliateReferenceTopUp:
+		var topUp TopUp
+		if err := tx.Select("status, user_id").Where("trade_no = ?", reward.ReferenceId).First(&topUp).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return false, "topup_missing", nil
+			}
+			return false, "", err
+		}
+		if topUp.Status != common.TopUpStatusSuccess {
+			return false, "topup_not_success", nil
+		}
+		if topUp.UserId != reward.SourceUserId {
+			return false, "topup_user_mismatch", nil
+		}
+		return true, "", nil
+	case AffiliateReferenceRedemption:
+		redemptionId, err := strconv.Atoi(reward.ReferenceId)
+		if err != nil || redemptionId <= 0 {
+			return false, "redemption_invalid", nil
+		}
+		var redemption Redemption
+		if err := tx.Select("status, used_user_id").Where("id = ?", redemptionId).First(&redemption).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return false, "redemption_missing", nil
+			}
+			return false, "", err
+		}
+		if redemption.Status != common.RedemptionCodeStatusUsed {
+			return false, "redemption_not_used", nil
+		}
+		if redemption.UsedUserId != reward.SourceUserId {
+			return false, "redemption_user_mismatch", nil
+		}
+		return true, "", nil
+	case AffiliateReferenceSubscriptionOrder:
+		var order SubscriptionOrder
+		if err := tx.Select("status, user_id").Where("trade_no = ?", reward.ReferenceId).First(&order).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return false, "subscription_missing", nil
+			}
+			return false, "", err
+		}
+		if order.Status != common.TopUpStatusSuccess {
+			return false, "subscription_not_success", nil
+		}
+		if order.UserId != reward.SourceUserId {
+			return false, "subscription_user_mismatch", nil
+		}
+		return true, "", nil
+	default:
+		return false, "reference_invalid", nil
+	}
 }
 
 // MatureAffiliateRewards 幂等处理该用户所有到期奖励，成熟后直接进入 bonus。
@@ -147,29 +309,41 @@ func matureOneAffiliateReward(userId, rewardId int, now int64) (bool, error) {
 			return cancelAffiliateRewardTx(tx, &reward, now, "inviter_changed")
 		}
 
-		refs, eligible, err := affiliateRewardCostRefsTx(tx, &reward)
-		if err != nil {
-			return err
-		}
-		if !eligible {
-			return cancelAffiliateRewardTx(tx, &reward, now, "source_not_eligible")
-		}
-		cost, err := NetCostByReferencesTx(tx, reward.SourceUserId, refs)
-		if err != nil {
-			return err
-		}
-		currentPaidQuota := -cost[AccountPaid]
-		if currentPaidQuota <= 0 {
-			return cancelAffiliateRewardTx(tx, &reward, now, "paid_cost_refunded")
-		}
-
+		currentPaidQuota := reward.EligiblePaidQuota
 		adjustedRewardQuota := reward.RewardQuota
-		if reward.EligiblePaidQuota > 0 && currentPaidQuota != reward.EligiblePaidQuota {
-			rateSnapshot := float64(reward.RewardQuota) / float64(reward.EligiblePaidQuota)
-			adjustedRewardQuota = int(math.Round(float64(currentPaidQuota) * rateSnapshot))
-		}
-		if adjustedRewardQuota <= 0 {
-			return cancelAffiliateRewardTx(tx, &reward, now, "reward_rounds_to_zero")
+		if isAffiliateTopUpEventReference(reward.ReferenceType) {
+			// 充值型奖励在解锁时复核对应充值事件仍然成立，金额保持创建时快照。
+			valid, reason, err := affiliateTopUpEventValidityTx(tx, &reward)
+			if err != nil {
+				return err
+			}
+			if !valid {
+				return cancelAffiliateRewardTx(tx, &reward, now, reason)
+			}
+		} else {
+			// 旧历史（relay/task 消费引用）沿用成本复核：退款或失败后取消。
+			refs, eligible, err := affiliateRewardCostRefsTx(tx, &reward)
+			if err != nil {
+				return err
+			}
+			if !eligible {
+				return cancelAffiliateRewardTx(tx, &reward, now, "source_not_eligible")
+			}
+			cost, err := NetCostByReferencesTx(tx, reward.SourceUserId, refs)
+			if err != nil {
+				return err
+			}
+			currentPaidQuota = -cost[AccountPaid]
+			if currentPaidQuota <= 0 {
+				return cancelAffiliateRewardTx(tx, &reward, now, "paid_cost_refunded")
+			}
+			if reward.EligiblePaidQuota > 0 && currentPaidQuota != reward.EligiblePaidQuota {
+				rateSnapshot := float64(reward.RewardQuota) / float64(reward.EligiblePaidQuota)
+				adjustedRewardQuota = int(math.Round(float64(currentPaidQuota) * rateSnapshot))
+			}
+			if adjustedRewardQuota <= 0 {
+				return cancelAffiliateRewardTx(tx, &reward, now, "reward_rounds_to_zero")
+			}
 		}
 
 		entry := LedgerEntry{

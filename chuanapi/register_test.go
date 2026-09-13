@@ -26,8 +26,6 @@ var expectedWalletModelOrder = []any{
 var expectedAffiliateModelOrder = []any{
 	&model.AffiliateReward{},
 	&model.AffiliateRewardReconcileState{},
-	&model.ReferralCoinReward{},
-	&model.ReferralCoinLedger{},
 }
 
 var expectedPaymentModelOrder = []any{

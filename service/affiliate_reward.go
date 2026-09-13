@@ -5,50 +5,14 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/pkg/affiliateport"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
 // ---------------------------------------------------------------------------
-// 推荐返利（TokenMix P1-3）— 服务层规则
-//
-// 目标默认规则：符合条件的实际 paid 消费按 AffiliateRewardRate（20%）计算。
-// bonus 消费、订阅消费、退款/失败请求、禁用或异常用户不产生返利。
-// 每个源请求/消费只创建一次奖励（幂等键 = 引用），奖励先 frozen/pending，
-// 7 天（AffiliateRewardFreezeDays）后经后台维护任务或查询时幂等补偿，进入
-// inviter 的模型赠金（bonus）账户。
-// ---------------------------------------------------------------------------
-
-// RecordAffiliateRewardForRequest 为一次实际 paid 消费创建返利记录（幂等）。
-// paidQuota 必须是该请求结算后的最终 paid 净份额（已含退款冲减）。
-// 返回是否创建了记录（重复请求返回 false）。
-func RecordAffiliateRewardForRequest(sourceUserId, paidQuota int, refType, refId string) (bool, error) {
-	rewardService, err := affiliateport.Default()
-	if err != nil {
-		return false, err
-	}
-	return rewardService.Record(sourceUserId, paidQuota, refType, refId)
-}
-
-func recordAffiliateRewardOrLog(sourceUserId, paidQuota int, refType, refId string) {
-	if _, err := RecordAffiliateRewardForRequest(sourceUserId, paidQuota, refType, refId); err != nil {
-		common.SysError(fmt.Sprintf("affiliate reward deferred to reconciliation: source=%d ref=%s/%s err=%s",
-			sourceUserId, refType, refId, err.Error()))
-	}
-}
-
-// MatureAffiliateRewards 幂等成熟用户所有到期返利并返回本次成熟条数。
-// 供懒加载（钱包/推荐概览读取时）与显式 API 触发共用。
-func MatureAffiliateRewards(userId int) (int, error) {
-	rewardService, err := affiliateport.Default()
-	if err != nil {
-		return 0, err
-	}
-	return rewardService.Mature(userId)
-}
-
-// ---------------------------------------------------------------------------
 // 钱包成本记录（P1-2）— 日志 other 中反映实际 wallet account split
+//
+// 推荐返利（前三次成功充值各按比例）在充值结算事务内由 model 层生成，
+// 不再依赖消费侧调用；本文件只负责钱包成本日志。
 // ---------------------------------------------------------------------------
 
 // FillWalletCostLogInfo 把该请求钱包账户的最终净份额写入日志 other：
@@ -57,7 +21,7 @@ func MatureAffiliateRewards(userId int) (int, error) {
 //
 // 净份额从 balance_ledger 汇总（预扣/追扣/结算/退款全部计入），退款后即反映
 // 最终净份额。订阅消费调用方不会走到这里，不伪造钱包成本。
-// 返回 paid 净消费额（供调用方生成返利）。
+// 返回 paid 净消费额。
 func FillWalletCostLogInfo(other *model.LogOther, userId int, refs [][2]string) (paidNet int) {
 	if other == nil || userId <= 0 || len(refs) == 0 {
 		return 0
@@ -99,17 +63,17 @@ func RelayWalletCostRefs(relayInfo *relaycommon.RelayInfo) [][2]string {
 	return [][2]string{{"relay", relayInfo.RequestId}}
 }
 
-// TaskWalletCostRefs 返回异步任务在账本中的引用（提交请求 relay 引用 + 任务 task 引用）。
+// TaskWalletCostRefs returns the durable wallet references for an async task.
+// It remains available to cost-log and reconciliation callers even though new
+// referral rewards are no longer created from usage consumption.
 func TaskWalletCostRefs(task *model.Task) [][2]string {
-	if task == nil {
+	if task == nil || task.TaskID == "" {
 		return nil
 	}
-	var refs [][2]string
-	if reqID := task.PrivateData.EffectiveRequestID(); reqID != "" {
-		refs = append(refs, [2]string{"relay", reqID})
+	refs := make([][2]string, 0, 2)
+	if requestID := task.PrivateData.EffectiveRequestID(); requestID != "" {
+		refs = append(refs, [2]string{"relay", requestID})
 	}
-	if task.TaskID != "" {
-		refs = append(refs, [2]string{"task", task.TaskID})
-	}
+	refs = append(refs, [2]string{"task", task.TaskID})
 	return refs
 }

@@ -1,8 +1,6 @@
 package model
 
 import (
-	"errors"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -148,9 +146,6 @@ func InitOptionMap() {
 	common.OptionMap["AffiliateRewardEnabled"] = strconv.FormatBool(common.AffiliateRewardEnabled)
 	common.OptionMap["AffiliateRewardRate"] = strconv.FormatFloat(common.AffiliateRewardRate, 'f', -1, 64)
 	common.OptionMap["AffiliateRewardFreezeDays"] = strconv.Itoa(common.AffiliateRewardFreezeDays)
-	common.OptionMap["ReferralCoinEnabled"] = strconv.FormatBool(common.ReferralCoinEnabled)
-	common.OptionMap["ReferralCoinRate"] = strconv.FormatFloat(common.ReferralCoinRate, 'f', -1, 64)
-	common.OptionMap["ReferralCoinFreezeDays"] = strconv.Itoa(common.ReferralCoinFreezeDays)
 	common.OptionMap["QuotaRemindThreshold"] = strconv.Itoa(common.QuotaRemindThreshold)
 	common.OptionMap["PreConsumedQuota"] = strconv.Itoa(common.PreConsumedQuota)
 	common.OptionMap["ModelRequestRateLimitCount"] = strconv.Itoa(setting.ModelRequestRateLimitCount)
@@ -205,21 +200,13 @@ func InitOptionMap() {
 }
 
 func loadOptionsFromDatabase() {
-	passkeyOptionMutex.Lock()
-	defer passkeyOptionMutex.Unlock()
 	options, _ := AllOption()
-	passkeyOptions := make(map[string]string)
 	for _, option := range options {
-		if IsPasskeyDomainOption(option.Key) {
-			passkeyOptions[option.Key] = option.Value
-			continue
-		}
 		err := updateOptionMap(option.Key, option.Value)
 		if err != nil {
 			common.SysLog("failed to update option map: " + err.Error())
 		}
 	}
-	applyPasskeyDomainOptions(passkeyOptions)
 }
 
 func SyncOptions(frequency int) {
@@ -244,57 +231,10 @@ func validateOptionValue(key string, value string) error {
 		_, err := setting.NormalizeWaffoPancakeEnvironment(value)
 		return err
 	}
-	if err := validateReferralCoinOption(key, value); err != nil {
-		return err
-	}
-	return rejectRetiredAffiliateReward(key, value)
-}
-
-func validateReferralCoinOption(key, value string) error {
-	switch key {
-	case "ReferralCoinEnabled":
-		if _, err := strconv.ParseBool(value); err != nil {
-			return errors.New("ReferralCoinEnabled must be a boolean")
-		}
-	case "ReferralCoinRate":
-		rate, err := strconv.ParseFloat(value, 64)
-		if err != nil || math.IsNaN(rate) || math.IsInf(rate, 0) || rate < 0 || rate > 1 {
-			return errors.New("ReferralCoinRate must be between 0 and 1")
-		}
-	case "ReferralCoinFreezeDays":
-		days, err := strconv.Atoi(value)
-		if err != nil || days < 0 || days > 3650 {
-			return errors.New("ReferralCoinFreezeDays must be between 0 and 3650")
-		}
-	}
-	return nil
-}
-
-// errAffiliateRewardRetired 表示对已永久下线推荐返利的再次启用尝试。
-var errAffiliateRewardRetired = errors.New(
-	"AffiliateRewardEnabled is permanently disabled: referral rewards are offline",
-)
-
-// rejectRetiredAffiliateReward 是已下线推荐返利的共享窄守卫：仅在
-// AffiliateRewardEnabled 被置为任何 ParseBool 为 true 的值时报错，false 与
-// 无法解析的值保持既有语义。validateOptionValue（UpdateOption/UpdateOptionsBulk
-// 持久化前）与 updateOptionMap（写内存前，覆盖 startup/SyncOptions 加载历史
-// 记录的路径）共用此守卫；不要把它扩展为对其他选项的通用 revalidation。
-func rejectRetiredAffiliateReward(key string, value string) error {
-	if key != "AffiliateRewardEnabled" {
-		return nil
-	}
-	if enabled, parseErr := strconv.ParseBool(value); parseErr == nil && enabled {
-		return errAffiliateRewardRetired
-	}
 	return nil
 }
 
 func UpdateOption(key string, value string) error {
-	if IsPasskeyDomainOption(key) {
-		_, err := UpdatePasskeyDomainOptions(map[string]string{key: value}, false, "")
-		return err
-	}
 	if IsModelPricingOption(key) {
 		return UpdateModelPricingOptions(map[string]string{key: value})
 	}
@@ -324,12 +264,6 @@ func UpdateOption(key string, value string) error {
 func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
-	}
-	for key := range values {
-		if IsPasskeyDomainOption(key) {
-			_, err := UpdatePasskeyDomainOptions(values, false, "")
-			return err
-		}
 	}
 	for key, value := range values {
 		if err := validateOptionValue(key, value); err != nil {
@@ -366,16 +300,6 @@ func updateOptionMap(key string, value string) (err error) {
 		delete(common.OptionMap, key)
 		common.OptionMapRWMutex.Unlock()
 		return nil
-	}
-	// updateOptionMap 会被两条路径直接调用：UpdateOption 持久化之后、以及
-	// 启动/SyncOptions 时 loadOptionsFromDatabase 读取历史数据库记录。此处只对
-	// 已下线的 AffiliateRewardEnabled 做窄拦截，并在写 common.OptionMap 与任何
-	// 全局变量之前生效，防止历史 true 值污染内存；其余选项不在启动路径上重新校验。
-	if err := validateReferralCoinOption(key, value); err != nil {
-		return err
-	}
-	if err := rejectRetiredAffiliateReward(key, value); err != nil {
-		return err
 	}
 	if key == "WaffoPancakeEnvironment" {
 		normalized, normalizeErr := setting.NormalizeWaffoPancakeEnvironment(value)
@@ -654,12 +578,6 @@ func updateOptionMap(key string, value string) (err error) {
 		common.AffiliateRewardRate, _ = strconv.ParseFloat(value, 64)
 	case "AffiliateRewardFreezeDays":
 		common.AffiliateRewardFreezeDays, _ = strconv.Atoi(value)
-	case "ReferralCoinEnabled":
-		common.ReferralCoinEnabled, _ = strconv.ParseBool(value)
-	case "ReferralCoinRate":
-		common.ReferralCoinRate, _ = strconv.ParseFloat(value, 64)
-	case "ReferralCoinFreezeDays":
-		common.ReferralCoinFreezeDays, _ = strconv.Atoi(value)
 	case "QuotaRemindThreshold":
 		common.QuotaRemindThreshold, _ = strconv.Atoi(value)
 	case "PreConsumedQuota":

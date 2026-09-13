@@ -353,36 +353,20 @@ export interface AffiliateRewardPage {
   total: number
 }
 
-export interface ReferralCoinSummary {
-  balance: number
-  pending: number
-  scale: number
-  redemption_step: number
-  enabled: boolean
-  rate: number
-  freeze_days: number
-}
-
-export interface ReferralCoinRedeemRequest {
-  coins: number
-  request_id: string
-}
-
-export interface ReferralCoinRewardItem {
-  id: number
-  source_user_id: number
-  paid_amount: number
-  coin_amount: number
-  status: 'pending' | 'credited' | 'cancelled'
-  unlock_at: number
-  reference_type: string
-  reference_id: string
+/**
+ * Privacy-filtered invitee row for the referral invitee list
+ */
+export interface ReferralInvitee {
+  user_id: number
+  username: string
+  status: number
   created_at: number
-  credited_at: number
-  cancelled_at: number
+  eligible_paid_quota: number
+  reward_quota: number
+  reward_status: '' | 'pending' | 'credited' | 'cancelled'
 }
 
-export interface ReferralCoinRewardPage {
-  items: ReferralCoinRewardItem[]
+export interface ReferralInviteePage {
+  items: ReferralInvitee[]
   total: number
 }

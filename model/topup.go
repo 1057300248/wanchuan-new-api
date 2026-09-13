@@ -102,8 +102,10 @@ func creditTopUpQuota(tx *gorm.DB, entry LedgerEntry) (*LedgerResult, error) {
 	if result.TotalAfter > common.MaxWalletQuota {
 		return nil, ErrTopUpQuotaLimitExceeded
 	}
-	if entry.Reason == LedgerReasonTopup && entry.ReferenceType == "topup" {
-		if err := RecordReferralCoinForTopupTx(tx, entry.UserId, entry.Delta, entry.ReferenceId); err != nil {
+	// 推荐返利：在同一结算事务内按成功充值次数生成（前三次）。重复回调由
+	// 订单状态与幂等键保证只生成一次。
+	if entry.ReferenceType == AffiliateReferenceTopUp {
+		if err := recordAffiliateRewardForTopUpEventTx(tx, entry.UserId, entry.Delta, entry.ReferenceType, entry.ReferenceId); err != nil {
 			return nil, err
 		}
 	}
