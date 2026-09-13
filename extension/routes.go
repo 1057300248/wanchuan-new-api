@@ -20,7 +20,17 @@ type RouteScopes struct {
 	SubscriptionUser          *gin.RouterGroup
 	RootOptions               *gin.RouterGroup
 	AdminModels               *gin.RouterGroup
+	PublicAPI                 *gin.RouterGroup
+	BrowserSession            *gin.RouterGroup
 	AnonymousRequestBodyLimit gin.HandlerFunc
+
+	// PaymentRoutes is the host-owned registrar for payment provider endpoints.
+	// The host router supplies it so provider handler bodies can live in host
+	// controller/service packages while extension route descriptors keep their
+	// historical identity, order and URL/middleware contract. Route sets that
+	// only forward host payment routes must delegate here and fail closed when
+	// the registrar is unavailable.
+	PaymentRoutes func(RouteScopes) error
 }
 
 // RoutePriority is a closed enum naming the points in host router wiring where

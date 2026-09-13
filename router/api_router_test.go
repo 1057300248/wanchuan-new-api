@@ -81,5 +81,8 @@ func TestSetApiRouterExposesHostOwnedExtensionScopes(t *testing.T) {
 	require.NotNil(t, scopes.SubscriptionUser)
 	require.NotNil(t, scopes.RootOptions)
 	require.NotNil(t, scopes.AdminModels)
+	require.NotNil(t, scopes.PublicAPI)
+	require.NotNil(t, scopes.BrowserSession)
 	require.NotNil(t, scopes.AnonymousRequestBodyLimit)
+	require.NotNil(t, scopes.PaymentRoutes, "host payment provider registrar must be exposed to extension route sets")
 }

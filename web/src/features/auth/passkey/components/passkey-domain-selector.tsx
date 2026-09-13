@@ -16,8 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { QueryClientContext, useQuery } from '@tanstack/react-query'
-import { useContext, useId, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -41,31 +41,10 @@ interface PasskeyDomainSelectorProps {
 }
 
 export function PasskeyDomainSelector(props: PasskeyDomainSelectorProps) {
-  const queryClient = useContext(QueryClientContext)
-
-  if (!queryClient) {
-    return <PasskeyDomainSelectorContent {...props} status={undefined} />
-  }
-
-  return <PasskeyDomainSelectorWithStatus {...props} />
-}
-
-function PasskeyDomainSelectorWithStatus(props: PasskeyDomainSelectorProps) {
-  const { data: status } = useQuery(statusQueryOptions)
-  return <PasskeyDomainSelectorContent {...props} status={status} />
-}
-
-interface PasskeyDomainSelectorContentProps extends PasskeyDomainSelectorProps {
-  status: Record<string, unknown> | null | undefined
-}
-
-function PasskeyDomainSelectorContent(
-  props: PasskeyDomainSelectorContentProps
-) {
   const { t } = useTranslation()
   const id = useId()
   const [expanded, setExpanded] = useState(false)
-  const status = props.status
+  const { data: status } = useQuery(statusQueryOptions)
   const configured = Array.isArray(status?.passkey_rp_ids)
     ? status.passkey_rp_ids.filter(
         (value): value is string => typeof value === 'string'
@@ -79,40 +58,7 @@ function PasskeyDomainSelectorContent(
       window.location.hostname.endsWith(`.${domain}`)
     )
   })
-  const otherWebsites: string[] = []
-  if (typeof status?.passkey_origins === 'string') {
-    for (const origin of status.passkey_origins.split(',')) {
-      try {
-        const url = new URL(origin.trim())
-        if (
-          url.protocol !== 'https:' &&
-          !(url.protocol === 'http:' && url.hostname === 'localhost')
-        ) {
-          continue
-        }
-        if (
-          url.username ||
-          url.password ||
-          url.origin === window.location.origin
-        ) {
-          continue
-        }
-        if (
-          !configured.some(
-            (rpID) =>
-              url.hostname === rpID.toLowerCase() ||
-              url.hostname.endsWith(`.${rpID.toLowerCase()}`)
-          )
-        ) {
-          continue
-        }
-        if (!otherWebsites.includes(url.origin)) otherWebsites.push(url.origin)
-      } catch {
-        /* Ignore malformed status entries. */
-      }
-    }
-  }
-  if (available.length < 2 && otherWebsites.length === 0) return null
+  if (available.length < 2) return null
   const value = props.value ?? props.domains?.rpID ?? available[0]
   return (
     <div className='space-y-2 text-sm'>
@@ -130,62 +76,36 @@ function PasskeyDomainSelectorContent(
       </Button>
       {expanded && (
         <div id={id} className='space-y-2'>
-          {available.length > 1 && (
-            <>
-              <Label htmlFor={`${id}-domain`}>
-                {t('Passkey website domain')}
-              </Label>
-              <Select
-                value={available.includes(value ?? '') ? value : available[0]}
-                onValueChange={(value) => {
-                  if (value) props.onChange(value)
-                }}
-                disabled={props.disabled}
-              >
-                <SelectTrigger id={`${id}-domain`}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {available.map((domain) => (
-                    <SelectItem key={domain} value={domain}>
-                      {domain}
-                      {domain !== domain.toLowerCase() &&
-                        available.some(
-                          (other) =>
-                            other !== domain &&
-                            other.toLowerCase() === domain.toLowerCase()
-                        ) && <> · {t('Historical capitalization')}</>}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </>
-          )}
+          <Label htmlFor={`${id}-domain`}>{t('Passkey website domain')}</Label>
+          <Select
+            value={available.includes(value ?? '') ? value : available[0]}
+            onValueChange={(value) => {
+              if (value) props.onChange(value)
+            }}
+            disabled={props.disabled}
+          >
+            <SelectTrigger id={`${id}-domain`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {available.map((domain) => (
+                <SelectItem key={domain} value={domain}>
+                  {domain}
+                  {domain !== domain.toLowerCase() &&
+                    available.some(
+                      (other) =>
+                        other !== domain &&
+                        other.toLowerCase() === domain.toLowerCase()
+                    ) && <> · {t('Historical capitalization')}</>}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <p className='text-muted-foreground'>
             {t(
               'Choose the domain used when this Passkey was created, then try again.'
             )}
           </p>
-          {otherWebsites.length > 0 && (
-            <div className='space-y-1'>
-              <p>
-                {t(
-                  'If your Passkey belongs to another website, start sign-in there:'
-                )}
-              </p>
-              {otherWebsites.map((origin) => (
-                <Button
-                  key={origin}
-                  variant='link'
-                  size='sm'
-                  className='h-auto p-0 break-all'
-                  render={<a href={`${origin}/sign-in`} />}
-                >
-                  {origin}
-                </Button>
-              ))}
-            </div>
-          )}
         </div>
       )}
     </div>

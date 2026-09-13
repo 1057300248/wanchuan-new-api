@@ -1,13 +1,10 @@
 package controller
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"net/http"
-	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -78,10 +75,6 @@ func GetStatus(c *gin.Context) {
 		"turnstile_site_key":          common.TurnstileSiteKey,
 		"docs_link":                   operation_setting.GetGeneralSetting().DocsLink,
 		"quota_per_unit":              common.QuotaPerUnit,
-		"signup_bonus_enabled":        common.SignupBonusEnabled,
-		"signup_bonus_quota":          common.QuotaForSignupBonus,
-		"referral_bonus_enabled":      common.AffiliateRewardEnabled,
-		"referral_bonus_rate":         common.AffiliateRewardRate,
 		// 兼容旧前端：保留 display_in_currency，同时提供新的 quota_display_type
 		"display_in_currency":           operation_setting.IsCurrencyDisplay(),
 		"quota_display_type":            operation_setting.GetQuotaDisplayType(),
@@ -126,7 +119,6 @@ func GetStatus(c *gin.Context) {
 		"passkey_display_name":        passkeySetting.RPDisplayName,
 		"passkey_rp_id":               passkeySetting.EffectiveRPID(),
 		"passkey_rp_ids":              passkeySetting.RelyingPartyIDs(),
-		"passkey_origins":             passkeySetting.Origins,
 		"passkey_allow_insecure":      passkeySetting.AllowInsecureOrigin,
 		"passkey_user_verification":   passkeySetting.UserVerification,
 		"passkey_attachment":          passkeySetting.AttachmentPreference,
@@ -181,56 +173,6 @@ func GetStatus(c *gin.Context) {
 		"data":    data,
 	})
 	return
-}
-
-// GetHealthz is a process liveness probe. It intentionally avoids database
-// and cache dependencies so an orchestrator can distinguish a live process
-// from one that is ready to receive traffic.
-func GetHealthz(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"success": true})
-}
-
-// GetReadyz checks the dependencies required to serve authenticated and relay
-// traffic. The response deliberately omits connection details and component
-// error text because this endpoint is reachable through the public API router.
-func GetReadyz(c *gin.Context) {
-	if model.DB == nil || model.LOG_DB == nil {
-		writeReadinessFailure(c)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
-	defer cancel()
-
-	sqlDB, err := model.DB.DB()
-	if err != nil {
-		writeReadinessFailure(c)
-		return
-	}
-	if err := sqlDB.PingContext(ctx); err != nil {
-		writeReadinessFailure(c)
-		return
-	}
-	if model.LOG_DB != model.DB {
-		logDB, err := model.LOG_DB.DB()
-		if err != nil || logDB.PingContext(ctx) != nil {
-			writeReadinessFailure(c)
-			return
-		}
-	}
-
-	if common.RedisEnabled {
-		if common.RDB == nil || common.RDB.Ping(ctx).Err() != nil {
-			writeReadinessFailure(c)
-			return
-		}
-	}
-
-	c.JSON(http.StatusOK, gin.H{"success": true})
-}
-
-func writeReadinessFailure(c *gin.Context) {
-	c.JSON(http.StatusServiceUnavailable, gin.H{"success": false})
 }
 
 func GetNotice(c *gin.Context) {
@@ -288,10 +230,15 @@ func SendEmailVerification(c *gin.Context) {
 	common.RegisterVerificationCodeWithKey(email, code, common.EmailVerificationPurpose)
 	subject := fmt.Sprintf("【%s】邮箱验证码", common.SystemName)
 	publicHost := system_setting.PublicSiteDisplayHost()
-	plainText := fmt.Sprintf("您好：\n\n您正在进行%s邮箱验证。\n\n验证码：%s\n\n验证码 %d 分钟内有效。若非本人操作，请忽略本邮件。\n\n%s\n%s",
-		common.SystemName, code, common.VerificationValidMinutes, common.SystemName, publicHost)
-	content := fmt.Sprintf("<!doctype html><html><body style=\"margin:0;padding:24px;background:#f6f8fb;color:#1f2937;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',Arial,sans-serif\"><main style=\"max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px\"><h1 style=\"margin:0 0 20px;font-size:22px\">邮箱验证</h1><p style=\"line-height:1.7\">您好，您正在进行%s邮箱验证。</p><p style=\"margin:24px 0;padding:16px;background:#f3f4f6;border-radius:8px;text-align:center;font-size:30px;font-weight:700;letter-spacing:6px;color:#111827\">%s</p><p style=\"line-height:1.7\">验证码 %d 分钟内有效。若非本人操作，请忽略本邮件。</p><hr style=\"margin:24px 0;border:0;border-top:1px solid #e5e7eb\"><p style=\"margin:0;color:#6b7280;font-size:13px\">%s · %s</p></main></body></html>",
-		html.EscapeString(common.SystemName), html.EscapeString(code), common.VerificationValidMinutes, html.EscapeString(common.SystemName), html.EscapeString(publicHost))
+	plainText, content := renderAuthEmail(authEmailContent{
+		Heading:         "邮箱验证",
+		Intro:           fmt.Sprintf("您正在进行%s邮箱验证。", common.SystemName),
+		Code:            code,
+		ValidityLabel:   "验证码",
+		ValidityMinutes: common.VerificationValidMinutes,
+		SystemName:      common.SystemName,
+		PublicHost:      publicHost,
+	})
 	err = common.SendEmailWithPlainText(subject, email, plainText, content)
 	if err != nil {
 		common.ApiError(c, err)
@@ -316,10 +263,16 @@ func SendPasswordResetEmail(c *gin.Context) {
 		link := fmt.Sprintf("%s/user/reset?email=%s&token=%s", system_setting.ServerAddress, email, code)
 		subject := fmt.Sprintf("【%s】密码重置", common.SystemName)
 		publicHost := system_setting.PublicSiteDisplayHost()
-		plainText := fmt.Sprintf("您好：\n\n您正在进行%s密码重置。\n\n请在浏览器中打开以下链接：\n%s\n\n重置链接 %d 分钟内有效。若非本人操作，请忽略本邮件。\n\n%s\n%s",
-			common.SystemName, link, common.VerificationValidMinutes, common.SystemName, publicHost)
-		content := fmt.Sprintf("<!doctype html><html><body style=\"margin:0;padding:24px;background:#f6f8fb;color:#1f2937;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',Arial,sans-serif\"><main style=\"max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px\"><h1 style=\"margin:0 0 20px;font-size:22px\">密码重置</h1><p style=\"line-height:1.7\">您好，您正在进行%s密码重置。</p><p style=\"margin:24px 0\"><a href=\"%s\" style=\"display:inline-block;padding:12px 22px;border-radius:8px;background:#111827;color:#ffffff;text-decoration:none;font-weight:600\">重置密码</a></p><p style=\"line-height:1.7\">如果按钮无法打开，请复制以下地址到浏览器：</p><p style=\"padding:12px;background:#f3f4f6;border-radius:8px;word-break:break-all;font-size:13px\">%s</p><p style=\"line-height:1.7\">重置链接 %d 分钟内有效。若非本人操作，请忽略本邮件。</p><hr style=\"margin:24px 0;border:0;border-top:1px solid #e5e7eb\"><p style=\"margin:0;color:#6b7280;font-size:13px\">%s · %s</p></main></body></html>",
-			html.EscapeString(common.SystemName), html.EscapeString(link), html.EscapeString(link), common.VerificationValidMinutes, html.EscapeString(common.SystemName), html.EscapeString(publicHost))
+		plainText, content := renderAuthEmail(authEmailContent{
+			Heading:         "密码重置",
+			Intro:           fmt.Sprintf("您正在进行%s密码重置。", common.SystemName),
+			Link:            link,
+			ActionLabel:     "重置密码",
+			ValidityLabel:   "重置链接",
+			ValidityMinutes: common.VerificationValidMinutes,
+			SystemName:      common.SystemName,
+			PublicHost:      publicHost,
+		})
 		err := common.SendEmailWithPlainText(subject, email, plainText, content)
 		if err != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("failed to send password reset email to %s: %s", email, err.Error()))

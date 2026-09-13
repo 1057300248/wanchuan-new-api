@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
-	paymentmodule "github.com/QuantumNous/new-api/modules/chuanapi/payment"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -33,8 +32,9 @@ func TestPaymentCreationEndpointsRequireCompliance(t *testing.T) {
 		{name: "epay", handler: RequestEpay},
 		{name: "stripe", handler: RequestStripePay},
 		{name: "creem", handler: RequestCreemPay},
-		{name: "waffo", handler: paymentmodule.RequestWaffoPay},
-		{name: "waffo pancake", handler: paymentmodule.RequestWaffoPancakePay},
+		{name: "waffo", handler: RequestWaffoPay},
+		{name: "waffo pancake", handler: RequestWaffoPancakePay},
+		{name: "waffo pancake subscription", handler: SubscriptionRequestWaffoPancakePay},
 	}
 
 	for _, testCase := range testCases {

@@ -1,4 +1,4 @@
-package payment
+package service
 
 import (
 	"context"
@@ -7,36 +7,40 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/paymentcore"
 	"github.com/QuantumNous/new-api/setting"
 	pancake "github.com/waffo-com/waffo-pancake-sdk-go"
 	"gorm.io/gorm"
 )
 
-type pancakeWebhookResolveError struct {
+type waffoPancakeWebhookResolveError struct {
 	err       error
 	retryable bool
 }
 
-func (e *pancakeWebhookResolveError) Error() string { return e.err.Error() }
-func (e *pancakeWebhookResolveError) Unwrap() error { return e.err }
+func (e *waffoPancakeWebhookResolveError) Error() string { return e.err.Error() }
+func (e *waffoPancakeWebhookResolveError) Unwrap() error { return e.err }
 
-func retryablePancakeWebhookError(err error) bool {
-	var target *pancakeWebhookResolveError
+// RetryableWaffoPancakeWebhookError reports whether a webhook resolution
+// failure is a transient storage problem the provider should retry; permanent
+// failures (unknown order, binding or identity mismatch) must be acknowledged.
+func RetryableWaffoPancakeWebhookError(err error) bool {
+	var target *waffoPancakeWebhookResolveError
 	return errors.As(err, &target) && target.retryable
 }
 
-func pancakePermanentError(err error) error {
+func permanentWaffoPancakeWebhookError(err error) error {
 	if err == nil {
 		return nil
 	}
-	return &pancakeWebhookResolveError{err: err}
+	return &waffoPancakeWebhookResolveError{err: err}
 }
 
-func pancakeRetryableError(err error) error {
+func retryableWaffoPancakeWebhookError(err error) error {
 	if err == nil {
 		return nil
 	}
-	return &pancakeWebhookResolveError{err: err, retryable: true}
+	return &waffoPancakeWebhookResolveError{err: err, retryable: true}
 }
 
 // WaffoPancakePriceSnapshot is the per-session price override sent with checkout.
@@ -224,50 +228,52 @@ func VerifyConfiguredWaffoPancakeWebhook(payload string, signatureHeader string)
 }
 
 // ResolveWaffoPancakeTradeNo maps a verified webhook event to a local TopUp
-// trade_no via OrderMerchantExternalID, and rejects buyer-identity mismatches.
+// trade_no via OrderMerchantExternalID, validates the pinned order binding
+// (amount, currency, store, environment, upstream order identity) and rejects
+// buyer-identity mismatches. Storage outages are classified as retryable.
 func ResolveWaffoPancakeTradeNo(event *WaffoPancakeWebhookEvent) (string, error) {
 	if event == nil {
-		return "", pancakePermanentError(fmt.Errorf("missing webhook event"))
+		return "", permanentWaffoPancakeWebhookError(fmt.Errorf("missing webhook event"))
 	}
 	tradeNo := strings.TrimSpace(event.Data.OrderMerchantExternalID)
 	if tradeNo == "" {
-		return "", pancakePermanentError(fmt.Errorf("missing webhook orderMerchantExternalId"))
+		return "", permanentWaffoPancakeWebhookError(fmt.Errorf("missing webhook orderMerchantExternalId"))
 	}
 	if model.DB == nil {
-		return "", pancakeRetryableError(errors.New("payment database is not initialized"))
+		return "", retryableWaffoPancakeWebhookError(errors.New("payment database is not initialized"))
 	}
 	var topUp model.TopUp
 	if err := model.DB.Where("trade_no = ?", tradeNo).First(&topUp).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", pancakePermanentError(fmt.Errorf("waffo pancake order not found for tradeNo=%s", tradeNo))
+			return "", permanentWaffoPancakeWebhookError(fmt.Errorf("waffo pancake order not found for tradeNo=%s", tradeNo))
 		}
-		return "", pancakeRetryableError(fmt.Errorf("waffo pancake order lookup failed for tradeNo=%s: %w", tradeNo, err))
+		return "", retryableWaffoPancakeWebhookError(fmt.Errorf("waffo pancake order lookup failed for tradeNo=%s: %w", tradeNo, err))
 	}
 	if topUp.PaymentProvider != model.PaymentProviderWaffoPancake {
-		return "", pancakePermanentError(fmt.Errorf("waffo pancake order not found for tradeNo=%s", tradeNo))
+		return "", permanentWaffoPancakeWebhookError(fmt.Errorf("waffo pancake order not found for tradeNo=%s", tradeNo))
 	}
-	binding, err := getPaymentOrderBinding(tradeNo)
+	binding, err := paymentcore.GetPaymentOrderBinding(tradeNo)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", pancakePermanentError(fmt.Errorf("waffo pancake binding not found for tradeNo=%s: %w", tradeNo, err))
+			return "", permanentWaffoPancakeWebhookError(fmt.Errorf("waffo pancake binding not found for tradeNo=%s: %w", tradeNo, err))
 		}
-		return "", pancakeRetryableError(fmt.Errorf("waffo pancake binding lookup failed for tradeNo=%s: %w", tradeNo, err))
+		return "", retryableWaffoPancakeWebhookError(fmt.Errorf("waffo pancake binding lookup failed for tradeNo=%s: %w", tradeNo, err))
 	}
-	if err := validatePaymentOrderBinding(binding, paymentCallbackFacts{
+	if err := paymentcore.ValidatePaymentOrderBinding(binding, paymentcore.PaymentCallbackFacts{
 		Provider:        model.PaymentProviderWaffoPancake,
-		OrderKind:       OrderBindingKindTopUp,
+		OrderKind:       paymentcore.OrderBindingKindTopUp,
 		Environment:     event.Mode,
 		StoreID:         event.StoreID,
 		ProviderOrderID: event.Data.OrderID,
 		ActualAmount:    event.Data.Amount,
 		ActualCurrency:  event.Data.Currency,
 	}); err != nil {
-		return "", pancakePermanentError(err)
+		return "", permanentWaffoPancakeWebhookError(err)
 	}
 	expectedIdentity := WaffoPancakeBuyerIdentityFromUserID(topUp.UserId)
 	actualIdentity := strings.TrimSpace(event.Data.MerchantProvidedBuyerIdentity)
 	if actualIdentity != expectedIdentity {
-		return "", pancakePermanentError(fmt.Errorf(
+		return "", permanentWaffoPancakeWebhookError(fmt.Errorf(
 			"waffo pancake buyer identity mismatch for tradeNo=%s: expected=%q actual=%q",
 			tradeNo,
 			expectedIdentity,
@@ -275,11 +281,11 @@ func ResolveWaffoPancakeTradeNo(event *WaffoPancakeWebhookEvent) (string, error)
 		))
 	}
 	if binding.ProviderOrderID == "" {
-		if err := bindProviderOrderID(tradeNo, event.Data.OrderID); err != nil {
-			if errors.Is(err, ErrProviderOrderIDMismatch) {
-				return "", pancakePermanentError(err)
+		if err := paymentcore.BindProviderOrderID(tradeNo, event.Data.OrderID); err != nil {
+			if errors.Is(err, paymentcore.ErrProviderOrderIDMismatch) {
+				return "", permanentWaffoPancakeWebhookError(err)
 			}
-			return "", pancakeRetryableError(fmt.Errorf("persist provider order id for tradeNo=%s: %w", tradeNo, err))
+			return "", retryableWaffoPancakeWebhookError(fmt.Errorf("persist provider order id for tradeNo=%s: %w", tradeNo, err))
 		}
 	}
 	return tradeNo, nil
@@ -289,47 +295,47 @@ func ResolveWaffoPancakeTradeNo(event *WaffoPancakeWebhookEvent) (string, error)
 // of ResolveWaffoPancakeTradeNo.
 func ResolveWaffoPancakeSubscriptionTradeNo(event *WaffoPancakeWebhookEvent) (string, error) {
 	if event == nil {
-		return "", pancakePermanentError(fmt.Errorf("missing webhook event"))
+		return "", permanentWaffoPancakeWebhookError(fmt.Errorf("missing webhook event"))
 	}
 	tradeNo := strings.TrimSpace(event.Data.OrderMerchantExternalID)
 	if tradeNo == "" {
-		return "", pancakePermanentError(fmt.Errorf("missing webhook orderMerchantExternalId"))
+		return "", permanentWaffoPancakeWebhookError(fmt.Errorf("missing webhook orderMerchantExternalId"))
 	}
 	if model.DB == nil {
-		return "", pancakeRetryableError(errors.New("payment database is not initialized"))
+		return "", retryableWaffoPancakeWebhookError(errors.New("payment database is not initialized"))
 	}
 	var order model.SubscriptionOrder
 	if err := model.DB.Where("trade_no = ?", tradeNo).First(&order).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", pancakePermanentError(fmt.Errorf("waffo pancake subscription order not found for tradeNo=%s", tradeNo))
+			return "", permanentWaffoPancakeWebhookError(fmt.Errorf("waffo pancake subscription order not found for tradeNo=%s", tradeNo))
 		}
-		return "", pancakeRetryableError(fmt.Errorf("waffo pancake subscription order lookup failed for tradeNo=%s: %w", tradeNo, err))
+		return "", retryableWaffoPancakeWebhookError(fmt.Errorf("waffo pancake subscription order lookup failed for tradeNo=%s: %w", tradeNo, err))
 	}
 	if order.PaymentProvider != model.PaymentProviderWaffoPancake {
-		return "", pancakePermanentError(fmt.Errorf("waffo pancake subscription order not found for tradeNo=%s", tradeNo))
+		return "", permanentWaffoPancakeWebhookError(fmt.Errorf("waffo pancake subscription order not found for tradeNo=%s", tradeNo))
 	}
-	binding, err := getPaymentOrderBinding(tradeNo)
+	binding, err := paymentcore.GetPaymentOrderBinding(tradeNo)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", pancakePermanentError(fmt.Errorf("waffo pancake subscription binding not found for tradeNo=%s: %w", tradeNo, err))
+			return "", permanentWaffoPancakeWebhookError(fmt.Errorf("waffo pancake subscription binding not found for tradeNo=%s: %w", tradeNo, err))
 		}
-		return "", pancakeRetryableError(fmt.Errorf("waffo pancake subscription binding lookup failed for tradeNo=%s: %w", tradeNo, err))
+		return "", retryableWaffoPancakeWebhookError(fmt.Errorf("waffo pancake subscription binding lookup failed for tradeNo=%s: %w", tradeNo, err))
 	}
-	if err := validatePaymentOrderBinding(binding, paymentCallbackFacts{
+	if err := paymentcore.ValidatePaymentOrderBinding(binding, paymentcore.PaymentCallbackFacts{
 		Provider:        model.PaymentProviderWaffoPancake,
-		OrderKind:       OrderBindingKindSubscription,
+		OrderKind:       paymentcore.OrderBindingKindSubscription,
 		Environment:     event.Mode,
 		StoreID:         event.StoreID,
 		ProviderOrderID: event.Data.OrderID,
 		ActualAmount:    event.Data.Amount,
 		ActualCurrency:  event.Data.Currency,
 	}); err != nil {
-		return "", pancakePermanentError(err)
+		return "", permanentWaffoPancakeWebhookError(err)
 	}
 	expectedIdentity := WaffoPancakeBuyerIdentityFromUserID(order.UserId)
 	actualIdentity := strings.TrimSpace(event.Data.MerchantProvidedBuyerIdentity)
 	if actualIdentity != expectedIdentity {
-		return "", pancakePermanentError(fmt.Errorf(
+		return "", permanentWaffoPancakeWebhookError(fmt.Errorf(
 			"waffo pancake buyer identity mismatch for subscription tradeNo=%s: expected=%q actual=%q",
 			tradeNo,
 			expectedIdentity,
@@ -337,11 +343,11 @@ func ResolveWaffoPancakeSubscriptionTradeNo(event *WaffoPancakeWebhookEvent) (st
 		))
 	}
 	if binding.ProviderOrderID == "" {
-		if err := bindProviderOrderID(tradeNo, event.Data.OrderID); err != nil {
-			if errors.Is(err, ErrProviderOrderIDMismatch) {
-				return "", pancakePermanentError(err)
+		if err := paymentcore.BindProviderOrderID(tradeNo, event.Data.OrderID); err != nil {
+			if errors.Is(err, paymentcore.ErrProviderOrderIDMismatch) {
+				return "", permanentWaffoPancakeWebhookError(err)
 			}
-			return "", pancakeRetryableError(fmt.Errorf("persist provider order id for subscription tradeNo=%s: %w", tradeNo, err))
+			return "", retryableWaffoPancakeWebhookError(fmt.Errorf("persist provider order id for subscription tradeNo=%s: %w", tradeNo, err))
 		}
 	}
 	return tradeNo, nil
@@ -534,10 +540,10 @@ type WaffoPancakeCatalog struct {
 	Stores []WaffoPancakeCatalogStore `json:"stores"`
 }
 
-// FetchWaffoPancakeCatalog queries Pancake's GraphQL `stores` for the
+// ListWaffoPancakeCatalog queries Pancake's GraphQL `stores` for the
 // merchant's stores + onetime products. A successful call also proves
 // the supplied credentials authenticate (doubles as a credential probe).
-func FetchWaffoPancakeCatalog(ctx context.Context, merchantID, privateKey string) (*WaffoPancakeCatalog, error) {
+func ListWaffoPancakeCatalog(ctx context.Context, merchantID, privateKey string) (*WaffoPancakeCatalog, error) {
 	client, err := newWaffoPancakeClientFromCreds(merchantID, privateKey)
 	if err != nil {
 		return nil, err

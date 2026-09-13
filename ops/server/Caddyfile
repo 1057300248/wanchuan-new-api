@@ -41,7 +41,7 @@ http://:8081 {
 	import common_headers
 
 	route {
-		# Dependency probes are origin-local; public callers use /api/status.
+		# Dependency probes are origin-local; public callers use /public-api/status.
 		@private_probes path /api/healthz /api/readyz
 		respond @private_probes 404
 
@@ -50,7 +50,9 @@ http://:8081 {
 			path /public-api/status
 		}
 		handle @public_status {
-			rewrite * /api/status
+			# Product configuration is module-owned; only the internal rewrite
+			# target differs from the browser-visible /public-api/status URL.
+			rewrite * /api/chuanapi/public-config
 			reverse_proxy http://127.0.0.1:3000 {
 				header_up -Cookie
 				header_up -Authorization

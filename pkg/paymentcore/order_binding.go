@@ -1,4 +1,4 @@
-package payment
+package paymentcore
 
 import (
 	"errors"
@@ -18,9 +18,10 @@ const (
 )
 
 // PaymentOrderBinding is the provider-owned settlement snapshot for one local
-// payment order. Keeping it in the payment module avoids adding provider fields
-// to root TopUp/SubscriptionOrder while still making webhook settlement depend
-// on immutable server-side facts captured when the order is created.
+// payment order. It stays a generic host payment capability (not a provider
+// module type) so top-up/subscription creation and webhook settlement can
+// depend on immutable server-side facts without adding provider fields to the
+// root TopUp/SubscriptionOrder tables.
 type PaymentOrderBinding struct {
 	TradeNo           string `gorm:"primaryKey;type:varchar(255)"`
 	Provider          string `gorm:"type:varchar(64);not null;index"`
@@ -41,7 +42,9 @@ func (PaymentOrderBinding) TableName() string { return "chuanapi_payment_order_b
 
 var ErrProviderOrderIDMismatch = errors.New("payment provider order id mismatch")
 
-type paymentCallbackFacts struct {
+// PaymentCallbackFacts are the immutable callback facts a webhook must match
+// against the binding captured when the local order was created.
+type PaymentCallbackFacts struct {
 	Provider         string
 	OrderKind        string
 	Environment      string
@@ -53,19 +56,23 @@ type paymentCallbackFacts struct {
 	ActualCurrency   string
 }
 
-func configuredWaffoPancakeEnvironment() (string, error) {
+// ConfiguredWaffoPancakeEnvironment returns the trusted Pancake environment
+// pinned at order creation; an invalid configured value fails closed.
+func ConfiguredWaffoPancakeEnvironment() (string, error) {
 	return setting.NormalizeWaffoPancakeEnvironment(setting.WaffoPancakeEnvironment)
 }
 
-func currentWaffoEnvironment() string {
+// CurrentWaffoEnvironment pins the Waffo production/sandbox mode into the
+// binding so callbacks cannot switch environments between order and webhook.
+func CurrentWaffoEnvironment() string {
 	if setting.WaffoSandbox {
 		return "sandbox"
 	}
 	return "production"
 }
 
-func newWaffoPancakeBinding(tradeNo, orderKind, amount string) (PaymentOrderBinding, error) {
-	environment, err := configuredWaffoPancakeEnvironment()
+func NewWaffoPancakeBinding(tradeNo, orderKind, amount string) (PaymentOrderBinding, error) {
+	environment, err := ConfiguredWaffoPancakeEnvironment()
 	if err != nil {
 		return PaymentOrderBinding{}, err
 	}
@@ -73,7 +80,7 @@ func newWaffoPancakeBinding(tradeNo, orderKind, amount string) (PaymentOrderBind
 	if storeID == "" {
 		return PaymentOrderBinding{}, errors.New("Waffo Pancake store id is not configured")
 	}
-	return newPaymentOrderBinding(
+	return NewPaymentOrderBinding(
 		tradeNo,
 		model.PaymentProviderWaffoPancake,
 		orderKind,
@@ -86,12 +93,12 @@ func newWaffoPancakeBinding(tradeNo, orderKind, amount string) (PaymentOrderBind
 	)
 }
 
-func newWaffoBinding(tradeNo, amount, currency string) (PaymentOrderBinding, error) {
-	return newPaymentOrderBinding(
+func NewWaffoBinding(tradeNo, amount, currency string) (PaymentOrderBinding, error) {
+	return NewPaymentOrderBinding(
 		tradeNo,
 		model.PaymentProviderWaffo,
 		OrderBindingKindTopUp,
-		currentWaffoEnvironment(),
+		CurrentWaffoEnvironment(),
 		"",
 		strings.TrimSpace(setting.WaffoMerchantId),
 		tradeNo,
@@ -100,7 +107,7 @@ func newWaffoBinding(tradeNo, amount, currency string) (PaymentOrderBinding, err
 	)
 }
 
-func newPaymentOrderBinding(tradeNo, provider, orderKind, environment, storeID, merchantID, paymentRequestID, amount, currency string) (PaymentOrderBinding, error) {
+func NewPaymentOrderBinding(tradeNo, provider, orderKind, environment, storeID, merchantID, paymentRequestID, amount, currency string) (PaymentOrderBinding, error) {
 	tradeNo = strings.TrimSpace(tradeNo)
 	provider = strings.TrimSpace(provider)
 	orderKind = strings.TrimSpace(orderKind)
@@ -109,7 +116,7 @@ func newPaymentOrderBinding(tradeNo, provider, orderKind, environment, storeID, 
 	if tradeNo == "" || provider == "" || orderKind == "" || environment == "" || currency == "" {
 		return PaymentOrderBinding{}, errors.New("payment order binding is incomplete")
 	}
-	canonicalAmount, err := canonicalPaymentAmount(amount)
+	canonicalAmount, err := CanonicalPaymentAmount(amount)
 	if err != nil {
 		return PaymentOrderBinding{}, err
 	}
@@ -126,7 +133,7 @@ func newPaymentOrderBinding(tradeNo, provider, orderKind, environment, storeID, 
 	}, nil
 }
 
-func canonicalPaymentAmount(raw string) (string, error) {
+func CanonicalPaymentAmount(raw string) (string, error) {
 	value, err := decimal.NewFromString(strings.TrimSpace(raw))
 	if err != nil || value.LessThanOrEqual(decimal.Zero) {
 		return "", fmt.Errorf("invalid payment amount %q", raw)
@@ -134,7 +141,10 @@ func canonicalPaymentAmount(raw string) (string, error) {
 	return value.String(), nil
 }
 
-func insertTopUpWithBinding(topUp *model.TopUp, binding PaymentOrderBinding) error {
+// InsertTopUpWithBinding persists the local order and its provider settlement
+// snapshot in one transaction; a binding failure must never leave an order
+// that a callback could settle without pinned facts.
+func InsertTopUpWithBinding(topUp *model.TopUp, binding PaymentOrderBinding) error {
 	if topUp == nil || model.DB == nil {
 		return errors.New("invalid topup binding insert")
 	}
@@ -146,7 +156,7 @@ func insertTopUpWithBinding(topUp *model.TopUp, binding PaymentOrderBinding) err
 	})
 }
 
-func insertSubscriptionOrderWithBinding(order *model.SubscriptionOrder, binding PaymentOrderBinding) error {
+func InsertSubscriptionOrderWithBinding(order *model.SubscriptionOrder, binding PaymentOrderBinding) error {
 	if order == nil || model.DB == nil {
 		return errors.New("invalid subscription binding insert")
 	}
@@ -161,7 +171,7 @@ func insertSubscriptionOrderWithBinding(order *model.SubscriptionOrder, binding 
 	})
 }
 
-func getPaymentOrderBinding(tradeNo string) (*PaymentOrderBinding, error) {
+func GetPaymentOrderBinding(tradeNo string) (*PaymentOrderBinding, error) {
 	if model.DB == nil {
 		return nil, errors.New("payment database is not initialized")
 	}
@@ -172,7 +182,9 @@ func getPaymentOrderBinding(tradeNo string) (*PaymentOrderBinding, error) {
 	return &binding, nil
 }
 
-func bindProviderSessionID(tradeNo, sessionID string) error {
+// BindProviderSessionID pins the upstream checkout session exactly once; a
+// different session for the same local order is rejected.
+func BindProviderSessionID(tradeNo, sessionID string) error {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return errors.New("provider session id is empty")
@@ -186,7 +198,7 @@ func bindProviderSessionID(tradeNo, sessionID string) error {
 	if result.RowsAffected > 0 {
 		return nil
 	}
-	binding, err := getPaymentOrderBinding(tradeNo)
+	binding, err := GetPaymentOrderBinding(tradeNo)
 	if err != nil {
 		return err
 	}
@@ -196,7 +208,9 @@ func bindProviderSessionID(tradeNo, sessionID string) error {
 	return nil
 }
 
-func bindProviderOrderID(tradeNo, providerOrderID string) error {
+// BindProviderOrderID pins the upstream order identity exactly once; a second
+// different upstream order id is a permanent conflict.
+func BindProviderOrderID(tradeNo, providerOrderID string) error {
 	providerOrderID = strings.TrimSpace(providerOrderID)
 	if providerOrderID == "" {
 		return errors.New("provider order id is empty")
@@ -210,7 +224,7 @@ func bindProviderOrderID(tradeNo, providerOrderID string) error {
 	if result.RowsAffected > 0 {
 		return nil
 	}
-	binding, err := getPaymentOrderBinding(tradeNo)
+	binding, err := GetPaymentOrderBinding(tradeNo)
 	if err != nil {
 		return err
 	}
@@ -220,7 +234,10 @@ func bindProviderOrderID(tradeNo, providerOrderID string) error {
 	return nil
 }
 
-func validatePaymentOrderBinding(binding *PaymentOrderBinding, facts paymentCallbackFacts) error {
+// ValidatePaymentOrderBinding rejects any callback whose provider, kind,
+// environment, store, merchant, payment request, amount, currency or upstream
+// order identity does not match the snapshot written at order creation.
+func ValidatePaymentOrderBinding(binding *PaymentOrderBinding, facts PaymentCallbackFacts) error {
 	if binding == nil {
 		return errors.New("missing payment order binding")
 	}
@@ -243,7 +260,7 @@ func validatePaymentOrderBinding(binding *PaymentOrderBinding, facts paymentCall
 	if actualCurrency != binding.ExpectedCurrency {
 		return fmt.Errorf("payment currency mismatch for tradeNo=%s: expected=%s actual=%s", binding.TradeNo, binding.ExpectedCurrency, actualCurrency)
 	}
-	actualAmount, err := canonicalPaymentAmount(facts.ActualAmount)
+	actualAmount, err := CanonicalPaymentAmount(facts.ActualAmount)
 	if err != nil {
 		return err
 	}

@@ -1,4 +1,4 @@
-package payment
+package controller
 
 import (
 	"errors"
@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/paymentcore"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -237,13 +238,13 @@ func RequestWaffoPay(c *gin.Context) {
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
 	}
-	binding, err := newWaffoBinding(merchantOrderId, expectedProviderAmount, currency)
+	binding, err := paymentcore.NewWaffoBinding(merchantOrderId, expectedProviderAmount, currency)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo 订单绑定配置失败 user_id=%d trade_no=%s error=%q", id, merchantOrderId, err.Error()))
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "支付配置错误"})
 		return
 	}
-	if err := insertTopUpWithBinding(topUp, binding); err != nil {
+	if err := paymentcore.InsertTopUpWithBinding(topUp, binding); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo 创建充值订单失败 user_id=%d trade_no=%s amount=%d error=%q", id, merchantOrderId, req.Amount, err.Error()))
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
 		return
@@ -258,12 +259,12 @@ func RequestWaffoPay(c *gin.Context) {
 		return
 	}
 
-	callbackAddr := paymentcore.CallbackAddress()
+	callbackAddr := service.GetCallbackAddress()
 	notifyUrl := callbackAddr + "/api/waffo/webhook"
 	if setting.WaffoNotifyUrl != "" {
 		notifyUrl = setting.WaffoNotifyUrl
 	}
-	returnUrl := paymentcore.ReturnPath("/wallet?show_history=true")
+	returnUrl := paymentReturnPath("/wallet?show_history=true")
 	if setting.WaffoReturnUrl != "" {
 		returnUrl = setting.WaffoReturnUrl
 	}
@@ -320,7 +321,7 @@ func RequestWaffoPay(c *gin.Context) {
 		return
 	}
 	if strings.TrimSpace(orderData.AcquiringOrderID) != "" {
-		if err := bindProviderOrderID(merchantOrderId, orderData.AcquiringOrderID); err != nil {
+		if err := paymentcore.BindProviderOrderID(merchantOrderId, orderData.AcquiringOrderID); err != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo 保存上游订单身份失败 trade_no=%s acquiring_order_id=%q error=%q", merchantOrderId, orderData.AcquiringOrderID, err.Error()))
 			topUp.Status = common.TopUpStatusFailed
 			_ = topUp.Update()
@@ -432,6 +433,9 @@ func waffoNotificationMerchantID(result *core.PaymentNotificationResult) string 
 	return ""
 }
 
+// validateWaffoPaymentCallback 在入账前用订单创建时钉扎的不可变快照校验回调
+// 事实（provider/kind/env/merchant/请求号/金额/币种/上游订单号），并首次钉扎
+// 上游订单号。缺绑定、错绑定或身份冲突一律拒绝，不进入充值事务。
 func validateWaffoPaymentCallback(result *core.PaymentNotificationResult) error {
 	if result == nil {
 		return errors.New("missing Waffo payment notification")
@@ -444,14 +448,14 @@ func validateWaffoPaymentCallback(result *core.PaymentNotificationResult) error 
 	if topUp == nil || topUp.PaymentProvider != model.PaymentProviderWaffo {
 		return fmt.Errorf("Waffo order not found for tradeNo=%s", tradeNo)
 	}
-	binding, err := getPaymentOrderBinding(tradeNo)
+	binding, err := paymentcore.GetPaymentOrderBinding(tradeNo)
 	if err != nil {
 		return fmt.Errorf("Waffo payment binding not found for tradeNo=%s: %w", tradeNo, err)
 	}
-	if err := validatePaymentOrderBinding(binding, paymentCallbackFacts{
+	if err := paymentcore.ValidatePaymentOrderBinding(binding, paymentcore.PaymentCallbackFacts{
 		Provider:         model.PaymentProviderWaffo,
-		OrderKind:        OrderBindingKindTopUp,
-		Environment:      currentWaffoEnvironment(),
+		OrderKind:        paymentcore.OrderBindingKindTopUp,
+		Environment:      paymentcore.CurrentWaffoEnvironment(),
 		MerchantID:       waffoNotificationMerchantID(result),
 		PaymentRequestID: result.PaymentRequestID,
 		ProviderOrderID:  result.AcquiringOrderID,
@@ -461,7 +465,7 @@ func validateWaffoPaymentCallback(result *core.PaymentNotificationResult) error 
 		return err
 	}
 	if binding.ProviderOrderID == "" {
-		return bindProviderOrderID(tradeNo, result.AcquiringOrderID)
+		return paymentcore.BindProviderOrderID(tradeNo, result.AcquiringOrderID)
 	}
 	return nil
 }
@@ -493,8 +497,8 @@ func handleWaffoPayment(c *gin.Context, wh *core.WebhookHandler, result *core.Pa
 
 	merchantOrderId := result.MerchantOrderID
 
-	paymentcore.LockOrder(merchantOrderId)
-	defer paymentcore.UnlockOrder(merchantOrderId)
+	LockOrder(merchantOrderId)
+	defer UnlockOrder(merchantOrderId)
 
 	if err := model.RechargeWaffo(merchantOrderId, c.ClientIP()); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo 充值处理失败 trade_no=%s client_ip=%s error=%q", merchantOrderId, c.ClientIP(), err.Error()))

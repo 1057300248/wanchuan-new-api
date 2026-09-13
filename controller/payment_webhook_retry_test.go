@@ -1,4 +1,4 @@
-package payment
+package controller
 
 import (
 	"crypto"
@@ -17,6 +17,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/paymentcore"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -78,7 +80,7 @@ func TestPancakeWebhookRetriesTransientBindingWriteFailureAndCompletesOnce(t *te
 	require.NoError(t, db.Create(user).Error)
 
 	tradeNo := "WAFFO_PANCAKE-retry-regression"
-	binding, err := newWaffoPancakeBinding(tradeNo, OrderBindingKindTopUp, "100.00")
+	binding, err := paymentcore.NewWaffoPancakeBinding(tradeNo, paymentcore.OrderBindingKindTopUp, "100.00")
 	require.NoError(t, err)
 	order := &model.TopUp{
 		UserId:          user.Id,
@@ -89,7 +91,7 @@ func TestPancakeWebhookRetriesTransientBindingWriteFailureAndCompletesOnce(t *te
 		PaymentMethod:   model.PaymentMethodWaffoPancake,
 		Status:          common.TopUpStatusPending,
 	}
-	require.NoError(t, insertTopUpWithBinding(order, binding))
+	require.NoError(t, paymentcore.InsertTopUpWithBinding(order, binding))
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -105,7 +107,7 @@ func TestPancakeWebhookRetriesTransientBindingWriteFailureAndCompletesOnce(t *te
 		"data": map[string]any{
 			"orderId":                       "ORD_RETRY_1",
 			"orderMerchantExternalId":       tradeNo,
-			"merchantProvidedBuyerIdentity": WaffoPancakeBuyerIdentityFromUserID(user.Id),
+			"merchantProvidedBuyerIdentity": service.WaffoPancakeBuyerIdentityFromUserID(user.Id),
 			"amount":                        "100.00",
 			"currency":                      "USD",
 		},
@@ -162,7 +164,7 @@ func TestPancakeSubscriptionWebhookRetriesTransientBindingWriteFailure(t *testin
 	setting.WaffoPancakeProductID = "product"
 
 	tradeNo := "WAFFO_PANCAKE_SUB-42-retry-regression"
-	binding, err := newWaffoPancakeBinding(tradeNo, OrderBindingKindSubscription, "29.99")
+	binding, err := paymentcore.NewWaffoPancakeBinding(tradeNo, paymentcore.OrderBindingKindSubscription, "29.99")
 	require.NoError(t, err)
 	order := &model.SubscriptionOrder{
 		UserId:          42,
@@ -173,7 +175,7 @@ func TestPancakeSubscriptionWebhookRetriesTransientBindingWriteFailure(t *testin
 		PaymentMethod:   model.PaymentMethodWaffoPancake,
 		Status:          common.TopUpStatusPending,
 	}
-	require.NoError(t, insertSubscriptionOrderWithBinding(order, binding))
+	require.NoError(t, paymentcore.InsertSubscriptionOrderWithBinding(order, binding))
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -189,7 +191,7 @@ func TestPancakeSubscriptionWebhookRetriesTransientBindingWriteFailure(t *testin
 		"data": map[string]any{
 			"orderId":                       "ORD_SUB_RETRY_1",
 			"orderMerchantExternalId":       tradeNo,
-			"merchantProvidedBuyerIdentity": WaffoPancakeBuyerIdentityFromUserID(order.UserId),
+			"merchantProvidedBuyerIdentity": service.WaffoPancakeBuyerIdentityFromUserID(order.UserId),
 			"amount":                        "29.99",
 			"currency":                      "USD",
 		},
@@ -208,36 +210,40 @@ func TestPancakeResolversTreatDatabaseUnavailableAsRetryable(t *testing.T) {
 	model.DB = nil
 	t.Cleanup(func() { model.DB = previousDB })
 
-	topupEvent := &WaffoPancakeWebhookEvent{
-		Data: WaffoPancakeWebhookData{OrderMerchantExternalID: "WAFFO_PANCAKE-db-down"},
+	topupEvent := &service.WaffoPancakeWebhookEvent{
+		Data: service.WaffoPancakeWebhookData{OrderMerchantExternalID: "WAFFO_PANCAKE-db-down"},
 	}
-	_, err := ResolveWaffoPancakeTradeNo(topupEvent)
+	_, err := service.ResolveWaffoPancakeTradeNo(topupEvent)
 	require.Error(t, err)
-	assert.True(t, retryablePancakeWebhookError(err), "top-up database outage must request provider retry")
+	assert.True(t, service.RetryableWaffoPancakeWebhookError(err), "top-up database outage must request provider retry")
 
-	subscriptionEvent := &WaffoPancakeWebhookEvent{
-		Data: WaffoPancakeWebhookData{OrderMerchantExternalID: "WAFFO_PANCAKE_SUB-db-down"},
+	subscriptionEvent := &service.WaffoPancakeWebhookEvent{
+		Data: service.WaffoPancakeWebhookData{OrderMerchantExternalID: "WAFFO_PANCAKE_SUB-db-down"},
 	}
-	_, err = ResolveWaffoPancakeSubscriptionTradeNo(subscriptionEvent)
+	_, err = service.ResolveWaffoPancakeSubscriptionTradeNo(subscriptionEvent)
 	require.Error(t, err)
-	assert.True(t, retryablePancakeWebhookError(err), "subscription database outage must request provider retry")
+	assert.True(t, service.RetryableWaffoPancakeWebhookError(err), "subscription database outage must request provider retry")
 }
 
 func TestProviderOrderIdentityConflictIsPermanent(t *testing.T) {
 	db := withPaymentBindingDB(t)
-	binding := PaymentOrderBinding{
-		TradeNo:          "provider-order-race",
+	withPancakeBindingConfig(t, "STORE_RACE")
+
+	tradeNo := "provider-order-race"
+	binding := paymentcore.PaymentOrderBinding{
+		TradeNo:          tradeNo,
 		Provider:         model.PaymentProviderWaffoPancake,
-		OrderKind:        OrderBindingKindTopUp,
+		OrderKind:        paymentcore.OrderBindingKindTopUp,
 		Environment:      "prod",
+		StoreID:          "STORE_RACE",
 		ProviderOrderID:  "ORD_WINNER",
 		ExpectedAmount:   "100.00",
 		ExpectedCurrency: "USD",
 	}
 	require.NoError(t, db.Create(&binding).Error)
 
-	err := bindProviderOrderID(binding.TradeNo, "ORD_LOSER")
+	err := paymentcore.BindProviderOrderID(binding.TradeNo, "ORD_LOSER")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrProviderOrderIDMismatch)
-	assert.False(t, retryablePancakeWebhookError(pancakePermanentError(err)), "identity conflict is not a transient storage error")
+	assert.ErrorIs(t, err, paymentcore.ErrProviderOrderIDMismatch)
+	assert.False(t, service.RetryableWaffoPancakeWebhookError(err), "identity conflict is not a transient storage error")
 }

@@ -1,4 +1,4 @@
-package payment
+package paymentcore
 
 import (
 	"errors"
@@ -18,28 +18,31 @@ import (
 	"gorm.io/gorm"
 )
 
-// TestPaymentOrderBindingDatabaseCompatibilityReal is the provider-owned half
-// of the repository database compatibility matrix. The model package cannot
-// import this concrete module without creating an import cycle, so provider
-// schema compatibility is exercised here instead of being duplicated there.
+// TestPaymentOrderBindingDatabaseCompatibilityReal exercises the host payment
+// binding schema against a real database engine. It is opt-in: configure
+// TEST_DATABASE_DIALECT (sqlite|mysql|postgres) and, for network engines,
+// TEST_DATABASE_DSN. An explicitly configured engine that cannot connect or
+// migrate fails the test instead of skipping, because a skipped database
+// matrix must never look like evidence.
 func TestPaymentOrderBindingDatabaseCompatibilityReal(t *testing.T) {
-	if os.Getenv("TEST_DATABASE_COMPAT") != "1" {
-		t.Skip("set TEST_DATABASE_COMPAT=1 to run the real payment binding database compatibility test")
+	dialect := strings.ToLower(strings.TrimSpace(os.Getenv("TEST_DATABASE_DIALECT")))
+	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_DSN"))
+	if os.Getenv("TEST_DATABASE_COMPAT") != "1" && dialect == "" && dsn == "" {
+		t.Skip("set TEST_DATABASE_DIALECT=postgres (+ TEST_DATABASE_DSN) to run the real payment binding database compatibility test")
 	}
 
-	dialect := strings.ToLower(strings.TrimSpace(os.Getenv("TEST_DATABASE_DIALECT")))
 	var dialector gorm.Dialector
 	switch dialect {
 	case "sqlite":
 		dialector = sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_")))
 	case "mysql":
-		dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_DSN"))
 		require.NotEmpty(t, dsn, "TEST_DATABASE_DSN is required for mysql")
 		dialector = mysql.Open(dsn)
 	case "postgres":
-		dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_DSN"))
 		require.NotEmpty(t, dsn, "TEST_DATABASE_DSN is required for postgres")
 		dialector = postgres.Open(dsn)
+	case "":
+		t.Fatalf("TEST_DATABASE_DIALECT is required when a compatibility run is requested (got TEST_DATABASE_DSN=%t)", dsn != "")
 	default:
 		t.Fatalf("unsupported TEST_DATABASE_DIALECT %q", dialect)
 	}
@@ -129,7 +132,7 @@ VALUES (?, ?, ?, ?, ?, ?)`,
 		PaymentProvider: model.PaymentProviderWaffoPancake,
 		Status:          common.TopUpStatusPending,
 	}
-	require.Error(t, insertTopUpWithBinding(topUp, topUpBinding))
+	require.Error(t, InsertTopUpWithBinding(topUp, topUpBinding))
 	var topUpCount int64
 	require.NoError(t, db.Model(&model.TopUp{}).Where("trade_no = ?", topUpBinding.TradeNo).Count(&topUpCount).Error)
 	assert.Zero(t, topUpCount)
@@ -152,7 +155,7 @@ VALUES (?, ?, ?, ?, ?, ?)`,
 		PaymentProvider: model.PaymentProviderWaffoPancake,
 		Status:          common.TopUpStatusPending,
 	}
-	require.Error(t, insertSubscriptionOrderWithBinding(order, subscriptionBinding))
+	require.Error(t, InsertSubscriptionOrderWithBinding(order, subscriptionBinding))
 	var orderCount int64
 	require.NoError(t, db.Model(&model.SubscriptionOrder{}).Where("trade_no = ?", subscriptionBinding.TradeNo).Count(&orderCount).Error)
 	assert.Zero(t, orderCount)
@@ -179,7 +182,7 @@ VALUES (?, ?, ?, ?, ?, ?)`,
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
-			errs <- bindProviderOrderID("matrix-race", id)
+			errs <- BindProviderOrderID("matrix-race", id)
 		}(providerOrderID)
 	}
 	wg.Wait()

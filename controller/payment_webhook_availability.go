@@ -3,6 +3,7 @@ package controller
 import (
 	"strings"
 
+	"github.com/QuantumNous/new-api/pkg/paymentcore"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
@@ -44,6 +45,57 @@ func isCreemWebhookConfigured() bool {
 
 func isCreemWebhookEnabled() bool {
 	return isCreemTopUpEnabled() && isCreemWebhookConfigured()
+}
+
+func isWaffoTopUpEnabled() bool {
+	if !isPaymentComplianceConfirmed() {
+		return false
+	}
+	if !setting.WaffoEnabled {
+		return false
+	}
+
+	return isWaffoWebhookConfigured()
+}
+
+func isWaffoWebhookConfigured() bool {
+	if setting.WaffoSandbox {
+		return strings.TrimSpace(setting.WaffoSandboxApiKey) != "" &&
+			strings.TrimSpace(setting.WaffoSandboxPrivateKey) != "" &&
+			strings.TrimSpace(setting.WaffoSandboxPublicCert) != ""
+	}
+
+	return strings.TrimSpace(setting.WaffoApiKey) != "" &&
+		strings.TrimSpace(setting.WaffoPrivateKey) != "" &&
+		strings.TrimSpace(setting.WaffoPublicCert) != ""
+}
+
+func isWaffoWebhookEnabled() bool {
+	return isWaffoTopUpEnabled()
+}
+
+func isWaffoPancakeTopUpEnabled() bool {
+	if !isPaymentComplianceConfirmed() {
+		return false
+	}
+	// Presence-of-credentials = enabled, plus the trusted environment and
+	// store id that webhook settlement pins into the order binding. Webhook
+	// public keys ship inside the SDK; mode is read from each event.
+	if _, err := paymentcore.ConfiguredWaffoPancakeEnvironment(); err != nil {
+		return false
+	}
+	return strings.TrimSpace(setting.WaffoPancakeMerchantID) != "" &&
+		strings.TrimSpace(setting.WaffoPancakePrivateKey) != "" &&
+		strings.TrimSpace(setting.WaffoPancakeStoreID) != "" &&
+		strings.TrimSpace(setting.WaffoPancakeProductID) != ""
+}
+
+func isWaffoPancakeWebhookConfigured() bool {
+	return isWaffoPancakeTopUpEnabled()
+}
+
+func isWaffoPancakeWebhookEnabled() bool {
+	return isWaffoPancakeTopUpEnabled()
 }
 
 func isEpayTopUpEnabled() bool {

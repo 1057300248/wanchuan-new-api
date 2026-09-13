@@ -94,7 +94,7 @@ func TestRegisterContributesModuleRoutesBeforePluginSnapshot(t *testing.T) {
 	require.NoError(t, Register(reg))
 
 	sets := reg.RouteSetsFor(extension.PriorityBeforePlugin)
-	require.Len(t, sets, 4)
+	require.Len(t, sets, 5)
 	assert.Equal(t, ExtensionName, sets[0].Extension)
 	assert.Equal(t, WalletPolicyRoutesName, sets[0].Name)
 	require.NotNil(t, sets[0].RegisterScoped)
@@ -105,8 +105,11 @@ func TestRegisterContributesModuleRoutesBeforePluginSnapshot(t *testing.T) {
 	assert.Equal(t, LlmsRoutesName, sets[2].Name)
 	require.NotNil(t, sets[2].Register)
 	assert.Equal(t, ExtensionName, sets[3].Extension)
-	assert.Equal(t, SupportRoutesName, sets[3].Name)
-	require.NotNil(t, sets[3].Register)
+	assert.Equal(t, ConsolePublicRoutesName, sets[3].Name)
+	require.NotNil(t, sets[3].RegisterScoped)
+	assert.Equal(t, ExtensionName, sets[4].Extension)
+	assert.Equal(t, SupportRoutesName, sets[4].Name)
+	require.NotNil(t, sets[4].Register)
 	assert.Empty(t, reg.RouteSetsFor(extension.PriorityAfterPlugin))
 }
 
@@ -145,7 +148,7 @@ func TestRegisterTwiceIsRejectedWithoutDuplicatingModels(t *testing.T) {
 
 	assert.Len(t, reg.ModelsFor(extension.PhaseAfterCoreModels), len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+len(expectedPaymentModelOrder)+len(expectedSupportModelOrder))
 	assert.Len(t, reg.StepsFor(extension.PhaseAfterCoreData), 1)
-	assert.Len(t, reg.RouteSetsFor(extension.PriorityBeforePlugin), 4)
+	assert.Len(t, reg.RouteSetsFor(extension.PriorityBeforePlugin), 5)
 }
 
 func TestSupportRouteSetRegistersUserAndAdminTicketAPIs(t *testing.T) {
@@ -153,10 +156,10 @@ func TestSupportRouteSetRegistersUserAndAdminTicketAPIs(t *testing.T) {
 	reg := extension.NewRegistry()
 	require.NoError(t, Register(reg))
 	sets := reg.RouteSetsFor(extension.PriorityBeforePlugin)
-	require.Len(t, sets, 4)
+	require.Len(t, sets, 5)
 
 	engine := gin.New()
-	require.NoError(t, sets[3].Register(engine))
+	require.NoError(t, sets[4].Register(engine))
 	routes := make(map[string]struct{})
 	for _, route := range engine.Routes() {
 		routes[route.Method+" "+route.Path] = struct{}{}

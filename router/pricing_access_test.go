@@ -12,7 +12,7 @@ import (
 func TestPricingRoutesSeparatePublicCatalogFromDashboardAPI(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	SetApiRouter(engine)
+	applyConsoleRoutes(t, SetApiRouter(engine))
 
 	routes := make(map[string]bool)
 	for _, route := range engine.Routes() {

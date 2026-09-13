@@ -22,6 +22,16 @@ var frontendConcreteChuanAPIBaseline = map[string]struct{}{}
 
 var coreBrandLiteralBaseline = map[string]struct{}{}
 
+// hostPaymentProviderFiles are the provider protocol/transport bodies the user
+// authorized back into host ownership. They must exist exactly once here; the
+// extension module contributes only the binding model and a route descriptor.
+var hostPaymentProviderFiles = []string{
+	"controller/topup_waffo.go",
+	"controller/topup_waffo_pancake.go",
+	"controller/subscription_payment_waffo_pancake.go",
+	"service/waffo_pancake.go",
+}
+
 func TestGoCoreDoesNotImportConcreteChuanAPI(t *testing.T) {
 	root := repoRoot(t)
 	fset := token.NewFileSet()
@@ -123,7 +133,7 @@ func TestChuanAPICompositionRootStaysThin(t *testing.T) {
 	for _, imp := range file.Imports {
 		importPath, unquoteErr := strconv.Unquote(imp.Path.Value)
 		require.NoError(t, unquoteErr)
-		if importPath == "fmt" || importPath == modulePath+"/extension" || importPath == modulePath+"/pkg/moneyport" || importPath == modulePath+"/pkg/paymentport" || strings.HasPrefix(importPath, modulePath+"/modules/chuanapi/") {
+		if importPath == "fmt" || importPath == modulePath+"/extension" || importPath == modulePath+"/pkg/moneyport" || strings.HasPrefix(importPath, modulePath+"/modules/chuanapi/") {
 			continue
 		}
 		offenders = append(offenders, importPath)
@@ -131,30 +141,71 @@ func TestChuanAPICompositionRootStaysThin(t *testing.T) {
 	assert.Empty(t, offenders, "chuanapi/register.go must remain a thin composition root: no controller/model/service/common business imports")
 }
 
-func TestCoreApiRouterDoesNotOwnWaffoRoutes(t *testing.T) {
+// TestPaymentProviderRoutesAreRegisteredByHostRouter pins the authorized
+// post-normalization ownership: provider URLs are declared once in the host
+// router's payment route file and handed to the extension registry through
+// RouteScopes.PaymentRoutes, so the module never rebuilds middleware policy or
+// duplicates the route table.
+func TestPaymentProviderRoutesAreRegisteredByHostRouter(t *testing.T) {
 	root := repoRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, "router", "api-router.go"))
-	require.NoError(t, err)
-	assert.NotContains(t, strings.ToLower(string(data)), "waffo", "Waffo route ownership belongs to modules/chuanapi/payment, not the upstream-hot core API router")
-}
 
-func TestPaymentProviderOwnershipStaysInModule(t *testing.T) {
-	root := repoRoot(t)
-	for _, legacy := range []string{
-		"controller/topup_waffo.go",
-		"controller/topup_waffo_pancake.go",
-		"controller/subscription_payment_waffo_pancake.go",
-		"service/waffo_pancake.go",
+	paymentRoutesPath := filepath.Join(root, "router", "payment_routes.go")
+	paymentRoutes, err := os.ReadFile(paymentRoutesPath)
+	require.NoError(t, err, "host router must own the payment route registrar")
+	paymentRoutesSource := string(paymentRoutes)
+	for _, handler := range []string{
+		"controller.WaffoWebhook",
+		"controller.WaffoPancakeWebhook",
+		"controller.RequestWaffoAmount",
+		"controller.RequestWaffoPay",
+		"controller.RequestWaffoPancakeAmount",
+		"controller.RequestWaffoPancakePay",
+		"controller.SubscriptionRequestWaffoPancakePay",
+		"controller.ListWaffoPancakeCatalog",
+		"controller.CreateWaffoPancakePair",
+		"controller.SaveWaffoPancake",
+		"controller.CreateWaffoPancakeSubscriptionProduct",
+		"controller.ListWaffoPancakeSubscriptionProductOptions",
 	} {
-		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(legacy)))
-		assert.ErrorIs(t, err, os.ErrNotExist, "%s must remain module-owned", legacy)
+		assert.Contains(t, paymentRoutesSource, handler, "payment route registrar must mount %s", handler)
 	}
 
-	for _, coreFile := range []string{"controller/topup.go", "controller/payment_webhook_availability.go"} {
-		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(coreFile)))
-		require.NoError(t, err)
-		assert.NotContains(t, strings.ToLower(string(data)), "waffo",
-			"generic payment catalogue/availability code must not know concrete Waffo providers: %s", coreFile)
+	apiRouter, err := os.ReadFile(filepath.Join(root, "router", "api-router.go"))
+	require.NoError(t, err)
+	assert.Contains(t, string(apiRouter), "scopes.PaymentRoutes = RegisterPaymentRoutes",
+		"SetApiRouter must expose the host payment route registrar to extension route sets")
+
+	moduleRegister, err := os.ReadFile(filepath.Join(root, "modules", "chuanapi", "payment", "register.go"))
+	require.NoError(t, err)
+	moduleRegisterSource := string(moduleRegister)
+	assert.Contains(t, moduleRegisterSource, "scopes.PaymentRoutes(scopes)",
+		"payment route descriptor must delegate to the host registrar")
+	for _, forbidden := range []string{`"/waffo`, "middleware."} {
+		assert.NotContains(t, moduleRegisterSource, forbidden,
+			"module route descriptor must not rebuild provider URLs or middleware policy (%s)", forbidden)
+	}
+}
+
+// TestPaymentProviderOwnershipReturnsToHost verifies the provider protocol
+// bodies exist in the host owner locations exactly once and that the module no
+// longer carries a second copy or imports the provider SDKs. The binding schema
+// stays module-declared through pkg/paymentcore aliases.
+func TestPaymentProviderOwnershipReturnsToHost(t *testing.T) {
+	root := repoRoot(t)
+	for _, hostFile := range hostPaymentProviderFiles {
+		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(hostFile)))
+		assert.NoError(t, err, "%s must exist in its host owner package", hostFile)
+	}
+	for _, legacyModuleFile := range []string{
+		"modules/chuanapi/payment/waffo_handler.go",
+		"modules/chuanapi/payment/pancake_handler.go",
+		"modules/chuanapi/payment/pancake_service.go",
+		"modules/chuanapi/payment/pancake_subscription_handler.go",
+		"modules/chuanapi/payment/order_binding.go",
+		"modules/chuanapi/payment/catalog.go",
+	} {
+		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(legacyModuleFile)))
+		assert.ErrorIs(t, err, os.ErrNotExist, "%s must not keep a duplicate provider implementation", legacyModuleFile)
 	}
 
 	moduleRoot := filepath.Join(root, "modules", "chuanapi", "payment")
@@ -176,14 +227,37 @@ func TestPaymentProviderOwnershipStaysInModule(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if importPath == modulePath+"/controller" || strings.HasPrefix(importPath, modulePath+"/controller/") ||
-				importPath == modulePath+"/service" || strings.HasPrefix(importPath, modulePath+"/service/") {
+			switch {
+			case importPath == modulePath+"/controller" || strings.HasPrefix(importPath, modulePath+"/controller/"):
+				offenders = append(offenders, slashRel(t, root, path)+" -> "+importPath)
+			case importPath == modulePath+"/service" || strings.HasPrefix(importPath, modulePath+"/service/"):
+				offenders = append(offenders, slashRel(t, root, path)+" -> "+importPath)
+			case strings.HasPrefix(importPath, "github.com/waffo-com/"):
 				offenders = append(offenders, slashRel(t, root, path)+" -> "+importPath)
 			}
 		}
 		return nil
 	}))
-	assert.Empty(t, offenders, "ChuanAPI payment module must own provider handlers/services without importing root controller/service")
+	assert.Empty(t, offenders, "ChuanAPI payment module must not import host controller/service or provider SDKs after the protocol bodies returned to the host")
+}
+
+// TestPaymentBindingSchemaStaysRegisteredByModule keeps the migration contract:
+// the module model set still contributes the chuanapi_payment_order_bindings
+// snapshot (aliased from pkg/paymentcore) in the host migration order.
+func TestPaymentBindingSchemaStaysRegisteredByModule(t *testing.T) {
+	root := repoRoot(t)
+	modelsFile, err := os.ReadFile(filepath.Join(root, "modules", "chuanapi", "payment", "models.go"))
+	require.NoError(t, err)
+	assert.Contains(t, string(modelsFile), "type PaymentOrderBinding = paymentcore.PaymentOrderBinding",
+		"the module must alias the generic binding type instead of duplicating the schema")
+
+	registerFile, err := os.ReadFile(filepath.Join(root, "modules", "chuanapi", "payment", "register.go"))
+	require.NoError(t, err)
+	assert.Contains(t, string(registerFile), "Models:    []any{&PaymentOrderBinding{}}",
+		"the module model set must keep registering the payment binding table")
+
+	_, err = os.Stat(filepath.Join(root, "pkg", "paymentcore", "order_binding.go"))
+	assert.NoError(t, err, "pkg/paymentcore must own the generic binding implementation")
 }
 
 func TestChuanAPIConsoleDoesNotImportHostControllerOrService(t *testing.T) {
@@ -238,34 +312,61 @@ func TestChuanAPIRouteModulesUseHostOwnedAPIScopes(t *testing.T) {
 				"%s must not reconstruct host API middleware policy (%s)", rel, forbidden)
 		}
 	}
+
+	// The payment route set forwards to the host registrar rather than owning
+	// the endpoints, which keeps the leaf registry free of provider bodies.
+	paymentRegister, err := os.ReadFile(filepath.Join(root, "modules", "chuanapi", "payment", "register.go"))
+	require.NoError(t, err)
+	assert.Contains(t, string(paymentRegister), "scopes.PaymentRoutes(scopes)",
+		"payment route descriptor must delegate to the host registrar")
 }
 
-func TestPaymentProviderCompositionUsesRegistry(t *testing.T) {
+// TestPaymentCatalogueHasSingleHostSource removes the provider catalogue
+// registry that only existed to move the Waffo catalogue out of the host. The
+// host GetTopUpInfo projection is the single source of pay_methods and
+// provider metadata fields; no parallel registry may be reintroduced.
+func TestPaymentCatalogueHasSingleHostSource(t *testing.T) {
 	root := repoRoot(t)
+
+	_, err := os.Stat(filepath.Join(root, "pkg", "paymentport"))
+	assert.ErrorIs(t, err, os.ErrNotExist, "the Waffo-only paymentport catalogue registry must not return")
+
+	topUpController, err := os.ReadFile(filepath.Join(root, "controller", "topup.go"))
+	require.NoError(t, err)
+	topUpSource := string(topUpController)
+	for _, key := range []string{
+		"enable_waffo_topup",
+		"enable_waffo_pancake_topup",
+		"waffo_min_topup",
+		"waffo_pancake_min_topup",
+		"waffo_pay_methods",
+		"model.PaymentMethodWaffoPancake",
+		"model.PaymentMethodWaffo",
+	} {
+		assert.Contains(t, topUpSource, key, "host top-up catalogue must project %s", key)
+	}
+
+	moduleRoot := filepath.Join(root, "modules", "chuanapi", "payment")
 	var offenders []string
-	require.NoError(t, filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+	require.NoError(t, filepath.WalkDir(moduleRoot, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() {
-			if skipDir(root, path) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
 		}
-		if strings.Contains(string(data), "paymentport.SetDefault") {
-			offenders = append(offenders, slashRel(t, root, path))
+		for _, duplicated := range []string{"enable_waffo", "waffo_min_topup", "waffo_pay_methods", "pay_methods"} {
+			if strings.Contains(string(data), duplicated) {
+				offenders = append(offenders, slashRel(t, root, path)+": "+duplicated)
+			}
 		}
 		return nil
 	}))
-	assert.Empty(t, offenders, "payment providers must register through the frozen multi-provider registry")
+	assert.Empty(t, offenders, "the payment module must not duplicate the host catalogue projection")
 }
 
 func TestWalletAndAffiliateRuntimeOwnershipStaysInModules(t *testing.T) {

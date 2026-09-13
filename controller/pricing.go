@@ -10,18 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// GetPublicPricing serves the anonymous marketing catalogue. The public route
-// is intentionally distinct from /api/pricing, whose router always requires a
-// signed-in dashboard user.
-func GetPublicPricing(c *gin.Context) {
-	writePricingResponse(c)
-}
-
 func GetPricing(c *gin.Context) {
-	writePricingResponse(c)
-}
-
-func writePricingResponse(c *gin.Context) {
 	pricing := model.GetPricing()
 	userId, exists := c.Get("id")
 	usableGroup := map[string]string{}

@@ -56,7 +56,7 @@ func TestAuthSessionReadOnlyBrowserIdentity(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	SetApiRouter(engine)
+	applyConsoleRoutes(t, SetApiRouter(engine))
 	const endpoint = "https://console.example/api/user/auth/session"
 	tests := []struct {
 		name       string
@@ -179,7 +179,7 @@ func TestAuthSessionRateLimitIsNotCached(t *testing.T) {
 	})
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	SetApiRouter(engine)
+	applyConsoleRoutes(t, SetApiRouter(engine))
 	for _, wantStatus := range []int{http.StatusUnauthorized, http.StatusTooManyRequests} {
 		request := httptest.NewRequest(http.MethodGet, "/api/user/auth/session", nil)
 		request.RemoteAddr = "192.0.2.207:12345"

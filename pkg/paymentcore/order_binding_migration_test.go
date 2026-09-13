@@ -1,4 +1,4 @@
-package payment
+package paymentcore
 
 import (
 	"fmt"
@@ -131,7 +131,7 @@ func TestTopUpAndPaymentBindingInsertRollbackTogether(t *testing.T) {
 		Status:          common.TopUpStatusPending,
 	}
 	conflicting := existing
-	require.Error(t, insertTopUpWithBinding(topUp, conflicting))
+	require.Error(t, InsertTopUpWithBinding(topUp, conflicting))
 
 	var topUpCount int64
 	require.NoError(t, db.Model(&model.TopUp{}).Where("trade_no = ?", tradeNo).Count(&topUpCount).Error)
@@ -167,7 +167,7 @@ func TestSubscriptionAndPaymentBindingInsertRollbackTogether(t *testing.T) {
 		Status:          common.TopUpStatusPending,
 	}
 	conflicting := existing
-	require.Error(t, insertSubscriptionOrderWithBinding(order, conflicting))
+	require.Error(t, InsertSubscriptionOrderWithBinding(order, conflicting))
 
 	var orderCount int64
 	require.NoError(t, db.Model(&model.SubscriptionOrder{}).Where("trade_no = ?", tradeNo).Count(&orderCount).Error)
