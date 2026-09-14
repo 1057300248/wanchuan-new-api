@@ -29,6 +29,7 @@ const LEGACY_QUICKSTART_URLS = new Set([
 export const chuanapiNavigationExtension: NavigationExtension = {
   id: 'chuanapi/navigation',
   publicHomeUrl: CHUANAPI_PUBLIC_HOME,
+  quickstartDocsUrl: CHUANAPI_QUICKSTART_DOCS,
   apply(links) {
     return links.map((link) => {
       if (link.href === '/') {

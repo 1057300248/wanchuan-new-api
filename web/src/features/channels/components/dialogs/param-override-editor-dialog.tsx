@@ -45,7 +45,9 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
+import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
@@ -1793,8 +1795,8 @@ export function ParamOverrideEditorDialog(
           <span className='text-muted-foreground text-xs font-medium'>
             {t('Template')}
           </span>
-          <Select
-            items={templatePresetOptions.map((o) => ({
+          <Combobox
+            options={templatePresetOptions.map((o) => ({
               value: o.value,
               label: t(o.label),
             }))}
@@ -1802,20 +1804,8 @@ export function ParamOverrideEditorDialog(
             onValueChange={(v) =>
               setTemplatePresetKey(v || 'operations_default')
             }
-          >
-            <SelectTrigger className='h-8 w-[220px]'>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent alignItemWithTrigger={false}>
-              <SelectGroup>
-                {templatePresetOptions.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {t(o.label)}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+            className='h-8 w-[220px]'
+          />
           <Button
             type='button'
             variant='outline'
@@ -2138,6 +2128,10 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
   const { t } = useTranslation()
   const operation = ruleEditorProps.operation
   const mode = operation.mode || 'set'
+  const returnErrorDraft =
+    mode === 'return_error' ? ruleEditorProps.returnErrorDraft : null
+  const pruneObjectsDraft =
+    mode === 'prune_objects' ? ruleEditorProps.pruneObjectsDraft : null
   const meta = MODE_META[mode] || MODE_META.set
   const conditions = operation.conditions
   const syncFromTarget =
@@ -2199,8 +2193,8 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
         <div className='grid gap-3 sm:grid-cols-2'>
           <div className='space-y-1.5'>
             <label className='text-xs font-medium'>{t('Operation Type')}</label>
-            <Select
-              items={OPERATION_MODE_OPTIONS.map((o) => ({
+            <Combobox
+              options={OPERATION_MODE_OPTIONS.map((o) => ({
                 value: o.value,
                 label: t(o.label),
               }))}
@@ -2211,20 +2205,8 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
                   mode: nextMode,
                 })
               }
-            >
-              <SelectTrigger className='h-9'>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent alignItemWithTrigger={false}>
-                <SelectGroup>
-                  {OPERATION_MODE_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>
-                      {t(o.label)}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+              className='h-9'
+            />
           </div>
           {(meta.path || meta.pathOptional) && (
             <div className='space-y-1.5'>
@@ -2278,27 +2260,23 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
         </div>
 
         {/* Value section */}
-        {Boolean(meta.value) &&
-          showReturnErrorEditor &&
-          ruleEditorProps.returnErrorDraft && (
-            <ReturnErrorEditor
-              operationId={operation.id}
-              draft={ruleEditorProps.returnErrorDraft}
-              updateDraft={ruleEditorProps.updateReturnErrorDraft}
-            />
-          )}
-        {Boolean(meta.value) &&
-          showPruneObjectsEditor &&
-          ruleEditorProps.pruneObjectsDraft && (
-            <PruneObjectsEditor
-              operationId={operation.id}
-              draft={ruleEditorProps.pruneObjectsDraft}
-              updateDraft={ruleEditorProps.updatePruneObjectsDraft}
-              addRule={ruleEditorProps.addPruneRule}
-              updateRule={ruleEditorProps.updatePruneRule}
-              removeRule={ruleEditorProps.removePruneRule}
-            />
-          )}
+        {Boolean(meta.value) && showReturnErrorEditor && returnErrorDraft && (
+          <ReturnErrorEditor
+            operationId={operation.id}
+            draft={returnErrorDraft}
+            updateDraft={ruleEditorProps.updateReturnErrorDraft}
+          />
+        )}
+        {Boolean(meta.value) && showPruneObjectsEditor && pruneObjectsDraft && (
+          <PruneObjectsEditor
+            operationId={operation.id}
+            draft={pruneObjectsDraft}
+            updateDraft={ruleEditorProps.updatePruneObjectsDraft}
+            addRule={ruleEditorProps.addPruneRule}
+            updateRule={ruleEditorProps.updatePruneRule}
+            removeRule={ruleEditorProps.removePruneRule}
+          />
+        )}
         {showDefaultValueEditor && (
           <div className='space-y-1.5'>
             <div className='flex items-center justify-between'>
@@ -2592,8 +2570,8 @@ function ConditionEditor(conditionEditorProps: ConditionEditorProps) {
                 <label className='text-[10px] font-medium'>
                   {t('Match Mode')}
                 </label>
-                <Select
-                  items={CONDITION_MODE_OPTIONS.map((o) => ({
+                <Combobox
+                  options={CONDITION_MODE_OPTIONS.map((o) => ({
                     value: o.value,
                     label: t(o.label),
                   }))}
@@ -2606,20 +2584,8 @@ function ConditionEditor(conditionEditorProps: ConditionEditorProps) {
                       { mode: v }
                     )
                   }
-                >
-                  <SelectTrigger className='h-8 text-xs'>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent alignItemWithTrigger={false}>
-                    <SelectGroup>
-                      {CONDITION_MODE_OPTIONS.map((o) => (
-                        <SelectItem key={o.value} value={o.value}>
-                          {t(o.label)}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
+                  className='h-8 text-xs'
+                />
               </div>
               <div className='space-y-1'>
                 <label className='text-[10px] font-medium'>
@@ -2731,9 +2697,9 @@ function ReturnErrorEditor(returnErrorEditorProps: ReturnErrorEditorProps) {
       </div>
 
       <div className='space-y-1.5'>
-        <label className='text-xs font-medium'>
-          {t('Error Message (required)')}
-        </label>
+        <Label required className='text-xs font-medium'>
+          {t('Error Message')}
+        </Label>
         <Textarea
           value={draft.message}
           onChange={(e) =>
@@ -3110,8 +3076,8 @@ function PruneObjectsEditor(pruneObjectsEditorProps: PruneObjectsEditorProps) {
                         <label className='text-[10px] font-medium'>
                           {t('Match Mode')}
                         </label>
-                        <Select
-                          items={CONDITION_MODE_OPTIONS.map((o) => ({
+                        <Combobox
+                          options={CONDITION_MODE_OPTIONS.map((o) => ({
                             value: o.value,
                             label: t(o.label),
                           }))}
@@ -3124,20 +3090,8 @@ function PruneObjectsEditor(pruneObjectsEditorProps: PruneObjectsEditorProps) {
                               { mode: v }
                             )
                           }
-                        >
-                          <SelectTrigger className='h-7 text-xs'>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent alignItemWithTrigger={false}>
-                            <SelectGroup>
-                              {CONDITION_MODE_OPTIONS.map((o) => (
-                                <SelectItem key={o.value} value={o.value}>
-                                  {t(o.label)}
-                                </SelectItem>
-                              ))}
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
+                          className='h-7 text-xs'
+                        />
                       </div>
                       <div className='space-y-0.5'>
                         <label className='text-[10px] font-medium'>

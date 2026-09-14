@@ -16,20 +16,43 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import en from './locales/en.json'
-import fr from './locales/fr.json'
-import ja from './locales/ja.json'
-import ru from './locales/ru.json'
-import vi from './locales/vi.json'
-import zhTW from './locales/zh-TW.json'
-import zhCN from './locales/zh.json'
+import type { ExtensionLocaleBundle, ExtensionLocaleKey } from '../../i18n'
 
-export const chuanapiI18nOverrides = {
-  en,
-  zhCN,
-  fr,
-  ru,
-  ja,
-  vi,
-  zhTW,
-} as const
+type LocaleModule = { default: ExtensionLocaleBundle } | ExtensionLocaleBundle
+
+function normalizeBundle(mod: LocaleModule): ExtensionLocaleBundle {
+  if (mod && typeof mod === 'object' && 'default' in mod) {
+    return (mod as { default: ExtensionLocaleBundle }).default
+  }
+  return mod as ExtensionLocaleBundle
+}
+
+const chuanapiLocaleLoaders: Record<
+  ExtensionLocaleKey,
+  () => Promise<LocaleModule>
+> = {
+  en: () => import('./locales/en.json'),
+  zhCN: () => import('./locales/zh.json'),
+  fr: () => import('./locales/fr.json'),
+  ru: () => import('./locales/ru.json'),
+  ja: () => import('./locales/ja.json'),
+  vi: () => import('./locales/vi.json'),
+  zhTW: () => import('./locales/zh-TW.json'),
+}
+
+/**
+ * Async single-locale loader so the chuanapi extension no longer pulls all
+ * seven locales into the sync entry. Registration-order merge semantics are
+ * preserved by the generic bridge in `@/extensions/i18n`.
+ */
+export async function loadChuanapiI18nOverride(
+  locale: ExtensionLocaleKey
+): Promise<ExtensionLocaleBundle | undefined> {
+  const loader = chuanapiLocaleLoaders[locale]
+  if (!loader) return undefined
+  try {
+    return normalizeBundle(await loader())
+  } catch {
+    return undefined
+  }
+}

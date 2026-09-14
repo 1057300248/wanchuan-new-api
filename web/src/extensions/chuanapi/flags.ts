@@ -31,8 +31,8 @@ For commercial licensing, please contact support@quantumnous.com
 /**
  * 是否展示上游的 affiliate 额度字段（邀请收益、邀请额度）。
  *
- * 恒为 false：万川自 2026-08-12 起不提供推荐奖励提现，客户端与管理端
- * 均不得暴露 affiliate 额度。推荐奖励改由 bonus 账户体系承载，展示位在
- * 钱包页的「推荐奖励」卡片。
+ * 恒为 false：管理端用户列表/用量详情不展示 aff_quota 原始字段；用户本人
+ * 的待使用收益由钱包页「邀请奖励」卡片按原生 aff_quota/aff_history 展示，
+ * 并通过划转进入 reward 余额。此处不提供任何生产可误开的开关。
  */
 export const SHOW_LEGACY_AFFILIATE_QUOTA = false as const

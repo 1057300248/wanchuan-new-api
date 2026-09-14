@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/paymentcore"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
@@ -20,11 +20,7 @@ type PaymentComplianceRequest struct {
 }
 
 func requirePaymentCompliance(c *gin.Context) bool {
-	if !operation_setting.IsPaymentComplianceConfirmed() {
-		common.ApiErrorI18n(c, i18n.MsgPaymentComplianceRequired)
-		return false
-	}
-	return true
+	return paymentcore.RequireCompliance(c)
 }
 
 func ConfirmPaymentCompliance(c *gin.Context) {

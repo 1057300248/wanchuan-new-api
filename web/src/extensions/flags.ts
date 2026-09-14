@@ -22,7 +22,7 @@ For commercial licensing, please contact support@quantumnous.com
  * Core code gates extension-owned UI through `extensionFlags` /
  * `isExtensionFeatureEnabled` instead of importing a concrete extension's
  * flag constants. Flags default to disabled and can only be configured once
- * during bundle composition in `extensions/index.ts`.
+ * during bundle composition in `extensions/bootstrap.ts`.
  */
 export type ExtensionFeatureFlag = 'showLegacyAffiliateQuota'
 

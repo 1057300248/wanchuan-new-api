@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient } from '@tanstack/react-query'
 import { isRedirect } from '@tanstack/react-router'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
@@ -45,11 +46,19 @@ function sidebarStatus(imageEnabled: boolean) {
   }
 }
 
-async function callImageBeforeLoad(): Promise<unknown> {
+function createTestQueryClient() {
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+}
+
+async function callImageBeforeLoad(queryClient: QueryClient): Promise<unknown> {
   const beforeLoad = ImageRoute.options.beforeLoad as unknown as (
-    ...args: never[]
+    args: unknown
   ) => unknown
-  return beforeLoad()
+  return (beforeLoad as (args: unknown) => unknown)({
+    context: { queryClient },
+  })
 }
 
 beforeEach(() => {
@@ -61,17 +70,20 @@ afterEach(() => {
   window.localStorage.clear()
 })
 
-describe('image route gate uses fresh module access', () => {
+describe('image route gate uses shared status query', () => {
   test('redirects to dashboard when fresh status disables chat.image even if cache is stale', async () => {
+    const queryClient = createTestQueryClient()
     writeStatus(sidebarStatus(true))
     expect(isSidebarModuleEnabled('chat', 'image')).toBe(true)
     mockedGetStatus.mockResolvedValue(sidebarStatus(false))
 
     let thrown: unknown
     try {
-      await callImageBeforeLoad()
+      await callImageBeforeLoad(queryClient)
     } catch (error) {
       thrown = error
+    } finally {
+      queryClient.clear()
     }
 
     expect(mockedGetStatus).toHaveBeenCalledTimes(1)
@@ -82,24 +94,32 @@ describe('image route gate uses fresh module access', () => {
   })
 
   test('allows /image when fresh status enables chat.image despite a disabled cache', async () => {
+    const queryClient = createTestQueryClient()
     writeStatus(sidebarStatus(false))
     mockedGetStatus.mockResolvedValue(sidebarStatus(true))
 
-    await expect(callImageBeforeLoad()).resolves.toBeUndefined()
+    try {
+      await expect(callImageBeforeLoad(queryClient)).resolves.toBeUndefined()
+    } finally {
+      queryClient.clear()
+    }
     expect(JSON.parse(window.localStorage.getItem('status') ?? '{}')).toEqual(
       sidebarStatus(true)
     )
   })
 
   test('redirects when cached status is corrupt and fresh fetch fails', async () => {
+    const queryClient = createTestQueryClient()
     window.localStorage.setItem('status', 'not-json{{{')
     mockedGetStatus.mockRejectedValue(new Error('network down'))
 
     let thrown: unknown
     try {
-      await callImageBeforeLoad()
+      await callImageBeforeLoad(queryClient)
     } catch (error) {
       thrown = error
+    } finally {
+      queryClient.clear()
     }
 
     expect(isRedirect(thrown)).toBe(true)
@@ -109,13 +129,16 @@ describe('image route gate uses fresh module access', () => {
   })
 
   test('redirects when no cached status exists and fresh fetch fails', async () => {
+    const queryClient = createTestQueryClient()
     mockedGetStatus.mockRejectedValue(new Error('network down'))
 
     let thrown: unknown
     try {
-      await callImageBeforeLoad()
+      await callImageBeforeLoad(queryClient)
     } catch (error) {
       thrown = error
+    } finally {
+      queryClient.clear()
     }
 
     expect(isRedirect(thrown)).toBe(true)
@@ -125,14 +148,17 @@ describe('image route gate uses fresh module access', () => {
   })
 
   test('falls back to cached disabled value when the status request fails', async () => {
+    const queryClient = createTestQueryClient()
     writeStatus(sidebarStatus(false))
     mockedGetStatus.mockRejectedValue(new Error('network down'))
 
     let thrown: unknown
     try {
-      await callImageBeforeLoad()
+      await callImageBeforeLoad(queryClient)
     } catch (error) {
       thrown = error
+    } finally {
+      queryClient.clear()
     }
 
     expect(isRedirect(thrown)).toBe(true)
@@ -141,11 +167,34 @@ describe('image route gate uses fresh module access', () => {
     )
   })
 
-  test('getFreshSidebarModuleEnabled refreshes the cache for the next cached read', async () => {
+  test('shared status query refreshes the cache for the next cached read', async () => {
+    const queryClient = createTestQueryClient()
     writeStatus(sidebarStatus(true))
     mockedGetStatus.mockResolvedValue(sidebarStatus(false))
 
-    expect(await getFreshSidebarModuleEnabled('chat', 'image')).toBe(false)
+    try {
+      expect(
+        await getFreshSidebarModuleEnabled(queryClient, 'chat', 'image')
+      ).toBe(false)
+    } finally {
+      queryClient.clear()
+    }
     expect(isSidebarModuleEnabled('chat', 'image')).toBe(false)
+  })
+
+  test('reuses a fresh shared query without issuing another status request', async () => {
+    const queryClient = createTestQueryClient()
+    writeStatus(sidebarStatus(true))
+    mockedGetStatus.mockResolvedValue(sidebarStatus(true))
+
+    try {
+      await callImageBeforeLoad(queryClient)
+      expect(mockedGetStatus).toHaveBeenCalledTimes(1)
+      mockedGetStatus.mockClear()
+      await expect(callImageBeforeLoad(queryClient)).resolves.toBeUndefined()
+      expect(mockedGetStatus).not.toHaveBeenCalled()
+    } finally {
+      queryClient.clear()
+    }
   })
 })

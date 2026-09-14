@@ -16,11 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { ImageIcon } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import { CopyButton } from '@/components/copy-button'
+import { Dialog } from '@/components/dialog'
+import { EmptyState } from '@/components/empty-state'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -31,11 +36,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
 
 import { downloadImage } from '../api'
 import type { ImageHistoryEntry } from '../types'
 
 type HistoryPanelProps = {
+  onReuse?: (entry: ImageHistoryEntry) => void
+  isGenerating?: boolean
+  pendingCount?: number
   entries: ImageHistoryEntry[]
   totalCount: number
   query: string
@@ -52,6 +61,17 @@ type HistoryPanelProps = {
 
 export function HistoryPanel(props: HistoryPanelProps) {
   const { t } = useTranslation()
+  const [confirmation, setConfirmation] = useState<string | null>(null)
+  const [preview, setPreview] = useState<{
+    entryId: string
+    resultId: string
+  } | null>(null)
+  const previewEntry = props.entries.find(
+    (entry) => entry.id === preview?.entryId
+  )
+  const previewResult = previewEntry?.results.find(
+    (result) => result.id === preview?.resultId
+  )
   const orientationLabels = {
     all: t('All orientations'),
     square: t('Square'),
@@ -81,133 +101,264 @@ export function HistoryPanel(props: HistoryPanelProps) {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t('History')}</CardTitle>
-      </CardHeader>
-      <CardContent className='grid gap-3'>
-        <div className='grid gap-2 sm:grid-cols-2'>
-          <div className='grid gap-1.5'>
-            <Label htmlFor='image-history-search'>{t('Search history')}</Label>
-            <Input
-              id='image-history-search'
-              value={props.query}
-              placeholder={t('Search by prompt or model')}
-              onChange={(event) => props.onQueryChange(event.target.value)}
-            />
-          </div>
-          <div className='grid gap-1.5'>
-            <Label htmlFor='image-history-orientation'>
-              {t('Orientation')}
-            </Label>
-            <Select
-              value={props.orientation}
-              onValueChange={(next) => {
-                if (next !== null) props.onOrientationChange(next)
-              }}
-            >
-              <SelectTrigger id='image-history-orientation' className='w-full'>
-                <SelectValue>
-                  {orientationLabels[props.orientation]}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value='all'>{t('All orientations')}</SelectItem>
-                  <SelectItem value='square'>{t('Square')}</SelectItem>
-                  <SelectItem value='landscape'>{t('Landscape')}</SelectItem>
-                  <SelectItem value='portrait'>{t('Portrait')}</SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
+    <section className='grid min-w-0 gap-4' aria-label={t('Artwork')}>
+      <div className='flex min-w-0 flex-wrap items-center gap-2'>
+        <h2 className='mr-auto text-sm font-semibold'>
+          {t('Generation results')}
+        </h2>
+        <div className='grid w-full min-w-0 gap-1.5 sm:w-64'>
+          <Label className='sr-only' htmlFor='image-history-search'>
+            {t('Search history')}
+          </Label>
+          <Input
+            id='image-history-search'
+            value={props.query}
+            placeholder={t('Search by prompt or model')}
+            onChange={(event) => props.onQueryChange(event.target.value)}
+          />
         </div>
-
-        {props.totalCount === 0 ? (
-          <p className='text-muted-foreground text-sm'>
-            {t('No history yet.')}
-          </p>
-        ) : (
+        <div className='grid w-full min-w-0 gap-1.5 sm:w-auto'>
+          <Label className='sr-only' htmlFor='image-history-orientation'>
+            {t('Orientation')}
+          </Label>
+          <Select
+            value={props.orientation}
+            onValueChange={(next) => {
+              if (next !== null) props.onOrientationChange(next)
+            }}
+          >
+            <SelectTrigger id='image-history-orientation' className='w-full'>
+              <SelectValue>{orientationLabels[props.orientation]}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value='all'>{t('All orientations')}</SelectItem>
+                <SelectItem value='square'>{t('Square')}</SelectItem>
+                <SelectItem value='landscape'>{t('Landscape')}</SelectItem>
+                <SelectItem value='portrait'>{t('Portrait')}</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <p className='text-muted-foreground text-xs'>
+        {t(
+          'Unkept images expire after one hour. Keep locally saves in this browser, not as a downloaded file. Up to 120 batches.'
+        )}
+      </p>
+      <div className='grid min-w-0 gap-3'>
+        {props.totalCount === 0 && !props.isGenerating ? (
+          <EmptyState
+            icon={ImageIcon}
+            bordered
+            className='min-h-[300px] border-dashed'
+            title={t('No history yet.')}
+            description={t('Generated images will appear here.')}
+          />
+        ) : null}
+        {props.totalCount > 0 ? (
           <Button
             type='button'
             variant='outline'
             size='sm'
-            onClick={props.onClear}
+            onClick={() => setConfirmation('all')}
+            className='justify-self-end'
           >
             {t('Clear history')}
           </Button>
-        )}
-
-        {props.totalCount > 0 && props.entries.length === 0 ? (
-          <p className='text-muted-foreground text-sm'>
-            {t('No matching history.')}
-          </p>
         ) : null}
 
-        <ul className='grid gap-3'>
-          {props.entries.map((entry) => (
-            <li key={entry.id} className='rounded-lg border p-2'>
-              <p className='truncate text-sm font-medium' title={entry.prompt}>
-                {entry.prompt}
-              </p>
-              <p className='text-muted-foreground text-xs'>
-                {entry.model} · {entry.settings.size || t('Default size')}
-              </p>
-              <ul className='mt-2 grid grid-cols-3 gap-1.5'>
-                {entry.results.map((result) => {
-                  const url = props.resolveUrl(result.id, result.source)
-                  return (
-                    <li
-                      key={result.id}
-                      className='overflow-hidden rounded-md border'
+        {props.totalCount > 0 && props.entries.length === 0 ? (
+          <EmptyState title={t('No matching history.')} />
+        ) : null}
+
+        <ul className='grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'>
+          {props.isGenerating
+            ? Array.from({ length: props.pendingCount ?? 1 }, (_, index) => (
+                <li
+                  key={`pending-${index}`}
+                  aria-label={t('Generating images...')}
+                  className='rounded-xl border p-3'
+                >
+                  <Skeleton className='aspect-square w-full' />
+                  <p
+                    role='status'
+                    className='text-muted-foreground mt-3 text-sm'
+                  >
+                    {t('Generating images...')}
+                  </p>
+                </li>
+              ))
+            : null}
+          {props.entries.flatMap((entry) =>
+            entry.results.map((result) => {
+              const url = props.resolveUrl(result.id, result.source)
+              return (
+                <li
+                  key={result.id}
+                  className='bg-card min-w-0 overflow-hidden rounded-xl border'
+                >
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    className='h-auto w-full rounded-none p-0'
+                    onClick={() =>
+                      setPreview({ entryId: entry.id, resultId: result.id })
+                    }
+                    aria-label={t('Preview image for {{prompt}}', {
+                      prompt: entry.prompt,
+                    })}
+                  >
+                    <img
+                      src={url}
+                      alt={entry.prompt}
+                      loading='lazy'
+                      className='bg-muted/30 aspect-square w-full object-contain'
+                    />
+                  </Button>
+                  <div className='grid gap-2 p-3'>
+                    <p
+                      className='truncate text-sm font-medium'
+                      title={entry.prompt}
                     >
-                      <img
-                        src={url}
-                        alt={entry.prompt}
-                        loading='lazy'
-                        className='aspect-square w-full object-cover'
-                      />
-                      <div className='flex flex-wrap gap-1 p-1'>
+                      {entry.prompt}
+                    </p>
+                    <p
+                      className='text-muted-foreground truncate text-xs'
+                      title={entry.model}
+                    >
+                      {entry.model} · {entry.settings.size || t('Default size')}
+                    </p>
+                    <div className='flex flex-wrap gap-1'>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='xs'
+                        onClick={() => void handleDownload(url, result.id)}
+                      >
+                        {t('Download')}
+                      </Button>
+                      {props.onReuse ? (
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='xs'
+                          disabled={props.isGenerating}
+                          onClick={() => props.onReuse?.(entry)}
+                        >
+                          {t('Reuse')}
+                        </Button>
+                      ) : null}
+                      {!result.keptLocally ? (
                         <Button
                           type='button'
                           variant='ghost'
                           size='xs'
-                          onClick={() => void handleDownload(url, result.id)}
+                          onClick={() => void handleKeep(entry.id, result.id)}
                         >
-                          {t('Download')}
+                          {t('Keep locally')}
                         </Button>
-                        {!result.keptLocally ? (
-                          <Button
-                            type='button'
-                            variant='ghost'
-                            size='xs'
-                            onClick={() => void handleKeep(entry.id, result.id)}
-                          >
-                            {t('Keep locally')}
-                          </Button>
-                        ) : null}
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
-              <div className='mt-2'>
-                <Button
-                  type='button'
-                  variant='ghost'
-                  size='xs'
-                  onClick={() => props.onRemove(entry.id)}
-                  aria-label={t('Delete history {{prompt}}', {
-                    prompt: entry.prompt,
-                  })}
-                >
-                  {t('Delete')}
-                </Button>
-              </div>
-            </li>
-          ))}
+                      ) : (
+                        <span className='text-muted-foreground text-xs'>
+                          {t('Kept locally')}
+                        </span>
+                      )}
+                      <Button
+                        type='button'
+                        variant='ghost'
+                        size='xs'
+                        onClick={() => setConfirmation(entry.id)}
+                        aria-label={t('Delete history {{prompt}}', {
+                          prompt: entry.prompt,
+                        })}
+                      >
+                        {t('Delete batch')}
+                      </Button>
+                    </div>
+                  </div>
+                </li>
+              )
+            })
+          )}
         </ul>
-      </CardContent>
-    </Card>
+      </div>
+      <ConfirmDialog
+        open={confirmation !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmation(null)
+        }}
+        title={confirmation === 'all' ? t('Clear history') : t('Delete batch')}
+        desc={t(
+          'This removes the selected batches and their locally kept images from this browser.'
+        )}
+        destructive
+        confirmText={t('Delete')}
+        handleConfirm={() => {
+          if (confirmation === 'all') props.onClear()
+          else if (confirmation) props.onRemove(confirmation)
+          setConfirmation(null)
+        }}
+      />
+      <Dialog
+        open={!!previewResult}
+        onOpenChange={(open) => {
+          if (!open) setPreview(null)
+        }}
+        title={t('Image preview')}
+        contentClassName='sm:max-w-4xl'
+      >
+        {previewResult && previewEntry ? (
+          <div className='grid gap-4'>
+            <img
+              src={props.resolveUrl(previewResult.id, previewResult.source)}
+              alt={previewEntry.prompt}
+              className='max-h-[60vh] w-full object-contain'
+            />
+            <p className='text-sm break-words whitespace-pre-wrap'>
+              {previewEntry.prompt}
+            </p>
+            <dl className='grid grid-cols-2 gap-2 text-sm break-all'>
+              <dt>{t('Model')}</dt>
+              <dd>{previewEntry.model}</dd>
+              <dt>{t('Size')}</dt>
+              <dd>{previewEntry.settings.size || t('Default size')}</dd>
+              <dt>{t('Quality')}</dt>
+              <dd>{previewEntry.settings.quality || '—'}</dd>
+              <dt>{t('Style')}</dt>
+              <dd>{previewEntry.settings.style || '—'}</dd>
+              <dt>{t('Count')}</dt>
+              <dd>{previewEntry.settings.count}</dd>
+            </dl>
+            <div className='flex flex-wrap gap-2'>
+              <CopyButton value={previewEntry.prompt} size='sm'>
+                {t('Copy')}
+              </CopyButton>
+              <Button
+                variant='outline'
+                onClick={() =>
+                  void handleDownload(
+                    props.resolveUrl(previewResult.id, previewResult.source),
+                    previewResult.id
+                  )
+                }
+              >
+                {t('Download')}
+              </Button>
+              {props.onReuse ? (
+                <Button
+                  disabled={props.isGenerating}
+                  onClick={() => {
+                    props.onReuse?.(previewEntry)
+                    setPreview(null)
+                  }}
+                >
+                  {t('Reuse')}
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+      </Dialog>
+    </section>
   )
 }

@@ -16,7 +16,7 @@ jobs:
     name: Backend vet, build, and test
     if: github.event.action != 'closed' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       GOWORK: 'off'
 
@@ -57,6 +57,17 @@ jobs:
       - name: Test root and relaykit modules
         run: make test
 
+      - name: Race tests
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          go test -race ./...
+          cd relaykit
+          go test -race ./...
+
+      - name: Release evidence gate tests
+        run: python3 -m unittest discover -s ops/server/tests -p test_release_gate.py -v
+
   frontend:
     name: Frontend typecheck and test
     if: github.event.action != 'closed' || github.event.pull_request.merged == true
@@ -81,6 +92,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Production dependency audit
+        run: bun audit --production
+
       - name: Lint
         run: bun run lint:ci
 
@@ -95,3 +109,6 @@ jobs:
 
       - name: Test
         run: bun run test
+
+      - name: Production build
+        run: bun run build

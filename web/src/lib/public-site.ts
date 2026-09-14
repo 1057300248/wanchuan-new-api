@@ -16,8 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-export const MARKETING_HOME_URL = 'https://chuanapi.com'
-export const QUICKSTART_DOCS_URL = 'https://chuanapi.com/docs/quickstart/'
+import {
+  extensionPublicHomeUrl,
+  extensionQuickstartDocsUrl,
+} from '@/extensions'
+
+export const MARKETING_HOME_URL = extensionPublicHomeUrl('/').replace(/\/$/, '')
+export const QUICKSTART_DOCS_URL = extensionQuickstartDocsUrl('/help')
 
 export function resolvePublicDocsUrl(value: unknown): string {
   if (typeof value !== 'string') return QUICKSTART_DOCS_URL

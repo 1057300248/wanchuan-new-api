@@ -325,6 +325,7 @@ export function useImageHistory() {
             }),
           }
         })
+        if (!saveHistoryEntries(nextEntries)) throw new Error('keep-failed')
         commitBlobUrls({ ...blobUrlsRef.current, [resultId]: committedUrl })
         commitEntries(nextEntries)
         if (previousUrl && previousUrl !== committedUrl) {

@@ -24,8 +24,10 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/modules/imagegen"
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/moneyport"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
@@ -135,11 +137,6 @@ func main() {
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
 
-	// Register ledger-driven affiliate reward reconciliation and maturity as a
-	// scheduled system task. The system-task runner provides DB-lease dedup,
-	// run history and durable failure state across multiple master instances.
-	service.RegisterAffiliateRewardMaintenanceSystemTask()
-
 	// Report this process as a system instance so the System Info page can show
 	// all currently alive nodes in multi-instance deployments.
 	service.StartSystemInstanceReporter()
@@ -160,6 +157,10 @@ func main() {
 	// (DB-lease dedup across masters + run history), then start the runner that
 	// schedules and executes them. Master-only execution and the UpdateTask
 	// switch are enforced inside the runner and each handler's Enabled().
+	if err := extension.Default().ApplyLifecycle(extension.PhaseBeforeBackgroundWorkers); err != nil {
+		common.FatalLog("failed to apply extension startup lifecycle: " + err.Error())
+		return
+	}
 	controller.RegisterScheduledSystemTasks()
 	service.StartSystemTaskRunner()
 
@@ -171,7 +172,7 @@ func main() {
 
 	if os.Getenv("ENABLE_PPROF") == "true" {
 		gopool.Go(func() {
-			log.Println(http.ListenAndServe("0.0.0.0:8005", nil))
+			log.Println(http.ListenAndServe("127.0.0.1:8005", nil))
 		})
 		go common.Monitor()
 		common.SysLog("pprof enabled")
@@ -220,8 +221,11 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:    ":" + port,
-		Handler: server,
+		Addr:              ":" + port,
+		Handler:           server,
+		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	go func() {
@@ -318,12 +322,36 @@ func InitResources() error {
 
 	service.InitTokenEncoders()
 
+	if err := chuanapi.RegisterRuntimeServices(); err != nil {
+		common.FatalLog("failed to register chuanapi runtime services: " + err.Error())
+		return err
+	}
+	// Runtime funding implementations are composed explicitly and frozen before
+	// any request can create a BillingSession.
+	fundingFactories := moneyport.NewFactoryRegistry()
+	if err := service.RegisterHostFundingFactories(fundingFactories); err != nil {
+		common.FatalLog("failed to register host funding factories: " + err.Error())
+		return err
+	}
+	if err := chuanapi.RegisterFundingFactories(fundingFactories); err != nil {
+		common.FatalLog("failed to register chuanapi funding factories: " + err.Error())
+		return err
+	}
+	if err := service.ConfigureFundingFactoryRegistry(fundingFactories); err != nil {
+		common.FatalLog("failed to configure funding factory registry: " + err.Error())
+		return err
+	}
+
 	// Compose the extension registry before any migration runs: model.InitDB
 	// reads extension.Default() to append extension models to the core
 	// AutoMigrate call and to run extension data steps. Registration is
 	// build-time and explicit, so a wiring failure here must abort startup
 	// rather than silently start with an unmigrated extension schema.
 	registry := extension.NewRegistry()
+	if err := imagegen.Register(registry); err != nil {
+		common.FatalLog("failed to register image generation module: " + err.Error())
+		return err
+	}
 	if err := chuanapi.Register(registry); err != nil {
 		common.FatalLog("failed to register chuanapi extension: " + err.Error())
 		return err

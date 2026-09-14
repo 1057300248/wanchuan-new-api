@@ -3,6 +3,7 @@ package helper
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
@@ -84,14 +85,35 @@ func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
 	_ = FlushWriter(c)
 }
 
-func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) error {
+func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("Responses stream write panic: %v", r)
+		}
+	}()
 	if requestContextDone(c) {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
+	SetEventStreamHeaders(c)
 
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s", data)})
-	return FlushWriter(c)
+	// CustomEvent discards write errors. Responses handlers need the actual
+	// result so a broken client connection is not recorded as a completed stream.
+	frame := fmt.Sprintf("event: %s\ndata: %s\n\n", resp.Type, data)
+	n, err := c.Writer.WriteString(frame)
+	if err != nil {
+		return err
+	}
+	if n != len(frame) {
+		return io.ErrShortWrite
+	}
+	// Gin exposes only Flush(), which discards net/http's FlushError result.
+	// Its Unwrap method lets us detect buffered socket failures as well. Stop
+	// unwrapping at other middleware so its own flushing semantics are retained.
+	writer := http.ResponseWriter(c.Writer)
+	if unwrapper, ok := c.Writer.(interface{ Unwrap() http.ResponseWriter }); ok {
+		writer = unwrapper.Unwrap()
+	}
+	return http.NewResponseController(writer).Flush()
 }
 
 func StringData(c *gin.Context, str string) error {
@@ -122,7 +144,7 @@ func PingData(c *gin.Context) error {
 	return FlushWriter(c)
 }
 
-func ObjectData(c *gin.Context, object interface{}) error {
+func ObjectData(c *gin.Context, object any) error {
 	if object == nil {
 		return errors.New("object is nil")
 	}
@@ -146,7 +168,7 @@ func WssString(c *gin.Context, ws *websocket.Conn, str string) error {
 	return ws.WriteMessage(1, []byte(str))
 }
 
-func WssObject(c *gin.Context, ws *websocket.Conn, object interface{}) error {
+func WssObject(c *gin.Context, ws *websocket.Conn, object any) error {
 	jsonData, err := common.Marshal(object)
 	if err != nil {
 		return fmt.Errorf("error marshalling object: %w", err)

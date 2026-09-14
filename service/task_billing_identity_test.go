@@ -123,7 +123,7 @@ func TestTaskBillingIdentitySurvivesRestartAndPolling(t *testing.T) {
 
 		assert.Equal(t, "identity-eligible", taskModelName(task))
 		assert.Equal(t,
-			[]model.LedgerAccount{model.AccountBonus, model.AccountPaid},
+			[]model.LedgerAccount{model.AccountBonus, model.AccountReward, model.AccountPaid},
 			taskDebitOrder(task),
 			"计费身份（而非路由身份）决定赠金资格")
 	})
@@ -145,7 +145,7 @@ func TestTaskBillingIdentitySurvivesRestartAndPolling(t *testing.T) {
 
 		assert.Equal(t, "identity-ineligible", taskModelName(task))
 		assert.Equal(t,
-			[]model.LedgerAccount{model.AccountPaid},
+			[]model.LedgerAccount{model.AccountReward, model.AccountPaid},
 			taskDebitOrder(task))
 	})
 }

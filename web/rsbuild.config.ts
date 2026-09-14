@@ -26,27 +26,30 @@ export default defineConfig(({ envMode }) => {
   return {
     plugins: [pluginReact(), pluginTailwindcss({ optimize: false })],
     // Rsbuild 2: replaces deprecated `performance.chunkSplit` (RSPack 2 aligned)
+    // Vendor groups use `initial` so lazily loaded Markdown/UI/parser/devtools
+    // dependencies stay in async chunks instead of flowing back into the sync
+    // entry. Async-only heavy deps are never part of the initial payload.
     splitChunks: {
       preset: 'default',
       cacheGroups: {
         'vendor-react': {
           test: /node_modules[\\/](react|react-dom)[\\/]/,
           name: 'vendor-react',
-          chunks: 'all',
+          chunks: 'initial',
           priority: 0,
           enforce: true,
         },
         'vendor-ui-primitives': {
           test: /node_modules[\\/](@base-ui|@radix-ui)[\\/]/,
           name: 'vendor-ui-primitives',
-          chunks: 'all',
+          chunks: 'initial',
           priority: 0,
           enforce: true,
         },
         'vendor-tanstack': {
           test: /node_modules[\\/]@tanstack[\\/]/,
           name: 'vendor-tanstack',
-          chunks: 'all',
+          chunks: 'initial',
           priority: 0,
           enforce: true,
         },

@@ -135,13 +135,16 @@ export function ReferenceUploader(props: ReferenceUploaderProps) {
         </p>
       ) : null}
       {props.items.length > 0 ? (
-        <ul className='grid grid-cols-2 gap-2 sm:grid-cols-4'>
+        <ul className='flex gap-2 overflow-x-auto pb-1'>
           {props.items.map((item) => (
-            <li key={item.id} className='overflow-hidden rounded-lg border'>
+            <li
+              key={item.id}
+              className='w-32 shrink-0 overflow-hidden rounded-lg border'
+            >
               <img
                 src={item.previewUrl}
                 alt={t('Reference image {{name}}', { name: item.name })}
-                className='aspect-square w-full object-cover'
+                className='h-16 w-full object-contain'
               />
               <div className='flex items-center justify-between gap-1 p-1.5'>
                 <span

@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 )
 
 const (
-	turnstileExpectedHostname = "chuanapi.com"
 	turnstileMaxTokenLength   = 2048
 	turnstileMaxResponseBytes = 64 * 1024
 )
@@ -27,11 +27,36 @@ type turnstileCheckResponse struct {
 	ErrorCodes []string `json:"error-codes"`
 }
 
-func TurnstileCheck(expectedAction string) gin.HandlerFunc {
+// turnstileActions maps a registered Gin route pattern to the widget action its
+// frontend is expected to render. Keys are Gin registration patterns so wildcard
+// and alias routes resolve to the same action. Routes outside this table fail
+// closed when TurnstileCheck is called without an explicit action.
+var turnstileActions = map[string]string{
+	"GET /api/verification":   "signup",
+	"POST /api/user/register": "signup",
+	"POST /api/user/login":    "login",
+}
+
+func turnstileActionForRoute(method, fullPath string) string {
+	return turnstileActions[method+" "+fullPath]
+}
+
+// TurnstileCheck validates the Siteverify response against the route's fixed
+// action and the configured public hostname. Callers may still pass an explicit
+// action; without one the action is resolved from the registered Gin route and
+// an unmapped route is rejected before any Siteverify request is sent.
+func TurnstileCheck(expectedAction ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !common.TurnstileCheckEnabled {
 			c.Next()
 			return
+		}
+
+		action := ""
+		if len(expectedAction) > 0 {
+			action = expectedAction[0]
+		} else {
+			action = turnstileActionForRoute(c.Request.Method, c.FullPath())
 		}
 
 		response := strings.TrimSpace(c.Query("turnstile"))
@@ -39,8 +64,14 @@ func TurnstileCheck(expectedAction string) gin.HandlerFunc {
 			turnstileReject(c)
 			return
 		}
-		if strings.TrimSpace(common.TurnstileSecretKey) == "" || expectedAction == "" {
+		if strings.TrimSpace(common.TurnstileSecretKey) == "" || action == "" {
 			common.SysLog("Turnstile verification rejected: incomplete server configuration")
+			turnstileReject(c)
+			return
+		}
+		expectedHostname, hostnameErr := system_setting.PublicSiteHostname()
+		if hostnameErr != nil {
+			common.SysLog("Turnstile verification rejected: public hostname is not configured")
 			turnstileReject(c)
 			return
 		}
@@ -83,7 +114,7 @@ func TurnstileCheck(expectedAction string) gin.HandlerFunc {
 			turnstileReject(c)
 			return
 		}
-		if !result.Success || result.Action != expectedAction || result.Hostname != turnstileExpectedHostname {
+		if !result.Success || result.Action != action || !strings.EqualFold(result.Hostname, expectedHostname) {
 			common.SysLog(fmt.Sprintf(
 				"Turnstile verification rejected: success=%t action=%q hostname=%q errors=%v",
 				result.Success,

@@ -102,6 +102,18 @@ func creditTopUpQuota(tx *gorm.DB, entry LedgerEntry) (*LedgerResult, error) {
 	if result.TotalAfter > common.MaxWalletQuota {
 		return nil, ErrTopUpQuotaLimitExceeded
 	}
+	// 账本幂等重放说明该充值此前已经入账：不得再生成邀请返佣，避免重放
+	// 历史充值补发奖励。订单状态与账本均由幂等头保证只生效一次。
+	if result.Replayed {
+		return result, nil
+	}
+	// 邀请奖励：在同一结算事务内按成功在线余额充值订单计次（前三次），
+	// 生成返佣凭证并增加邀请人的 aff_quota/aff_history。只有真实在线支付
+	// 结算（LedgerReasonTopup）合格；管理员补单的 admin_topup 直接跳过。
+	// 奖励/邀请人余额异常会返回错误并整体回滚本事务。
+	if err := RecordReferralCommissionForTopUpTx(tx, entry.UserId, entry.Delta, entry.ReferenceType, entry.ReferenceId, entry.Reason); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -197,8 +209,10 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, actualMoney string
 		if topUp.Status != common.TopUpStatusPending {
 			return ErrTopUpStatusInvalid
 		}
-		if actualPaymentMethod != "" && topUp.PaymentMethod != actualPaymentMethod {
+		if topUp.PaymentMethod == "" {
 			topUp.PaymentMethod = actualPaymentMethod
+		} else if actualPaymentMethod != "" && topUp.PaymentMethod != actualPaymentMethod {
+			return ErrPaymentMethodMismatch
 		}
 		var quotaErr error
 		quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(

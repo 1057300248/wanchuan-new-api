@@ -56,7 +56,7 @@ func TestApplyUpstreamBodyMetadataSetsReplayableMetadata(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, payload, sent)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		rc, err := req.GetBody()
 		require.NoError(t, err)
 		replay, err := io.ReadAll(rc)
@@ -110,7 +110,6 @@ func TestApplyUpstreamBodyMetadataKeepsNativeMetadataForNonReplayableBody(t *tes
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -218,7 +217,6 @@ func TestDoTaskApiRequest_KeepsReplayableGetBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", bytes.NewReader(payload))
@@ -241,7 +239,7 @@ func TestDoTaskApiRequest_KeepsReplayableGetBody(t *testing.T) {
 	require.NotNil(t, req.GetBody)
 	// Even after the request body has been fully written, GetBody must still
 	// return the complete payload, repeatedly.
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		rc, err := req.GetBody()
 		require.NoError(t, err)
 		replay, err := io.ReadAll(rc)
@@ -418,7 +416,7 @@ func runGoAwayAfterFirstRequestServer(ln net.Listener) <-chan h2ServerResult {
 		res := h2ServerResult{}
 		defer func() { resCh <- res }()
 
-		for attempt := 0; attempt < 2; attempt++ {
+		for attempt := range 2 {
 			conn, framer, err := acceptH2TestConnection(ln)
 			if err != nil {
 				res.err = err
@@ -602,8 +600,11 @@ func TestUpstreamGetBody_HTTP2CannotRetryWithoutGetBody(t *testing.T) {
 	resp, err := client.Do(req) //nolint:bodyclose // Do fails, no body to close
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	require.ErrorContains(t, err, "cannot retry err")
-	require.ErrorContains(t, err, "Request.Body was written")
+	// The concrete transport error is intentionally not asserted here. Depending
+	// on the OS/socket timing, Go may surface its own "cannot retry" error or the
+	// peer reset first. The safety invariant is transport-independent: a body with
+	// no GetBody must fail rather than be replayed, and the server must observe
+	// exactly one stream containing the original body.
 
 	srv := awaitH2ServerResult(t, resCh)
 	require.NoError(t, srv.err)

@@ -42,6 +42,19 @@ const pricing = [
 ]
 
 describe('getAvailableImageModels intersects pricing, group, and token limits', () => {
+  test.each(['', ' , '])(
+    'an enabled empty allowlist %j permits no models',
+    (model_limits) => {
+      expect(
+        getAvailableImageModels({
+          pricingModels: pricing,
+          groupModels: ['dall-e-3', 'gpt-image-2'],
+          token: makeToken({ model_limits_enabled: true, model_limits }),
+        })
+      ).toEqual([])
+    }
+  )
+
   test('keeps only image endpoint models present in the key group', () => {
     const models = getAvailableImageModels({
       pricingModels: pricing,

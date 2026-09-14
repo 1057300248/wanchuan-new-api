@@ -20,6 +20,8 @@ import type { QueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { t } from 'i18next'
 
+import i18n from '@/i18n/config'
+import { toBackendLanguage } from '@/i18n/languages'
 import { publishAuthSessionEvent } from '@/lib/auth-session-sync'
 import { hasSessionHint } from '@/lib/session-hint'
 import {
@@ -71,7 +73,8 @@ const authClient = axios.create({
   baseURL: '',
   withCredentials: true,
   headers: {
-    'Cache-Control': 'no-store',
+    // no-store forbids storage; no-cache also revalidates any older cached response.
+    'Cache-Control': 'no-cache, no-store',
   },
 })
 
@@ -280,7 +283,12 @@ async function requestRefresh(
       '/api/user/auth/refresh',
       undefined,
       {
-        headers: expectedSID ? { 'X-Auth-Session': expectedSID } : undefined,
+        headers: {
+          'Accept-Language': toBackendLanguage(
+            i18n.resolvedLanguage || i18n.language
+          ),
+          ...(expectedSID ? { 'X-Auth-Session': expectedSID } : {}),
+        },
       }
     )
     return { status: response.status, data: response.data }
@@ -409,6 +417,9 @@ export async function bootstrapAuthentication(): Promise<RefreshOutcome> {
 export function getCommonHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'Accept-Language': toBackendLanguage(
+      i18n.resolvedLanguage || i18n.language
+    ),
   }
   const accessToken = useAuthStore.getState().auth.accessToken
   if (accessToken) {

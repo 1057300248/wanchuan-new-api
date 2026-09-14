@@ -24,7 +24,11 @@ import {
   isExtensionFeatureEnabled,
   setExtensionFlags,
 } from '../flags'
-import { extensionI18nOverrides, setI18nExtensions } from '../i18n'
+import {
+  extensionI18nOverrides,
+  loadExtensionI18nOverride,
+  setI18nExtensions,
+} from '../i18n'
 
 describe('frontend brand extension bridge', () => {
   test('falls back to the default logo until an extension registers one, then rejects reconfiguration', () => {
@@ -57,7 +61,7 @@ describe('frontend extension feature flag bridge', () => {
 })
 
 describe('frontend i18n override bridge', () => {
-  test('merges overrides in registration order with later extensions winning, then rejects reconfiguration', () => {
+  test('merges static and async overrides in registration order, then rejects reconfiguration', async () => {
     expect(extensionI18nOverrides()).toEqual({})
 
     setI18nExtensions([
@@ -73,6 +77,10 @@ describe('frontend i18n override bridge', () => {
         overrides: {
           en: { translation: { Greeting: 'Hey' } },
         },
+        loadOverride: async (locale) =>
+          locale === 'en'
+            ? { translation: { Greeting: 'Howdy', Async: 'loaded' } }
+            : undefined,
       },
     ])
 
@@ -82,6 +90,13 @@ describe('frontend i18n override bridge', () => {
       Farewell: 'Bye',
     })
     expect(overrides.zhCN?.translation).toEqual({ Greeting: '你好' })
+    await expect(loadExtensionI18nOverride('en')).resolves.toEqual({
+      translation: {
+        Greeting: 'Howdy',
+        Farewell: 'Bye',
+        Async: 'loaded',
+      },
+    })
 
     expect(() => setI18nExtensions([])).toThrow(
       'frontend i18n extensions are already configured'

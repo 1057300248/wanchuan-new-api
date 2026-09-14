@@ -36,7 +36,7 @@ export function isHttpSchemeUrl(url: string): boolean {
   return scheme === 'http' || scheme === 'https'
 }
 
-const managedObjectUrls = new Map<string, number>()
+const managedObjectUrls = new Map<string, { count: number; mimeType: string }>()
 
 function normalizeManagedKey(url: string): string {
   const trimmed = url.trimStart()
@@ -48,7 +48,10 @@ function normalizeManagedKey(url: string): string {
 export function createManagedObjectUrl(blob: Blob): string {
   const url = URL.createObjectURL(blob)
   const key = normalizeManagedKey(url)
-  managedObjectUrls.set(key, (managedObjectUrls.get(key) ?? 0) + 1)
+  managedObjectUrls.set(key, {
+    count: (managedObjectUrls.get(key)?.count ?? 0) + 1,
+    mimeType: blob.type,
+  })
   return url
 }
 
@@ -59,10 +62,14 @@ export function revokeManagedObjectUrl(url: string): void {
     /* ignore revoke failures and still drop the registration */
   }
   const key = normalizeManagedKey(url)
-  const count = managedObjectUrls.get(key)
-  if (count === undefined) return
-  if (count <= 1) managedObjectUrls.delete(key)
-  else managedObjectUrls.set(key, count - 1)
+  const record = managedObjectUrls.get(key)
+  if (!record) return
+  if (record.count <= 1) managedObjectUrls.delete(key)
+  else record.count -= 1
+}
+
+export function getManagedObjectUrlMimeType(url: string): string {
+  return managedObjectUrls.get(normalizeManagedKey(url))?.mimeType ?? ''
 }
 
 export function isManagedObjectUrl(url: string): boolean {

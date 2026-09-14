@@ -115,8 +115,49 @@ func TestPreWssConsumeQuotaUsesBillingModelIdentity(t *testing.T) {
 		Account:        string(model.AccountBonus),
 		Delta:          -wssExpectedQuota,
 		Reason:         model.LedgerReasonBillingSettle,
-		IdempotencyKey: "billing:settle:" + requestID + ":96",
+		IdempotencyKey: "billing:settle:" + requestID + ":wss:1:96",
 	}}, ledgerRowsFor(t, userID))
+}
+
+func TestPreWssConsumeQuotaChargesEqualSegmentsExactlyOnceEach(t *testing.T) {
+	truncate(t)
+	configureWSSBillingIdentityRatios(t)
+	seedBonusEligibleModel(t, wssBillingModel, boolPtr(true))
+
+	const (
+		userID    = 9430
+		tokenID   = 9431
+		tokenKey  = "wss-segment-token"
+		requestID = "wss-segment-request"
+	)
+	seedBonusUser(t, userID, 1000, 0)
+	seedToken(t, tokenID, userID, tokenKey, 10_000)
+	ctx := testGinContext(t)
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:           userID,
+		TokenId:          tokenID,
+		TokenKey:         tokenKey,
+		RequestId:        requestID,
+		UsingGroup:       "default",
+		UserGroup:        "default",
+		OriginModelName:  wssOriginModel,
+		BillingModelName: wssBillingModel,
+		BillingSource:    BillingSourceWallet,
+	}
+
+	require.NoError(t, PreWssConsumeQuota(ctx, relayInfo, wssBillingIdentityUsage()))
+	require.NoError(t, PreWssConsumeQuota(ctx, relayInfo, wssBillingIdentityUsage()))
+
+	assert.Equal(t, uint64(2), relayInfo.WssPostConsumeSequence)
+	assertUserBalances(t, userID, 1000-2*wssExpectedQuota, 0, 0)
+	var token model.Token
+	require.NoError(t, model.DB.First(&token, tokenID).Error)
+	assert.Equal(t, 10_000-2*wssExpectedQuota, token.RemainQuota)
+	assert.Equal(t, 2*wssExpectedQuota, token.UsedQuota)
+	assert.Equal(t, []ledgerRow{
+		{Account: string(model.AccountBonus), Delta: -wssExpectedQuota, Reason: model.LedgerReasonBillingSettle, IdempotencyKey: "billing:settle:" + requestID + ":wss:1:96"},
+		{Account: string(model.AccountBonus), Delta: -wssExpectedQuota, Reason: model.LedgerReasonBillingSettle, IdempotencyKey: "billing:settle:" + requestID + ":wss:2:96"},
+	}, ledgerRowsFor(t, userID))
 }
 
 func TestPostWssConsumeQuotaUsesBillingModelIdentity(t *testing.T) {

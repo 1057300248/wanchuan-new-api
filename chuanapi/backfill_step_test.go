@@ -100,9 +100,9 @@ func TestBackfillStepUsesTheInjectedDatabase(t *testing.T) {
 	migrated := readUser(t, target, 1)
 	assert.Equal(t, legacyQuota, migrated.QuotaPaid, "legacy quota must land in the paid account")
 	assert.Equal(t, 0, migrated.QuotaBonus)
-	assert.Equal(t, 0, migrated.QuotaAffiliate)
-	assert.Equal(t, migrated.QuotaPaid+migrated.QuotaBonus+migrated.QuotaAffiliate, migrated.Quota,
-		"quota mirror must equal paid+bonus+affiliate")
+	assert.Equal(t, 0, migrated.QuotaReward)
+	assert.Equal(t, migrated.QuotaPaid+migrated.QuotaBonus+migrated.QuotaReward, migrated.Quota,
+		"quota mirror must equal paid+bonus+reward")
 
 	var ledgerRows int64
 	require.NoError(t, target.Model(&model.BalanceLedger{}).Count(&ledgerRows).Error)

@@ -186,6 +186,17 @@ describe('image URL protocol allowlist', () => {
     expect(createdAnchors[0].download).toBe('kept.png')
   })
 
+  test('a managed JPEG blob downloads as JPEG without fetching a private URL', async () => {
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+    const managed = createManagedObjectUrl(
+      new Blob(['jpeg'], { type: 'image/jpeg' })
+    )
+    await downloadImage(managed, 'history.png')
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(createdAnchors[0].download).toBe('history.jpg')
+  })
+
   test('downloadImage rejects a managed blob URL again after revoke', async () => {
     const fetchSpy = vi.fn()
     vi.stubGlobal('fetch', fetchSpy)

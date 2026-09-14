@@ -20,12 +20,20 @@ import { createFileRoute, redirect } from '@tanstack/react-router'
 
 import { Main } from '@/components/layout'
 import { ImageGenerationPage } from '@/features/image-generation'
-import { getFreshSidebarModuleEnabled } from '@/lib/nav-modules'
+import { isSidebarModuleEnabledInStatus } from '@/lib/nav-modules'
+import { ensureSharedStatus, readCachedStatus } from '@/lib/status-query'
 
 export const Route = createFileRoute('/_authenticated/image/')({
-  beforeLoad: async () => {
-    const enabled = await getFreshSidebarModuleEnabled('chat', 'image')
-    if (!enabled) {
+  beforeLoad: async ({ context }) => {
+    const queryClient = context?.queryClient
+    const status = queryClient
+      ? await ensureSharedStatus(queryClient)
+      : readCachedStatus()
+    // Fail closed when there is no cached status and the shared query fails.
+    if (!status) {
+      throw redirect({ to: '/dashboard' })
+    }
+    if (!isSidebarModuleEnabledInStatus(status, 'chat', 'image')) {
       throw redirect({ to: '/dashboard' })
     }
   },
@@ -34,7 +42,7 @@ export const Route = createFileRoute('/_authenticated/image/')({
 
 function ImagePage() {
   return (
-    <Main>
+    <Main className='overflow-y-auto p-4 sm:p-6'>
       <ImageGenerationPage />
     </Main>
   )

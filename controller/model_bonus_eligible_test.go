@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -42,7 +43,7 @@ func TestBatchUpdateModelBonusEligibleAPI(t *testing.T) {
 		strings.NewReader(`{"model_ids":[1,2],"bonus_eligible":true,"idempotency_key":"ctrl-batch-1"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 
-	BatchUpdateModelBonusEligible(c)
+	walletmodule.BatchUpdateModelBonusEligible(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp struct {
@@ -73,7 +74,7 @@ func TestBatchUpdateModelBonusEligibleAPI(t *testing.T) {
 	c2.Request = httptest.NewRequest(http.MethodPost, "/api/models/bonus_eligible/batch",
 		strings.NewReader(`{"model_ids":[],"bonus_eligible":true}`))
 	c2.Request.Header.Set("Content-Type", "application/json")
-	BatchUpdateModelBonusEligible(c2)
+	walletmodule.BatchUpdateModelBonusEligible(c2)
 	require.Equal(t, http.StatusOK, w2.Code)
 	var respBad struct {
 		Success bool `json:"success"`
@@ -106,7 +107,7 @@ func TestGetModelBonusEligibleAuditsAPI(t *testing.T) {
 	require.NoError(t, err)
 
 	c.Request = httptest.NewRequest(http.MethodGet, "/api/models/bonus_eligible/audits?model_id=1&page=1&page_size=10", nil)
-	GetModelBonusEligibleAudits(c)
+	walletmodule.GetModelBonusEligibleAudits(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp struct {
@@ -130,7 +131,7 @@ func TestGetModelBonusEligibleAuditsAPI(t *testing.T) {
 	c2.Set("id", 7)
 	c2.Set("username", "admin-test")
 	c2.Request = httptest.NewRequest(http.MethodGet, "/api/models/bonus_eligible/audits?operator_id=7", nil)
-	GetModelBonusEligibleAudits(c2)
+	walletmodule.GetModelBonusEligibleAudits(c2)
 	var resp2 struct {
 		Success bool `json:"success"`
 		Data    struct {

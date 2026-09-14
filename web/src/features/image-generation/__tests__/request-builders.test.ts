@@ -152,6 +152,26 @@ describe('buildEditsFormData constructs the multipart edits request', () => {
 })
 
 describe('normalizeImageResponse handles url and b64_json payloads', () => {
+  test('malformed items do not discard valid images in a mixed response', () => {
+    expect(
+      normalizeImageResponse({
+        data: {
+          data: [
+            null,
+            7,
+            { b64_json: 42 },
+            { url: 'https://cdn.example/valid.png' },
+          ],
+        },
+        prompt: 'A lake',
+        model: 'gpt-image-2',
+        size: 'auto',
+      })
+    ).toEqual([
+      expect.objectContaining({ url: 'https://cdn.example/valid.png' }),
+    ])
+  })
+
   test('keeps remote urls and converts base64 into data urls', () => {
     const images = normalizeImageResponse({
       data: {

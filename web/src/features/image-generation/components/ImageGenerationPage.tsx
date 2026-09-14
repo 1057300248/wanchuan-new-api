@@ -16,9 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -31,9 +33,9 @@ import {
   getModelCapability,
   resolveSettingsForModel,
 } from '../lib/model-capabilities'
+import type { ImageHistoryEntry } from '../types'
 import { GenerationForm } from './GenerationForm'
 import { HistoryPanel } from './HistoryPanel'
-import { ResultGallery } from './ResultGallery'
 
 export function ImageGenerationPage() {
   const { t } = useTranslation()
@@ -46,7 +48,18 @@ export function ImageGenerationPage() {
   const [quality, setQuality] = useState('')
   const [style, setStyle] = useState('')
   const [count, setCount] = useState(1)
-  const [hasAttempted, setHasAttempted] = useState(false)
+  const [asyncMode, setAsyncMode] = useState(false)
+  const [reuseEntry, setReuseEntry] = useState<ImageHistoryEntry | null>(null)
+  const artworkRef = useRef<HTMLDivElement>(null)
+  const [completed, setCompleted] = useState(0)
+  useEffect(() => {
+    if (completed) {
+      artworkRef.current?.scrollIntoView?.({
+        block: 'start',
+        behavior: 'smooth',
+      })
+    }
+  }, [completed])
 
   const capability = getModelCapability(data.model)
 
@@ -85,7 +98,7 @@ export function ImageGenerationPage() {
   }
 
   const handleGenerate = async () => {
-    setHasAttempted(true)
+    if (generation.isGenerating) return
     const images = await generation.generate({
       apiKeyId: data.apiKeyId,
       model: data.model,
@@ -95,8 +108,18 @@ export function ImageGenerationPage() {
       quality,
       style,
       images: references.items.map((item) => item.file),
+      asyncMode,
     })
+    if (images?.length === 0) {
+      generation.setError(
+        t('No images were returned. Try adjusting your prompt.')
+      )
+      return
+    }
     if (images && images.length > 0) {
+      history.setQuery('')
+      history.setOrientation('all')
+      setCompleted((value) => value + 1)
       history.pushEntry({
         prompt: prompt.trim(),
         model: data.model,
@@ -107,6 +130,42 @@ export function ImageGenerationPage() {
         images,
       })
     }
+  }
+
+  const applyReuse = (entry: ImageHistoryEntry) => {
+    if (generation.isGenerating) return
+    const nextModel = data.availableModels.includes(entry.model)
+      ? entry.model
+      : data.model
+    const resolved = resolveSettingsForModel(nextModel, entry.settings)
+    setPrompt(entry.prompt)
+    data.setModel(nextModel)
+    setSize(resolved.size)
+    setQuality(resolved.quality)
+    setStyle(resolved.style)
+    setCount(resolved.count)
+    references.clear()
+    generation.setError(null)
+    setReuseEntry(null)
+    if (
+      nextModel !== entry.model ||
+      Object.entries(resolved).some(
+        ([key, value]) =>
+          value !== entry.settings[key as keyof typeof entry.settings]
+      )
+    ) {
+      toast.info(
+        t(
+          'Some historical settings are unavailable and were adjusted for the current model.'
+        )
+      )
+    }
+    toast.info(
+      t(
+        'Prompt and settings restored. Add reference images again if needed, then generate.'
+      )
+    )
+    document.querySelector<HTMLTextAreaElement>('#image-prompt')?.focus()
   }
 
   if (data.isLoadingBootstrap) {
@@ -169,7 +228,7 @@ export function ImageGenerationPage() {
     const groupLoading = data.isLoadingGroupModels
     let modelsTitle = t('No image models available')
     let modelsDescription = t(
-      'This API key has no image models. Try another key or refresh.'
+      'No image models match this API key. Check the model image-generation endpoint configuration, the key group, and its model restrictions, then refresh.'
     )
     if (groupLoading) {
       modelsTitle = t('Loading models...')
@@ -187,7 +246,7 @@ export function ImageGenerationPage() {
   }
 
   return (
-    <div className='grid gap-4'>
+    <div className='mx-auto grid w-full max-w-7xl min-w-0 gap-5'>
       <div>
         <h1 className='text-xl font-semibold tracking-tight'>
           {t('Image Generation')}
@@ -209,16 +268,26 @@ export function ImageGenerationPage() {
                 type='button'
                 variant='outline'
                 size='sm'
-                onClick={() => void data.refetchGroupModels()}
+                onClick={() =>
+                  void Promise.all([
+                    data.refetchBootstrap(),
+                    data.refetchGroupModels(),
+                  ])
+                }
               >
-                {t('Retry')}
+                {t('Refresh')}
               </Button>
             ) : null}
           </AlertDescription>
         </Alert>
       ) : null}
-      <div className='grid items-start gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]'>
+      <div className='grid min-w-0 gap-4'>
+        <h2 className='text-center text-xl font-semibold'>
+          {t('Start generating images')}
+        </h2>
         <GenerationForm
+          asyncMode={asyncMode}
+          onAsyncModeChange={setAsyncMode}
           value={{
             prompt,
             apiKeyId: data.apiKeyId,
@@ -254,13 +323,21 @@ export function ImageGenerationPage() {
           onGenerate={() => void handleGenerate()}
           onCancel={generation.cancel}
         />
-        <div className='grid gap-4'>
-          <ResultGallery
-            results={generation.results}
-            isGenerating={generation.isGenerating}
-            hasAttempted={hasAttempted}
-          />
+        {capability.requestFormat === 'grok-console' ? (
+          <p className='text-muted-foreground text-sm'>
+            {t(
+              'Console supports up to 3 reference images and low/medium quality. Size sets the aspect ratio; resolution is 1K.'
+            )}
+          </p>
+        ) : null}
+        <div ref={artworkRef} className='min-w-0 scroll-mt-4'>
           <HistoryPanel
+            isGenerating={generation.isGenerating}
+            pendingCount={count}
+            onReuse={(entry) => {
+              if (references.items.length) setReuseEntry(entry)
+              else applyReuse(entry)
+            }}
             entries={history.visibleEntries}
             totalCount={history.entries.length}
             query={history.query}
@@ -274,6 +351,20 @@ export function ImageGenerationPage() {
           />
         </div>
       </div>
+      <ConfirmDialog
+        open={reuseEntry !== null}
+        onOpenChange={(open) => {
+          if (!open) setReuseEntry(null)
+        }}
+        title={t('Reuse')}
+        desc={t(
+          'Reusing this artwork clears the current reference images. Continue?'
+        )}
+        disabled={generation.isGenerating}
+        handleConfirm={() => {
+          if (reuseEntry) applyReuse(reuseEntry)
+        }}
+      />
     </div>
   )
 }

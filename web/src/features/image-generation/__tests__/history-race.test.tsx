@@ -139,6 +139,27 @@ afterEach(() => {
 })
 
 describe('keepLocally does not orphan blobs when history changes mid-flight', () => {
+  test('a failed metadata write rejects local retention and rolls back the saved blob', async () => {
+    seedStorage([seedEntry('e1')])
+    vi.mocked(saveImageBlob).mockResolvedValue(undefined)
+    const { result } = renderHook(() => useImageHistory())
+    vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('Storage full', 'QuotaExceededError')
+    })
+    await act(async () => {
+      await expect(result.current.keepLocally('e1', 'e1-r')).rejects.toThrow(
+        'keep-failed'
+      )
+    })
+    expect(result.current.entries[0].results[0]).toMatchObject({
+      keptLocally: false,
+      type: 'url',
+      source: 'https://cdn.example/a.png',
+    })
+    expect(deleteImageBlob).toHaveBeenCalledWith('e1:e1-r')
+    expect(result.current.resolveResultUrl('e1-r', 'fallback')).toBe('fallback')
+  })
+
   test('removing the entry while persisting deletes the written blob and creates no URL', async () => {
     seedStorage([seedEntry('e1')])
     const { result } = renderHook(() => useImageHistory())

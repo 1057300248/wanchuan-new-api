@@ -17,17 +17,17 @@ import (
 )
 
 // moneyColumnsByTable 是必须为 64 位的资金持久化列。
-// users.quota 是三账户合计的兼容镜像，quota_paid/bonus/affiliate 是资金真源。
+// users.quota 是三账户合计的兼容镜像，quota_paid/bonus/reward 是资金真源。
 var moneyColumnsByTable = map[string][]string{
 	"users": {
 		"quota", "used_quota", "aff_quota", "aff_history",
-		"quota_paid", "quota_bonus", "quota_affiliate",
+		"quota_paid", "quota_bonus", "quota_reward",
 	},
 	"balance_ledger_operations": {"total_before", "total_after"},
 	"balance_ledger": {
 		"delta", "balance_before", "balance_after", "total_before", "total_after",
 	},
-	"affiliate_rewards": {"eligible_paid_quota", "reward_quota"},
+	"referral_commissions": {"paid_quota", "reward_quota"},
 }
 
 // openScratchDB 提供与共享测试库隔离的空库，用于构造遗留 32 位 schema。
@@ -64,11 +64,11 @@ func createLegacyUsersTable(t *testing.T, db *gorm.DB, bigintColumns ...string) 
 		aff_history %s DEFAULT 0,
 		quota_paid %s DEFAULT 0,
 		quota_bonus %s DEFAULT 0,
-		quota_affiliate %s DEFAULT 0
+		quota_reward %s DEFAULT 0
 	)`,
 		columnType("quota"), columnType("used_quota"), columnType("aff_quota"),
 		columnType("aff_history"), columnType("quota_paid"), columnType("quota_bonus"),
-		columnType("quota_affiliate"))).Error)
+		columnType("quota_reward"))).Error)
 }
 
 // TestEnsureUserQuotaColumnsRejectsLegacyChuanAPIWalletColumns 覆盖 P0 的核心契约：
@@ -112,7 +112,7 @@ func TestEnsureUserQuotaColumnsSkipEnvDoesNotSkipWalletColumns(t *testing.T) {
 // tag 必须显式 bigint，否则本检查放行、AutoMigrate 建出 32 位列。
 func TestEnsureUserQuotaColumnsAllowsMissingWalletColumns(t *testing.T) {
 	db := openScratchDB(t)
-	// 只有官方四列的 rc.26 形态 users 表，完全没有 quota_paid/bonus/affiliate。
+	// 只有官方四列的 rc.26 形态 users 表，完全没有 quota_paid/bonus/reward。
 	require.NoError(t, db.Exec(`CREATE TABLE users (
 		id INTEGER PRIMARY KEY,
 		quota BIGINT DEFAULT 0,
@@ -131,7 +131,7 @@ func TestEnsureUserQuotaColumnsAcceptsFullyMigratedSchema(t *testing.T) {
 	db := openScratchDB(t)
 	createLegacyUsersTable(t, db,
 		"quota", "used_quota", "aff_quota", "aff_history",
-		"quota_paid", "quota_bonus", "quota_affiliate")
+		"quota_paid", "quota_bonus", "quota_reward")
 
 	require.NoError(t, ensureUserQuotaColumns(db, common.DatabaseTypeMySQL))
 	require.NoError(t, ensureUserQuotaColumns(db, common.DatabaseTypePostgreSQL))
@@ -144,13 +144,13 @@ var moneyFieldsByModel = []struct {
 }{
 	{&User{}, []string{
 		"Quota", "UsedQuota", "AffQuota", "AffHistoryQuota",
-		"QuotaPaid", "QuotaBonus", "QuotaAffiliate",
+		"QuotaPaid", "QuotaBonus", "QuotaReward",
 	}},
 	{&BalanceLedgerOperation{}, []string{"TotalBefore", "TotalAfter"}},
 	{&BalanceLedger{}, []string{
 		"Delta", "BalanceBefore", "BalanceAfter", "TotalBefore", "TotalAfter",
 	}},
-	{&AffiliateReward{}, []string{"EligiblePaidQuota", "RewardQuota"}},
+	{&ReferralCommission{}, []string{"PaidQuota", "RewardQuota"}},
 }
 
 // TestMoneyColumnTagsDeclareBigint 方言无关地断言资金字段的 GORM tag 显式声明 bigint。
@@ -177,14 +177,14 @@ func TestAutoMigrateDeclaresMoneyColumnsAs64Bit(t *testing.T) {
 		&User{},
 		&BalanceLedgerOperation{},
 		&BalanceLedger{},
-		&AffiliateReward{},
+		&ReferralCommission{},
 	))
 
 	tableModels := map[string]any{
 		"users":                     &User{},
 		"balance_ledger_operations": &BalanceLedgerOperation{},
 		"balance_ledger":            &BalanceLedger{},
-		"affiliate_rewards":         &AffiliateReward{},
+		"referral_commissions":      &ReferralCommission{},
 	}
 
 	for table, expectedColumns := range moneyColumnsByTable {
@@ -253,7 +253,7 @@ func TestMoneyColumnsAre64BitOnConfiguredDatabases(t *testing.T) {
 				"users":                     &User{},
 				"balance_ledger_operations": &BalanceLedgerOperation{},
 				"balance_ledger":            &BalanceLedger{},
-				"affiliate_rewards":         &AffiliateReward{},
+				"referral_commissions":      &ReferralCommission{},
 			}
 			for table, expectedColumns := range moneyColumnsByTable {
 				model := models[table]
@@ -291,7 +291,7 @@ func TestBackfillLegacyQuotaAccountsPreserves64BitBalance(t *testing.T) {
 	require.Equal(t, legacyQuota, migrated.QuotaPaid, "quota_paid 不得截断")
 	assert.Equal(t, legacyQuota, migrated.Quota)
 	assert.Zero(t, migrated.QuotaBonus)
-	assert.Zero(t, migrated.QuotaAffiliate)
+	assert.Zero(t, migrated.QuotaReward)
 	assertQuotaInvariant(t, migrated)
 
 	key := fmt.Sprintf("migration:legacy_quota:%d", user.Id)

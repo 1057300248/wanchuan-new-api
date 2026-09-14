@@ -34,6 +34,7 @@ func TestPaymentCreationEndpointsRequireCompliance(t *testing.T) {
 		{name: "creem", handler: RequestCreemPay},
 		{name: "waffo", handler: RequestWaffoPay},
 		{name: "waffo pancake", handler: RequestWaffoPancakePay},
+		{name: "waffo pancake subscription", handler: SubscriptionRequestWaffoPancakePay},
 	}
 
 	for _, testCase := range testCases {

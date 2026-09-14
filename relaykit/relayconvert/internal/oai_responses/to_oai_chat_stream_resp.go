@@ -32,6 +32,7 @@ type ResponsesToChatStreamState struct {
 	callIDToKey                map[string]string
 	pendingArgsByOutputIndex   map[int]string
 	pendingArgsByItemID        map[string]string
+	captureUsageText           bool
 	usageText                  strings.Builder
 }
 
@@ -48,17 +49,35 @@ type responsesStreamTool struct {
 }
 
 func NewResponsesToChatStreamState(model string, includeUsage bool) *ResponsesToChatStreamState {
+	return newResponsesToChatStreamState(model, includeUsage, true)
+}
+
+// NewResponsesToChatStreamStateWithoutUsageText is used by the response
+// registry when the caller incrementally accounts for emitted chat deltas.
+// The public compatibility constructor keeps the historical capture behavior.
+func NewResponsesToChatStreamStateWithoutUsageText(model string, includeUsage bool) *ResponsesToChatStreamState {
+	return newResponsesToChatStreamState(model, includeUsage, false)
+}
+
+func newResponsesToChatStreamState(model string, includeUsage bool, captureUsageText bool) *ResponsesToChatStreamState {
 	return &ResponsesToChatStreamState{
 		Model:                    model,
 		Created:                  time.Now().Unix(),
 		IncludeUsage:             includeUsage,
 		Usage:                    &dto.Usage{},
+		captureUsageText:         captureUsageText,
 		toolByKey:                make(map[string]*responsesStreamTool),
 		outputIndexToKey:         make(map[int]string),
 		itemIDToKey:              make(map[string]string),
 		callIDToKey:              make(map[string]string),
 		pendingArgsByOutputIndex: make(map[int]string),
 		pendingArgsByItemID:      make(map[string]string),
+	}
+}
+
+func (s *ResponsesToChatStreamState) appendUsageText(text string) {
+	if s.captureUsageText {
+		s.usageText.WriteString(text)
 	}
 }
 
@@ -170,7 +189,7 @@ func (s *ResponsesToChatStreamState) textDelta(delta string) []dto.ChatCompletio
 	if delta == "" {
 		return nil
 	}
-	s.usageText.WriteString(delta)
+	s.appendUsageText(delta)
 	s.hasSentText = true
 	chunks := s.ensureStart()
 	chunks = append(chunks, s.makeChunk(dto.ChatCompletionsStreamResponseChoiceDelta{
@@ -257,10 +276,7 @@ func (s *ResponsesToChatStreamState) remainingAnnotationChunks(output *dto.Respo
 	for _, content := range output.Content {
 		annotations = append(annotations, content.Annotations...)
 	}
-	start := s.sentAnnotationCount - offset
-	if start < 0 {
-		start = 0
-	}
+	start := max(s.sentAnnotationCount-offset, 0)
 	if start >= len(annotations) {
 		return nil, nil
 	}
@@ -298,7 +314,7 @@ func (s *ResponsesToChatStreamState) reasoningDelta(delta string) []dto.ChatComp
 			s.needsReasoningSummaryBreak = false
 		}
 	}
-	s.usageText.WriteString(delta)
+	s.appendUsageText(delta)
 	chunks := s.ensureStart()
 	chunks = append(chunks, s.makeChunk(dto.ChatCompletionsStreamResponseChoiceDelta{
 		ReasoningContent: &delta,
@@ -509,10 +525,10 @@ func (s *ResponsesToChatStreamState) toolDelta(tool *responsesStreamTool, explic
 	}
 	if argsDelta != "" {
 		tool.ArgsSentAt += len(argsDelta)
-		s.usageText.WriteString(argsDelta)
+		s.appendUsageText(argsDelta)
 	}
 	if responseTool.Function.Name != "" {
-		s.usageText.WriteString(responseTool.Function.Name)
+		s.appendUsageText(responseTool.Function.Name)
 	}
 
 	chunks = append(chunks, s.makeChunk(dto.ChatCompletionsStreamResponseChoiceDelta{
@@ -579,8 +595,8 @@ func (s *ResponsesToChatStreamState) flushAllPendingTools() []dto.ChatCompletion
 		tool := s.toolByKey[key]
 		if tool == nil {
 			callID := strings.TrimPrefix(key, "item:")
-			if strings.HasPrefix(key, "output:") {
-				callID = "call_output_" + strings.TrimPrefix(key, "output:")
+			if after, ok := strings.CutPrefix(key, "output:"); ok {
+				callID = "call_output_" + after
 			}
 			tool = &responsesStreamTool{
 				Key:    key,
@@ -597,8 +613,8 @@ func (s *ResponsesToChatStreamState) flushAllPendingTools() []dto.ChatCompletion
 				delete(s.pendingArgsByOutputIndex, outputIndex)
 			}
 		}
-		if strings.HasPrefix(key, "item:") {
-			itemID := strings.TrimPrefix(key, "item:")
+		if after, ok := strings.CutPrefix(key, "item:"); ok {
+			itemID := after
 			tool.Arguments += s.pendingArgsByItemID[itemID]
 			delete(s.pendingArgsByItemID, itemID)
 		}
@@ -660,7 +676,7 @@ type responsesBufferedItem struct {
 	Type                string
 	ID                  string
 	Text                strings.Builder
-	Annotations         []interface{}
+	Annotations         []any
 	ToolIndex           int
 	NeedsReasoningBreak bool
 }
@@ -694,7 +710,7 @@ func (a *ResponsesBufferedAccumulator) ProcessEvent(event *dto.ResponsesStreamRe
 		item.Text.WriteString(event.Delta)
 	case responsesEventOutputTextAnnotationAdded:
 		item := a.ensureItem(event, responsesOutputTypeMessage)
-		var annotation interface{}
+		var annotation any
 		if err := kitutil.Unmarshal(event.Annotation, &annotation); err == nil && annotation != nil {
 			item.Annotations = append(item.Annotations, annotation)
 		}

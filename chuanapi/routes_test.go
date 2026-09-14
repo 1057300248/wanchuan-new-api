@@ -19,23 +19,48 @@ func TestLlmsRouteSetPreservesLegacyRouteTableAndHandlers(t *testing.T) {
 	require.NoError(t, reg.Freeze())
 
 	engine := gin.New()
-	require.NoError(t, reg.ApplyRoutes(engine, extension.PriorityBeforePlugin))
+	api := engine.Group("/api")
+	scopes := extension.RouteScopes{
+		Engine:                    engine,
+		API:                       api,
+		UserSelf:                  api.Group("/user"),
+		SubscriptionUser:          api.Group("/subscription"),
+		RootOptions:               api.Group("/option"),
+		AdminModels:               api.Group("/models"),
+		PublicAPI:                 engine.Group("/public-api"),
+		BrowserSession:            engine.Group("/api/user/auth"),
+		AnonymousRequestBodyLimit: func(c *gin.Context) { c.Next() },
+		// Provider route bodies are host-owned again; the payment route set
+		// only forwards to this registrar. Real URL/handler coverage lives in
+		// router/payment_routes_test.go against the production registrar.
+		PaymentRoutes: func(extension.RouteScopes) error { return nil },
+	}
+	require.NoError(t, reg.ApplyRoutesWithScopes(scopes, extension.PriorityBeforePlugin))
 
-	var got []string
 	handlers := make(map[string]string)
 	for _, route := range engine.Routes() {
 		key := route.Method + " " + route.Path
-		got = append(got, key)
 		handlers[key] = route.Handler
 	}
-	assert.Equal(t, []string{
+	for _, key := range []string{
 		http.MethodGet + " /llms.txt",
 		http.MethodGet + " /llms-full.txt",
 		http.MethodHead + " /llms.txt",
 		http.MethodHead + " /llms-full.txt",
-	}, got)
-	assert.True(t, strings.HasSuffix(handlers[http.MethodGet+" /llms.txt"], "/controller.GetLlmsIndex"))
-	assert.True(t, strings.HasSuffix(handlers[http.MethodHead+" /llms.txt"], "/controller.GetLlmsIndex"))
-	assert.True(t, strings.HasSuffix(handlers[http.MethodGet+" /llms-full.txt"], "/controller.GetLlmsFull"))
-	assert.True(t, strings.HasSuffix(handlers[http.MethodHead+" /llms-full.txt"], "/controller.GetLlmsFull"))
+		http.MethodGet + " /public-api/pricing",
+		http.MethodHead + " /public-api/pricing",
+		http.MethodGet + " /public-api/status",
+		http.MethodGet + " /api/chuanapi/public-config",
+		http.MethodGet + " /api/user/auth/session",
+	} {
+		assert.Contains(t, handlers, key)
+	}
+	assert.True(t, strings.HasSuffix(handlers[http.MethodGet+" /llms.txt"], "/console.GetLlmsIndex"))
+	assert.True(t, strings.HasSuffix(handlers[http.MethodHead+" /llms.txt"], "/console.GetLlmsIndex"))
+	assert.True(t, strings.HasSuffix(handlers[http.MethodGet+" /llms-full.txt"], "/console.GetLlmsFull"))
+	assert.True(t, strings.HasSuffix(handlers[http.MethodHead+" /llms-full.txt"], "/console.GetLlmsFull"))
+	assert.True(t, strings.HasSuffix(handlers[http.MethodGet+" /public-api/pricing"], "/console.GetPublicPricing"))
+	assert.True(t, strings.HasSuffix(handlers[http.MethodGet+" /public-api/status"], "/console.GetPublicConfig"))
+	assert.True(t, strings.HasSuffix(handlers[http.MethodGet+" /api/chuanapi/public-config"], "/console.GetPublicConfig"))
+	assert.True(t, strings.HasSuffix(handlers[http.MethodGet+" /api/user/auth/session"], "/console.GetAuthSession"))
 }

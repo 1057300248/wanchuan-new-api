@@ -18,14 +18,20 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import axios, { type AxiosRequestConfig } from 'axios'
 import { t } from 'i18next'
-import { toast } from 'sonner'
 
+import i18n from '@/i18n/config'
+import { toBackendLanguage } from '@/i18n/languages'
 import {
   applyAuthRotation,
   clearAuthentication,
+  getFreshAuthHeaders,
   refreshAuthentication,
 } from '@/lib/auth-session'
-import { getServerErrorMessageKey } from '@/lib/server-error-message'
+import { handleServerError } from '@/lib/handle-server-error'
+import {
+  getServerErrorMessage,
+  safeServerErrorMessage,
+} from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 declare module 'axios' {
@@ -37,6 +43,7 @@ declare module 'axios' {
     authRetry?: boolean
     acceptAuthRotation?: boolean
     preserveAuthorization?: boolean
+    singleUseAuthorization?: boolean
   }
 }
 
@@ -46,7 +53,8 @@ export const api = axios.create({
   baseURL: '',
   withCredentials: true,
   headers: {
-    'Cache-Control': 'no-store',
+    // no-store forbids storage; no-cache also revalidates any older cached response.
+    'Cache-Control': 'no-cache, no-store',
   },
 })
 
@@ -84,18 +92,6 @@ api.interceptors.response.use(
       applyAuthRotation(response.data.data)
     }
 
-    if (
-      !response.config.skipBusinessError &&
-      typeof response.data?.success === 'boolean' &&
-      !response.data.success
-    ) {
-      const messageKey = getServerErrorMessageKey(response.data)
-      toast.error(
-        messageKey
-          ? t(messageKey)
-          : response.data.message || t('Request failed')
-      )
-    }
     return response
   },
   async (error) => {
@@ -124,43 +120,57 @@ api.interceptors.response.use(
         }
 
         if (outcome.kind === 'anonymous' || outcome.kind === 'out_of_sync') {
-          if (!skipErrorHandler) toast.error(t('Session expired!'))
+          if (!skipErrorHandler) {
+            handleServerError({
+              message: t('Session expired!'),
+              [safeServerErrorMessage]: true,
+              cause: error,
+            })
+          }
           redirectToSignIn()
         }
       } else if (config?.authRetry) {
         clearAuthentication(false)
-        if (!skipErrorHandler) toast.error(t('Session expired!'))
+        if (!skipErrorHandler) {
+          handleServerError({
+            message: t('Session expired!'),
+            [safeServerErrorMessage]: true,
+            cause: error,
+          })
+        }
         redirectToSignIn()
       } else if (!skipErrorHandler) {
-        toast.error(t('Session expired!'))
+        handleServerError({
+          message: t('Session expired!'),
+          [safeServerErrorMessage]: true,
+          cause: error,
+        })
       }
-    } else if (status === 429 && !skipErrorHandler) {
-      const retryAfterValue = Number.parseInt(
-        String(error?.response?.headers?.['retry-after'] ?? ''),
-        10
-      )
-      const retryAfterHint =
-        Number.isFinite(retryAfterValue) && retryAfterValue > 0
-          ? ` (${Math.ceil(retryAfterValue)}s)`
-          : ''
-      toast.error(
-        `${t('Too many requests')}. ${t('Please wait a moment before trying again.')}${retryAfterHint}`
-      )
-    } else if (!skipErrorHandler) {
-      const messageKey = getServerErrorMessageKey(error)
-      const message = messageKey
-        ? t(messageKey)
-        : error?.response?.data?.message ||
-          error?.message ||
-          t('Request failed')
-      toast.error(message)
     }
+    if (axios.isAxiosError(error)) error.message = getServerErrorMessage(error)
     throw error
   }
 )
 
-api.interceptors.request.use((config) => {
+api.interceptors.request.use(async (config) => {
+  config.headers.set(
+    'Accept-Language',
+    toBackendLanguage(i18n.resolvedLanguage || i18n.language)
+  )
   if (config.preserveAuthorization) return config
+  if (config.singleUseAuthorization || config.headers.has('X-Security-Proof')) {
+    // Refresh before spending a proof/flow, never by replaying its request.
+    config.skipAuthRefresh = true
+    try {
+      const headers = await getFreshAuthHeaders()
+      for (const [name, value] of Object.entries(headers)) {
+        config.headers.set(name, value)
+      }
+    } catch (error) {
+      throw axios.AxiosError.from(error, undefined, config)
+    }
+    return config
+  }
   const accessToken = useAuthStore.getState().auth.accessToken
   if (accessToken) {
     config.headers.Authorization = `Bearer ${accessToken}`

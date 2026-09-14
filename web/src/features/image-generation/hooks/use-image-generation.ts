@@ -34,6 +34,7 @@ type GenerateInput = {
   quality: string
   style: string
   images: File[]
+  asyncMode?: boolean
 }
 
 export function useImageGeneration() {
@@ -96,6 +97,7 @@ export function useImageGeneration() {
           quality: input.quality,
           style: input.style,
           images: input.images,
+          asyncMode: input.asyncMode,
           signal: controller.signal,
         })
         if (!mountedRef.current || controller.signal.aborted) return null

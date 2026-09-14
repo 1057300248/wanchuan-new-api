@@ -113,7 +113,9 @@ export async function fetchTokenKey(
   id: number,
   config?: { signal?: AbortSignal }
 ): Promise<{ success: boolean; message?: string; data?: { key: string } }> {
-  const res = await api.post(`/api/token/${id}/key`, undefined, config)
+  const res = config
+    ? await api.post(`/api/token/${id}/key`, undefined, config)
+    : await api.post(`/api/token/${id}/key`)
   return res.data
 }
 

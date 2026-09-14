@@ -39,7 +39,7 @@ export function loadHistoryEntries(): ImageHistoryEntry[] {
   }
 }
 
-export function saveHistoryEntries(entries: ImageHistoryEntry[]): void {
+export function saveHistoryEntries(entries: ImageHistoryEntry[]): boolean {
   try {
     const persistedEntries = entries.map((entry) => ({
       ...entry,
@@ -59,8 +59,10 @@ export function saveHistoryEntries(entries: ImageHistoryEntry[]): void {
       IMAGE_HISTORY_STORAGE_KEY,
       JSON.stringify(pruned)
     )
+    return true
   } catch {
     /* storage full or unavailable: keep in-memory state only */
+    return false
   }
 }
 

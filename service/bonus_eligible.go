@@ -1,10 +1,11 @@
 package service
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/moneyport"
+	"github.com/QuantumNous/new-api/pkg/walletport"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
@@ -12,14 +13,15 @@ import (
 // 钱包计费账户顺序（TokenMix P0-5）
 //
 // 规则（fail-closed）：只有模型元数据显式 bonus_eligible=true 时才允许使用
-// 赠金，扣减顺序 bonus -> paid；其余模型（false/null/缺失）只允许 paid。
-// 预扣、追扣（reserve）、结算差额补扣、异步任务、PostConsume 回退路径都必须
-// 使用同一套顺序；退款必须精确退回本次原始扣款账户。
+// 赠金，扣减顺序 bonus -> reward -> paid；其余模型（false/null/缺失）顺序为
+// reward -> paid（邀请奖励不受 bonus 限制）。预扣、追扣（reserve）、结算差额
+// 补扣、异步任务、PostConsume 回退路径都必须使用同一套顺序；退款必须精确退回
+// 本次原始扣款账户。
 // ---------------------------------------------------------------------------
 
 // ErrModelBonusNotSupported 表示请求模型不支持赠金支付且付费余额不足。
 // 不得静默扣减赠金；错误信息面向用户且可在测试中断言。
-var ErrModelBonusNotSupported = errors.New("该模型不支持赠金支付，付费余额不足")
+var ErrModelBonusNotSupported = moneyport.ErrBonusFundingNotSupported
 
 // WalletDebitOrder 返回请求钱包计费使用的账户扣减顺序。
 // 资金身份必须使用 GetBillingModelName()（价格/倍率身份），禁止直接使用
@@ -29,10 +31,23 @@ func WalletDebitOrder(relayInfo *relaycommon.RelayInfo) []model.LedgerAccount {
 	if relayInfo != nil {
 		billingModel = relayInfo.GetBillingModelName()
 	}
-	if model.IsModelBonusEligible(billingModel) {
-		return []model.LedgerAccount{model.AccountBonus, model.AccountPaid}
+	policy, err := walletport.Default()
+	if err != nil {
+		return []model.LedgerAccount{model.AccountPaid}
 	}
-	return []model.LedgerAccount{model.AccountPaid}
+	rawOrder := policy.AccountOrder(billingModel)
+	order := make([]model.LedgerAccount, 0, len(rawOrder))
+	for _, raw := range rawOrder {
+		account := model.LedgerAccount(raw)
+		switch account {
+		case model.AccountBonus, model.AccountReward, model.AccountPaid:
+			order = append(order, account)
+		}
+	}
+	if len(order) == 0 {
+		return []model.LedgerAccount{model.AccountPaid}
+	}
+	return order
 }
 
 // WalletBonusEligible 返回请求模型是否允许使用赠金（与 WalletDebitOrder 同源）。
@@ -40,7 +55,11 @@ func WalletBonusEligible(relayInfo *relaycommon.RelayInfo) bool {
 	if relayInfo == nil {
 		return false
 	}
-	return model.IsModelBonusEligible(relayInfo.GetBillingModelName())
+	policy, err := walletport.Default()
+	if err != nil {
+		return false
+	}
+	return policy.BonusEligible(relayInfo.GetBillingModelName())
 }
 
 // LedgerSharesFromRelayShares 将 relay 层份额（无 model 依赖）转换为账本份额。

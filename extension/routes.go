@@ -7,6 +7,32 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// RouteScopes are host-owned mount points whose middleware policy has already
+// been applied. Extensions may attach endpoints to these groups without
+// reconstructing the host's API middleware chain.
+//
+// Fields are intentionally concrete gin handles instead of host DTOs/packages,
+// preserving extension/'s leaf-package dependency rule (stdlib + gin only).
+type RouteScopes struct {
+	Engine                    *gin.Engine
+	API                       *gin.RouterGroup
+	UserSelf                  *gin.RouterGroup
+	SubscriptionUser          *gin.RouterGroup
+	RootOptions               *gin.RouterGroup
+	AdminModels               *gin.RouterGroup
+	PublicAPI                 *gin.RouterGroup
+	BrowserSession            *gin.RouterGroup
+	AnonymousRequestBodyLimit gin.HandlerFunc
+
+	// PaymentRoutes is the host-owned registrar for payment provider endpoints.
+	// The host router supplies it so provider handler bodies can live in host
+	// controller/service packages while extension route descriptors keep their
+	// historical identity, order and URL/middleware contract. Route sets that
+	// only forward host payment routes must delegate here and fail closed when
+	// the registrar is unavailable.
+	PaymentRoutes func(RouteScopes) error
+}
+
 // RoutePriority is a closed enum naming the points in host router wiring where
 // an extension route set may be attached. The split exists because the host
 // snapshots the engine's static routes when it builds the plugin dispatcher:
@@ -51,10 +77,11 @@ func (p RoutePriority) String() string {
 // only attach handlers and must not depend on host router or controller
 // packages, keeping the dependency edge one-directional.
 type RouteSet struct {
-	Extension string
-	Name      string
-	Priority  RoutePriority
-	Register  func(*gin.Engine) error
+	Extension      string
+	Name           string
+	Priority       RoutePriority
+	Register       func(*gin.Engine) error
+	RegisterScoped func(RouteScopes) error
 }
 
 func (s RouteSet) id() descriptorID {
@@ -72,8 +99,8 @@ func (s RouteSet) validate() error {
 	if !s.Priority.valid() {
 		return fmt.Errorf("extension: route set %s has invalid priority %s", id, s.Priority)
 	}
-	if s.Register == nil {
-		return fmt.Errorf("extension: route set %s has a nil Register function", id)
+	if (s.Register == nil) == (s.RegisterScoped == nil) {
+		return fmt.Errorf("extension: route set %s must define exactly one route registrar", id)
 	}
 	return nil
 }
@@ -134,6 +161,12 @@ func (r *Registry) RouteSetsFor(priority RoutePriority) []RouteSet {
 // registration order. It fails closed: the first failing route set aborts the
 // priority and its error is returned wrapped with the route set identity.
 func (r *Registry) ApplyRoutes(engine *gin.Engine, priority RoutePriority) error {
+	return r.ApplyRoutesWithScopes(RouteScopes{Engine: engine}, priority)
+}
+
+// ApplyRoutesWithScopes attaches route contributions with host-owned mount
+// points. Legacy engine-only contributions still receive scopes.Engine.
+func (r *Registry) ApplyRoutesWithScopes(scopes RouteScopes, priority RoutePriority) error {
 	if !priority.valid() {
 		return fmt.Errorf("extension: cannot apply routes for invalid priority %s", priority)
 	}
@@ -141,11 +174,17 @@ func (r *Registry) ApplyRoutes(engine *gin.Engine, priority RoutePriority) error
 	if len(sets) == 0 {
 		return nil
 	}
-	if engine == nil {
+	if scopes.Engine == nil {
 		return errors.New("extension: cannot apply routes with a nil engine")
 	}
 	for _, set := range sets {
-		if err := set.Register(engine); err != nil {
+		var err error
+		if set.RegisterScoped != nil {
+			err = set.RegisterScoped(scopes)
+		} else {
+			err = set.Register(scopes.Engine)
+		}
+		if err != nil {
 			return fmt.Errorf("route set %s failed: %w", set.id(), err)
 		}
 	}

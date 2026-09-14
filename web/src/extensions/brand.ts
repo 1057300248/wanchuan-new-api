@@ -21,7 +21,7 @@ For commercial licensing, please contact support@quantumnous.com
  *
  * Core components must resolve brand assets through the generic accessors in
  * `@/extensions`, never by importing a concrete extension module. The concrete
- * extension is composed once in `extensions/index.ts` at bundle construction.
+ * extension is composed once in `extensions/bootstrap.ts` at bundle startup.
  */
 export type BrandExtension = {
   id: string

@@ -51,6 +51,36 @@ func (fundingWithoutCapabilities) PreConsume(int) error { return nil }
 func (fundingWithoutCapabilities) Settle(int) error     { return nil }
 func (fundingWithoutCapabilities) Refund() error        { return nil }
 
+type walletFundingWithoutTransactionalSettlement struct {
+	settleCalls int
+}
+
+func (*walletFundingWithoutTransactionalSettlement) Source() string       { return BillingSourceWallet }
+func (*walletFundingWithoutTransactionalSettlement) PreConsume(int) error { return nil }
+func (f *walletFundingWithoutTransactionalSettlement) Settle(int) error {
+	f.settleCalls++
+	return nil
+}
+func (*walletFundingWithoutTransactionalSettlement) Refund() error { return nil }
+
+// 钱包来源必须显式具备事务结算能力；不能退回 funding.Settle -> token 两步提交。
+func TestWalletSettleFailsClosedWithoutTransactionalSettlementCapability(t *testing.T) {
+	funding := &walletFundingWithoutTransactionalSettlement{}
+	session := &BillingSession{
+		relayInfo:        &relaycommon.RelayInfo{IsPlayground: true},
+		funding:          funding,
+		preConsumedQuota: 100,
+		tokenConsumed:    100,
+	}
+
+	err := session.Settle(200)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support transactional settlement")
+	assert.Zero(t, funding.settleCalls, "wallet source must not fall back to non-transactional Settle")
+	assert.False(t, session.fundingSettled)
+	assert.False(t, session.settled)
+}
+
 // ---------------------------------------------------------------------------
 // 钱包：逐级补充预扣的账本序列必须与类型断言时期完全一致
 // ---------------------------------------------------------------------------

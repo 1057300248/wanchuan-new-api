@@ -92,8 +92,8 @@ func (token *Token) GetIpLimits() []string {
 	if cleanIps == "" {
 		return ipLimits
 	}
-	ips := strings.Split(cleanIps, "\n")
-	for _, ip := range ips {
+	ips := strings.SplitSeq(cleanIps, "\n")
+	for ip := range ips {
 		ip = strings.TrimSpace(ip)
 		ip = strings.ReplaceAll(ip, ",", "")
 		if ip != "" {
@@ -396,7 +396,7 @@ func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
 
 func increaseTokenQuota(id int, quota int) (err error) {
 	err = DB.Model(&Token{}).Where("id = ?", id).Updates(
-		map[string]interface{}{
+		map[string]any{
 			"remain_quota":  gorm.Expr("remain_quota + ?", quota),
 			"used_quota":    gorm.Expr("used_quota - ?", quota),
 			"accessed_time": common.GetTimestamp(),
@@ -425,13 +425,46 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 
 func decreaseTokenQuota(id int, quota int) (err error) {
 	err = DB.Model(&Token{}).Where("id = ?", id).Updates(
-		map[string]interface{}{
+		map[string]any{
 			"remain_quota":  gorm.Expr("remain_quota - ?", quota),
 			"used_quota":    gorm.Expr("used_quota + ?", quota),
 			"accessed_time": common.GetTimestamp(),
 		},
 	).Error
 	return err
+}
+
+// ApplyTokenQuotaDeltaTx updates token quota inside a caller-owned database
+// transaction. delta follows the balance direction: positive refunds quota,
+// negative consumes quota. The token cache is fenced before the database write
+// so a rolled-back transaction leaves only a cold cache, never a stale value.
+func ApplyTokenQuotaDeltaTx(tx *gorm.DB, id int, key string, delta int) error {
+	if tx == nil {
+		return errors.New("token quota transaction is nil")
+	}
+	if id <= 0 {
+		return errors.New("token id must be positive")
+	}
+	if delta == 0 {
+		return nil
+	}
+	if err := invalidateTokenCacheForMutation(key); err != nil {
+		common.SysLog("failed to invalidate token quota cache before transaction: " + err.Error())
+	}
+	result := tx.Model(&Token{}).Where("id = ?", id).Updates(
+		map[string]any{
+			"remain_quota":  gorm.Expr("remain_quota + ?", delta),
+			"used_quota":    gorm.Expr("used_quota - ?", delta),
+			"accessed_time": common.GetTimestamp(),
+		},
+	)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("token quota update affected %d rows for token %d", result.RowsAffected, id)
+	}
+	return nil
 }
 
 // CountUserTokens returns total number of tokens for the given user, used for pagination

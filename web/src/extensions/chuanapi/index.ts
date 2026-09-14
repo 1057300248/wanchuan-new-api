@@ -16,22 +16,52 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { createElement } from 'react'
+
 import type { BrandExtension } from '../brand'
+import type { HelpExtension } from '../help'
 import type { I18nExtension } from '../i18n'
+import type { PaymentSettingsExtension } from '../payment-settings'
+import type { WalletExtension } from '../wallet'
 import { CHUANAPI_BRAND_LOGO } from './brand'
-import { chuanapiI18nOverrides } from './i18n'
+import { loadChuanapiI18nOverride } from './i18n'
+import {
+  LazyHelpApiReference,
+  LazyHelpGuide,
+  LazyHelpIndex,
+  LazyPaymentSettingsRenderer,
+  LazyWallet,
+} from './lazy-pages'
 
 export { CHUANAPI_PUBLIC_HOME, chuanapiNavigationExtension } from './navigation'
-
 export { SHOW_LEGACY_AFFILIATE_QUOTA } from './flags'
 export { CHUANAPI_BRAND_LOGO } from './brand'
-export { chuanapiI18nOverrides } from './i18n'
+export { loadChuanapiI18nOverride } from './i18n'
+
 export const chuanapiBrandExtension: BrandExtension = {
   id: 'chuanapi/brand',
   logoUrl: CHUANAPI_BRAND_LOGO,
 }
 
+export const chuanapiHelpExtension: HelpExtension = {
+  id: 'chuanapi/help',
+  indexPage: LazyHelpIndex,
+  guidePage: LazyHelpGuide,
+  apiReferencePage: LazyHelpApiReference,
+}
+
 export const chuanapiI18nExtension: I18nExtension = {
   id: 'chuanapi/i18n',
-  overrides: chuanapiI18nOverrides,
+  loadOverride: loadChuanapiI18nOverride,
+}
+
+export const chuanapiWalletExtension: WalletExtension = {
+  id: 'chuanapi/wallet',
+  page: LazyWallet,
+}
+
+export const chuanapiPaymentSettingsExtension: PaymentSettingsExtension = {
+  id: 'chuanapi/payment-settings',
+  render: (settings) =>
+    createElement(LazyPaymentSettingsRenderer, { settings }),
 }

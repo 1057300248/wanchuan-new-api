@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,12 +15,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// installDatabaseCompatRegistry mirrors the schema/data descriptors installed by
-// chuanapi.Register at the production composition root. This test lives in the
-// model package, so importing chuanapi here would create an import cycle
-// (chuanapi imports model). Keeping the production-owned models and backfill in
-// the test registry makes InitDB exercise the same extension migration phases
-// without changing the package dependency graph.
+// installDatabaseCompatRegistry mirrors the root-model-owned schema/data
+// descriptors installed by chuanapi.Register at the production composition
+// root. This test lives in the model package, so importing concrete ChuanAPI
+// modules here would create an import cycle. Provider-owned schema (including
+// PaymentOrderBinding) is exercised by its module-level real-database
+// compatibility test instead of being duplicated here.
 func installDatabaseCompatRegistry(t *testing.T) {
 	t.Helper()
 	reg := extension.NewRegistry()
@@ -31,9 +32,14 @@ func installDatabaseCompatRegistry(t *testing.T) {
 			&BalanceLedgerOperation{},
 			&BalanceLedger{},
 			&ModelBonusEligibleAudit{},
-			&AffiliateReward{},
-			&AffiliateRewardReconcileState{},
+			&ReferralCommission{},
 		},
+	}))
+	require.NoError(t, reg.RegisterModelSet(extension.ModelSet{
+		Extension: "chuanapi",
+		Name:      "support_models",
+		Phase:     extension.PhaseAfterCoreModels,
+		Models:    []any{&SupportTicket{}, &SupportTicketMessage{}},
 	}))
 	require.NoError(t, reg.RegisterDataStep(extension.DataStep{
 		Extension: "chuanapi",
@@ -81,16 +87,40 @@ func TestDatabaseCompatibilityReal(t *testing.T) {
 	default:
 		t.Fatalf("unsupported TEST_DATABASE_DIALECT %q", dialect)
 	}
-	t.Setenv("LOG_SQL_DSN", "")
+	logDSN := strings.TrimSpace(os.Getenv("TEST_LOG_DATABASE_DSN"))
+	t.Setenv("LOG_SQL_DSN", logDSN)
 
 	require.NoError(t, InitDB(), "production InitDB/migrateDB path must succeed on %s", dialect)
 	require.NoError(t, InitLogDB(), "production InitLogDB path must succeed on %s", dialect)
+	firstMainDB := DB
+	firstLogDB := LOG_DB
+	firstMainSQLDB, err := firstMainDB.DB()
+	require.NoError(t, err)
+	require.NoError(t, firstMainSQLDB.Close())
+	if firstLogDB != firstMainDB {
+		firstLogSQLDB, logErr := firstLogDB.DB()
+		require.NoError(t, logErr)
+		require.NoError(t, firstLogSQLDB.Close())
+	}
+	require.NoError(t, InitDB(), "production InitDB/migrateDB path must be idempotent on %s", dialect)
+	require.NoError(t, InitLogDB(), "production InitLogDB path must be idempotent on %s", dialect)
 	require.NotNil(t, DB)
 	require.NotNil(t, LOG_DB)
 
 	sqlDB, err := DB.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sqlDB.Close() })
+	if LOG_DB != DB {
+		logSQLDB, logErr := LOG_DB.DB()
+		require.NoError(t, logErr)
+		t.Cleanup(func() { require.NoError(t, logSQLDB.Close()) })
+		require.NoError(t, logSQLDB.Ping())
+	}
+	if logDSN != "" {
+		require.NotSame(t, DB, LOG_DB, "configured log databases must be initialized independently")
+		require.True(t, LOG_DB.Migrator().HasTable(&Log{}))
+		require.True(t, LOG_DB.Migrator().HasTable(&AuditLog{}))
+	}
 	require.NoError(t, sqlDB.Ping())
 
 	var version string
@@ -111,6 +141,8 @@ func TestDatabaseCompatibilityReal(t *testing.T) {
 		"quota_data":         &QuotaData{},
 		"balance_ledger":     &BalanceLedger{},
 		"subscription_plans": &SubscriptionPlan{},
+		"support_tickets":    &SupportTicket{},
+		"support_messages":   &SupportTicketMessage{},
 	} {
 		require.Truef(t, DB.Migrator().HasTable(table), "migrateDB did not create %s on %s", name, dialect)
 	}
@@ -139,7 +171,7 @@ func TestDatabaseCompatibilityReal(t *testing.T) {
 	require.NoError(t, DB.First(&stored, user.Id).Error)
 	require.Equal(t, largeQuota, stored.Quota)
 	require.Equal(t, largeQuota, stored.QuotaPaid)
-	require.Equal(t, stored.QuotaPaid+stored.QuotaBonus+stored.QuotaAffiliate, stored.Quota)
+	require.Equal(t, stored.QuotaPaid+stored.QuotaBonus+stored.QuotaReward, stored.Quota)
 
 	// Exercise the quota_data write/update/group-by path, which is sensitive to
 	// SQL dialect differences and is used by the dashboard/export flow.
@@ -173,4 +205,131 @@ func TestDatabaseCompatibilityReal(t *testing.T) {
 	var updatedPaid int
 	require.NoError(t, DB.Model(&User{}).Select("quota_paid").Where("id = ?", user.Id).Scan(&updatedPaid).Error)
 	require.Equal(t, largeQuota+1, updatedPaid)
+
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 5
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	paymentUsername := fmt.Sprintf("e%x", uint64(time.Now().UnixNano()))
+	paymentUser := User{
+		Username:    paymentUsername,
+		Password:    "compat-payment-password-hash",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+		AuthVersion: 1,
+		AffCode:     paymentUsername,
+	}
+	require.NoError(t, DB.Create(&paymentUser).Error)
+
+	legacyTradeNo := fmt.Sprintf("DBLEGACY%x", uint64(time.Now().UnixNano()))
+	legacyOrder := TopUp{
+		UserId:          paymentUser.Id,
+		Amount:          2,
+		Money:           10,
+		TradeNo:         legacyTradeNo,
+		PaymentMethod:   "",
+		PaymentProvider: PaymentProviderEpay,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      common.GetTimestamp(),
+	}
+	require.NoError(t, legacyOrder.Insert())
+
+	alreadyDone, err := RechargeEpay(legacyTradeNo, "wxpay", "10.00", "127.0.0.1")
+	require.NoError(t, err)
+	require.False(t, alreadyDone)
+
+	var storedLegacy TopUp
+	require.NoError(t, DB.Where("trade_no = ?", legacyTradeNo).First(&storedLegacy).Error)
+	require.Equal(t, common.TopUpStatusSuccess, storedLegacy.Status)
+	require.Equal(t, "wxpay", storedLegacy.PaymentMethod)
+
+	var paymentQuota int
+	require.NoError(t, DB.Model(&User{}).Select("quota").Where("id = ?", paymentUser.Id).Scan(&paymentQuota).Error)
+	require.Equal(t, 10, paymentQuota)
+
+	alreadyDone, err = RechargeEpay(legacyTradeNo, "wxpay", "10.00", "127.0.0.1")
+	require.NoError(t, err)
+	require.True(t, alreadyDone)
+	require.NoError(t, DB.Model(&User{}).Select("quota").Where("id = ?", paymentUser.Id).Scan(&paymentQuota).Error)
+	require.Equal(t, 10, paymentQuota)
+
+	mismatchTradeNo := fmt.Sprintf("DBMISMATCH%x", uint64(time.Now().UnixNano()))
+	mismatchOrder := TopUp{
+		UserId:          paymentUser.Id,
+		Amount:          2,
+		Money:           10,
+		TradeNo:         mismatchTradeNo,
+		PaymentMethod:   "alipay",
+		PaymentProvider: PaymentProviderEpay,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      common.GetTimestamp(),
+	}
+	require.NoError(t, mismatchOrder.Insert())
+	_, err = RechargeEpay(mismatchTradeNo, "wxpay", "10.00", "127.0.0.1")
+	require.ErrorIs(t, err, ErrPaymentMethodMismatch)
+	require.NoError(t, DB.Where("trade_no = ?", mismatchTradeNo).First(&mismatchOrder).Error)
+	require.Equal(t, common.TopUpStatusPending, mismatchOrder.Status)
+	require.Equal(t, "alipay", mismatchOrder.PaymentMethod)
+
+	concurrentUsername := fmt.Sprintf("c%x", uint64(time.Now().UnixNano()))
+	concurrentUser := User{
+		Username:    concurrentUsername,
+		Password:    "compat-concurrent-password-hash",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+		AuthVersion: 1,
+		AffCode:     concurrentUsername,
+	}
+	require.NoError(t, DB.Create(&concurrentUser).Error)
+	concurrentTradeNo := fmt.Sprintf("DBCONCURRENT%x", uint64(time.Now().UnixNano()))
+	concurrentOrder := TopUp{
+		UserId:          concurrentUser.Id,
+		Amount:          2,
+		Money:           10,
+		TradeNo:         concurrentTradeNo,
+		PaymentMethod:   "wxpay",
+		PaymentProvider: PaymentProviderEpay,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      common.GetTimestamp(),
+	}
+	require.NoError(t, concurrentOrder.Insert())
+
+	type callbackResult struct {
+		alreadyDone bool
+		err         error
+	}
+	start := make(chan struct{})
+	results := make(chan callbackResult, 2)
+	var waitGroup sync.WaitGroup
+	for range 2 {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			<-start
+			done, callbackErr := RechargeEpay(concurrentTradeNo, "wxpay", "10.00", "127.0.0.1")
+			results <- callbackResult{alreadyDone: done, err: callbackErr}
+		}()
+	}
+	close(start)
+	waitGroup.Wait()
+	close(results)
+
+	completedCallbacks := 0
+	idempotentCallbacks := 0
+	for result := range results {
+		require.NoError(t, result.err)
+		if result.alreadyDone {
+			idempotentCallbacks++
+		} else {
+			completedCallbacks++
+		}
+	}
+	require.Equal(t, 1, completedCallbacks)
+	require.Equal(t, 1, idempotentCallbacks)
+
+	var concurrentQuota int
+	require.NoError(t, DB.Model(&User{}).Select("quota").Where("id = ?", concurrentUser.Id).Scan(&concurrentQuota).Error)
+	require.Equal(t, 10, concurrentQuota)
 }

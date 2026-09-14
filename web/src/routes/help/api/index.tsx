@@ -18,7 +18,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute } from '@tanstack/react-router'
 
-import { ApiReferencePage } from '@/extensions/chuanapi/help'
+import { extensionHelpPages } from '@/extensions'
+
+const { apiReferencePage: ApiReferencePage } = extensionHelpPages()
 
 type ApiReferenceSearch = {
   endpoint?: string

@@ -42,6 +42,8 @@ export type ImageModelCapability = {
   maxN: number
   maxReferenceImages: number
   supportsResponseFormat: boolean
+  responseFormat?: 'url' | 'b64_json'
+  requestFormat?: 'grok-console'
 }
 
 export type GeneratedImage = {

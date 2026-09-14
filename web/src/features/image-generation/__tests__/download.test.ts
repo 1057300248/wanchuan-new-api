@@ -45,7 +45,22 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('downloadImage degrades gracefully across origins', () => {
+describe('downloadImage saves image data without navigating on failure', () => {
+  test('a raster Content-Type with parameters still downloads with the correct extension', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        blob: async () =>
+          new Blob(['jpeg'], { type: 'image/jpeg; charset=binary' }),
+      }))
+    )
+    URL.createObjectURL = vi.fn(() => 'blob:jpeg')
+    URL.revokeObjectURL = vi.fn()
+    await downloadImage('https://cdn.example/image', 'image.png')
+    expect(createdAnchors[0].download).toBe('image.jpg')
+  })
+
   test('saves data URLs through a temporary anchor without any fetch', async () => {
     const fetchSpy = vi.fn()
     vi.stubGlobal('fetch', fetchSpy)
@@ -86,23 +101,63 @@ describe('downloadImage degrades gracefully across origins', () => {
     expect(document.body.querySelector('a')).toBeNull()
   })
 
-  test('opens the raw URL in a new tab instead of failing when fetch is blocked', async () => {
+  test.each([
+    'https://cdn.example/blocked.png',
+    'http://127.0.0.1:8000/v1/media/images/image-id',
+  ])(
+    'reports a failed fetch instead of opening %s in a new tab',
+    async (url) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          throw new TypeError('Failed to fetch')
+        })
+      )
+
+      await expect(downloadImage(url, 'blocked.png')).rejects.toThrow()
+
+      expect(createdAnchors).toHaveLength(0)
+      expect(document.body.querySelector('a')).toBeNull()
+    }
+  )
+
+  test('a non-success response does not navigate or save its error body', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => {
-        throw new TypeError('Failed to fetch')
-      })
+      vi.fn(async () => ({ ok: false, status: 404 }))
     )
-
     await expect(
-      downloadImage('https://cdn.example/blocked.png', 'blocked.png')
-    ).resolves.toBeUndefined()
+      downloadImage('https://cdn.example/missing.png', 'missing.png')
+    ).rejects.toThrow()
+    expect(createdAnchors).toHaveLength(0)
+  })
 
-    expect(createdAnchors).toHaveLength(1)
-    expect(createdAnchors[0].href).toBe('https://cdn.example/blocked.png')
-    expect(createdAnchors[0].download).toBe('blocked.png')
-    expect(createdAnchors[0].target).toBe('_blank')
-    expect(createdAnchors[0].rel).toContain('noopener')
-    expect(document.body.querySelector('a')).toBeNull()
+  test('an HTML response is not saved as a broken image', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        blob: async () => new Blob(['<!doctype html>'], { type: 'text/html' }),
+      }))
+    )
+    await expect(
+      downloadImage('https://cdn.example/missing.png', 'missing.png')
+    ).rejects.toThrow()
+    expect(createdAnchors).toHaveLength(0)
+  })
+
+  test('a JPEG download uses the matching file extension', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        blob: async () => new Blob(['jpeg-bytes'], { type: 'image/jpeg' }),
+      }))
+    )
+    URL.createObjectURL = vi.fn(() => 'blob:jpeg')
+    URL.revokeObjectURL = vi.fn()
+    await downloadImage('https://cdn.example/image-id', 'history-image.png')
+    expect(createdAnchors[0].download).toBe('history-image.jpg')
+    expect(createdAnchors[0].target).toBe('')
   })
 })

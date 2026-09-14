@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -20,7 +21,15 @@ func (f turnstileRoundTripper) RoundTrip(request *http.Request) (*http.Response,
 	return f(request)
 }
 
+func configureTurnstilePublicSite(t *testing.T, address string) {
+	t.Helper()
+	previous := system_setting.ServerAddress
+	system_setting.ServerAddress = address
+	t.Cleanup(func() { system_setting.ServerAddress = previous })
+}
+
 func TestTurnstileCheckRequiresMatchingActionAndHostname(t *testing.T) {
+	configureTurnstilePublicSite(t, "https://chuanapi.com")
 	previousEnabled := common.TurnstileCheckEnabled
 	previousSecret := common.TurnstileSecretKey
 	previousClient := turnstileHTTPClient
@@ -82,6 +91,65 @@ func TestTurnstileCheckRequiresMatchingActionAndHostname(t *testing.T) {
 	}
 }
 
+func TestTurnstileCheckFailsClosedWithoutConfiguredPublicHostname(t *testing.T) {
+	previousEnabled := common.TurnstileCheckEnabled
+	previousSecret := common.TurnstileSecretKey
+	previousClient := turnstileHTTPClient
+	common.TurnstileCheckEnabled = true
+	common.TurnstileSecretKey = "test-secret"
+	configureTurnstilePublicSite(t, "")
+	called := false
+	turnstileHTTPClient = &http.Client{Transport: turnstileRoundTripper(func(_ *http.Request) (*http.Response, error) {
+		called = true
+		return nil, assert.AnError
+	})}
+	t.Cleanup(func() {
+		common.TurnstileCheckEnabled = previousEnabled
+		common.TurnstileSecretKey = previousSecret
+		turnstileHTTPClient = previousClient
+	})
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/verify", TurnstileCheck("login"), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "https://attacker.example/verify?turnstile=test-token", nil)
+	router.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.False(t, called, "invalid public hostname must fail before calling Turnstile")
+}
+
+func TestTurnstileCheckDoesNotTrustRequestHost(t *testing.T) {
+	previousEnabled := common.TurnstileCheckEnabled
+	previousSecret := common.TurnstileSecretKey
+	previousClient := turnstileHTTPClient
+	common.TurnstileCheckEnabled = true
+	common.TurnstileSecretKey = "test-secret"
+	configureTurnstilePublicSite(t, "https://trusted.example")
+	t.Cleanup(func() {
+		common.TurnstileCheckEnabled = previousEnabled
+		common.TurnstileSecretKey = previousSecret
+		turnstileHTTPClient = previousClient
+	})
+	turnstileHTTPClient = &http.Client{Transport: turnstileRoundTripper(func(_ *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"success":true,"action":"login","hostname":"attacker.example"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/verify", TurnstileCheck("login"), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "https://attacker.example/verify?turnstile=test-token", nil)
+	router.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+}
+
 func TestTurnstileCheckSkipsVerificationWhenDisabled(t *testing.T) {
 	previousEnabled := common.TurnstileCheckEnabled
 	common.TurnstileCheckEnabled = false
@@ -99,7 +167,63 @@ func TestTurnstileCheckSkipsVerificationWhenDisabled(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, recorder.Code)
 }
 
+func TestTurnstileCheckResolvesActionFromRegisteredRoute(t *testing.T) {
+	configureTurnstilePublicSite(t, "https://chuanapi.com")
+	previousEnabled := common.TurnstileCheckEnabled
+	previousSecret := common.TurnstileSecretKey
+	previousClient := turnstileHTTPClient
+	common.TurnstileCheckEnabled = true
+	common.TurnstileSecretKey = "test-secret"
+	t.Cleanup(func() {
+		common.TurnstileCheckEnabled = previousEnabled
+		common.TurnstileSecretKey = previousSecret
+		turnstileHTTPClient = previousClient
+	})
+
+	verificationCalls := 0
+	action := "login"
+	turnstileHTTPClient = &http.Client{Transport: turnstileRoundTripper(func(_ *http.Request) (*http.Response, error) {
+		verificationCalls++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"success":true,"action":"` + action + `","hostname":"chuanapi.com"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	for _, path := range []string{"/api/user/login", "/api/user/register", "/api/unmapped-turnstile"} {
+		router.POST(path, TurnstileCheck(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	}
+	post := func(path string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path+"?turnstile=test-token", nil))
+		return recorder
+	}
+
+	t.Run("mapped route passes with its own action", func(t *testing.T) {
+		action = "login"
+		before := verificationCalls
+		assert.Equal(t, http.StatusNoContent, post("/api/user/login").Code)
+		assert.Equal(t, before+1, verificationCalls)
+	})
+
+	t.Run("mapped route rejects a different action", func(t *testing.T) {
+		action = "login"
+		assert.Equal(t, http.StatusForbidden, post("/api/user/register").Code)
+	})
+
+	t.Run("unmapped route fails closed without calling siteverify", func(t *testing.T) {
+		action = "signup"
+		before := verificationCalls
+		assert.Equal(t, http.StatusForbidden, post("/api/unmapped-turnstile").Code)
+		assert.Equal(t, before, verificationCalls, "an unmapped route must be rejected before any siteverify request")
+	})
+}
+
 func TestTurnstileCheckRejectsReplayedToken(t *testing.T) {
+	configureTurnstilePublicSite(t, "https://chuanapi.com")
 	previousEnabled := common.TurnstileCheckEnabled
 	previousSecret := common.TurnstileSecretKey
 	previousClient := turnstileHTTPClient

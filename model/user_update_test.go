@@ -68,16 +68,16 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 	require.NoError(t, err)
 
 	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]interface{}{
-		"quota":           gorm.Expr("quota - ?", 400),
-		"used_quota":      gorm.Expr("used_quota + ?", 400),
-		"request_count":   gorm.Expr("request_count + ?", 1),
-		"quota_paid":      gorm.Expr("quota_paid - ?", 400),
-		"quota_bonus":     gorm.Expr("quota_bonus + ?", 100),
-		"quota_affiliate": gorm.Expr("quota_affiliate + ?", 300),
-		"aff_count":       gorm.Expr("aff_count + ?", 1),
-		"aff_quota":       gorm.Expr("aff_quota - ?", 500),
-		"aff_history":     gorm.Expr("aff_history + ?", 500),
-		"access_token":    "rotated-token",
+		"quota":         gorm.Expr("quota - ?", 400),
+		"used_quota":    gorm.Expr("used_quota + ?", 400),
+		"request_count": gorm.Expr("request_count + ?", 1),
+		"quota_paid":    gorm.Expr("quota_paid - ?", 400),
+		"quota_bonus":   gorm.Expr("quota_bonus + ?", 100),
+		"quota_reward":  gorm.Expr("quota_reward + ?", 300),
+		"aff_count":     gorm.Expr("aff_count + ?", 1),
+		"aff_quota":     gorm.Expr("aff_quota - ?", 500),
+		"aff_history":   gorm.Expr("aff_history + ?", 500),
+		"access_token":  "rotated-token",
 	}).Error)
 
 	staleUser.DisplayName = "after"
@@ -91,7 +91,7 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 	assert.Equal(t, 4, got.RequestCount)
 	assert.Equal(t, 600, got.QuotaPaid)
 	assert.Equal(t, 100, got.QuotaBonus)
-	assert.Equal(t, 300, got.QuotaAffiliate)
+	assert.Equal(t, 300, got.QuotaReward)
 	assert.Equal(t, 3, got.AffCount)
 	assert.Equal(t, 300, got.AffQuota)
 	assert.Equal(t, 1700, got.AffHistoryQuota)
@@ -420,7 +420,7 @@ func setupInviteRaceTestState(t *testing.T) {
 // TestInviteUserDoesNotOverwriteConcurrentLedgerChanges 回归测试：inviteUser
 // 只能做邀请计数的原子列增量。历史实现 GetUserById + DB.Save(user) 会把
 // 读取时刻的旧快照写回全行，覆盖并发的账本事务对
-// quota_paid/quota_bonus/quota_affiliate（及 quota 镜像）的更新。
+// quota_paid/quota_bonus/quota_reward（及 quota 镜像）的更新。
 func TestInviteUserDoesNotOverwriteConcurrentLedgerChanges(t *testing.T) {
 	setupInviteRaceTestState(t)
 
@@ -432,7 +432,7 @@ func TestInviteUserDoesNotOverwriteConcurrentLedgerChanges(t *testing.T) {
 		Quota:           1500,
 		QuotaPaid:       1000,
 		QuotaBonus:      200,
-		QuotaAffiliate:  300,
+		QuotaReward:     300,
 		AffCount:        5,
 		AffQuota:        800,
 		AffHistoryQuota: 1200,
@@ -465,7 +465,7 @@ func TestInviteUserDoesNotOverwriteConcurrentLedgerChanges(t *testing.T) {
 	// 会把这些断言需要的值覆盖回 1000/200/300/1500。
 	assert.Equal(t, 600, got.QuotaPaid)
 	assert.Equal(t, 200, got.QuotaBonus)
-	assert.Equal(t, 300, got.QuotaAffiliate)
+	assert.Equal(t, 300, got.QuotaReward)
 	assert.Equal(t, 1100, got.Quota)
 	assertQuotaInvariant(t, got)
 	// 邀请计数精确递增一次。
@@ -488,7 +488,7 @@ func TestInviteUserConcurrentWithLedgerDebits(t *testing.T) {
 		Quota:           1500,
 		QuotaPaid:       1000,
 		QuotaBonus:      200,
-		QuotaAffiliate:  300,
+		QuotaReward:     300,
 		AffCount:        0,
 		AffQuota:        0,
 		AffHistoryQuota: 0,
@@ -533,7 +533,7 @@ func TestInviteUserConcurrentWithLedgerDebits(t *testing.T) {
 	// 三次扣减全部生效（paid 先扣 100*3），邀请更新未吞掉任何一笔账本变更。
 	assert.Equal(t, 700, got.QuotaPaid)
 	assert.Equal(t, 200, got.QuotaBonus)
-	assert.Equal(t, 300, got.QuotaAffiliate)
+	assert.Equal(t, 300, got.QuotaReward)
 	assert.Equal(t, 1200, got.Quota)
 	assertQuotaInvariant(t, got)
 	// 八次邀请全部精确计数，不创建注册时奖励余额。

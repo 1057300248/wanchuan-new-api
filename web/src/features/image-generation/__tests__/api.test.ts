@@ -42,9 +42,254 @@ const postMock = vi.mocked(api.post)
 
 beforeEach(() => {
   postMock.mockReset()
+  vi.mocked(api.get).mockReset()
+})
+
+test('async generation submits once then retrieves the result using the dashboard session', async () => {
+  const id = 'a'.repeat(48)
+  postMock.mockResolvedValue({ status: 202, data: { id, status: 'running' } })
+  vi.mocked(api.get).mockResolvedValue({
+    data: {
+      id,
+      status: 'succeeded',
+      result: { data: [{ url: 'https://example.com/image.png' }] },
+    },
+  })
+  const result = await requestImageGeneration({
+    fullKey: 'fixture',
+    model: 'gpt-image-2',
+    prompt: 'A lake',
+    count: 1,
+    size: 'auto',
+    quality: 'auto',
+    style: '',
+    images: [],
+    asyncMode: true,
+  })
+  expect(postMock).toHaveBeenCalledTimes(1)
+  expect(postMock.mock.calls[0][0]).toBe('/v1/images/tasks/generations')
+  expect(api.get).toHaveBeenCalledWith(
+    `/v1/images/tasks/${id}`,
+    expect.not.objectContaining({
+      headers: expect.anything(),
+      preserveAuthorization: true,
+    })
+  )
+  expect(result[0].url).toBe('https://example.com/image.png')
+})
+
+test('async terminal failure preserves the upstream message and never resubmits', async () => {
+  const id = 'b'.repeat(48)
+  postMock.mockResolvedValue({ status: 202, data: { id, status: 'running' } })
+  vi.mocked(api.get).mockResolvedValue({
+    data: {
+      id,
+      status: 'failed',
+      result: {
+        error: { message: 'Upstream image quota exhausted' },
+      },
+    },
+  })
+  await expect(
+    requestImageGeneration({
+      fullKey: 'fixture',
+      model: 'gpt-image-2',
+      prompt: 'A lake',
+      count: 1,
+      size: 'auto',
+      quality: 'auto',
+      style: '',
+      images: [],
+      asyncMode: true,
+    })
+  ).rejects.toThrow('Upstream image quota exhausted')
+  expect(postMock).toHaveBeenCalledTimes(1)
+})
+
+test('stopping async polling aborts the wait without resubmitting or sending cancellation upstream', async () => {
+  vi.useFakeTimers()
+  try {
+    const id = 'c'.repeat(48)
+    const controller = new AbortController()
+    postMock.mockResolvedValue({ status: 202, data: { id, status: 'running' } })
+    vi.mocked(api.get).mockResolvedValue({ data: { id, status: 'running' } })
+    const pending = requestImageGeneration({
+      fullKey: 'fixture',
+      model: 'gpt-image-2',
+      prompt: 'A lake',
+      count: 1,
+      size: 'auto',
+      quality: 'auto',
+      style: '',
+      images: [],
+      asyncMode: true,
+      signal: controller.signal,
+    })
+    const rejected = expect(pending).rejects.toMatchObject({
+      name: 'AbortError',
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    controller.abort()
+    await rejected
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(postMock).toHaveBeenCalledTimes(1)
+    expect(api.get).toHaveBeenCalledTimes(1)
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
 describe('requestImageGeneration selects the synchronous image endpoint', () => {
+  test('Console generations send aspect ratio, explicit 1K resolution and selected quality', async () => {
+    postMock.mockResolvedValue({ data: { data: [] } })
+    await requestImageGeneration({
+      fullKey: 'fixture',
+      model: 'grok-imagine-image-2.0-console',
+      prompt: 'A lake',
+      count: 1,
+      size: '16:9',
+      quality: 'medium',
+      style: '',
+      images: [],
+    })
+    expect(postMock.mock.calls[0][0]).toBe('/v1/images/generations')
+    expect(postMock.mock.calls[0][1]).toEqual({
+      model: 'grok-imagine-image-2.0-console',
+      prompt: 'A lake',
+      n: 1,
+      aspect_ratio: '16:9',
+      resolution: '1k',
+      quality: 'medium',
+      response_format: 'b64_json',
+    })
+  })
+
+  test('Console reference images are sent as JSON data URLs, not multipart, with quality preserved', async () => {
+    postMock.mockResolvedValue({ data: { data: [] } })
+    await requestImageGeneration({
+      fullKey: 'fixture',
+      model: 'grok-imagine-image-2.0-console',
+      prompt: 'Edit this',
+      count: 2,
+      size: '3:2',
+      quality: 'low',
+      style: '',
+      images: [
+        new File(['hello'], 'a.png', { type: 'image/png' }),
+        new File(['world'], 'b.jpg', { type: 'image/jpeg' }),
+      ],
+    })
+    expect(postMock.mock.calls[0][0]).toBe('/v1/images/edits')
+    expect(postMock.mock.calls[0][1]).toEqual({
+      model: 'grok-imagine-image-2.0-console',
+      prompt: 'Edit this',
+      n: 2,
+      aspect_ratio: '3:2',
+      resolution: '1k',
+      quality: 'low',
+      response_format: 'b64_json',
+      images: [
+        { url: 'data:image/png;base64,aGVsbG8=' },
+        { url: 'data:image/jpeg;base64,d29ybGQ=' },
+      ],
+    })
+  })
+
+  test('Console rejects more than three references instead of silently discarding files', async () => {
+    postMock.mockResolvedValue({ data: { data: [] } })
+    const files = [1, 2, 3, 4].map(
+      (i) => new File(['hello'], `${i}.png`, { type: 'image/png' })
+    )
+    await expect(
+      requestImageGeneration({
+        fullKey: 'fixture',
+        model: 'grok-imagine-image-2.0-console',
+        prompt: 'Edit this',
+        count: 1,
+        size: 'auto',
+        quality: 'low',
+        style: '',
+        images: files,
+      })
+    ).rejects.toThrow('Too many reference images for this model')
+    expect(postMock).not.toHaveBeenCalled()
+  })
+
+  test('an aborted Console image read never sends an upstream request', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    await expect(
+      requestImageGeneration({
+        fullKey: 'fixture',
+        model: 'grok-imagine-image-2.0-console',
+        prompt: 'Edit this',
+        count: 1,
+        size: 'auto',
+        quality: 'low',
+        style: '',
+        images: [new File(['hello'], 'a.png', { type: 'image/png' })],
+        signal: controller.signal,
+      })
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(postMock).not.toHaveBeenCalled()
+  })
+
+  test('cancelling during Console file conversion stops before submitting', async () => {
+    const controller = new AbortController()
+    const request = requestImageGeneration({
+      fullKey: 'fixture',
+      model: 'grok-imagine-image-2.0-console',
+      prompt: 'Edit this',
+      count: 1,
+      size: 'auto',
+      quality: 'low',
+      style: '',
+      images: [new File(['hello'], 'a.png', { type: 'image/png' })],
+      signal: controller.signal,
+    })
+    controller.abort()
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' })
+    expect(postMock).not.toHaveBeenCalled()
+  })
+
+  test('Console file read errors are reported without sending a request', async () => {
+    vi.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(
+      function (this: FileReader) {
+        this.dispatchEvent(new ProgressEvent('error'))
+        this.dispatchEvent(new ProgressEvent('loadend'))
+      }
+    )
+    await expect(
+      requestImageGeneration({
+        fullKey: 'fixture',
+        model: 'grok-imagine-image-2.0-console',
+        prompt: 'Edit this',
+        count: 1,
+        size: 'auto',
+        quality: 'low',
+        style: '',
+        images: [new File(['hello'], 'a.png', { type: 'image/png' })],
+      })
+    ).rejects.toThrow('Failed to read reference image')
+    expect(postMock).not.toHaveBeenCalled()
+  })
+
+  test('Console infers a known image MIME type when the uploaded file omits it', async () => {
+    postMock.mockResolvedValue({ data: { data: [] } })
+    await requestImageGeneration({
+      fullKey: 'fixture',
+      model: 'grok-imagine-image-2.0-console',
+      prompt: 'Edit this',
+      count: 1,
+      size: 'auto',
+      quality: 'low',
+      style: '',
+      images: [new File(['hello'], 'a.webp')],
+    })
+    expect(postMock.mock.calls[0][1]).toMatchObject({
+      images: [{ url: 'data:image/webp;base64,aGVsbG8=' }],
+    })
+  })
   test('sends JSON to generations when no reference image is present', async () => {
     postMock.mockResolvedValue({
       data: { data: [{ url: 'https://cdn.example/generated.png' }] },
@@ -117,6 +362,7 @@ describe('requestImageGeneration selects the synchronous image endpoint', () => 
     expect(uploaded.type).toBe(file.type)
     expect(uploaded.size).toBe(file.size)
     expect(form.get('n')).toBe('2')
+    expect(form.get('quality')).toBe('medium')
     expect(config).toMatchObject({
       headers: { Authorization: 'Bearer sk-test' },
       skipErrorHandler: true,

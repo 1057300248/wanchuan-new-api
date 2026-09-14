@@ -27,13 +27,11 @@ function normalizeModelName(value: string): string {
   return value.trim().toLowerCase()
 }
 
-function parseModelLimits(modelLimits: string): Set<string> | null {
-  if (!modelLimits || modelLimits.trim() === '') return null
+function parseModelLimits(modelLimits: string): Set<string> {
   const items = modelLimits
     .split(',')
     .map((item) => item.trim())
     .filter((item) => item !== '')
-  if (items.length === 0) return null
   return new Set(items.map(normalizeModelName))
 }
 
@@ -62,9 +60,7 @@ export function getAvailableImageModels(params: {
 
   if (params.token.model_limits_enabled) {
     const limits = parseModelLimits(params.token.model_limits)
-    if (limits) {
-      allowed = allowed.filter((model) => limits.has(model))
-    }
+    allowed = allowed.filter((model) => limits.has(model))
   }
   if (allowed.length === 0) return []
 

@@ -37,6 +37,39 @@ function png(name: string) {
 }
 
 describe('useReferenceImages releases previews created after mount', () => {
+  test('two uploads in one event respect the combined Console reference limit', () => {
+    const { result } = renderHook(() =>
+      useReferenceImages('grok-imagine-image-2.0-console', 3)
+    )
+    act(() => {
+      expect(result.current.addFiles([png('a.png'), png('b.png')])).toBe(true)
+      expect(result.current.addFiles([png('c.png'), png('d.png')])).toBe(false)
+    })
+    expect(result.current.items.map((item) => item.name)).toEqual([
+      'a.png',
+      'b.png',
+    ])
+    expect(result.current.errorKey).toBe(
+      'Too many reference images for this model'
+    )
+  })
+
+  test('clearing and replacing references in one event validates the remaining files', () => {
+    const { result } = renderHook(() =>
+      useReferenceImages('grok-imagine-image-2.0-console', 3)
+    )
+    act(() => {
+      result.current.addFiles([png('a.png'), png('b.png'), png('c.png')])
+    })
+    act(() => {
+      result.current.clear()
+      expect(result.current.addFiles([png('replacement.png')])).toBe(true)
+    })
+    expect(result.current.items.map((item) => item.name)).toEqual([
+      'replacement.png',
+    ])
+  })
+
   test('unmount revokes every preview URL added during the session', () => {
     const { result, unmount } = renderHook(() =>
       useReferenceImages('gpt-image-2', 4)

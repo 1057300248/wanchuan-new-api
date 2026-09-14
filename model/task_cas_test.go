@@ -64,6 +64,7 @@ func TestMain(m *testing.M) {
 		&Model{},
 		&Vendor{},
 		&ModelBonusEligibleAudit{},
+		&ReferralCommission{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -101,6 +102,7 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM models")
 		DB.Exec("DELETE FROM vendors")
 		DB.Exec("DELETE FROM model_bonus_eligible_audits")
+		DB.Exec("DELETE FROM referral_commissions")
 		InvalidateModelBonusEligibleCache()
 	})
 }
@@ -300,7 +302,7 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		go func(idx int) {
 			defer wg.Done()
 			t := &Task{}

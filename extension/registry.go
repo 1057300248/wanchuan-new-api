@@ -42,11 +42,12 @@ func (id descriptorID) String() string {
 // Registry collects extension descriptors during startup wiring. A Registry is
 // mutable until Freeze (or SetDefault) succeeds and immutable afterwards.
 type Registry struct {
-	mu        sync.RWMutex
-	frozen    bool
-	modelSets []ModelSet
-	dataSteps []DataStep
-	routeSets []RouteSet
+	mu            sync.RWMutex
+	frozen        bool
+	modelSets     []ModelSet
+	dataSteps     []DataStep
+	routeSets     []RouteSet
+	lifecycleSets []LifecycleSet
 }
 
 // NewRegistry returns an empty, mutable Registry.
@@ -126,6 +127,16 @@ func (r *Registry) validateLocked() error {
 			return fmt.Errorf("extension: duplicate route set %s", set.id())
 		}
 		seenRouteSets[set.id()] = struct{}{}
+	}
+	seenLifecycleSets := make(map[descriptorID]struct{}, len(r.lifecycleSets))
+	for _, set := range r.lifecycleSets {
+		if err := set.validate(); err != nil {
+			return err
+		}
+		if _, ok := seenLifecycleSets[set.id()]; ok {
+			return fmt.Errorf("extension: duplicate lifecycle set %s", set.id())
+		}
+		seenLifecycleSets[set.id()] = struct{}{}
 	}
 	return nil
 }

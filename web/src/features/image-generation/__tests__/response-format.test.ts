@@ -21,7 +21,45 @@ import { describe, expect, test } from 'vitest'
 import {
   buildEditsFormData,
   buildGenerationsBody,
+  normalizeImageResponse,
 } from '../lib/request-builders'
+
+test.each(['grok-imagine-image-2.0', 'grok-imagine-image-2.0-console'])(
+  '%s requests inline image data instead of private asset URLs',
+  (model) => {
+    expect(
+      buildGenerationsBody({
+        model,
+        prompt: 'A circle',
+        count: 1,
+        size: 'auto',
+        quality: 'low',
+        style: '',
+      }).response_format
+    ).toBe('b64_json')
+  }
+)
+
+test.each([
+  {
+    b64_json: '/9j/4AAQSkZJRgABAQAA',
+    mime_type: 'image/jpeg',
+    mime: 'image/jpeg',
+  },
+  { b64_json: '/9j/4AAQSkZJRgABAQAA', mime: 'image/jpeg' },
+  { b64_json: 'UklGRgAAAABXRUJQVlA4', mime: 'image/webp' },
+])(
+  'base64 images retain their actual MIME type: $mime',
+  ({ mime, ...item }) => {
+    const images = normalizeImageResponse({
+      data: { data: [item] },
+      model: 'grok-imagine-image-2.0',
+      prompt: 'A circle',
+      size: '',
+    })
+    expect(images[0].url).toBe(`data:${mime};base64,${item.b64_json}`)
+  }
+)
 
 describe('generations omit response_format for GPT Image and keep it for DALL-E', () => {
   test('sends response_format url for dall-e-3 generations', () => {

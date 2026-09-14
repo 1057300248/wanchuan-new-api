@@ -47,8 +47,8 @@ func getUserBalances(t *testing.T, id int) User {
 
 func assertQuotaInvariant(t *testing.T, user User) {
 	t.Helper()
-	assert.Equal(t, user.QuotaPaid+user.QuotaBonus+user.QuotaAffiliate, user.Quota,
-		"quota must equal paid+bonus+affiliate")
+	assert.Equal(t, user.QuotaPaid+user.QuotaBonus+user.QuotaReward, user.Quota,
+		"quota must equal paid+bonus+reward")
 }
 
 func countLedgerRows(t *testing.T, key string) int64 {
@@ -79,7 +79,7 @@ func TestBackfillLegacyQuotaAccounts(t *testing.T) {
 	u1 := getUserBalances(t, 1)
 	assert.Equal(t, 5000, u1.QuotaPaid)
 	assert.Equal(t, 0, u1.QuotaBonus)
-	assert.Equal(t, 0, u1.QuotaAffiliate)
+	assert.Equal(t, 0, u1.QuotaReward)
 	assertQuotaInvariant(t, u1)
 	assert.Equal(t, int64(1), countLedgerRows(t, "migration:legacy_quota:1"))
 	var operation BalanceLedgerOperation
@@ -265,13 +265,13 @@ func TestTransferQuota(t *testing.T) {
 	result, err := TransferQuota(LedgerEntry{
 		UserId: 106, Account: AccountPaid, Delta: 400, Reason: "test",
 		ReferenceType: "transfer", ReferenceId: "t1",
-	}, AccountAffiliate)
+	}, AccountReward)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 2)
 
 	user := getUserBalances(t, 106)
 	assert.Equal(t, 600, user.QuotaPaid)
-	assert.Equal(t, 400, user.QuotaAffiliate)
+	assert.Equal(t, 400, user.QuotaReward)
 	assert.Equal(t, 1000, user.Quota)
 	assertQuotaInvariant(t, user)
 
@@ -403,7 +403,7 @@ func TestIdempotencySignatureCoversOverrideTransferAndDebitOrder(t *testing.T) {
 	transfer := LedgerEntry{UserId: 204, Account: AccountPaid, Delta: 100, Reason: "transfer", IdempotencyKey: "transfer-fixed"}
 	_, err = TransferQuota(transfer, AccountBonus)
 	require.NoError(t, err)
-	_, err = TransferQuota(transfer, AccountAffiliate)
+	_, err = TransferQuota(transfer, AccountReward)
 	require.ErrorIs(t, err, ErrLedgerIdempotencyConflict)
 
 	debit := LedgerEntry{UserId: 204, Delta: 50, Reason: "debit", IdempotencyKey: "debit-fixed"}
@@ -424,7 +424,7 @@ func TestInsertWithTxNewUserGiftCreditsExactlyOnce(t *testing.T) {
 		common.QuotaForSignupBonus = previousQuota
 	})
 
-	user := &User{Username: "ledger-new-user", Password: "password", Status: common.UserStatusEnabled}
+	user := &User{Username: "ledger-new-user", Password: "Cedar-river-782!quiet", Status: common.UserStatusEnabled}
 	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
 		return user.InsertWithTx(tx, 0)
 	}))
@@ -454,7 +454,7 @@ func TestInsertSignupBonusDisabledGrantsNothing(t *testing.T) {
 		common.QuotaForSignupBonus = previousQuota
 	})
 
-	user := &User{Username: "ledger-new-user-disabled", Password: "password", Status: common.UserStatusEnabled}
+	user := &User{Username: "ledger-new-user-disabled", Password: "Cedar-river-782!quiet", Status: common.UserStatusEnabled}
 	require.NoError(t, user.Insert(0))
 
 	// 功能开关关闭：不发放任何注册赠金。

@@ -23,16 +23,22 @@ import {
   isHttpSchemeUrl,
   isManagedObjectUrl,
 } from './managed-object-urls'
-import { getModelCapability, parseSizeDimensions } from './model-capabilities'
+import {
+  getModelCapability,
+  parseSizeDimensions,
+  resolveSettingsForModel,
+} from './model-capabilities'
 
 export type GenerationsRequestBody = {
   model: string
   prompt: string
   n: number
-  response_format?: 'url'
+  response_format?: 'url' | 'b64_json'
   size?: string
   quality?: string
   style?: string
+  aspect_ratio?: string
+  resolution?: string
 }
 
 const SAFE_HTTP_URL = /^https?:\/\//i
@@ -76,7 +82,16 @@ export function buildGenerationsBody(params: {
     prompt: params.prompt,
     n: count,
   }
-  if (capability.supportsResponseFormat) body.response_format = 'url'
+  if (capability.supportsResponseFormat) {
+    body.response_format = capability.responseFormat ?? 'url'
+  }
+  if (capability.requestFormat === 'grok-console') {
+    const settings = resolveSettingsForModel(params.model, params)
+    body.aspect_ratio = settings.size
+    body.resolution = '1k'
+    body.quality = settings.quality
+    return body
+  }
   if (capability.sizes.length > 0 && params.size) body.size = params.size
   if (capability.qualities.length > 0 && params.quality) {
     body.quality = params.quality
@@ -91,6 +106,7 @@ export function buildEditsFormData(params: {
   count: number
   size: string
   images: File[]
+  quality?: string
 }): FormData {
   const capability = getModelCapability(params.model)
   const count = normalizeCount(params.count, capability.maxN)
@@ -107,11 +123,14 @@ export function buildEditsFormData(params: {
     }
   }
   form.append('n', String(count))
+  if (capability.qualities.length > 0 && params.quality) {
+    form.append('quality', params.quality)
+  }
   if (capability.sizes.length > 0 && params.size) {
     form.append('size', params.size)
   }
   if (capability.supportsResponseFormat) {
-    form.append('response_format', 'url')
+    form.append('response_format', capability.responseFormat ?? 'url')
   }
   return form
 }
@@ -119,11 +138,30 @@ export function buildEditsFormData(params: {
 type RawImageItem = {
   url?: string
   b64_json?: string
+  mime_type?: string
 }
 
-function normalizeDataUrl(value: string): string {
+function normalizeDataUrl(value: string, declaredMime?: string): string {
   if (isDataSchemeUrl(value)) return value
-  return `data:image/png;base64,${value}`
+  let mime = typeof declaredMime === 'string' ? declaredMime.toLowerCase() : ''
+  if (mime && !['image/png', 'image/jpeg', 'image/webp'].includes(mime)) {
+    return ''
+  }
+  if (!mime) {
+    try {
+      const signature = atob(value.slice(0, 24))
+      if (signature.startsWith('\xff\xd8\xff')) mime = 'image/jpeg'
+      else if (
+        signature.startsWith('RIFF') &&
+        signature.slice(8, 12) === 'WEBP'
+      ) {
+        mime = 'image/webp'
+      }
+    } catch {
+      return ''
+    }
+  }
+  return `data:${mime || 'image/png'};base64,${value}`
 }
 
 export function normalizeImageResponse(params: {
@@ -143,6 +181,7 @@ export function normalizeImageResponse(params: {
 
   return items
     .map((item, index): GeneratedImage | null => {
+      if (!item || typeof item !== 'object') return null
       if (typeof item.url === 'string' && item.url.length > 0) {
         if (!isSafeImageUrl(item.url)) return null
         const isDataUrl = isDataSchemeUrl(item.url)
@@ -156,8 +195,8 @@ export function normalizeImageResponse(params: {
           createdAt: now,
         }
       }
-      if (item.b64_json) {
-        const normalized = normalizeDataUrl(item.b64_json)
+      if (typeof item.b64_json === 'string' && item.b64_json) {
+        const normalized = normalizeDataUrl(item.b64_json, item.mime_type)
         if (!isSafeImageUrl(normalized)) return null
         return {
           id: `${now}-${index}`,
