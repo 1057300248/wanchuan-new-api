@@ -13,14 +13,27 @@ jobs:
   import-upstream:
     runs-on: ubuntu-latest
     steps:
-      - name: Import official Sub2API main into upstream/sub2-main
+      - name: Import official Sub2API main snapshot into upstream/sub2-main
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git clone --no-tags --single-branch --branch main https://github.com/Wei-Shaw/sub2api.git sub2api
           cd sub2api
-          test "$(git rev-parse HEAD)" = "32682a4f84c6a29104439050a0be14737552cec2"
+          upstream_sha="$(git rev-parse HEAD)"
+          test "${upstream_sha}" = "32682a4f84c6a29104439050a0be14737552cec2"
+
+          # The Actions token can write repository contents but GitHub does not let it
+          # introduce workflow files. Build a history-free snapshot without workflows;
+          # the four upstream workflow files are restored afterward through the repo API.
+          rm -rf .github/workflows
+          rm -rf .git
+          git init -b transfer
+          git config user.name "Sub2API Upstream Import"
+          git config user.email "noreply@github.com"
+          git add -A
+          git commit -m "chore: snapshot Sub2API main ${upstream_sha}"
+
           git remote add target "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push --force target HEAD:refs/heads/upstream/sub2-main
-          echo "Imported $(git rev-parse HEAD) to ${GITHUB_REPOSITORY}:upstream/sub2-main"
+          echo "Imported Sub2API ${upstream_sha} snapshot to ${GITHUB_REPOSITORY}:upstream/sub2-main"
