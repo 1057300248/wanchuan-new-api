@@ -1739,7 +1739,62 @@ test('advanced custom edits preview draft connection settings with the saved key
   )
 })
 
-test('an operator without sensitive write permission can discover saved models and update routing', async () => {
+test('a limited operator can fetch saved upstream models while the provider and key stay read-only', async () => {
+  useAuthStore.setState({
+    auth: {
+      ...originalAuth,
+      user: {
+        id: 10,
+        username: 'operator',
+        role: ROLE.ADMIN,
+        permissions: {
+          admin_permissions: {
+            channel: { read: true, write: true, operate: true },
+          },
+        },
+      },
+    },
+  })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  expect(screen.getByRole('button', { name: 'Change provider' })).toBeDisabled()
+  expect(screen.getByLabelText('API Key *')).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Fetch from Upstream' }))
+  expect(
+    await screen.findByRole('checkbox', { name: 'upstream-model' })
+  ).toBeVisible()
+})
+
+test('a limited operator sees request-processing and proxy settings disabled and clicking them changes nothing', async () => {
+  useAuthStore.setState({
+    auth: {
+      ...originalAuth,
+      user: {
+        id: 10,
+        username: 'operator',
+        role: ROLE.ADMIN,
+        permissions: {
+          admin_permissions: {
+            channel: { read: true, write: true, operate: true },
+          },
+        },
+      },
+    },
+  })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Request & Response/ }))
+  const thinking = screen.getByRole('switch', { name: 'Thinking to Content' })
+  expect(thinking).toHaveAttribute('aria-disabled', 'true')
+  await user.click(thinking)
+  expect(thinking).not.toBeChecked()
+  await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
+  expect(screen.getByLabelText('Proxy Address')).toBeDisabled()
+})
+
+test('a limited operator can save routing priority while sensitive setting and key stay omitted', async () => {
   useAuthStore.setState({
     auth: {
       ...originalAuth,
@@ -1761,19 +1816,6 @@ test('an operator without sensitive write permission can discover saved models a
   const user = userEvent.setup()
   render(<ConfigurationHarness currentRow={editingChannel} />)
   await screen.findByDisplayValue('Existing channel')
-  expect(screen.getByRole('button', { name: 'Change provider' })).toBeDisabled()
-  expect(screen.getByLabelText('API Key *')).toBeDisabled()
-  await user.click(screen.getByRole('button', { name: 'Fetch from Upstream' }))
-  expect(
-    await screen.findByRole('checkbox', { name: 'upstream-model' })
-  ).toBeVisible()
-  await user.click(screen.getByRole('tab', { name: /Request & Response/ }))
-  const thinking = screen.getByRole('switch', { name: 'Thinking to Content' })
-  expect(thinking).toHaveAttribute('aria-disabled', 'true')
-  await user.click(thinking)
-  expect(thinking).not.toBeChecked()
-  await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
-  expect(screen.getByLabelText('Proxy Address')).toBeDisabled()
   await user.click(screen.getByRole('tab', { name: /Routing & Mapping/ }))
   fireEvent.change(screen.getByLabelText('Priority'), {
     target: { value: '8' },
@@ -1783,7 +1825,7 @@ test('an operator without sensitive write permission can discover saved models a
   expect(put.mock.calls[0]?.[1]).toMatchObject({ id: 42, priority: 8 })
   expect(put.mock.calls[0]?.[1]).not.toHaveProperty('setting')
   expect(put.mock.calls[0]?.[1]).not.toHaveProperty('key')
-}, 10_000)
+})
 
 test.each([
   ['random', 'Random', 'polling', 'Polling'],
