@@ -19,9 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 import type { NavigationExtension } from '../navigation'
 
 export const CHUANAPI_PUBLIC_HOME = 'https://chuanapi.com/'
-export const CHUANAPI_QUICKSTART_DOCS = 'https://chuanapi.com/docs/quickstart/'
+
+/** Web-home quickstart URL that used to be the Docs destination. */
+export const CHUANAPI_LEGACY_QUICKSTART_DOCS =
+  'https://chuanapi.com/docs/quickstart/'
 
 const LEGACY_QUICKSTART_URLS = new Set([
+  CHUANAPI_LEGACY_QUICKSTART_DOCS,
+  'https://chuanapi.com/docs/quickstart',
   'https://chuanapi.com/#quickstart',
   'https://chuanapi.com#quickstart',
 ])
@@ -29,7 +34,6 @@ const LEGACY_QUICKSTART_URLS = new Set([
 export const chuanapiNavigationExtension: NavigationExtension = {
   id: 'chuanapi/navigation',
   publicHomeUrl: CHUANAPI_PUBLIC_HOME,
-  quickstartDocsUrl: CHUANAPI_QUICKSTART_DOCS,
   apply(links) {
     return links.map((link) => {
       if (link.href === '/') {
@@ -40,11 +44,14 @@ export const chuanapiNavigationExtension: NavigationExtension = {
         }
       }
 
+      // The New API documentation lives inside the SPA: keep /help internal
+      // and treat every legacy marketing quickstart entry as the same page.
       if (link.href === '/help' || LEGACY_QUICKSTART_URLS.has(link.href)) {
         return {
           ...link,
-          href: CHUANAPI_QUICKSTART_DOCS,
-          documentNavigation: true,
+          href: '/help',
+          documentNavigation: false,
+          external: false,
         }
       }
 

@@ -22,13 +22,30 @@ import {
 } from '@/extensions'
 
 export const MARKETING_HOME_URL = extensionPublicHomeUrl('/').replace(/\/$/, '')
-export const QUICKSTART_DOCS_URL = extensionQuickstartDocsUrl('/help')
+
+/** Built-in New API documentation route that lives inside the SPA. */
+export const BUILT_IN_HELP_PATH = '/help'
+
+export const QUICKSTART_DOCS_URL =
+  extensionQuickstartDocsUrl(BUILT_IN_HELP_PATH)
+
+/**
+ * Documentation entries that pointed at the marketing web home before the
+ * built-in docs were restored. They must keep working, but they resolve to
+ * the built-in `/help` documentation instead of leaving the SPA.
+ */
+const LEGACY_PUBLIC_DOCS_URLS = new Set([
+  `${MARKETING_HOME_URL}/#quickstart`,
+  `${MARKETING_HOME_URL}#quickstart`,
+  `${MARKETING_HOME_URL}/docs/quickstart`,
+  `${MARKETING_HOME_URL}/docs/quickstart/`,
+])
 
 export function resolvePublicDocsUrl(value: unknown): string {
   if (typeof value !== 'string') return QUICKSTART_DOCS_URL
 
   const normalized = value.trim()
-  if (!normalized || normalized === `${MARKETING_HOME_URL}/#quickstart`) {
+  if (!normalized || LEGACY_PUBLIC_DOCS_URLS.has(normalized)) {
     return QUICKSTART_DOCS_URL
   }
 

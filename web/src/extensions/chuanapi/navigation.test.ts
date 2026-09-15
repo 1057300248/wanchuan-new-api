@@ -25,8 +25,8 @@ import { describe, expect, test } from 'vitest'
 import type { TopNavLink } from '@/components/layout/types'
 
 import {
+  CHUANAPI_LEGACY_QUICKSTART_DOCS,
   CHUANAPI_PUBLIC_HOME,
-  CHUANAPI_QUICKSTART_DOCS,
   chuanapiNavigationExtension,
 } from './navigation'
 
@@ -41,7 +41,7 @@ describe('ChuanAPI cross-shell navigation', () => {
     expect(CHUANAPI_PUBLIC_HOME).toBe('https://chuanapi.com/')
   })
 
-  test('maps built-in docs fallback to the Wanchuan quickstart', () => {
+  test('keeps the built-in docs fallback inside the SPA', () => {
     const links: TopNavLink[] = [{ title: 'Docs', href: '/help' }]
     expect(
       chuanapiNavigationExtension.apply(links, {
@@ -51,22 +51,28 @@ describe('ChuanAPI cross-shell navigation', () => {
     ).toEqual([
       {
         title: 'Docs',
-        href: CHUANAPI_QUICKSTART_DOCS,
-        documentNavigation: true,
+        href: '/help',
+        documentNavigation: false,
+        external: false,
       },
     ])
   })
 
-  test('maps the legacy quickstart anchor to the canonical docs URL', () => {
-    const links: TopNavLink[] = [
-      { title: 'Docs', href: 'https://chuanapi.com/#quickstart' },
-    ]
-    expect(
-      chuanapiNavigationExtension.apply(links, {
-        isAuthenticated: false,
-        status: null,
-      })[0]?.href
-    ).toBe(CHUANAPI_QUICKSTART_DOCS)
+  test.each([
+    'https://chuanapi.com/#quickstart',
+    'https://chuanapi.com#quickstart',
+    CHUANAPI_LEGACY_QUICKSTART_DOCS,
+    'https://chuanapi.com/docs/quickstart',
+  ])('routes the legacy docs entry %s to the built-in docs', (entry) => {
+    const links: TopNavLink[] = [{ title: 'Docs', href: entry }]
+    const applied = chuanapiNavigationExtension.apply(links, {
+      isAuthenticated: false,
+      status: null,
+    })[0]
+
+    expect(applied?.href).toBe('/help')
+    expect(applied?.documentNavigation).toBe(false)
+    expect(applied?.external).toBe(false)
   })
 
   test('leaves custom docs URLs untouched', () => {

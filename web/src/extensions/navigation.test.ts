@@ -51,10 +51,27 @@ describe('frontend extension navigation contract', () => {
     ])
   })
 
-  test('publishes extension-owned public URLs', () => {
+  test('publishes extension-owned public URLs with the built-in docs fallback', () => {
     expect(extensionPublicHomeUrl()).toBe('https://chuanapi.com/')
-    expect(extensionQuickstartDocsUrl()).toBe(
-      'https://chuanapi.com/docs/quickstart/'
+    expect(extensionQuickstartDocsUrl()).toBe('/help')
+  })
+
+  test('keeps the built-in docs entry inside the SPA after composition', () => {
+    const result = applyNavigationExtensions(
+      [{ title: 'Docs', href: '/help' }],
+      {
+        isAuthenticated: false,
+        status: null,
+      }
     )
+
+    expect(result).toEqual([
+      {
+        title: 'Docs',
+        href: '/help',
+        documentNavigation: false,
+        external: false,
+      },
+    ])
   })
 })

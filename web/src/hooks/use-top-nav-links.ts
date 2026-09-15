@@ -23,6 +23,7 @@ import type { TopNavLink } from '@/components/layout/types'
 import { applyNavigationExtensions } from '@/extensions'
 import { useStatus } from '@/hooks/use-status'
 import { parseHeaderNavModulesFromStatus } from '@/lib/nav-modules'
+import { BUILT_IN_HELP_PATH, resolvePublicDocsUrl } from '@/lib/public-site'
 import { useAuthStore } from '@/stores/auth-store'
 
 /**
@@ -48,9 +49,6 @@ export function useTopNavLinks(): TopNavLink[] {
       status as Record<string, unknown> | null
     )
   }, [status])
-
-  // Documentation link (may be external)
-  const docsLink: string | undefined = status?.docs_link as string | undefined
 
   const isAuthed = !!auth?.user
 
@@ -87,20 +85,16 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({ title: t('Rankings'), href: '/rankings', requiresAuth })
   }
 
-  // Docs (supports external links; falls back to the built-in /help page)
+  // Docs (built-in /help by default; explicit external URLs stay same-tab
+  // document navigations, while legacy marketing entries resolve to /help)
   if (modules?.docs !== false) {
-    if (docsLink) {
-      links.push({
-        title: t('Docs'),
-        href: docsLink,
-        documentNavigation: true,
-      })
-    } else {
-      links.push({
-        title: t('Docs'),
-        href: '/help',
-      })
-    }
+    const docsHref = resolvePublicDocsUrl(status?.docs_link)
+    links.push({
+      title: t('Docs'),
+      href: docsHref,
+      external: false,
+      documentNavigation: docsHref !== BUILT_IN_HELP_PATH,
+    })
   }
 
   // About
