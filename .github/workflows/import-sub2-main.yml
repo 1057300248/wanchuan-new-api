@@ -1,0 +1,26 @@
+name: Import Sub2API upstream main
+
+on:
+  push:
+    branches:
+      - automation/import-sub2-main-20260915
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Import official Sub2API main into upstream/sub2-main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git clone --no-tags --single-branch --branch main https://github.com/Wei-Shaw/sub2api.git sub2api
+          cd sub2api
+          test "$(git rev-parse HEAD)" = "32682a4f84c6a29104439050a0be14737552cec2"
+          git remote add target "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force target HEAD:refs/heads/upstream/sub2-main
+          echo "Imported $(git rev-parse HEAD) to ${GITHUB_REPOSITORY}:upstream/sub2-main"
