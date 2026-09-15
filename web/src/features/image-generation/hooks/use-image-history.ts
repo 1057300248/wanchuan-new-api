@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { apiResourceUrl } from '@/lib/api-url'
+
 import { IMAGE_HISTORY_MAX_ENTRIES } from '../constants'
 import {
   deleteImageBlob,
@@ -282,7 +284,7 @@ export function useImageHistory() {
       let savedBlob = false
       let objectUrl: string | null = null
       try {
-        const response = await fetch(sourceAtStart)
+        const response = await fetch(apiResourceUrl(sourceAtStart))
         if (!isStillPresent(sourceAtStart)) return
         if (!response.ok) throw new Error('keep-failed')
         const blob = await response.blob()

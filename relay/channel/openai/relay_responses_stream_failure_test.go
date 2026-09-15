@@ -123,7 +123,7 @@ func TestOaiResponsesStreamHandlerRejectsMissingTerminal(t *testing.T) {
 			assert.Equal(t, 9, *last.SequenceNumber)
 			require.NotNil(t, last.Response)
 			assert.Equal(t, "resp_original", last.Response.ID)
-			assert.Equal(t, 123, last.Response.CreatedAt)
+			assert.Equal(t, dto.IntValue(123), last.Response.CreatedAt)
 			assert.Equal(t, "server_error", last.Response.GetOpenAIError().Code)
 			assert.Empty(t, last.Response.Output, "do not mark partial tool arguments as a complete output")
 		})

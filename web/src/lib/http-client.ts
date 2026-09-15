@@ -21,6 +21,7 @@ import { t } from 'i18next'
 
 import i18n from '@/i18n/config'
 import { toBackendLanguage } from '@/i18n/languages'
+import { API_BASE_URL } from '@/lib/api-url'
 import {
   applyAuthRotation,
   clearAuthentication,
@@ -50,7 +51,7 @@ declare module 'axios' {
 export type ApiRequestConfig = AxiosRequestConfig
 
 export const api = axios.create({
-  baseURL: '',
+  baseURL: API_BASE_URL,
   withCredentials: true,
   headers: {
     // no-store forbids storage; no-cache also revalidates any older cached response.

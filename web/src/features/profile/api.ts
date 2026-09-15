@@ -292,7 +292,11 @@ export async function getCheckinStatus(
 /**
  * Perform daily checkin
  */
-export async function performCheckin(): Promise<ApiResponse<CheckinResponse>> {
-  const res = await api.post('/api/user/checkin')
+export async function performCheckin(
+  turnstile?: string
+): Promise<ApiResponse<CheckinResponse>> {
+  const res = await api.post('/api/user/checkin', undefined, {
+    params: { turnstile },
+  })
   return res.data
 }

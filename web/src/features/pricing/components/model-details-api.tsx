@@ -39,6 +39,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useStatus } from '@/hooks/use-status'
+import { API_BASE_URL } from '@/lib/api-url'
 
 import {
   buildRateLimits,
@@ -449,6 +450,10 @@ function CodeSamplesSection(props: {
   const { status } = useStatus()
 
   const baseUrl = useMemo(() => {
+    // Copyable samples must always show the API origin. An explicitly
+    // configured API base wins over the admin-configured server address,
+    // which may be the console address in split deployments.
+    if (API_BASE_URL) return API_BASE_URL
     const candidate =
       (status as Record<string, unknown> | null)?.server_address ??
       (status as Record<string, unknown> | null)?.serverAddress ??

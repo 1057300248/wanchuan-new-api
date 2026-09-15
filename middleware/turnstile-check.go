@@ -35,6 +35,8 @@ var turnstileActions = map[string]string{
 	"GET /api/verification":   "signup",
 	"POST /api/user/register": "signup",
 	"POST /api/user/login":    "login",
+	"GET /api/reset_password": "reset_password",
+	"POST /api/user/checkin":  "checkin",
 }
 
 func turnstileActionForRoute(method, fullPath string) string {

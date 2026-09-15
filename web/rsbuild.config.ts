@@ -14,6 +14,10 @@ export default defineConfig(({ envMode }) => {
     process.env.VITE_REACT_APP_SERVER_URL ||
     env.rawPublicVars.VITE_REACT_APP_SERVER_URL ||
     'http://localhost:3000'
+  // Empty keeps app-owned requests on the frontend origin (dev proxy included);
+  // a value points them at a separately hosted API origin.
+  const apiBaseUrl =
+    process.env.VITE_API_BASE_URL || env.rawPublicVars.VITE_API_BASE_URL || ''
 
   const isProd = envMode === 'production'
   const devProxy = Object.fromEntries(
@@ -58,6 +62,10 @@ export default defineConfig(({ envMode }) => {
     source: {
       entry: {
         index: './src/main.tsx',
+      },
+      define: {
+        ...env.publicVars,
+        'import.meta.env.VITE_API_BASE_URL': JSON.stringify(apiBaseUrl),
       },
     },
     resolve: {

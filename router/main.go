@@ -36,7 +36,10 @@ func setRouterWithRegistry(router *gin.Engine, assets WebAssets, registry *exten
 		frontendBaseUrl = ""
 		common.SysLog("FRONTEND_BASE_URL is ignored on master node")
 	}
-	if frontendBaseUrl == "" {
+	// api_only builds disable the embedded dashboard. That decision precedes
+	// the legacy frontend redirect: a disabled build must answer JSON 404 on
+	// its own origin instead of bouncing visitors to FRONTEND_BASE_URL.
+	if frontendBaseUrl == "" || assets.Disabled {
 		SetWebRouter(router, assets, pluginDispatcher)
 	} else {
 		frontendBaseUrl = strings.TrimSuffix(frontendBaseUrl, "/")

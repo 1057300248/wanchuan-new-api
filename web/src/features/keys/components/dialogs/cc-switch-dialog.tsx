@@ -27,6 +27,7 @@ import { ComboboxInput } from '@/components/ui/combobox-input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { getUserModels } from '@/lib/api'
+import { API_BASE_URL } from '@/lib/api-url'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 const APP_CONFIGS = {
@@ -55,6 +56,8 @@ const APP_CONFIGS = {
 type AppType = keyof typeof APP_CONFIGS
 
 function getServerAddress(): string {
+  // Import links must point API clients at the API origin.
+  if (API_BASE_URL) return API_BASE_URL
   try {
     const raw = localStorage.getItem('status')
     if (raw) {

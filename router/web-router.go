@@ -17,9 +17,20 @@ import (
 type WebAssets struct {
 	BuildFS   embed.FS
 	IndexPage []byte
+	Disabled  bool
 }
 
 func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.HandlerFunc) {
+	if assets.Disabled {
+		router.NoRoute(
+			pluginDispatcher,
+			middleware.RouteTag("web"),
+			middleware.AccessTokenAudit(),
+			controller.RelayNotFound,
+		)
+		return
+	}
+
 	frontendFS := common.EmbedFolder(assets.BuildFS, "web/dist")
 
 	router.NoRoute(

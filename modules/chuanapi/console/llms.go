@@ -3,6 +3,7 @@ package console
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/console_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -45,9 +47,12 @@ type llmsModel struct {
 }
 
 type llmsPageData struct {
-	SystemName    string
-	Version       string
-	BaseURL       string
+	SystemName string
+	Version    string
+	BaseURL    string
+	// DocsURL is the browser-facing documentation origin. It falls back to
+	// BaseURL when unset so a single-domain deployment keeps one address.
+	DocsURL       string
 	Notice        string
 	Announcements []llmsAnnouncement
 	FAQ           []llmsFAQ
@@ -61,6 +66,7 @@ var llmsEndpointCatalog = []llmsEndpoint{
 	{Method: http.MethodPost, Path: "/v1/responses", Description: "OpenAI Responses API compatible generation."},
 	{Method: http.MethodPost, Path: "/v1/responses/compact", Description: "Compact a Responses conversation context."},
 	{Method: http.MethodPost, Path: "/v1/messages", Description: "Anthropic Messages compatible generation."},
+	{Method: http.MethodGet, Path: "/v1/responses", Description: "Open an OpenAI Responses compatible WebSocket session."},
 	{Method: http.MethodPost, Path: "/v1/completions", Description: "Legacy OpenAI text completions."},
 	{Method: http.MethodPost, Path: "/v1/embeddings", Description: "Create text embeddings."},
 	{Method: http.MethodPost, Path: "/v1/rerank", Description: "Rerank documents against a query."},
@@ -84,7 +90,30 @@ func GetLlmsFull(c *gin.Context) {
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(renderLlmsFull(data)))
 }
 
-func buildLlmsPageData(c *gin.Context) llmsPageData {
+// normalizeLlmsBaseURL validates an absolute public origin. Only http(s)
+// URLs with a host are accepted; userinfo, queries and fragments are rejected.
+// The returned value never has a trailing slash.
+func normalizeLlmsBaseURL(raw string) (string, bool) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed == nil {
+		return "", false
+	}
+	if !strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https") {
+		return "", false
+	}
+	if parsed.Host == "" || parsed.User != nil || parsed.Opaque != "" ||
+		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return "", false
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	return strings.TrimRight(parsed.String(), "/"), true
+}
+
+// llmsRequestBaseURL derives the legacy fallback origin from the request. The
+// Host header is untrusted input, so it is only used after structured URL
+// validation; a malformed value yields an empty base instead of a bogus
+// canonical address.
+func llmsRequestBaseURL(c *gin.Context) string {
 	proto := strings.TrimSpace(strings.Split(c.GetHeader("X-Forwarded-Proto"), ",")[0])
 	if proto == "" {
 		if c.Request.TLS != nil {
@@ -93,7 +122,34 @@ func buildLlmsPageData(c *gin.Context) llmsPageData {
 			proto = "http"
 		}
 	}
-	baseURL := fmt.Sprintf("%s://%s", proto, c.Request.Host)
+	normalized, ok := normalizeLlmsBaseURL(proto + "://" + strings.TrimSpace(c.Request.Host))
+	if !ok {
+		return ""
+	}
+	return normalized
+}
+
+// llmsPublicBaseURL resolves one public address. An address configured by an
+// administrator always wins; a configured but invalid value yields an empty
+// canonical instead of falling back to the request-controlled host.
+func llmsPublicBaseURL(configured, fallback string) string {
+	if strings.TrimSpace(configured) == "" {
+		return fallback
+	}
+	normalized, ok := normalizeLlmsBaseURL(configured)
+	if !ok {
+		return ""
+	}
+	return normalized
+}
+
+func buildLlmsPageData(c *gin.Context) llmsPageData {
+	fallbackBaseURL := llmsRequestBaseURL(c)
+	// Human documentation lives on the browser-facing site address while relay
+	// samples must point at the public API address; split deployments configure
+	// them separately and never let the request Host define the canonical URL.
+	apiBaseURL := llmsPublicBaseURL(system_setting.TaskPublicAddress, fallbackBaseURL)
+	docsURL := llmsPublicBaseURL(system_setting.ServerAddress, fallbackBaseURL)
 
 	common.OptionMapRWMutex.RLock()
 	notice := common.OptionMap["Notice"]
@@ -137,7 +193,8 @@ func buildLlmsPageData(c *gin.Context) llmsPageData {
 	return llmsPageData{
 		SystemName:    common.SystemName,
 		Version:       common.Version,
-		BaseURL:       baseURL,
+		BaseURL:       apiBaseURL,
+		DocsURL:       docsURL,
 		Notice:        notice,
 		Announcements: announcements,
 		FAQ:           faq,
@@ -187,15 +244,25 @@ func publicModelsFromPricing(pricing []model.Pricing) []llmsModel {
 	return models
 }
 
+// llmsDocsURL returns the browser-facing documentation origin. A single-domain
+// deployment that only fills BaseURL keeps using it for documentation links.
+func llmsDocsURL(data llmsPageData) string {
+	if docsURL := strings.TrimRight(strings.TrimSpace(data.DocsURL), "/"); docsURL != "" {
+		return docsURL
+	}
+	return strings.TrimRight(strings.TrimSpace(data.BaseURL), "/")
+}
+
 func renderLlmsIndex(data llmsPageData) string {
 	var builder strings.Builder
+	docsURL := llmsDocsURL(data)
 	fmt.Fprintf(&builder, "# %s\n\n", plainText(data.SystemName))
 	builder.WriteString("Public AI API gateway documentation index.\n\n")
 	fmt.Fprintf(&builder, "- Version: %s\n", plainText(data.Version))
 	fmt.Fprintf(&builder, "- Base URL: %s\n", plainText(data.BaseURL))
-	fmt.Fprintf(&builder, "- Human documentation: %s/help\n", plainText(data.BaseURL))
-	fmt.Fprintf(&builder, "- API reference: %s/help/api\n", plainText(data.BaseURL))
-	fmt.Fprintf(&builder, "- Full AI context: %s/llms-full.txt\n\n", plainText(data.BaseURL))
+	fmt.Fprintf(&builder, "- Human documentation: %s/help\n", plainText(docsURL))
+	fmt.Fprintf(&builder, "- API reference: %s/help/api\n", plainText(docsURL))
+	fmt.Fprintf(&builder, "- Full AI context: %s/llms-full.txt\n\n", plainText(docsURL))
 	builder.WriteString("## Core endpoints\n\n")
 	for _, endpoint := range llmsEndpointCatalog[:6] {
 		fmt.Fprintf(&builder, "- `%s %s` — %s\n", endpoint.Method, endpoint.Path, endpoint.Description)
@@ -206,6 +273,7 @@ func renderLlmsIndex(data llmsPageData) string {
 
 func renderLlmsFull(data llmsPageData) string {
 	var builder strings.Builder
+	docsURL := llmsDocsURL(data)
 	fmt.Fprintf(&builder, "# %s — Full AI context\n\n", plainText(data.SystemName))
 	builder.WriteString("This document describes the public documentation, runtime notices, API routes, FAQ, and public model pricing metadata.\n\n")
 
@@ -213,9 +281,9 @@ func renderLlmsFull(data llmsPageData) string {
 	fmt.Fprintf(&builder, "- System: %s\n", plainText(data.SystemName))
 	fmt.Fprintf(&builder, "- Version: %s\n", plainText(data.Version))
 	fmt.Fprintf(&builder, "- Base URL: %s\n", plainText(data.BaseURL))
-	fmt.Fprintf(&builder, "- Documentation center: %s/help\n", plainText(data.BaseURL))
-	fmt.Fprintf(&builder, "- API reference: %s/help/api\n", plainText(data.BaseURL))
-	fmt.Fprintf(&builder, "- Short AI index: %s/llms.txt\n", plainText(data.BaseURL))
+	fmt.Fprintf(&builder, "- Documentation center: %s/help\n", plainText(docsURL))
+	fmt.Fprintf(&builder, "- API reference: %s/help/api\n", plainText(docsURL))
+	fmt.Fprintf(&builder, "- Short AI index: %s/llms.txt\n", plainText(docsURL))
 
 	builder.WriteString("\n## System notice\n\n")
 	if strings.TrimSpace(data.Notice) == "" {

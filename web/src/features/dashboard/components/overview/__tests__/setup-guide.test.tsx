@@ -33,6 +33,18 @@ import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { OverviewDashboard } from '../overview-dashboard'
 
+const apiBaseUrl = vi.hoisted(() => ({ value: '' }))
+
+vi.mock('@/lib/api-url', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/lib/api-url')>()
+  return {
+    ...original,
+    get API_BASE_URL() {
+      return apiBaseUrl.value
+    },
+  }
+})
+
 const storageKey = 'dashboard_overview_setup_guide_expanded'
 let client: QueryClient
 let keyLookupError: Error | null
@@ -51,6 +63,7 @@ beforeEach(() => {
   client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
+  apiBaseUrl.value = ''
   keyLookupError = null
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     switch (url) {
@@ -241,5 +254,34 @@ describe('overview setup guide', () => {
     expect(
       screen.queryByRole('button', { name: 'Setup guide' })
     ).not.toBeInTheDocument()
+  })
+})
+
+describe('overview setup guide request endpoint', () => {
+  it('uses the configured external API origin for the default curl endpoint', async () => {
+    const user = userEvent.setup()
+    apiBaseUrl.value = 'https://api.example.com'
+    await renderOverview()
+
+    await user.click(await screen.findByRole('button', { name: 'Setup guide' }))
+
+    expect(
+      await screen.findByText(
+        'curl https://api.example.com/v1/chat/completions \\'
+      )
+    ).toBeVisible()
+  })
+
+  it('keeps the current origin for the default curl endpoint without an external API origin', async () => {
+    const user = userEvent.setup()
+    await renderOverview()
+
+    await user.click(await screen.findByRole('button', { name: 'Setup guide' }))
+
+    expect(
+      await screen.findByText(
+        `curl ${window.location.origin}/v1/chat/completions \\`
+      )
+    ).toBeVisible()
   })
 })

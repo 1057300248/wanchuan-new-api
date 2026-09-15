@@ -35,6 +35,45 @@ For commercial licensing, please contact support@quantumnous.com
  */
 export const SESSION_HINT_COOKIE_NAME = 'new_api_has_session'
 
+function writeCookie(name: string, value: string, maxAgeSeconds: number): void {
+  if (typeof document === 'undefined') return
+  const secure =
+    typeof location !== 'undefined' && location.protocol === 'https:'
+      ? '; Secure'
+      : ''
+  document.cookie = `${name}=${value}; Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax${secure}`
+}
+
+/**
+ * Record the non-credential hint on the frontend host until the server session
+ * itself expires.
+ *
+ * `sessionExpiresAt` is the login session's absolute expiry in Unix seconds.
+ * The hint must expire with that deadline instead of a fixed lifetime:
+ * authentication refreshes do not extend the server session, so a hint that
+ * outlives it would announce a session that no longer exists. An expiry that is
+ * already in the past clears the hint instead of writing one.
+ *
+ * The server's own hint is scoped to the API host, which is unreadable from a
+ * separately hosted console. This host-scoped copy lets the console skip a
+ * refresh that is certain to fail, exactly like the server-written one. It
+ * carries no credential and must never be used as an authorization signal.
+ */
+export function markSessionHint(sessionExpiresAt: number): void {
+  if (!Number.isFinite(sessionExpiresAt)) return
+  const remainingSeconds = Math.floor(sessionExpiresAt - Date.now() / 1000)
+  if (remainingSeconds <= 0) {
+    clearSessionHint()
+    return
+  }
+  writeCookie(SESSION_HINT_COOKIE_NAME, '1', remainingSeconds)
+}
+
+/** Remove the host-scoped hint on explicit sign-out or invalidation. */
+export function clearSessionHint(): void {
+  writeCookie(SESSION_HINT_COOKIE_NAME, '', 0)
+}
+
 /** Read a cookie value out of a `document.cookie`-shaped string. */
 export function readCookie(cookieHeader: string, name: string): string | null {
   for (const part of cookieHeader.split(';')) {

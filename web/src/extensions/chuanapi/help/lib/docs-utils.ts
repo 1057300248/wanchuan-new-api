@@ -16,12 +16,25 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { API_BASE_URL } from '@/lib/api-url'
+
 import type { EndpointDoc, GuideDoc } from '../content/types'
 
+/**
+ * Base URL used by docs samples and copyable snippets. It must point at the
+ * API origin when the console is hosted separately, never at the web origin.
+ */
 export function getDocsOrigin(): string {
+  if (API_BASE_URL) return API_BASE_URL
   if (typeof window === 'undefined') {
     return ''
   }
+  return window.location.origin
+}
+
+/** Browser-visible origin for links back into the docs site itself. */
+function getWebOrigin(): string {
+  if (typeof window === 'undefined') return ''
   return window.location.origin
 }
 
@@ -46,7 +59,7 @@ export function buildGuideMarkdown(
     '',
     `---`,
     '',
-    `来源：${origin}/help/guides/${guide.slug}`,
+    `来源：${getWebOrigin()}/help/guides/${guide.slug}`,
   ]
   return lines.join('\n')
 }
@@ -83,6 +96,6 @@ export function buildEndpointMarkdown(
       lines.push(`- ${note}`)
     }
   }
-  lines.push('', '---', '', `来源：${origin}/help/api`)
+  lines.push('', '---', '', `来源：${getWebOrigin()}/help/api`)
   return lines.join('\n')
 }

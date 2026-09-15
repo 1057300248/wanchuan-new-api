@@ -52,6 +52,7 @@ import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
 import type { ApiKey } from '@/features/keys/types'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { getUserModels } from '@/lib/api'
+import { API_BASE_URL } from '@/lib/api-url'
 import { handleServerError } from '@/lib/handle-server-error'
 import { MOTION_TRANSITION } from '@/lib/motion'
 import { ROLE } from '@/lib/roles'
@@ -147,7 +148,7 @@ function getCurrentOrigin(): string {
 }
 
 function normalizeEndpoint(sourceUrl?: string): string {
-  const fallback = `${getCurrentOrigin()}/v1/chat/completions`
+  const fallback = `${API_BASE_URL || getCurrentOrigin()}/v1/chat/completions`
   const trimmed = sourceUrl?.trim()
   if (!trimmed) return fallback
 

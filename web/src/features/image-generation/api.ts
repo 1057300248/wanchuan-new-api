@@ -22,6 +22,7 @@ import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
 import type { ApiKey } from '@/features/keys/types'
 import { getPricing } from '@/features/pricing/api'
 import { api } from '@/lib/api'
+import { apiResourceUrl } from '@/lib/api-url'
 
 import {
   getManagedObjectUrlMimeType,
@@ -259,7 +260,9 @@ export async function downloadImage(
   } else if (isBlobSchemeUrl(url)) {
     mimeType = getManagedObjectUrlMimeType(url)
   } else {
-    const response = await fetch(url)
+    // Third-party absolute URLs pass through untouched; app-relative links
+    // resolve against the configured API origin.
+    const response = await fetch(apiResourceUrl(url))
     if (!response.ok) throw new Error(`Download failed: ${response.status}`)
     const blob = await response.blob()
     mimeType = blob.type.split(';', 1)[0].trim().toLowerCase()
