@@ -76,6 +76,11 @@ jobs:
           go test ./relay/channel/openai -count=1
           go test ./relay -count=1
 
+      - name: Stream failure policy and billing tests
+        run: |
+          go test ./controller -run 'Handled(Chat|Responses)Stream|ShouldRetryNeverReplaysHandled' -count=1 -v
+          go test ./service -run '^TestStreamFailure' -count=1 -v
+
       - name: Group rename unit tests
         run: go test ./model -run '^(TestGroupRename|TestGroupNamespace)' -count=1 -v
 
