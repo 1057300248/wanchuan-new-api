@@ -71,6 +71,7 @@ func TestGroupRenamePostgresRedis(t *testing.T) {
 	t.Run("concurrent_group_writers", testGroupNamespaceConcurrentWriters)
 	t.Run("namespace_rollback", testGroupNamespaceRollbackState)
 	t.Run("group_config_pubsub_and_fallback", testGroupConfigPubSubAndFallback)
+	t.Run("two_process_group_runtime", testGroupConfigTwoProcessInstances)
 	t.Run("warm_caches", func(t *testing.T) {
 		setupGroupRenameTest(t)
 		seedGroupRenameOption(t, "GroupRatio", `{"old":0.8}`)

@@ -1,15 +1,21 @@
 package model
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -268,4 +274,179 @@ func testGroupConfigPubSubAndFallback(t *testing.T) {
 	assert.True(t, ratio_setting.ContainsGroupRatio("new"))
 	assert.False(t, ratio_setting.ContainsGroupRatio("old"))
 	assert.Equal(t, version, groupConfigAppliedVersion.Load())
+}
+
+
+func TestGroupConfigSecondProcessHelper(t *testing.T) {
+	mode := os.Getenv("TEST_GROUP_CONFIG_CHILD_MODE")
+	if mode == "" {
+		t.Skip("second-process helper")
+	}
+	require.Contains(t, []string{"subscriber", "fallback"}, mode)
+
+	dsn := os.Getenv("TEST_GROUP_RENAME_POSTGRES_DSN")
+	redisAddr := os.Getenv("TEST_REDIS_ADDR")
+	prefix := os.Getenv("TEST_GROUP_CONFIG_CHILD_PREFIX")
+	require.NotEmpty(t, dsn)
+	require.NotEmpty(t, redisAddr)
+	require.NotEmpty(t, prefix)
+
+	common.IsMasterNode = false
+	require.NoError(t, os.Setenv("SQL_DSN", dsn))
+	require.NoError(t, InitDB())
+	sqlDB, err := DB.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+
+	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
+	require.NoError(t, rdb.Ping(context.Background()).Err())
+	t.Cleanup(func() { _ = rdb.Close() })
+	common.RedisEnabled, common.RDB = true, rdb
+	common.MemoryCacheEnabled = true
+
+	// Snapshot node B before node A renames anything.
+	InitOptionMap()
+	InitChannelCache()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var pubsub *redis.PubSub
+	var subscriberDone chan struct{}
+	if mode == "subscriber" {
+		pubsub = rdb.Subscribe(ctx, groupConfigTopic(rdb.Options().DB))
+		require.NoError(t, pubsub.Receive(ctx))
+		subscriberDone = make(chan struct{})
+		go func() {
+			defer close(subscriberDone)
+			receiveGroupConfigEvents(ctx, pubsub.Channel())
+		}()
+		t.Cleanup(func() {
+			_ = pubsub.Close()
+			cancel()
+			<-subscriberDone
+		})
+	}
+
+	readyKey := prefix + ":" + mode + ":ready"
+	require.NoError(t, rdb.Set(ctx, readyKey, "1", 30*time.Second).Err())
+
+	if mode == "fallback" {
+		triggerKey := prefix + ":fallback:sync"
+		require.Eventually(t, func() bool {
+			value, err := rdb.Get(ctx, triggerKey).Result()
+			return err == nil && value == "1"
+		}, 10*time.Second, 10*time.Millisecond, "parent never triggered periodic-sync fallback")
+		// Equivalent to one SyncOptions tick without sleeping for 60 seconds.
+		loadOptionsFromDatabase()
+	}
+
+	require.Eventually(t, func() bool {
+		if !ratio_setting.ContainsGroupRatio("new") || ratio_setting.ContainsGroupRatio("old") {
+			return false
+		}
+		groups := setting.GetUserUsableGroupsCopy()
+		if groups["new"] != "New group" {
+			return false
+		}
+		if _, stale := groups["old"]; stale {
+			return false
+		}
+		channel, err := GetRandomSatisfiedChannel("new", "m1", 0, nil)
+		if err != nil || channel == nil || channel.Group != "new" {
+			return false
+		}
+		oldChannel, err := GetRandomSatisfiedChannel("old", "m1", 0, nil)
+		return err == nil && oldChannel == nil
+	}, 10*time.Second, 10*time.Millisecond,
+		"node B did not converge group ratio, permission map and channel routing to the renamed key")
+}
+
+type groupConfigChildProcess struct {
+	mode   string
+	cmd    *exec.Cmd
+	output *bytes.Buffer
+	done   chan error
+}
+
+func startGroupConfigChild(t *testing.T, mode, prefix string) *groupConfigChildProcess {
+	t.Helper()
+	buffer := &bytes.Buffer{}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestGroupConfigSecondProcessHelper$", "-test.v")
+	cmd.Env = append(os.Environ(),
+		"TEST_GROUP_CONFIG_CHILD_MODE="+mode,
+		"TEST_GROUP_CONFIG_CHILD_PREFIX="+prefix,
+	)
+	cmd.Stdout = buffer
+	cmd.Stderr = buffer
+	require.NoError(t, cmd.Start())
+	child := &groupConfigChildProcess{
+		mode:   mode,
+		cmd:    cmd,
+		output: buffer,
+		done:   make(chan error, 1),
+	}
+	go func() { child.done <- cmd.Wait() }()
+	return child
+}
+
+func waitGroupConfigChild(t *testing.T, child *groupConfigChildProcess) {
+	t.Helper()
+	select {
+	case err := <-child.done:
+		require.NoErrorf(t, err, "second application process %s failed:\n%s", child.mode, child.output.String())
+	case <-time.After(15 * time.Second):
+		_ = child.cmd.Process.Kill()
+		t.Fatalf("second application process %s timed out:\n%s", child.mode, child.output.String())
+	}
+}
+
+func testGroupConfigTwoProcessInstances(t *testing.T) {
+	setupGroupRenameTest(t)
+	seedGroupRenameOption(t, "GroupRatio", `{"old":0.8}`)
+	seedGroupRenameOption(t, "UserUsableGroups", `{"old":"Old group"}`)
+	channel := Channel{Name: "two-process-channel", Key: "sk-two-process", Status: common.ChannelStatusEnabled, Group: "old", Models: "m1"}
+	require.NoError(t, channel.Insert())
+
+	prefix := fmt.Sprintf("new-api:test:group-config:%d", os.Getpid())
+	ctx := context.Background()
+	for _, suffix := range []string{":subscriber:ready", ":fallback:ready", ":fallback:sync"} {
+		_ = common.RDB.Del(ctx, prefix+suffix).Err()
+	}
+	t.Cleanup(func() {
+		for _, suffix := range []string{":subscriber:ready", ":fallback:ready", ":fallback:sync"} {
+			_ = common.RDB.Del(context.Background(), prefix+suffix).Err()
+		}
+	})
+
+	subscriber := startGroupConfigChild(t, "subscriber", prefix)
+	fallback := startGroupConfigChild(t, "fallback", prefix)
+
+	for _, mode := range []string{"subscriber", "fallback"} {
+		readyKey := prefix + ":" + mode + ":ready"
+		require.Eventuallyf(t, func() bool {
+			value, err := common.RDB.Get(ctx, readyKey).Result()
+			return err == nil && value == "1"
+		}, 10*time.Second, 10*time.Millisecond, "%s child never became ready", mode)
+	}
+
+	_, err := ApplyGroupRename(GroupRenameApplyRequest{
+		Mappings: []GroupRenameMapping{{From: "old", To: "new"}},
+		Options: map[string]string{
+			"GroupRatio":       `{"new":0.8}`,
+			"UserUsableGroups": `{"new":"New group"}`,
+		},
+		Expected: map[string]string{
+			"GroupRatio":       `{"old":0.8}`,
+			"UserUsableGroups": `{"old":"Old group"}`,
+		},
+	})
+	require.NoError(t, err)
+
+	// The fallback node deliberately did not subscribe. Trigger one periodic
+	// option-sync iteration after rename; it must recover dependent caches from
+	// the persisted version without waiting the normal 60-second interval.
+	require.NoError(t, common.RDB.Set(ctx, prefix+":fallback:sync", "1", 30*time.Second).Err())
+
+	waitGroupConfigChild(t, subscriber)
+	waitGroupConfigChild(t, fallback)
 }

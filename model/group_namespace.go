@@ -29,9 +29,10 @@ const (
 var (
 	ErrGroupReferenceRenamed = errors.New("group reference was renamed")
 
-	groupConfigAppliedVersion atomic.Int64
-	groupConfigApplyMutex     sync.Mutex
-	groupConfigSubscriberOnce sync.Once
+	groupConfigAppliedVersion     atomic.Int64
+	groupConfigVersionInitialized atomic.Bool
+	groupConfigApplyMutex         sync.Mutex
+	groupConfigSubscriberOnce     sync.Once
 )
 
 type groupConfigInvalidationEvent struct {
@@ -324,10 +325,12 @@ func applyGroupConfigInvalidation(version int64, mappings []GroupRenameMapping, 
 		return err
 	}
 	groupConfigAppliedVersion.Store(version)
+	groupConfigVersionInitialized.Store(true)
 	return nil
 }
 
 func setGroupConfigAppliedVersion(version int64) {
+	groupConfigVersionInitialized.Store(true)
 	for version > 0 {
 		current := groupConfigAppliedVersion.Load()
 		if version <= current || groupConfigAppliedVersion.CompareAndSwap(current, version) {
@@ -346,19 +349,22 @@ func syncGroupConfigVersionAfterOptionLoad(options []*Option) {
 			continue
 		}
 		parsed, err := strconv.ParseInt(strings.TrimSpace(option.Value), 10, 64)
-		if err == nil {
+		if err == nil && parsed >= 0 {
 			version = parsed
 		}
 		break
 	}
-	if version <= 0 {
-		return
-	}
-	current := groupConfigAppliedVersion.Load()
-	if current == 0 {
+
+	// Mark even version zero as an initialized runtime snapshot. A node may
+	// start before the first rename creates GroupConfigVersion; if it then
+	// misses that first Pub/Sub event, the later 0 -> 1 periodic observation
+	// must rebuild dependent caches instead of being mistaken for first init.
+	if !groupConfigVersionInitialized.Swap(true) {
 		groupConfigAppliedVersion.Store(version)
 		return
 	}
+
+	current := groupConfigAppliedVersion.Load()
 	if version > current {
 		if err := applyGroupConfigInvalidation(version, nil, false); err != nil {
 			common.SysLog("failed to recover group config after periodic option sync: " + err.Error())
