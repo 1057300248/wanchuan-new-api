@@ -3,6 +3,8 @@ package cline
 import (
 	"bufio"
 	"bytes"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -17,6 +19,8 @@ const (
 	maxClineStreamPeekBytes = 256 << 10
 	maxClineStreamPeekLines = 64
 )
+
+var errClineStreamPeekTooLarge = fmt.Errorf("cline upstream SSE prefix exceeds %d bytes", maxClineStreamPeekBytes)
 
 func prepareClineStreamResponse(resp *http.Response, info *relaycommon.RelayInfo) *types.NewAPIError {
 	original := resp.Body
@@ -43,13 +47,21 @@ func prepareClineStreamResponse(resp *http.Response, info *relaycommon.RelayInfo
 func peekClineStreamEvents(reader *bufio.Reader) ([]byte, *types.NewAPIError, error) {
 	var prefix bytes.Buffer
 	var eventType string
-	lines := 0
-	for lines < maxClineStreamPeekLines && prefix.Len() < maxClineStreamPeekBytes {
-		line, err := reader.ReadString('\n')
+	for lines := 0; lines < maxClineStreamPeekLines; lines++ {
+		remaining := maxClineStreamPeekBytes - prefix.Len()
+		if remaining <= 0 {
+			if _, err := reader.Peek(1); err == nil {
+				return prefix.Bytes(), nil, errClineStreamPeekTooLarge
+			} else if !errors.Is(err, io.EOF) {
+				return prefix.Bytes(), nil, err
+			}
+			return prefix.Bytes(), nil, nil
+		}
+
+		line, err := readClinePeekLine(reader, remaining)
 		if len(line) > 0 {
-			lines++
-			prefix.WriteString(line)
-			trimmed := strings.TrimSpace(line)
+			prefix.Write(line)
+			trimmed := strings.TrimSpace(string(line))
 			switch {
 			case strings.HasPrefix(trimmed, "event:"):
 				eventType = strings.TrimSpace(strings.TrimPrefix(trimmed, "event:"))
@@ -67,13 +79,39 @@ func peekClineStreamEvents(reader *bufio.Reader) ([]byte, *types.NewAPIError, er
 			}
 		}
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return prefix.Bytes(), nil, nil
 			}
 			return prefix.Bytes(), nil, err
 		}
 	}
 	return prefix.Bytes(), nil, nil
+}
+
+func readClinePeekLine(reader *bufio.Reader, limit int) ([]byte, error) {
+	if limit <= 0 {
+		return nil, errClineStreamPeekTooLarge
+	}
+	line := make([]byte, 0, min(limit, reader.Size()))
+	for {
+		fragment, err := reader.ReadSlice('\n')
+		if len(fragment) > 0 {
+			if len(line)+len(fragment) > limit {
+				return nil, errClineStreamPeekTooLarge
+			}
+			line = append(line, fragment...)
+		}
+		switch {
+		case err == nil:
+			return line, nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		case errors.Is(err, io.EOF):
+			return line, io.EOF
+		default:
+			return line, err
+		}
+	}
 }
 
 type clineStreamBody struct {
@@ -159,8 +197,13 @@ func (r *clineStreamReader) processLine(line string) {
 		// the failure stays recorded in StreamStatus.
 		if r.info != nil && r.info.RelayFormat == types.RelayFormatOpenAIResponses {
 			r.emit(clineErrorFrame(apiErr))
+			r.err = io.EOF
+			return
 		}
-		r.err = io.EOF
+		// Chat/Claude/Gemini need the typed semantic failure to reach the
+		// adaptor. Returning EOF here would make the shared stream handler emit
+		// a normal terminal and classify the request as successful.
+		r.err = apiErr
 		return
 	}
 	if len(normalized) == 0 {
@@ -182,6 +225,7 @@ func (r *clineStreamReader) recordFailure(apiErr *types.NewAPIError) {
 	}
 	status := r.info.StreamStatus
 	status.RecordError(apiErr.Error())
+	status.SetAPIError(apiErr)
 	openAIError := apiErr.ToOpenAIError()
 	status.MarkFailed(string(apiErr.GetErrorCode()), openAIError.Type, apiErr.StatusCode)
 }

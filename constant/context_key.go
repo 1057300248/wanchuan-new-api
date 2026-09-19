@@ -12,6 +12,11 @@ const (
 	// The Responses handler owns the SSE error response, even when the client
 	// disconnected or a write failed. Do not retry or append a JSON HTTP error.
 	ContextKeyResponsesStreamErrorHandled ContextKey = "responses_stream_error_handled"
+	// ContextKeyStreamErrorHandled marks a non-Responses SSE failure that has
+	// already emitted an in-band protocol error. The outer relay must still
+	// record the request as failed, but must not append a JSON HTTP error or retry
+	// after partial output has reached the client.
+	ContextKeyStreamErrorHandled ContextKey = "stream_error_handled"
 
 	/* token related keys */
 	ContextKeyTokenUnlimited         ContextKey = "token_unlimited_quota"

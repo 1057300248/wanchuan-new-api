@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 type StreamEndReason string
@@ -55,6 +57,7 @@ type StreamStatus struct {
 	errorStatus      int
 	incompleteReason string
 	expectsTerminal  bool
+	apiError         *types.NewAPIError
 }
 
 // StreamOutcome holds classification facts only; upstream messages never
@@ -168,6 +171,30 @@ func (s *StreamStatus) ResponseOutcome() string {
 
 func (s *StreamStatus) ResponseFailed() bool {
 	return s.ResponseOutcome() == string(ResponseOutcomeFailed)
+}
+
+// SetAPIError records the typed semantic failure that terminated a stream.
+// It is intentionally separate from EndError: transport/scanner failures may
+// end a stream without being a provider-declared response failure.
+func (s *StreamStatus) SetAPIError(apiErr *types.NewAPIError) {
+	if s == nil || apiErr == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.apiError == nil {
+		s.apiError = apiErr
+	}
+}
+
+// APIError returns the first typed semantic failure recorded for the stream.
+func (s *StreamStatus) APIError() *types.NewAPIError {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.apiError
 }
 
 func (s *StreamStatus) OutcomeSnapshot() StreamOutcome {

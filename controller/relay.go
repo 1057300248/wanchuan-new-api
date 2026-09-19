@@ -92,7 +92,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			service.RecordRequestPolicyTermination(c, newAPIError)
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
-			if common.GetContextKeyBool(c, constant.ContextKeyResponsesStreamErrorHandled) {
+			if common.GetContextKeyBool(c, constant.ContextKeyResponsesStreamErrorHandled) ||
+				common.GetContextKeyBool(c, constant.ContextKeyStreamErrorHandled) {
 				return
 			}
 			switch relayFormat {
@@ -298,7 +299,8 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 }
 
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
-	if common.GetContextKeyBool(c, constant.ContextKeyResponsesStreamErrorHandled) {
+	if common.GetContextKeyBool(c, constant.ContextKeyResponsesStreamErrorHandled) ||
+		common.GetContextKeyBool(c, constant.ContextKeyStreamErrorHandled) {
 		return false
 	}
 	return service.ShouldRetryRelayError(c, openaiErr, retryTimes)

@@ -78,12 +78,14 @@ func TestClineStreamReaderReportsErrorAfterOutputOnce(t *testing.T) {
 	t.Run("chat path stops without fabricating an empty chunk", func(t *testing.T) {
 		info := &relaycommon.RelayInfo{RelayFormat: types.RelayFormatOpenAI, ChannelMeta: &relaycommon.ChannelMeta{}}
 		info.StreamStatus = relaycommon.NewStreamStatus()
-		output := readAllStream(t, newClineStreamReader(strings.NewReader(upstream), info))
+		output, err := io.ReadAll(newClineStreamReader(strings.NewReader(upstream), info))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "quota exceeded for free tier")
 
-		assert.Contains(t, output, `"partial"`)
-		assert.NotContains(t, output, "should not appear")
-		assert.NotContains(t, output, `"error"`)
-		assert.NotContains(t, output, "[DONE]")
+		assert.Contains(t, string(output), `"partial"`)
+		assert.NotContains(t, string(output), "should not appear")
+		assert.NotContains(t, string(output), `"error"`)
+		assert.NotContains(t, string(output), "[DONE]")
 		assert.True(t, info.StreamStatus.ResponseFailed())
 	})
 }
@@ -121,6 +123,45 @@ func TestPeekClineStreamEventsReplaysSuccessfulPrefix(t *testing.T) {
 
 	replayed := readAllStream(t, io.MultiReader(strings.NewReader(string(prefix)), reader))
 	assert.Equal(t, stream, replayed)
+}
+
+func TestPeekClineStreamEventsEnforcesHardByteLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		payload   string
+		wantError bool
+	}{
+		{name: "exact limit", payload: strings.Repeat("x", maxClineStreamPeekBytes)},
+		{name: "one byte over", payload: strings.Repeat("x", maxClineStreamPeekBytes+1), wantError: true},
+		{name: "huge no newline", payload: strings.Repeat("x", maxClineStreamPeekBytes*8), wantError: true},
+		{name: "multi line cumulative over", payload: strings.Repeat("x\n", maxClineStreamPeekBytes/2+1), wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := bufio.NewReaderSize(strings.NewReader(tc.payload), 1024)
+			prefix, apiErr, err := peekClineStreamEvents(reader)
+			require.Nil(t, apiErr)
+			if tc.wantError {
+				require.ErrorIs(t, err, errClineStreamPeekTooLarge)
+				assert.LessOrEqual(t, len(prefix), maxClineStreamPeekBytes)
+				return
+			}
+			require.NoError(t, err)
+			assert.Len(t, prefix, maxClineStreamPeekBytes)
+		})
+	}
+}
+
+func TestReadClinePeekLinePreservesFragmentsAndEOF(t *testing.T) {
+	input := strings.Repeat("a", 8192) + "\n"
+	reader := bufio.NewReaderSize(strings.NewReader(input), 128)
+	line, err := readClinePeekLine(reader, len(input))
+	require.NoError(t, err)
+	assert.Equal(t, input, string(line))
+
+	reader = bufio.NewReaderSize(strings.NewReader("tail"), 2)
+	line, err = readClinePeekLine(reader, 4)
+	require.ErrorIs(t, err, io.EOF)
+	assert.Equal(t, "tail", string(line))
 }
 
 func TestClineStreamBodyCloseIsIdempotentAndPropagates(t *testing.T) {

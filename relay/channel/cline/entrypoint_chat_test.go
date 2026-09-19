@@ -176,7 +176,7 @@ func TestClineChatCompletionLeadingStreamErrorReturnsBeforeOutput(t *testing.T) 
 	assert.Empty(t, env.recorder.Body.String())
 }
 
-func TestClineChatCompletionMidStreamErrorIsRecordedAndDoesNotFabricateASuccess(t *testing.T) {
+func TestClineChatCompletionMidStreamErrorReturnsFailureWithoutDone(t *testing.T) {
 	stream := "data: " + `{"success":true,"data":{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"partial"}}]}}` + "\n\n" +
 		"data: " + `{"success":false,"error":{"message":"internal account id 42 rejected"}}` + "\n\n"
 
@@ -192,15 +192,44 @@ func TestClineChatCompletionMidStreamErrorIsRecordedAndDoesNotFabricateASuccess(
 	require.NoError(t, err)
 	resp := env.send(t, converted)
 	usage, apiErr := env.receive(t, resp)
-	require.Nil(t, apiErr)
+	require.NotNil(t, apiErr)
 	require.NotNil(t, usage)
+	assert.True(t, types.IsSkipRetryError(apiErr), "partial output must never be retried onto another channel")
 
 	body := env.recorder.Body.String()
 	assert.Contains(t, body, "partial")
+	assert.Contains(t, body, `"error"`)
+	assert.Contains(t, body, "upstream request failed")
 	assert.NotContains(t, body, "internal account id 42 rejected")
-	assert.NotContains(t, body, `"error"`, "chat chunks are typed and cannot carry an error frame")
+	assert.NotContains(t, body, "[DONE]")
 	require.NotNil(t, env.info.StreamStatus)
 	assert.True(t, env.info.StreamStatus.ResponseFailed())
+	require.NotNil(t, env.info.StreamStatus.APIError())
+}
+
+func TestClineCompatibleFormatsExposeSanitizedMidStreamFailure(t *testing.T) {
+	for _, format := range []types.RelayFormat{types.RelayFormatClaude, types.RelayFormatGemini} {
+		t.Run(string(format), func(t *testing.T) {
+			stream := "data: " + `{"success":true,"data":{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"partial"}}]}}` + "\n\n" +
+				"data: " + `{"success":false,"error":{"message":"internal account id 42 rejected"}}` + "\n\n"
+			upstream, _ := newClineUpstream(t, func(w http.ResponseWriter, r *http.Request, body []byte) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = w.Write([]byte(stream))
+			})
+			env := newClineTestEnv(t, format, relayconstant.RelayModeChatCompletions, true, "cline-free/deepseek-v4.1-flash", upstream.URL+"/api/v1")
+			request := &dto.GeneralOpenAIRequest{Model: env.info.OriginModelName, Messages: []dto.Message{{Role: "user", Content: "hello"}}}
+			resp := env.send(t, request)
+			usage, apiErr := env.receive(t, resp)
+			require.NotNil(t, apiErr)
+			require.NotNil(t, usage)
+			body := env.recorder.Body.String()
+			assert.Contains(t, body, "partial")
+			assert.Contains(t, body, "upstream request failed")
+			assert.NotContains(t, body, "internal account id 42 rejected")
+			assert.NotContains(t, body, "[DONE]")
+			assert.True(t, env.info.StreamStatus.ResponseFailed())
+		})
+	}
 }
 
 func TestClineChatCompletionDoesNotMultiplyDoneOrUsage(t *testing.T) {

@@ -147,6 +147,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	})
 
 	info.StreamStatus.RequireTerminal()
+	streamFailure := info.StreamStatus.APIError()
 
 	// 处理最后的响应
 	shouldSendLastResp := true
@@ -176,6 +177,42 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 					usage.InputTokens, usage.OutputTokens)
 			}
 		}
+	}
+
+	if streamFailure != nil && info.StreamStatus.ResponseFailed() {
+		// The shared handler delays one chunk so it can identify the terminal
+		// usage frame. Flush that already-received chunk before the in-band
+		// failure, but never emit a normal [DONE]/message_stop/final Gemini event.
+		if lastStreamData != "" {
+			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
+				info.StreamStatus.RecordError(err.Error())
+			}
+		}
+
+		billablePartial := containStreamUsage || responseTextBuilder.Len() > 0 || toolCount > 0
+		if !containStreamUsage {
+			if billablePartial {
+				usage = service.ResponseText2Usage(c, responseTextBuilder.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+				usage.CompletionTokens += toolCount * 7
+			} else {
+				usage = nil
+			}
+		}
+		if usage != nil {
+			applyUsagePostProcessing(info, usage, common.StringToByteSlice(usageFrame))
+		}
+		for _, name := range streamFunctionCallNames {
+			info.CountBillableToolCall(dto.BuildInCallFunctionCall, name)
+		}
+
+		common.SetContextKey(c, constant.ContextKeyStreamErrorHandled, true)
+		if err := HandleStreamFailure(c, info, streamFailure); err != nil {
+			info.StreamStatus.RecordError(err.Error())
+		}
+		// Bytes have already reached the client, so retrying on another channel
+		// would splice two generations into one SSE response.
+		streamFailure = types.NewError(streamFailure, streamFailure.GetErrorCode(), types.ErrOptionWithSkipRetry())
+		return usage, streamFailure
 	}
 
 	if info.RelayFormat == types.RelayFormatOpenAI {
