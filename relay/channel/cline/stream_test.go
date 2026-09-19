@@ -134,7 +134,7 @@ func TestPeekClineStreamEventsEnforcesHardByteLimit(t *testing.T) {
 		{name: "exact limit", payload: strings.Repeat("x", maxClineStreamPeekBytes)},
 		{name: "one byte over", payload: strings.Repeat("x", maxClineStreamPeekBytes+1), wantError: true},
 		{name: "huge no newline", payload: strings.Repeat("x", maxClineStreamPeekBytes*8), wantError: true},
-		{name: "multi line cumulative over", payload: strings.Repeat("x\n", maxClineStreamPeekBytes/2+1), wantError: true},
+		{name: "multi line cumulative over", payload: strings.Repeat(strings.Repeat("x", maxClineStreamPeekBytes/maxClineStreamPeekLines)+"\n", maxClineStreamPeekLines), wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := bufio.NewReaderSize(strings.NewReader(tc.payload), 1024)
