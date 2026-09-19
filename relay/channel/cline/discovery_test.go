@@ -6,9 +6,26 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func allowPrivateClineDiscoveryForTest(t *testing.T) {
+	t.Helper()
+	fetchSetting := system_setting.GetFetchSetting()
+	original := *fetchSetting
+	t.Cleanup(func() { *fetchSetting = original })
+
+	fetchSetting.EnableSSRFProtection = true
+	fetchSetting.AllowPrivateIp = true
+	fetchSetting.DomainFilterMode = false
+	fetchSetting.IpFilterMode = false
+	fetchSetting.DomainList = nil
+	fetchSetting.IpList = nil
+	fetchSetting.AllowedPorts = nil
+	fetchSetting.ApplyIPFilterForDomain = true
+}
 
 func TestRecommendedModelsURL(t *testing.T) {
 	for _, tc := range []struct {
@@ -38,6 +55,7 @@ func TestRecommendedModelsURL(t *testing.T) {
 }
 
 func TestFetchRecommendedModelIDsMergesAllGroupsInOrder(t *testing.T) {
+	allowPrivateClineDiscoveryForTest(t)
 	var gotPath string
 	var gotAuth string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -67,6 +85,7 @@ func TestFetchRecommendedModelIDsMergesAllGroupsInOrder(t *testing.T) {
 }
 
 func TestFetchRecommendedModelIDsErrors(t *testing.T) {
+	allowPrivateClineDiscoveryForTest(t)
 	for _, tc := range []struct {
 		name        string
 		status      int
@@ -93,6 +112,7 @@ func TestFetchRecommendedModelIDsErrors(t *testing.T) {
 }
 
 func TestFetchRecommendedModelIDsRejectsOversizedCatalog(t *testing.T) {
+	allowPrivateClineDiscoveryForTest(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"free":[{"id":"` + strings.Repeat("a", recommendedModelsMaxBytes) + `"}]}`))
@@ -104,6 +124,7 @@ func TestFetchRecommendedModelIDsRejectsOversizedCatalog(t *testing.T) {
 }
 
 func TestFetchRecommendedModelIDsRejectsCrossHostRedirect(t *testing.T) {
+	allowPrivateClineDiscoveryForTest(t)
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"free":[{"id":"stolen"}]}`))
 	}))
@@ -116,4 +137,30 @@ func TestFetchRecommendedModelIDsRejectsCrossHostRedirect(t *testing.T) {
 	_, err := FetchRecommendedModelIDs(redirector.URL, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "redirect to a different host")
+}
+
+func TestFetchRecommendedModelIDsRejectsPrivateTargetByDefault(t *testing.T) {
+	fetchSetting := system_setting.GetFetchSetting()
+	original := *fetchSetting
+	t.Cleanup(func() { *fetchSetting = original })
+	fetchSetting.EnableSSRFProtection = true
+	fetchSetting.AllowPrivateIp = false
+	fetchSetting.DomainFilterMode = false
+	fetchSetting.IpFilterMode = false
+	fetchSetting.DomainList = nil
+	fetchSetting.IpList = nil
+	fetchSetting.AllowedPorts = nil
+	fetchSetting.ApplyIPFilterForDomain = true
+
+	called := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		_, _ = w.Write([]byte(`{"free":[{"id":"must-not-be-read"}]}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	_, err := FetchRecommendedModelIDs(upstream.URL, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "private IP address not allowed")
+	assert.False(t, called, "blocked private discovery must fail before contacting the target")
 }

@@ -43,12 +43,9 @@ func FetchRecommendedModelIDs(baseURL, proxy string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := service.NewProxyHttpClient(proxy)
+	client, err := service.NewSSRFProtectedHTTPClientWithProxy(proxy)
 	if err != nil {
 		return nil, err
-	}
-	if client == nil {
-		client = http.DefaultClient
 	}
 	fetchClient := *client
 	fetchClient.Timeout = recommendedModelsTimeout
@@ -129,6 +126,9 @@ func RecommendedModelsURL(baseURL string) (string, error) {
 }
 
 func limitRecommendedModelsRedirects(request *http.Request, via []*http.Request) error {
+	if err := service.ValidateSSRFProtectedFetchURL(request.URL.String()); err != nil {
+		return fmt.Errorf("cline recommended-models redirect target blocked: %w", err)
+	}
 	if len(via) >= recommendedModelsRedirects {
 		return errors.New("too many cline recommended-models redirects")
 	}
