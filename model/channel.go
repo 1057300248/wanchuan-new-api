@@ -457,6 +457,16 @@ func BatchInsertChannels(channels []Channel) error {
 	if tx.Error != nil {
 		return tx.Error
 	}
+	if err := lockGroupNamespace(tx); err != nil {
+		tx.Rollback()
+		return err
+	}
+	for i := range channels {
+		if err := validateJoinedGroupsForWriteTx(tx, channels[i].Group); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
@@ -546,13 +556,18 @@ func (channel *Channel) GetStatusCodeMapping() string {
 }
 
 func (channel *Channel) Insert() error {
-	var err error
-	err = DB.Create(channel).Error
-	if err != nil {
-		return err
-	}
-	err = channel.AddAbilities(nil)
-	return err
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
+		if err := validateJoinedGroupsForWriteTx(tx, channel.Group); err != nil {
+			return err
+		}
+		if err := tx.Create(channel).Error; err != nil {
+			return err
+		}
+		return channel.AddAbilities(tx)
+	})
 }
 
 func (channel *Channel) Update() error {
@@ -594,14 +609,21 @@ func (channel *Channel) Update() error {
 			}
 		}
 	}
-	var err error
-	err = DB.Model(channel).Updates(channel).Error
-	if err != nil {
-		return err
-	}
-	DB.Model(channel).First(channel, "id = ?", channel.Id)
-	err = channel.UpdateAbilities(nil)
-	return err
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
+		if err := validateJoinedGroupsForWriteTx(tx, channel.Group); err != nil {
+			return err
+		}
+		if err := tx.Model(channel).Updates(channel).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(channel).First(channel, "id = ?", channel.Id).Error; err != nil {
+			return err
+		}
+		return channel.UpdateAbilities(tx)
+	})
 }
 
 func (channel *Channel) UpdateResponseTime(responseTime int64) {
@@ -851,7 +873,6 @@ func EditChannelByTag(tag string, newTag *string, modelMapping *string, models *
 	updateData := Channel{}
 	shouldReCreateAbilities := false
 	updatedTag := tag
-	// 如果 newTag 不为空且不等于 tag，则更新 tag
 	if newTag != nil && *newTag != tag {
 		updateData.Tag = newTag
 		updatedTag = *newTag
@@ -880,27 +901,45 @@ func EditChannelByTag(tag string, newTag *string, modelMapping *string, models *
 		updateData.HeaderOverride = headerOverride
 	}
 
-	err := DB.Model(&Channel{}).Where("tag = ?", tag).Updates(updateData).Error
-	if err != nil {
+	if group != nil && *group != "" {
+		return DB.Transaction(func(tx *gorm.DB) error {
+			if err := lockGroupNamespace(tx); err != nil {
+				return err
+			}
+			if err := validateJoinedGroupsForWriteTx(tx, *group); err != nil {
+				return err
+			}
+			if err := tx.Model(&Channel{}).Where("tag = ?", tag).Updates(updateData).Error; err != nil {
+				return err
+			}
+			var channels []*Channel
+			if err := tx.Where("tag = ?", updatedTag).Find(&channels).Error; err != nil {
+				return err
+			}
+			for _, channel := range channels {
+				if err := channel.UpdateAbilities(tx); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+
+	if err := DB.Model(&Channel{}).Where("tag = ?", tag).Updates(updateData).Error; err != nil {
 		return err
 	}
 	if shouldReCreateAbilities {
 		channels, err := GetChannelsByTag(updatedTag, false, false)
 		if err == nil {
 			for _, channel := range channels {
-				err = channel.UpdateAbilities(nil)
-				if err != nil {
+				if err = channel.UpdateAbilities(nil); err != nil {
 					common.SysLog(fmt.Sprintf("failed to update abilities: channel_id=%d, tag=%s, error=%v", channel.Id, channel.GetTag(), err))
 				}
 			}
 		}
-	} else {
-		err := UpdateAbilityByTag(tag, newTag, priority, weight)
-		if err != nil {
-			return err
-		}
+		return err
 	}
-	return nil
+	return UpdateAbilityByTag(tag, newTag, priority, weight)
 }
 
 func UpdateChannelUsedQuota(id int, quota int) {

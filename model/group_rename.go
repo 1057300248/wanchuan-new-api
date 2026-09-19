@@ -151,6 +151,7 @@ type groupRenameTxState struct {
 	affectedOptionKeys  []string
 	appliedOptions      map[string]string
 	affectedPlanIds     []int
+	groupConfigVersion  int64
 	result              GroupRenameResult
 }
 
@@ -187,6 +188,9 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 	var plan *groupRenamePlan
 	optionKeys := groupRenameAffectedOptionKeys(request)
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
 		optionValues, err := lockAndLoadGroupRenameOptions(tx, optionKeys)
 		if err != nil {
 			return err
@@ -202,6 +206,9 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 		}
 		plan, err = buildGroupRenamePlan(request.Mappings, knownGroups)
 		if err != nil {
+			return err
+		}
+		if err := recordGroupRenameAliasesTx(tx, plan.mappings); err != nil {
 			return err
 		}
 		unmappedRemovals, err := collectGroupRenameUnmappedRemovals(request, optionValues, plan)
@@ -259,6 +266,10 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 			state.appliedOptions[key] = value
 		}
 		state.affectedOptionKeys = optionKeys
+		state.groupConfigVersion, err = bumpGroupConfigVersionTx(tx)
+		if err != nil {
+			return err
+		}
 		if groupRenameTxFailureHook != nil {
 			if err := groupRenameTxFailureHook(); err != nil {
 				return err
@@ -270,6 +281,10 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 		return nil, err
 	}
 	applyGroupRenameRuntime(state)
+	setGroupConfigAppliedVersion(state.groupConfigVersion)
+	if err := PublishGroupConfigInvalidation(state.groupConfigVersion, plan.mappings); err != nil {
+		common.SysLog("failed to publish group config invalidation: " + err.Error())
+	}
 	state.result.Renames = plan.mappings
 	if len(state.appliedOptions) > 0 {
 		state.result.AppliedOptions = state.appliedOptions

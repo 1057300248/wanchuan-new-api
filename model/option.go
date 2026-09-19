@@ -222,6 +222,7 @@ func loadOptionsFromDatabase() {
 		}
 	}
 	applyPasskeyDomainOptions(passkeyOptions)
+	syncGroupConfigVersionAfterOptionLoad(options)
 }
 
 func SyncOptions(frequency int) {

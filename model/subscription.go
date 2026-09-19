@@ -190,6 +190,12 @@ type SubscriptionPlan struct {
 }
 
 func (p *SubscriptionPlan) BeforeCreate(tx *gorm.DB) error {
+	if err := lockGroupNamespace(tx); err != nil {
+		return err
+	}
+	if err := validateGroupNamesForWriteTx(tx, p.UpgradeGroup, p.DowngradeGroup); err != nil {
+		return err
+	}
 	now := common.GetTimestamp()
 	p.CreatedAt = now
 	p.UpdatedAt = now
@@ -197,6 +203,12 @@ func (p *SubscriptionPlan) BeforeCreate(tx *gorm.DB) error {
 }
 
 func (p *SubscriptionPlan) BeforeUpdate(tx *gorm.DB) error {
+	if err := lockGroupNamespace(tx); err != nil {
+		return err
+	}
+	if err := validateGroupNamesForWriteTx(tx, p.UpgradeGroup, p.DowngradeGroup); err != nil {
+		return err
+	}
 	p.UpdatedAt = common.GetTimestamp()
 	return nil
 }
@@ -281,6 +293,12 @@ type UserSubscription struct {
 }
 
 func (s *UserSubscription) BeforeCreate(tx *gorm.DB) error {
+	if err := lockGroupNamespace(tx); err != nil {
+		return err
+	}
+	if err := validateGroupNamesForWriteTx(tx, s.UpgradeGroup, s.PrevUserGroup, s.DowngradeGroup); err != nil {
+		return err
+	}
 	now := common.GetTimestamp()
 	s.CreatedAt = now
 	s.UpdatedAt = now
@@ -288,6 +306,21 @@ func (s *UserSubscription) BeforeCreate(tx *gorm.DB) error {
 }
 
 func (s *UserSubscription) BeforeUpdate(tx *gorm.DB) error {
+	groupFieldsSelected := len(tx.Statement.Selects) == 0
+	for _, field := range tx.Statement.Selects {
+		switch field {
+		case "*", "upgrade_group", "UpgradeGroup", "prev_user_group", "PrevUserGroup", "downgrade_group", "DowngradeGroup":
+			groupFieldsSelected = true
+		}
+	}
+	if groupFieldsSelected {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
+		if err := validateGroupNamesForWriteTx(tx, s.UpgradeGroup, s.PrevUserGroup, s.DowngradeGroup); err != nil {
+			return err
+		}
+	}
 	s.UpdatedAt = common.GetTimestamp()
 	return nil
 }
@@ -474,8 +507,7 @@ func downgradeUserGroupForSubscriptionTx(tx *gorm.DB, sub *UserSubscription, now
 	if target == "" || target == currentGroup {
 		return "", nil
 	}
-	if err := tx.Model(&User{}).Where("id = ?", sub.UserId).
-		Update("group", target).Error; err != nil {
+	if err := updateUserGroupTx(tx, sub.UserId, target); err != nil {
 		return "", err
 	}
 	return target, nil
@@ -523,8 +555,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 		}
 		if currentGroup != upgradeGroup {
 			prevGroup = currentGroup
-			if err := tx.Model(&User{}).Where("id = ?", userId).
-				Update("group", upgradeGroup).Error; err != nil {
+			if err := updateUserGroupTx(tx, userId, upgradeGroup); err != nil {
 				return nil, err
 			}
 		}
@@ -1034,7 +1065,7 @@ func resetUserSubscriptionTx(tx *gorm.DB, sub *UserSubscription, plan *Subscript
 			sub.LastResetTime = 0
 		}
 	}
-	return tx.Save(sub).Error
+	return tx.Select("amount_used", "last_reset_time", "next_reset_time", "updated_at").Updates(sub).Error
 }
 
 func buildSubscriptionResetResult(plan *SubscriptionPlan, subs []UserSubscription, advanceResetTime bool) *SubscriptionResetResult {
@@ -1228,8 +1259,7 @@ func ExpireDueSubscriptions(limit int) (int, error) {
 			if target == "" || target == currentGroup {
 				return nil
 			}
-			if err := tx.Model(&User{}).Where("id = ?", userId).
-				Update("group", target).Error; err != nil {
+			if err := updateUserGroupTx(tx, userId, target); err != nil {
 				return err
 			}
 			cacheGroup = target
@@ -1295,14 +1325,14 @@ func maybeResetUserSubscriptionWithPlanTx(tx *gorm.DB, sub *UserSubscription, pl
 		if sub.NextResetTime == 0 && next > 0 {
 			sub.NextResetTime = next
 			sub.LastResetTime = base.Unix()
-			return tx.Save(sub).Error
+			return tx.Select("next_reset_time", "last_reset_time", "updated_at").Updates(sub).Error
 		}
 		return nil
 	}
 	sub.AmountUsed = 0
 	sub.LastResetTime = base.Unix()
 	sub.NextResetTime = next
-	return tx.Save(sub).Error
+	return tx.Select("amount_used", "last_reset_time", "next_reset_time", "updated_at").Updates(sub).Error
 }
 
 // PreConsumeUserSubscription pre-consumes from any active subscription total quota.
@@ -1391,7 +1421,7 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 				return err
 			}
 			sub.AmountUsed += amount
-			if err := tx.Save(&sub).Error; err != nil {
+			if err := tx.Select("amount_used", "updated_at").Updates(&sub).Error; err != nil {
 				return err
 			}
 			returnValue.UserSubscriptionId = sub.Id
@@ -1537,6 +1567,6 @@ func PostConsumeUserSubscriptionDelta(userSubscriptionId int, delta int64) error
 			return fmt.Errorf("subscription used exceeds total, used=%d total=%d", newUsed, sub.AmountTotal)
 		}
 		sub.AmountUsed = newUsed
-		return tx.Save(&sub).Error
+		return tx.Select("amount_used", "updated_at").Updates(&sub).Error
 	})
 }

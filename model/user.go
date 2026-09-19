@@ -931,11 +931,21 @@ func (user *User) EditWithTx(tx *gorm.DB, updatePassword bool) error {
 		updates["password"] = newUser.Password
 	}
 
+	// Edit always writes the group field. Acquire the namespace lock before
+	// reading the current row so a pre-rename snapshot cannot decide that the
+	// group is "unchanged" and later restore a retired key.
+	if err := lockGroupNamespace(tx); err != nil {
+		return err
+	}
+	if err := validateGroupNamesForWriteTx(tx, newUser.Group); err != nil {
+		return err
+	}
 	current := User{}
 	if err = tx.First(&current, user.Id).Error; err != nil {
 		return err
 	}
-	authChanged := (updatePassword && current.Password != newUser.Password) || current.Group != newUser.Group
+	groupChanged := current.Group != newUser.Group
+	authChanged := (updatePassword && current.Password != newUser.Password) || groupChanged
 	if authChanged {
 		newUser.AuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
 		if err != nil {
