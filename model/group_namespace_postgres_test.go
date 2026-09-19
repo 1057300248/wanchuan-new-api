@@ -34,7 +34,7 @@ func testGroupNamespaceConcurrentWriters(t *testing.T) {
 				stale := &Channel{Name: "stale-insert", Key: "sk-stale-insert", Status: common.ChannelStatusEnabled, Group: "old", Models: "m1"}
 				return stale.Insert, func(t *testing.T) {
 					var count int64
-					require.NoError(t, DB.Model(&Channel{}).Where("group = ?", "old").Count(&count).Error)
+					require.NoError(t, DB.Model(&Channel{}).Where(commonGroupCol+" = ?", "old").Count(&count).Error)
 					assert.Zero(t, count)
 				}
 			},
@@ -126,12 +126,12 @@ func testGroupNamespaceConcurrentWriters(t *testing.T) {
 				return func() error { return DB.Save(&stale).Error }, func(t *testing.T) {
 					var oldCount int64
 					require.NoError(t, DB.Model(&Ability{}).
-						Where("channel_id = ? AND model = ? AND \"group\" = ?", channel.Id, "m1", "old").
+						Where("channel_id = ? AND model = ? AND "+commonGroupCol+" = ?", channel.Id, "m1", "old").
 						Count(&oldCount).Error)
 					assert.Zero(t, oldCount)
 					var newCount int64
 					require.NoError(t, DB.Model(&Ability{}).
-						Where("channel_id = ? AND model = ? AND \"group\" = ?", channel.Id, "m1", "new").
+						Where("channel_id = ? AND model = ? AND "+commonGroupCol+" = ?", channel.Id, "m1", "new").
 						Count(&newCount).Error)
 					assert.Equal(t, int64(1), newCount)
 				}
