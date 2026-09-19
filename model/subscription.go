@@ -474,6 +474,9 @@ func downgradeUserGroupForSubscriptionTx(tx *gorm.DB, sub *UserSubscription, now
 	if tx == nil || sub == nil {
 		return "", errors.New("invalid downgrade args")
 	}
+	if err := lockGroupNamespace(tx); err != nil {
+		return "", err
+	}
 	downgradeGroup := strings.TrimSpace(sub.DowngradeGroup)
 	upgradeGroup := strings.TrimSpace(sub.UpgradeGroup)
 	// Nothing to do if neither an explicit downgrade target nor an upgrade snapshot exists.
@@ -516,6 +519,9 @@ func downgradeUserGroupForSubscriptionTx(tx *gorm.DB, sub *UserSubscription, now
 func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *SubscriptionPlan, source string) (*UserSubscription, error) {
 	if tx == nil {
 		return nil, errors.New("tx is nil")
+	}
+	if err := lockGroupNamespace(tx); err != nil {
+		return nil, err
 	}
 	if plan == nil || plan.Id == 0 {
 		return nil, errors.New("invalid plan")
@@ -611,6 +617,9 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 	var logPaymentMethod string
 	var upgradeGroup string
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
 		var order SubscriptionOrder
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
 			return ErrSubscriptionOrderNotFound
@@ -749,7 +758,11 @@ func AdminBindSubscription(userId int, planId int, sourceNote string) (string, e
 	}
 	groupChanged := false
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		// 与 CompleteSubscriptionOrder 一致：先锁用户行，再做购买次数检查。
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
+		// Namespace lock precedes the user row lock, matching group rename's
+		// global lock order and preventing a PostgreSQL deadlock cycle.
 		var userRow User
 		if err := lockForUpdate(tx).Select("id").Where("id = ?", userId).First(&userRow).Error; err != nil {
 			return err
@@ -795,6 +808,9 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 	var upgradeGroup string
 	var ledgerTotalAfter int
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
 		plan, err := getSubscriptionPlanByIdTx(tx, planId)
 		if err != nil {
 			return err
@@ -975,6 +991,9 @@ func AdminInvalidateUserSubscription(userSubscriptionId int) (string, error) {
 	downgradeGroup := ""
 	var userId int
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
 		var sub UserSubscription
 		if err := lockForUpdate(tx).
 			Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
@@ -1020,6 +1039,9 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (string, error) {
 	downgradeGroup := ""
 	var userId int
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
 		var sub UserSubscription
 		if err := lockForUpdate(tx).
 			Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
@@ -1204,6 +1226,9 @@ func ExpireDueSubscriptions(limit int) (int, error) {
 	for userId := range userIds {
 		cacheGroup := ""
 		err := DB.Transaction(func(tx *gorm.DB) error {
+			if err := lockGroupNamespace(tx); err != nil {
+				return err
+			}
 			res := tx.Model(&UserSubscription{}).
 				Where("user_id = ? AND status = ? AND end_time > 0 AND end_time <= ?", userId, "active", now).
 				Updates(map[string]any{

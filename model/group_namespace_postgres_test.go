@@ -83,6 +83,19 @@ func testGroupNamespaceConcurrentWriters(t *testing.T) {
 			},
 		},
 		{
+			name: "user_update_group",
+			seed: func(t *testing.T) (func() error, func(*testing.T)) {
+				user := User{Username: "stale-update-user", AffCode: "stale-update-user", Status: common.UserStatusEnabled, Group: "old"}
+				require.NoError(t, DB.Create(&user).Error)
+				stale := user
+				return func() error { return stale.Update(false) }, func(t *testing.T) {
+					var stored User
+					require.NoError(t, DB.First(&stored, user.Id).Error)
+					assert.Equal(t, "new", stored.Group)
+				}
+			},
+		},
+		{
 			name: "subscription_plan",
 			seed: func(t *testing.T) (func() error, func(*testing.T)) {
 				plan := SubscriptionPlan{Title: "stale-plan", UpgradeGroup: "old", DowngradeGroup: "old", Enabled: true}
@@ -173,7 +186,9 @@ func testGroupNamespaceConcurrentWriters(t *testing.T) {
 			select {
 			case err := <-writerResult:
 				t.Fatalf("group writer completed while rename transaction still held namespace lock: %v", err)
-			default:
+			case <-time.After(100 * time.Millisecond):
+				// The writer has entered its transaction while rename still
+				// owns the namespace lock; it must remain blocked until release.
 			}
 
 			close(releaseRename)

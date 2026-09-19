@@ -39,6 +39,20 @@ type groupConfigInvalidationEvent struct {
 	Mappings []GroupRenameMapping `json:"mappings,omitempty"`
 }
 
+func groupNamespaceMetadataAvailable(tx *gorm.DB) bool {
+	if tx == nil {
+		return false
+	}
+	// Focused SQLite unit fixtures may intentionally migrate only the model
+	// under test. Production schemas always contain options. Skip namespace
+	// metadata only for those incomplete SQLite fixtures; PostgreSQL/MySQL stay
+	// fail-closed.
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+		return tx.Migrator().HasTable(&Option{})
+	}
+	return true
+}
+
 // lockGroupNamespace serializes every write that can change a group reference.
 // PostgreSQL uses a transaction-scoped advisory lock so inserts and updates
 // serialize even when no row exists yet. MySQL falls back to a locked option
@@ -46,6 +60,9 @@ type groupConfigInvalidationEvent struct {
 func lockGroupNamespace(tx *gorm.DB) error {
 	if tx == nil {
 		return errors.New("group namespace lock requires a transaction")
+	}
+	if !groupNamespaceMetadataAvailable(tx) {
+		return nil
 	}
 	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
 		return tx.Exec("SELECT pg_advisory_xact_lock(?)", groupNamespaceAdvisoryLockID).Error
@@ -106,6 +123,9 @@ func loadConfiguredGroupNamesTx(tx *gorm.DB) (map[string]struct{}, error) {
 // from a committed rename is rejected unless an administrator explicitly
 // reintroduced that key into current group settings.
 func validateGroupNamesForWriteTx(tx *gorm.DB, groups ...string) error {
+	if !groupNamespaceMetadataAvailable(tx) {
+		return nil
+	}
 	aliases, err := loadGroupRenameAliasesTx(tx)
 	if err != nil || len(aliases) == 0 {
 		return err

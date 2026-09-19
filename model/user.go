@@ -868,6 +868,19 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 		}
 	}
 	newUser := *user
+	// Updates(struct) writes Group whenever it is non-empty, even if a snapshot
+	// read later says the value is unchanged. Therefore acquire/validate the
+	// namespace before reading current state whenever this request carries a
+	// group value; otherwise a pre-rename stale object could restore old after
+	// waiting on the row lock held by rename.
+	if newUser.Group != "" {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
+		if err := validateGroupNamesForWriteTx(tx, newUser.Group); err != nil {
+			return err
+		}
+	}
 	current := User{}
 	if err = tx.First(&current, user.Id).Error; err != nil {
 		return err
@@ -875,10 +888,11 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 	// Updates(struct) ignores zero values. Match that behavior when deciding
 	// whether this request actually changes authentication-sensitive state;
 	// partial self-profile updates intentionally leave role/status/group empty.
+	groupChanged := newUser.Group != "" && current.Group != newUser.Group
 	authChanged := (updatePassword && current.Password != newUser.Password) ||
 		(newUser.Role != 0 && current.Role != newUser.Role) ||
 		(newUser.Status != 0 && current.Status != newUser.Status) ||
-		(newUser.Group != "" && current.Group != newUser.Group)
+		groupChanged
 	if authChanged {
 		newUser.AuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
 		if err != nil {
