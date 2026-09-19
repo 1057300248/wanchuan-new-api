@@ -314,7 +314,8 @@ func TestGroupConfigSecondProcessHelper(t *testing.T) {
 	var subscriberDone chan struct{}
 	if mode == "subscriber" {
 		pubsub = rdb.Subscribe(ctx, groupConfigTopic(rdb.Options().DB))
-		require.NoError(t, pubsub.Receive(ctx))
+		_, receiveErr := pubsub.Receive(ctx)
+		require.NoError(t, receiveErr)
 		subscriberDone = make(chan struct{})
 		go func() {
 			defer close(subscriberDone)
