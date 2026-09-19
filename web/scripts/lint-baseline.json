@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "upstreamRevision": "7fd06381976cbea126d1f20973548bf60f20e37d",
+  "upstreamRevision": "b0bf2580e2491869ee9fe861c12b86153c3fe5f4",
   "oxlintVersion": "1.74.0",
-  "configSha256": "34288f0fe0395b3d1f47b65e1e12b171bce17eba2188e0a4b978ba615f5b73ca",
+  "configSha256": "e4d28b65d320733f66ff7052358d335a0291b1351b0733bec1b01f8d2f54f585",
   "note": "Curated allowlist of known upstream lint diagnostics. Each path must be byte-identical (LF-normalized sha256) to the pinned upstream revision; modified or new files must lint clean. Adopt new upstream files explicitly with --adopt after confirming they match the pinned revision.",
   "files": {
     "src/assets/brand-icons/icon-discord.tsx": {
@@ -502,16 +502,8 @@
       ]
     },
     "src/components/layout/config/system-settings.config.ts": {
-      "sha256": "4719391e1bb1a7d1a98b438328c287723b4d32651ba3ac151027cde819086d6f",
-      "diagnostics": [
-        {
-          "code": "typescript(no-import-type-side-effects)",
-          "severity": "error",
-          "line": 19,
-          "column": 1,
-          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
-        }
-      ]
+      "sha256": "06f8dbe455b718ceda7d182063ad3e9843d66762be9bfaff4a8087fd593c52bd",
+      "diagnostics": []
     },
     "src/components/layout/config/top-nav.config.ts": {
       "sha256": "167cbe1a91a6e35238c6b32f68e2b62f4c20a65495b2fde96b9c3e61001bee08",

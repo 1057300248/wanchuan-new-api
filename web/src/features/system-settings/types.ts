@@ -39,6 +39,36 @@ export type UpdateOptionResponse = {
   message: string
 }
 
+export type GroupRenameMapping = {
+  from: string
+  to: string
+}
+
+export type GroupRenameResult = {
+  renames: GroupRenameMapping[]
+  options: number
+  channels: number
+  abilities: number
+  users: number
+  tokens: number
+  subscription_plans: number
+  user_subscriptions: number
+  applied_options?: Record<string, string>
+}
+
+export type GroupRenameRequest = {
+  renames: GroupRenameMapping[]
+  options?: Record<string, string>
+  expected?: Record<string, string>
+}
+
+export type GroupRenameResponse = {
+  success: boolean
+  message: string
+  code?: string
+  data?: GroupRenameResult
+}
+
 export interface PasskeyDomainChange {
   rp_id: string
   legacy_rp_ids: string
@@ -130,6 +160,14 @@ export type SystemTaskListResponse = {
   success: boolean
   message: string
   data?: SystemTask[]
+  total: number
+}
+
+export type SystemTaskFilters = {
+  type?: string
+  status?: SystemTaskStatus | ''
+  scope?: 'active' | 'history'
+  offset?: number
 }
 
 export type SiteSettings = {
@@ -257,26 +295,6 @@ export type ModelSettings = {
   MaxTokenAutoGroups: number
   DefaultUseAutoGroup: boolean
   'group_ratio_setting.group_special_usable_group': string
-  RetryTimes: number
-  ChannelDisableThreshold: string
-  AutomaticDisableChannelEnabled: boolean
-  AutomaticEnableChannelEnabled: boolean
-  AutomaticDisableKeywords: string
-  AutomaticDisableStatusCodes: string
-  AutomaticRetryStatusCodes: string
-  'monitor_setting.auto_test_channel_enabled': boolean
-  'monitor_setting.auto_test_channel_minutes': number
-  'monitor_setting.channel_test_concurrency': number
-  'monitor_setting.channel_test_mode':
-    | 'scheduled_all'
-    | 'auto_ban_only'
-    | 'passive_recovery'
-  'channel_affinity_setting.enabled': boolean
-  'channel_affinity_setting.switch_on_success': boolean
-  'channel_affinity_setting.keep_on_channel_disabled': boolean
-  'channel_affinity_setting.max_entries': number
-  'channel_affinity_setting.default_ttl_seconds': number
-  'channel_affinity_setting.rules': string
   'model_deployment.ionet.api_key': string
   'model_deployment.ionet.enabled': boolean
 }

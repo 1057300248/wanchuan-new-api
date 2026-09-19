@@ -232,6 +232,9 @@ func UpdateUserBindColumn(userId int, column string, value string) error {
 	if !userBindColumns[column] {
 		return fmt.Errorf("invalid user bind column: %s", column)
 	}
+	if column == "github_id" {
+		return DB.Transaction(func(tx *gorm.DB) error { return UpdateGitHubBindingWithTx(tx, userId, value) })
+	}
 	return DB.Model(&User{}).Where("id = ?", userId).Update(column, value).Error
 }
 
@@ -969,8 +972,8 @@ func (user *User) ClearBinding(bindingType string) error {
 		if err := tx.Model(&User{}).Where("id = ?", user.Id).Update(column, "").Error; err != nil {
 			return err
 		}
-		if bindingType == ExternalIdentityProviderTelegram {
-			return ReleaseExternalIdentityWithTx(tx, ExternalIdentityProviderTelegram, user.Id)
+		if bindingType == ExternalIdentityProviderTelegram || bindingType == ExternalIdentityProviderGitHub {
+			return ReleaseExternalIdentityWithTx(tx, bindingType, user.Id)
 		}
 		return nil
 	}); err != nil {
@@ -1133,16 +1136,19 @@ func (user *User) FillUserByGitHubId() error {
 	if user.GitHubId == "" {
 		return errors.New("GitHub id 为空！")
 	}
-	DB.Where(User{GitHubId: user.GitHubId}).First(user)
-	return nil
-}
-
-// UpdateGitHubId updates the user's GitHub ID (used for migration from login to numeric ID)
-func (user *User) UpdateGitHubId(newGitHubId string) error {
-	if user.Id == 0 {
-		return errors.New("user id is empty")
+	var users []User
+	if err := DB.Unscoped().Where("github_id = ?", user.GitHubId).Limit(2).Find(&users).Error; err != nil {
+		return err
 	}
-	return DB.Model(user).Update("github_id", newGitHubId).Error
+	if len(users) > 1 {
+		return ErrExternalIdentityAlreadyClaimed
+	}
+	if len(users) == 0 || users[0].DeletedAt.Valid {
+		user.Id = 0
+		return nil
+	}
+	*user = users[0]
+	return nil
 }
 
 func (user *User) FillUserByDiscordId() error {
@@ -1209,7 +1215,9 @@ func IsWeChatIdAlreadyTaken(wechatId string) bool {
 }
 
 func IsGitHubIdAlreadyTaken(githubId string) bool {
-	return DB.Unscoped().Where("github_id = ?", githubId).Find(&User{}).RowsAffected == 1
+	var count int64
+	err := DB.Unscoped().Model(&User{}).Where("github_id = ?", githubId).Count(&count).Error
+	return err != nil || count > 0
 }
 
 func IsDiscordIdAlreadyTaken(discordId string) bool {

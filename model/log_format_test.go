@@ -105,17 +105,19 @@ func TestLegacyLogOtherVisibilityIsRoleSeparated(t *testing.T) {
 
 	t.Run("user", func(t *testing.T) {
 		logs := []*Log{{
-			Id:          99,
-			ChannelId:   77,
-			ChannelName: "resolved-secret-channel",
-			Other:       other,
+			Id:                99,
+			ChannelId:         77,
+			ChannelName:       "resolved-secret-channel",
+			UpstreamRequestId: "upstream-request-secret",
+			Other:             other,
 		}}
 
 		formatUserLogs(logs, 10)
 
 		assert.Equal(t, 11, logs[0].Id)
-		assert.Equal(t, 77, logs[0].ChannelId)
+		assert.Zero(t, logs[0].ChannelId, "channel identity is not part of the user projection")
 		assert.Empty(t, logs[0].ChannelName)
+		assert.Empty(t, logs[0].UpstreamRequestId, "upstream request identity is not part of the user projection")
 		parsed, err := common.StrToMap(logs[0].Other)
 		require.NoError(t, err)
 		assert.Equal(t, "/v1/chat/completions", parsed["request_path"])
@@ -298,4 +300,61 @@ func TestWalletCostVisibleToUserButPrivilegedMetadataIsNot(t *testing.T) {
 		require.Contains(t, parsed, "admin_info")
 		require.Contains(t, parsed, "root_info")
 	})
+}
+
+// TestFormatUserLogsScrubsHistoricalErrorDiagnostics pins the ordinary-user
+// projection for stored error records: raw upstream messages, channel identity,
+// upstream request identity and provider-supplied error codes must not reach
+// the owner, while administrators keep the untouched stored record.
+func TestFormatUserLogsScrubsHistoricalErrorDiagnostics(t *testing.T) {
+	other := common.MapToJsonStr(map[string]any{
+		"error_type":  "bad_response_status_code",
+		"error_code":  "private-provider-code-42",
+		"status_code": 502,
+	})
+	stored := []*Log{{
+		Id:                41,
+		Type:              LogTypeError,
+		Content:           "status_code=502, upstream https://private.example.com/v1?token=secret rejected model private-provider-model",
+		ChannelId:         909,
+		ChannelName:       "resolved-private-channel",
+		UpstreamRequestId: "upstream-request-private",
+		Other:             other,
+	}}
+
+	formatUserLogs(stored, 0)
+
+	assert.Equal(t, "upstream request failed", stored[0].Content)
+	assert.Zero(t, stored[0].ChannelId)
+	assert.Empty(t, stored[0].ChannelName)
+	assert.Empty(t, stored[0].UpstreamRequestId)
+	parsed, err := common.StrToMap(stored[0].Other)
+	require.NoError(t, err)
+	assert.Equal(t, "bad_response_status_code", parsed["error_type"], "stable classifications remain visible")
+	assert.NotContains(t, parsed, "error_code", "provider-supplied codes are dropped from user projections")
+	assert.NotContains(t, parsed, "private-provider-code-42")
+
+	adminLogs := []*Log{{
+		Id:                41,
+		Type:              LogTypeError,
+		Content:           "status_code=502, upstream https://private.example.com/v1?token=secret rejected model private-provider-model",
+		ChannelId:         909,
+		ChannelName:       "resolved-private-channel",
+		UpstreamRequestId: "upstream-request-private",
+		Other:             other,
+	}}
+	FormatAdminLogs(adminLogs)
+	assert.Contains(t, adminLogs[0].Content, "private-provider-model", "administrators keep stored diagnostics")
+	assert.Equal(t, 909, adminLogs[0].ChannelId)
+	assert.Equal(t, "resolved-private-channel", adminLogs[0].ChannelName)
+	assert.Equal(t, "upstream-request-private", adminLogs[0].UpstreamRequestId)
+}
+
+func TestFormatUserLogsKeepsConsumeContent(t *testing.T) {
+	stored := []*Log{{
+		Type:    LogTypeConsume,
+		Content: "模型倍率 1.00，分组倍率 1.00, 钱包扣费 100",
+	}}
+	formatUserLogs(stored, 0)
+	assert.Equal(t, "模型倍率 1.00，分组倍率 1.00, 钱包扣费 100", stored[0].Content)
 }

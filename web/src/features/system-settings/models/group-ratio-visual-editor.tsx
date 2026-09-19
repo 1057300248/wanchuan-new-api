@@ -68,7 +68,9 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 
+import type { GroupRenameMapping } from '../types'
 import { safeJsonParse } from '../utils/json-parser'
+import { collectGroupRenames } from './group-rename'
 
 type GroupRatioVisualEditorProps = {
   groupRatio: string
@@ -76,13 +78,16 @@ type GroupRatioVisualEditorProps = {
   userUsableGroups: string
   groupGroupRatio: string
   autoGroups: string
+  pendingRenames?: GroupRenameMapping[]
   maxTokenAutoGroupsField: ReactNode
   groupSpecialUsableGroup: string
   onChange: (field: string, value: string) => void
+  onRenamesChange?: (renames: GroupRenameMapping[]) => void
 }
 
 type GroupPricingRow = {
   _id: string
+  originalName: string | null
   name: string
   ratio: string
   topupRatio: string
@@ -149,6 +154,7 @@ function buildGroupPricingRows(
 
   return [...names].map((name) => ({
     _id: createGroupPricingId(),
+    originalName: name,
     name,
     ratio: String(normalizeRatio(ratioMap[name])),
     topupRatio: Object.hasOwn(topupMap, name) ? String(topupMap[name]) : '',
@@ -191,16 +197,34 @@ function groupPricingSignature(rows: GroupPricingRow[]): string {
   })
 }
 
-function sourceGroupPricingSignature(
-  groupRatio: string,
-  userUsableGroups: string,
-  topupGroupRatio: string
-): string {
-  return JSON.stringify({
-    groupRatio: parseRatioMap(groupRatio),
-    userUsableGroups: parseUsableMap(userUsableGroups),
-    topupGroupRatio: parseRatioMap(topupGroupRatio),
+// Rows rebuilt from the form values still carry the original group names after
+// a mode toggle. Re-apply the pending rename mapping so the kept names survive;
+// when the values already contain the target name, restore the original name so
+// the mapping stays explicit for the save request.
+function applyPendingRenamesToRows(
+  rows: GroupPricingRow[],
+  renames: GroupRenameMapping[] | undefined
+): GroupPricingRow[] {
+  if (!renames || renames.length === 0) return rows
+  const forward = new Map(renames.map((rename) => [rename.from, rename.to]))
+  const backward = new Map(renames.map((rename) => [rename.to, rename.from]))
+  let changed = false
+  const next = rows.map((row) => {
+    if (row.originalName) {
+      const target = forward.get(row.originalName)
+      if (target && target !== row.name) {
+        changed = true
+        return { ...row, name: target }
+      }
+    }
+    const original = backward.get(row.name)
+    if (original && original !== row.originalName) {
+      changed = true
+      return { ...row, originalName: original }
+    }
+    return row
   })
+  return changed ? next : rows
 }
 
 function UnknownGroupBadge() {
@@ -249,9 +273,11 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
   userUsableGroups,
   groupGroupRatio,
   autoGroups,
+  pendingRenames,
   maxTokenAutoGroupsField,
   groupSpecialUsableGroup,
   onChange,
+  onRenamesChange,
 }: GroupRatioVisualEditorProps) {
   const { t } = useTranslation()
   const [detailGroup, setDetailGroup] = useState<string | null>(null)
@@ -322,8 +348,10 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
         groupRatio={groupRatio}
         userUsableGroups={userUsableGroups}
         topupGroupRatio={topupGroupRatio}
+        pendingRenames={pendingRenames}
         onChange={onChange}
         onShowDetail={setDetailGroup}
+        onRenamesChange={onRenamesChange}
       />
 
       <GroupOverrideRules
@@ -414,39 +442,50 @@ type GroupPricingTableProps = {
   groupRatio: string
   userUsableGroups: string
   topupGroupRatio: string
+  pendingRenames?: GroupRenameMapping[]
   onChange: (field: string, value: string) => void
   onShowDetail: (name: string) => void
+  onRenamesChange?: (renames: GroupRenameMapping[]) => void
 }
 
 function GroupPricingTable({
   groupRatio,
   userUsableGroups,
   topupGroupRatio,
+  pendingRenames,
   onChange,
   onShowDetail,
+  onRenamesChange,
 }: GroupPricingTableProps) {
   const { t } = useTranslation()
   const [rows, setRows] = useState<GroupPricingRow[]>(() =>
-    buildGroupPricingRows(groupRatio, userUsableGroups, topupGroupRatio)
+    applyPendingRenamesToRows(
+      buildGroupPricingRows(groupRatio, userUsableGroups, topupGroupRatio),
+      pendingRenames
+    )
   )
 
   useEffect(() => {
-    const incomingSignature = sourceGroupPricingSignature(
-      groupRatio,
-      userUsableGroups,
-      topupGroupRatio
+    const incomingRows = applyPendingRenamesToRows(
+      buildGroupPricingRows(groupRatio, userUsableGroups, topupGroupRatio),
+      pendingRenames
     )
     setRows((currentRows) => {
-      if (groupPricingSignature(currentRows) === incomingSignature) {
+      if (
+        groupPricingSignature(currentRows) ===
+        groupPricingSignature(incomingRows)
+      ) {
         return currentRows
       }
-      return buildGroupPricingRows(
-        groupRatio,
-        userUsableGroups,
-        topupGroupRatio
-      )
+      return incomingRows
     })
-  }, [groupRatio, userUsableGroups, topupGroupRatio])
+  }, [groupRatio, userUsableGroups, topupGroupRatio, pendingRenames])
+
+  const renames = useMemo(() => collectGroupRenames(rows), [rows])
+
+  useEffect(() => {
+    onRenamesChange?.(renames)
+  }, [onRenamesChange, renames])
 
   const emitRows = useCallback(
     (nextRows: GroupPricingRow[]) => {
@@ -462,7 +501,7 @@ function GroupPricingTable({
   const updateRow = useCallback(
     (
       id: string,
-      field: Exclude<keyof GroupPricingRow, '_id'>,
+      field: Exclude<keyof GroupPricingRow, '_id' | 'originalName'>,
       value: string | number | boolean
     ) => {
       emitRows(
@@ -484,6 +523,7 @@ function GroupPricingTable({
       ...rows,
       {
         _id: createGroupPricingId(),
+        originalName: null,
         name,
         ratio: '1',
         topupRatio: '',
@@ -560,7 +600,7 @@ function GroupPricingTable({
                   <Input
                     type='number'
                     min={0}
-                    step={0.1}
+                    step={0.0001}
                     value={row.ratio}
                     onChange={(event) =>
                       updateRow(row._id, 'ratio', event.target.value)
@@ -576,7 +616,7 @@ function GroupPricingTable({
                   <Input
                     type='number'
                     min={0}
-                    step={0.1}
+                    step={0.0001}
                     value={row.topupRatio}
                     placeholder={t('Not set')}
                     onChange={(event) =>

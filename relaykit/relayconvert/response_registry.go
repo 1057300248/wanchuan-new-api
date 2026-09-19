@@ -1178,7 +1178,7 @@ func convertGeminiChatResponseToOAIChat(_ context.Context, info convmeta.Meta, r
 	usage := UsageFromGeminiMetadata(geminiResponse.GetUsageMetadata(), fallbackPromptTokens(info))
 	openAIResponse := ResponseGeminiChat2OpenAI(fmt.Sprintf("chatcmpl-%s", kitutil.GetUUID()), kitutil.GetTimestamp(), geminiResponse)
 	if info != nil && info.HasChannelMeta() {
-		openAIResponse.Model = info.GetUpstreamModelName()
+		openAIResponse.Model = info.GetOriginModelName()
 	}
 	if usage != nil {
 		openAIResponse.Usage = *usage
@@ -1202,7 +1202,7 @@ func convertGeminiChatStreamResponseChunkToOAIChat(_ context.Context, info convm
 	usage := UsageFromGeminiMetadata(geminiResponse.GetUsageMetadata(), fallbackPromptTokens(info))
 	model := ""
 	if info != nil && info.HasChannelMeta() {
-		model = info.GetUpstreamModelName()
+		model = info.GetOriginModelName()
 	}
 	responses, err := streamState.ConvertChunk(geminiResponse, model, usage)
 	if err != nil {
@@ -1218,7 +1218,7 @@ func finalizeGeminiChatStreamResponseToOAIChat(_ context.Context, info convmeta.
 	}
 	model := ""
 	if info != nil && info.HasChannelMeta() {
-		model = info.GetUpstreamModelName()
+		model = info.GetOriginModelName()
 	}
 	responses, err := streamState.Finalize(model)
 	if err != nil {
@@ -1238,7 +1238,7 @@ func convertGeminiChatStreamResponseToOAIChat(_ context.Context, info convmeta.M
 		openAIResponse.Id = fmt.Sprintf("chatcmpl-%s", kitutil.GetUUID())
 		openAIResponse.Created = kitutil.GetTimestamp()
 		if info != nil && info.HasChannelMeta() {
-			openAIResponse.Model = info.GetUpstreamModelName()
+			openAIResponse.Model = info.GetOriginModelName()
 		}
 		openAIResponse.Usage = usage
 	}

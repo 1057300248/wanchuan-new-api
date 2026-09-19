@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -76,6 +77,12 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 
 	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)
 	if newAPIError != nil {
+		// Accepted streams can carry billable output before a terminal failure.
+		// Settle those facts once, as the WebSocket path does, before refund handling.
+		if streamUsage, ok := usage.(*dto.Usage); ok && streamUsage != nil && info.IsStream &&
+			info.ReceivedResponseCount > 0 && common.GetContextKeyBool(c, constant.ContextKeyResponsesStreamErrorHandled) {
+			ConsumeResponsesQuota(c, info, streamUsage)
+		}
 		// reset status code 重置状态码
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
 		return newAPIError
