@@ -44,7 +44,10 @@ func TestGroupRenamePostgresRedis(t *testing.T) {
 	})
 	var version string
 	require.NoError(t, DB.Raw("SHOW server_version").Scan(&version).Error)
-	require.Equal(t, "18.6", version)
+	t.Logf("PostgreSQL server_version=%s", version)
+	var versionNum string
+	require.NoError(t, DB.Raw("SHOW server_version_num").Scan(&versionNum).Error)
+	require.Equal(t, "180006", versionNum)
 	for _, scenario := range []struct {
 		name string
 		run  func(*testing.T)
