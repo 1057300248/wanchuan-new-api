@@ -69,6 +69,7 @@ func TestGroupRenamePostgresRedis(t *testing.T) {
 		t.Run(scenario.name, scenario.run)
 	}
 	t.Run("concurrent_group_writers", testGroupNamespaceConcurrentWriters)
+	t.Run("subscription_plan_map_writer", testGroupNamespaceSubscriptionPlanMapWriter)
 	t.Run("namespace_rollback", testGroupNamespaceRollbackState)
 	t.Run("group_config_pubsub_and_fallback", testGroupConfigPubSubAndFallback)
 	t.Run("two_process_group_runtime", testGroupConfigTwoProcessInstances)

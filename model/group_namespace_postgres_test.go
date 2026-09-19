@@ -18,6 +18,7 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func testGroupNamespaceConcurrentWriters(t *testing.T) {
@@ -224,6 +225,58 @@ func testGroupNamespaceRollbackState(t *testing.T) {
 	groupRenameTxFailureHook = nil
 	channel := Channel{Name: "old-after-rollback", Key: "sk-old-after-rollback", Status: common.ChannelStatusEnabled, Group: "old", Models: "m1"}
 	require.NoError(t, channel.Insert(), "rolled-back rename must not tombstone the old group")
+}
+
+func testGroupNamespaceSubscriptionPlanMapWriter(t *testing.T) {
+	setupGroupRenameTest(t)
+	seedGroupRenameOption(t, "GroupRatio", `{"old":0.8}`)
+	plan := SubscriptionPlan{Title: "plan", UpgradeGroup: "old", DowngradeGroup: "old", Enabled: true}
+	require.NoError(t, DB.Create(&plan).Error)
+
+	renameAtCommit := make(chan struct{})
+	releaseRename := make(chan struct{})
+	previousHook := groupRenameTxFailureHook
+	groupRenameTxFailureHook = func() error {
+		close(renameAtCommit)
+		<-releaseRename
+		return nil
+	}
+	t.Cleanup(func() { groupRenameTxFailureHook = previousHook })
+
+	renameResult := make(chan error, 1)
+	go func() {
+		_, err := RenameGroups([]GroupRenameMapping{{From: "old", To: "new"}})
+		renameResult <- err
+	}()
+	<-renameAtCommit
+
+	writerResult := make(chan error, 1)
+	go func() {
+		writerResult <- DB.Transaction(func(tx *gorm.DB) error {
+			stale := SubscriptionPlan{Title: "stale", UpgradeGroup: "old", DowngradeGroup: "old"}
+			old, new := "old", "old"
+			return UpdateSubscriptionPlanTx(tx, plan.Id, SubscriptionPlanUpdate{
+				Plan:           stale,
+				UpgradeGroup:   &old,
+				DowngradeGroup: &new,
+			})
+		})
+	}()
+	select {
+	case err := <-writerResult:
+		t.Fatalf("map writer completed while rename held namespace lock: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(releaseRename)
+	require.NoError(t, <-renameResult)
+	writerErr := <-writerResult
+	require.ErrorIs(t, writerErr, ErrGroupReferenceRenamed)
+
+	var stored SubscriptionPlan
+	require.NoError(t, DB.First(&stored, plan.Id).Error)
+	assert.Equal(t, "new", stored.UpgradeGroup)
+	assert.Equal(t, "new", stored.DowngradeGroup)
 }
 
 func testGroupConfigPubSubAndFallback(t *testing.T) {

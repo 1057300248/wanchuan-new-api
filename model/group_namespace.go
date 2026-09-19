@@ -152,6 +152,29 @@ func validateGroupNamesForWriteTx(tx *gorm.DB, groups ...string) error {
 	return nil
 }
 
+// validateConfiguredGroupNamesForWriteTx validates the values that a writer
+// will actually persist. This is stricter than the alias check used by legacy
+// writers: a group must still be present in the committed group options.
+func validateConfiguredGroupNamesForWriteTx(tx *gorm.DB, groups ...string) error {
+	if err := validateGroupNamesForWriteTx(tx, groups...); err != nil {
+		return err
+	}
+	configured, err := loadConfiguredGroupNamesTx(tx)
+	if err != nil {
+		return err
+	}
+	for _, raw := range groups {
+		group := strings.TrimSpace(raw)
+		if group == "" {
+			continue
+		}
+		if _, ok := configured[group]; !ok {
+			return fmt.Errorf("group %q is not configured", group)
+		}
+	}
+	return nil
+}
+
 func validateJoinedGroupsForWriteTx(tx *gorm.DB, joined string) error {
 	if strings.TrimSpace(joined) == "" {
 		return nil

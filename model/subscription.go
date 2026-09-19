@@ -38,6 +38,68 @@ var (
 	ErrSubscriptionOrderStatusInvalid = errors.New("subscription order status invalid")
 )
 
+// SubscriptionPlanUpdate is the authoritative write boundary for an admin
+// plan edit. A nil group pointer means the client omitted that field; a
+// non-nil empty string explicitly clears it.
+type SubscriptionPlanUpdate struct {
+	Plan           SubscriptionPlan
+	UpgradeGroup   *string
+	DowngradeGroup *string
+}
+
+// UpdateSubscriptionPlanTx updates a plan while validating the exact group
+// values that will be written after acquiring the shared namespace lock.
+func UpdateSubscriptionPlanTx(tx *gorm.DB, id int, request SubscriptionPlanUpdate) error {
+	if tx == nil || id <= 0 {
+		return errors.New("invalid subscription plan update")
+	}
+	if err := lockGroupNamespace(tx); err != nil {
+		return err
+	}
+	var current SubscriptionPlan
+	if err := lockForUpdate(tx).Where("id = ?", id).First(&current).Error; err != nil {
+		return err
+	}
+	upgrade, downgrade := current.UpgradeGroup, current.DowngradeGroup
+	if request.UpgradeGroup != nil {
+		upgrade = strings.TrimSpace(*request.UpgradeGroup)
+	}
+	if request.DowngradeGroup != nil {
+		downgrade = strings.TrimSpace(*request.DowngradeGroup)
+	}
+	if err := validateConfiguredGroupNamesForWriteTx(tx, upgrade, downgrade); err != nil {
+		return err
+	}
+	updateMap := map[string]any{
+		"title":                      request.Plan.Title,
+		"subtitle":                   request.Plan.Subtitle,
+		"price_amount":               request.Plan.PriceAmount,
+		"currency":                   request.Plan.Currency,
+		"duration_unit":              request.Plan.DurationUnit,
+		"duration_value":             request.Plan.DurationValue,
+		"custom_seconds":             request.Plan.CustomSeconds,
+		"enabled":                    request.Plan.Enabled,
+		"sort_order":                 request.Plan.SortOrder,
+		"stripe_price_id":            request.Plan.StripePriceId,
+		"creem_product_id":           request.Plan.CreemProductId,
+		"waffo_pancake_product_id":   request.Plan.WaffoPancakeProductId,
+		"max_purchase_per_user":      request.Plan.MaxPurchasePerUser,
+		"total_amount":               request.Plan.TotalAmount,
+		"upgrade_group":              upgrade,
+		"downgrade_group":            downgrade,
+		"quota_reset_period":         request.Plan.QuotaResetPeriod,
+		"quota_reset_custom_seconds": request.Plan.QuotaResetCustomSeconds,
+		"updated_at":                 common.GetTimestamp(),
+	}
+	if request.Plan.AllowBalancePay != nil {
+		updateMap["allow_balance_pay"] = *request.Plan.AllowBalancePay
+	}
+	if request.Plan.AllowWalletOverflow != nil {
+		updateMap["allow_wallet_overflow"] = *request.Plan.AllowWalletOverflow
+	}
+	return tx.Model(&current).Updates(updateMap).Error
+}
+
 const (
 	subscriptionPlanCacheNamespace     = "new-api:subscription_plan:v1"
 	subscriptionPlanInfoCacheNamespace = "new-api:subscription_plan_info:v1"
