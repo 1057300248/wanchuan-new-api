@@ -71,9 +71,11 @@ export async function getTokenAutoGroups(): Promise<
 }
 
 // Models routable by the API key routing scope currently selected in the form.
-export async function getApiKeyScopeModels(
-  data: Pick<ApiKeyFormData, 'group' | 'auto_groups'>
-): Promise<ApiResponse<string[]>> {
+export async function getApiKeyScopeModels(data: {
+  group: string
+  auto_groups_mode: 'inherit' | 'custom'
+  auto_groups: string[]
+}): Promise<ApiResponse<string[]>> {
   const res = await api.post('/api/token/models', data)
   return res.data
 }
