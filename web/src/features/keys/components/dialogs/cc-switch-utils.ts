@@ -56,10 +56,7 @@ function buildCCSwitchURL(
   return `ccswitch://v1/import?${params.toString()}`
 }
 
-export function ccSwitchModelsQueryKey(
-  token: ApiKey | null,
-  app: CCSwitchApp
-) {
+export function ccSwitchModelsQueryKey(token: ApiKey | null, app: CCSwitchApp) {
   return [
     'ccswitch-models',
     token?.id ?? 0,
