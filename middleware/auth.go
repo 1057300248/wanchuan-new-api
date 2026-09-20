@@ -557,6 +557,9 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 			common.SetContextKey(c, constant.ContextKeyTokenAutoGroups, autoGroups)
 		}
 	}
+	if handled, err := setupTokenGroupRoute(c, token, parts); handled {
+		return err
+	}
 	if len(parts) > 1 {
 		if model.IsAdmin(token.UserId) {
 			id, err := strconv.Atoi(parts[1])

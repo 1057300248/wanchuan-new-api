@@ -317,7 +317,7 @@ func GetTokenModels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	groups, err := service.GetTokenEffectiveGroups(user.Group, token)
+	effectiveGroups, groups, err := service.GetTokenSelectedGroups(user.Group, token, c.Query("group"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -334,7 +334,14 @@ func GetTokenModels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, models)
+	// Keep the existing data array for older clients; groups are read-only
+	// capability metadata, never the user's wider list of selectable groups.
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    models,
+		"groups":  effectiveGroups,
+	})
 }
 
 func GetTokenKey(c *gin.Context) {
@@ -396,9 +403,14 @@ func GetTokenUsage(c *gin.Context) {
 		})
 		return
 	}
-	tokenKey := parts[1]
+	// TokenAuthReadOnly has already authenticated the canonical key. Routing
+	// hints (and legacy channel suffixes) must not break usage lookup.
+	tokenKey := c.GetString("token_key")
+	if tokenKey == "" {
+		tokenKey = strings.TrimPrefix(parts[1], "sk-")
+	}
 
-	token, err := model.GetTokenByKey(strings.TrimPrefix(tokenKey, "sk-"), false)
+	token, err := model.GetTokenByKey(tokenKey, false)
 	if err != nil {
 		common.SysError("failed to get token by key: " + err.Error())
 		common.ApiErrorI18n(c, i18n.MsgTokenGetInfoFailed)

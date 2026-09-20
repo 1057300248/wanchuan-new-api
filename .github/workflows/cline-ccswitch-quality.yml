@@ -1,0 +1,83 @@
+name: Cline and CC Switch Quality
+
+on:
+  push:
+    branches:
+      - codex/cline-content-ccswitch-groups-20260920
+  pull_request:
+    paths:
+      - 'relay/channel/cline/**'
+      - 'service/token_group_route*'
+      - 'middleware/token_group_route*'
+      - 'controller/ccswitch_group_route_test.go'
+      - 'web/src/features/keys/**'
+      - '.github/workflows/cline-ccswitch-quality.yml'
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: 'off'
+
+concurrency:
+  group: cline-ccswitch-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  routing:
+    name: Token group routing regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Prepare embed fixture
+        run: mkdir -p web/dist && touch web/dist/index.html
+      - name: Cline and group routing tests
+        run: |
+          go test ./relay/channel/cline -count=1
+          go test ./service -run '^TestParseTokenGroupRoute' -count=1 -v
+          go test ./controller -run '^TestCCSwitch' -count=1 -v
+          go test ./middleware -count=1
+      - name: Check Go formatting
+        run: |
+          files=(relay/channel/cline/{adaptor,request_content,response,error_detail,wire_content_test,content_error_test}.go service/token_group_route{,_test}.go middleware/{auth,token_group_route}.go controller/{token,ccswitch_group_route_test}.go)
+          unformatted=$(gofmt -l "${files[@]}")
+          if [ -n "$unformatted" ]; then
+            printf '%s\n' "$unformatted"
+            gofmt -d "${files[@]}"
+            exit 1
+          fi
+
+  frontend:
+    name: Frontend full tests and changed-file quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - run: bun install --frozen-lockfile
+      - name: CC Switch real UI and payload regressions
+        run: bun run test -- src/features/keys/components/__tests__/cc-switch-groups.test.tsx
+      - name: Full Vitest suite
+        run: bun run test
+      - name: Changed-file lint
+        run: |
+          bunx eslint src/features/keys/api.ts src/features/keys/components/api-key-group-combobox.tsx src/features/keys/components/dialogs/cc-switch-dialog.tsx src/features/keys/components/dialogs/cc-switch-utils.ts src/features/keys/components/__tests__/cc-switch-groups.test.tsx
+      - name: Changed-file formatting
+        run: |
+          files=(src/features/keys/api.ts src/features/keys/components/api-key-group-combobox.tsx src/features/keys/components/dialogs/cc-switch-dialog.tsx src/features/keys/components/dialogs/cc-switch-utils.ts src/features/keys/components/__tests__/cc-switch-groups.test.tsx)
+          if ! bunx prettier --check "${files[@]}"; then
+            for file in "${files[@]}"; do
+              bunx prettier "$file" | diff -u "$file" - || true
+            done
+            exit 1
+          fi

@@ -51,6 +51,7 @@ export type ApiKeyGroupOption = {
 }
 
 type ApiKeyGroupComboboxProps = {
+  id?: string
   options: ApiKeyGroupOption[]
   value?: string
   onValueChange: (value: string) => void
@@ -59,6 +60,7 @@ type ApiKeyGroupComboboxProps = {
 }
 
 export function ApiKeyGroupCombobox({
+  id,
   options,
   value,
   onValueChange,
@@ -98,6 +100,7 @@ export function ApiKeyGroupCombobox({
       <PopoverTrigger
         render={
           <Button
+            id={id}
             type='button'
             variant='outline'
             role='combobox'

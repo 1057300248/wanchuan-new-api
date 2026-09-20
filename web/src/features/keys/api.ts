@@ -80,15 +80,19 @@ export async function getApiKeyScopeModels(data: {
   return res.data
 }
 
-// Models that this exact API key can route for the selected CC Switch app.
+export type CCSwitchModelsResponse = ApiResponse<string[]> & {
+  groups?: string[]
+}
+
+// Models and groups that this exact API key can route for the selected app.
 export async function getCCSwitchTokenModels(
   id: number,
-  app: CCSwitchApp
-): Promise<ApiResponse<string[]>> {
+  app: CCSwitchApp,
+  group = ''
+): Promise<CCSwitchModelsResponse> {
   const params = new URLSearchParams({ app })
-  const res = await api.get(
-    `/api/user/tokens/${id}/models?${params.toString()}`
-  )
+  if (group) params.set('group', group)
+  const res = await api.get(`/api/user/tokens/${id}/models?${params.toString()}`)
   return res.data
 }
 

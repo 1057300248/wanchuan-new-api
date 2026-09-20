@@ -56,7 +56,11 @@ function buildCCSwitchURL(
   return `ccswitch://v1/import?${params.toString()}`
 }
 
-export function ccSwitchModelsQueryKey(token: ApiKey | null, app: CCSwitchApp) {
+export function ccSwitchModelsQueryKey(
+  token: ApiKey | null,
+  app: CCSwitchApp,
+  group = ''
+) {
   return [
     'ccswitch-models',
     token?.id ?? 0,
@@ -65,6 +69,7 @@ export function ccSwitchModelsQueryKey(token: ApiKey | null, app: CCSwitchApp) {
     token?.model_limits_enabled ?? false,
     token?.model_limits ?? '',
     app,
+    group,
   ] as const
 }
 
@@ -73,13 +78,30 @@ export function buildValidatedCCSwitchURL(
   name: string,
   models: Record<string, string>,
   apiKey: string,
-  availableModels: string[]
+  availableModels: string[],
+  group = '',
+  availableGroups: string[] = []
 ): string | null {
   if (!models.model || availableModels.length === 0) return null
   const available = new Set(availableModels)
   for (const modelName of Object.values(models)) {
     if (modelName && !available.has(modelName)) return null
   }
-  const key = apiKey.startsWith('sk-') ? apiKey : `sk-${apiKey}`
+  const rawKey = apiKey.startsWith('sk-') ? apiKey.slice(3) : apiKey
+  if (!rawKey) return null
+  let key = `sk-${rawKey}`
+  if (group) {
+    if (!availableGroups.includes(group) || group === 'auto') return null
+    // A routing hint, not a new credential. The server checks the canonical
+    // key and intersects this group with its current permissions on every call.
+    // Never combine it with the legacy administrator channel-id suffix.
+    if (rawKey.includes('-')) return null
+    const bytes = new TextEncoder().encode(group)
+    if (bytes.length > 1024) return null
+    const encoded = Array.from(bytes, (byte) =>
+      byte.toString(16).padStart(2, '0')
+    ).join('')
+    key += `-grp-${encoded}`
+  }
   return buildCCSwitchURL(app, name, models, key)
 }
