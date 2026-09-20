@@ -129,8 +129,10 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: CC Switch model scope tests
-        run: bun run test -- src/features/keys/components/dialogs/cc-switch-dialog.test.tsx
+      - name: API key model scope frontend regressions
+        run: |
+          bun run test -- src/features/keys/components/dialogs/cc-switch-dialog.test.tsx
+          bun run test -- src/features/keys/components/__tests__/api-key-model-scope.test.tsx
 
       - name: Typecheck
         run: bun run typecheck
