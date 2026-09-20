@@ -43,7 +43,7 @@ func TestSupportsCCSwitchModelUsesAdaptorCapabilities(t *testing.T) {
 
 func TestSupportsCCSwitchModelRejectsDisabledAndUnknownApp(t *testing.T) {
 	channel := ccswitchTestChannel(constant.ChannelTypeOpenAI)
-	channel.Status = common.ChannelStatusDisabled
+	channel.Status = common.ChannelStatusManuallyDisabled
 	assert.False(t, SupportsCCSwitchModel(channel, CCSwitchAppCodex, "gpt-4o"))
 	channel.Status = common.ChannelStatusEnabled
 	assert.False(t, SupportsCCSwitchModel(channel, "unknown", "gpt-4o"))
