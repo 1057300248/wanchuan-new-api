@@ -6,6 +6,7 @@ on:
       - codex/fix-new-api-review-20260919
       - codex/subscription-group-write-fix-20260920
       - codex/fix-ccswitch-token-scoped-models-20260920
+      - codex/cline-content-ccswitch-groups-20260920
 
 permissions:
   contents: read
