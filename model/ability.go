@@ -47,12 +47,19 @@ func GetEnabledAbilitiesWithChannelsForGroups(groups []string) ([]AbilityWithCha
 	if len(groups) == 0 {
 		return []AbilityWithChannel{}, nil
 	}
+	values := make([]any, 0, len(groups))
+	for _, group := range groups {
+		values = append(values, group)
+	}
 	var abilities []AbilityWithChannel
 	err := DB.Table("abilities").
 		Select("abilities.*, channels.type as channel_type").
 		Joins("join channels on abilities.channel_id = channels.id").
 		Where("abilities.enabled = ? AND channels.status = ?", true, common.ChannelStatusEnabled).
-		Where("abilities."+commonGroupCol+" IN ?", groups).
+		Where(clause.IN{
+			Column: clause.Column{Table: "abilities", Name: "group"},
+			Values: values,
+		}).
 		Scan(&abilities).Error
 	return abilities, err
 }
