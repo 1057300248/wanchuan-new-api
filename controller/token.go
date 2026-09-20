@@ -190,8 +190,9 @@ func GetTokenAutoGroups(c *gin.Context) {
 }
 
 type tokenModelScopeRequest struct {
-	Group      string   `json:"group"`
-	AutoGroups []string `json:"auto_groups"`
+	Group          string   `json:"group"`
+	AutoGroupsMode string   `json:"auto_groups_mode"`
+	AutoGroups     []string `json:"auto_groups"`
 }
 
 func getRoutableModelsForGroups(user *model.User, groups []string, allow func(*model.Channel, string) bool) ([]string, error) {
@@ -270,16 +271,21 @@ func PreviewTokenModels(c *gin.Context) {
 	}
 
 	token := &model.Token{Group: strings.TrimSpace(request.Group)}
-	if token.Group == "auto" && len(request.AutoGroups) > 0 {
-		if err := token.SetAutoGroups(request.AutoGroups); err != nil {
+	var groups []string
+	if token.Group == "auto" && request.AutoGroupsMode == "custom" {
+		groups = service.FilterUserTokenAutoGroups(user.Group, request.AutoGroups)
+	} else {
+		if token.Group == "auto" && len(request.AutoGroups) > 0 {
+			if err := token.SetAutoGroups(request.AutoGroups); err != nil {
+				common.ApiError(c, err)
+				return
+			}
+		}
+		groups, err = service.GetTokenEffectiveGroups(user.Group, token)
+		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
-	}
-	groups, err := service.GetTokenEffectiveGroups(user.Group, token)
-	if err != nil {
-		common.ApiError(c, err)
-		return
 	}
 	models, err := getRoutableModelsForGroups(user, groups, nil)
 	if err != nil {
