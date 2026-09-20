@@ -113,6 +113,56 @@ func requestTokenModels(t *testing.T, tokenID, userID int, app string) ([]string
 	return models, response
 }
 
+func requestTokenModelScope(t *testing.T, userID int, group string, autoGroups []string) ([]string, tokenAPIResponse) {
+	t.Helper()
+	body := tokenModelScopeRequest{
+		Group:      group,
+		AutoGroups: autoGroups,
+	}
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/models", body, userID)
+	PreviewTokenModels(ctx)
+	response := decodeAPIResponse(t, recorder)
+	var models []string
+	if response.Success {
+		require.NoError(t, common.Unmarshal(response.Data, &models))
+	}
+	return models, response
+}
+
+func TestPreviewTokenModelsUsesSelectedGroup(t *testing.T) {
+	db, user := setupTokenModelsControllerTest(t)
+	seedTokenModelsAbility(t, db, "a", "gpt-4o", constant.ChannelTypeOpenAI, true)
+	seedTokenModelsAbility(t, db, "b", "gpt-4.1", constant.ChannelTypeOpenAI, true)
+
+	models, response := requestTokenModelScope(t, user.Id, "b", nil)
+	require.True(t, response.Success, response.Message)
+	assert.Equal(t, []string{"gpt-4.1"}, models)
+	assert.NotContains(t, models, "gpt-4o")
+}
+
+func TestPreviewTokenModelsUsesEditedAutoGroups(t *testing.T) {
+	db, user := setupTokenModelsControllerTest(t)
+	seedTokenModelsAbility(t, db, "a", "gpt-4o", constant.ChannelTypeOpenAI, true)
+	seedTokenModelsAbility(t, db, "b", "gpt-4.1", constant.ChannelTypeOpenAI, true)
+
+	models, response := requestTokenModelScope(t, user.Id, "auto", []string{"b"})
+	require.True(t, response.Success, response.Message)
+	assert.Equal(t, []string{"gpt-4.1"}, models)
+	assert.NotContains(t, models, "gpt-4o")
+}
+
+func TestPreviewTokenModelsFiltersDisabledAndUnpricedModels(t *testing.T) {
+	db, user := setupTokenModelsControllerTest(t)
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"priced-model":1,"disabled-model":1}`))
+	seedTokenModelsAbility(t, db, "b", "priced-model", constant.ChannelTypeOpenAI, true)
+	seedTokenModelsAbility(t, db, "b", "disabled-model", constant.ChannelTypeOpenAI, false)
+	seedTokenModelsAbility(t, db, "b", "unpriced-model", constant.ChannelTypeOpenAI, true)
+
+	models, response := requestTokenModelScope(t, user.Id, "b", nil)
+	require.True(t, response.Success, response.Message)
+	assert.Equal(t, []string{"priced-model"}, models)
+}
+
 func TestGetTokenModelsUsesConcreteTokenGroup(t *testing.T) {
 	db, user := setupTokenModelsControllerTest(t)
 	token := seedTokenModelsToken(t, db, user.Id, "fixed-b", "b", nil)
