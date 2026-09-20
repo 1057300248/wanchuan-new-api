@@ -98,7 +98,9 @@ let client: QueryClient
 const i18n = createInstance()
 beforeEach(async () => {
   useAuthStore.getState().auth.reset()
-  useAuthStore.getState().auth.setUser({ id: 1, username: 'pricing-viewer', role: 100 })
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'pricing-viewer', role: 100 })
   await i18n.init({
     lng: 'en',
     resources: { en },

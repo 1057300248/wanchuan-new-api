@@ -615,10 +615,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
       ].filter(Boolean) as Array<{ label: string; value: string }>)
     : []
 
-  const conversionChain =
-    Array.isArray(requestConversion)
-      ? requestConversion.filter(Boolean)
-      : []
+  const conversionChain = Array.isArray(requestConversion)
+    ? requestConversion.filter(Boolean)
+    : []
   const conversionLabel =
     conversionChain.length <= 1
       ? t('Native format')
@@ -1149,22 +1148,16 @@ export function DetailsDialog(props: DetailsDialogProps) {
           </DetailSection>
         )}
         {/* Model mapping for logs without response observations */}
-        {!responseModel &&
-          other?.is_model_mapped &&
-          upstreamModel && (
-            <DetailSection label={t('Model Mapping')}>
-              <DetailRow
-                label={t('Request Model')}
-                value={props.log.model_name}
-                mono
-              />
-              <DetailRow
-                label={t('Actual Model')}
-                value={upstreamModel}
-                mono
-              />
-            </DetailSection>
-          )}
+        {!responseModel && other?.is_model_mapped && upstreamModel && (
+          <DetailSection label={t('Model Mapping')}>
+            <DetailRow
+              label={t('Request Model')}
+              value={props.log.model_name}
+              mono
+            />
+            <DetailRow label={t('Actual Model')} value={upstreamModel} mono />
+          </DetailSection>
+        )}
 
         {/* Token breakdown (for consume/error types with token data) */}
         {isDisplayableType(props.log.type) && other && (
@@ -1315,34 +1308,36 @@ export function DetailsDialog(props: DetailsDialogProps) {
         )}
 
         {/* Param override */}
-        {paramOverrides && Array.isArray(paramOverrides) && paramOverrides.length > 0 && (
-          <DetailSection
-            icon={<Settings2 className='size-3.5' aria-hidden='true' />}
-            iconTone='chart-3'
-            label={`${t('Param Override')} (${paramOverrides.length})`}
-          >
-            {paramOverrides.filter(Boolean).map((line) => {
-              const parsed = parseAuditLine(line)
-              if (!parsed) return null
-              return (
-                <div
-                  key={`${parsed.action}-${parsed.content}`}
-                  className='bg-background/60 flex min-w-0 flex-col gap-1.5 rounded border p-2 sm:flex-row sm:items-start sm:gap-2'
-                >
-                  <StatusBadge
-                    variant='neutral'
-                    label={getParamOverrideActionLabel(parsed.action, t)}
-                    className='shrink-0 font-medium'
-                    copyable={false}
-                  />
-                  <span className='min-w-0 font-mono text-[11px] leading-relaxed break-all sm:wrap-break-word'>
-                    {parsed.content}
-                  </span>
-                </div>
-              )
-            })}
-          </DetailSection>
-        )}
+        {paramOverrides &&
+          Array.isArray(paramOverrides) &&
+          paramOverrides.length > 0 && (
+            <DetailSection
+              icon={<Settings2 className='size-3.5' aria-hidden='true' />}
+              iconTone='chart-3'
+              label={`${t('Param Override')} (${paramOverrides.length})`}
+            >
+              {paramOverrides.filter(Boolean).map((line) => {
+                const parsed = parseAuditLine(line)
+                if (!parsed) return null
+                return (
+                  <div
+                    key={`${parsed.action}-${parsed.content}`}
+                    className='bg-background/60 flex min-w-0 flex-col gap-1.5 rounded border p-2 sm:flex-row sm:items-start sm:gap-2'
+                  >
+                    <StatusBadge
+                      variant='neutral'
+                      label={getParamOverrideActionLabel(parsed.action, t)}
+                      className='shrink-0 font-medium'
+                      copyable={false}
+                    />
+                    <span className='min-w-0 font-mono text-[11px] leading-relaxed break-all sm:wrap-break-word'>
+                      {parsed.content}
+                    </span>
+                  </div>
+                )
+              })}
+            </DetailSection>
+          )}
 
         {/* Content */}
         {details && (
