@@ -170,16 +170,28 @@ func TestPreviewTokenModelsCustomAutoEmptyDoesNotInheritGlobalGroups(t *testing.
 	assert.Empty(t, models)
 }
 
-func TestPreviewTokenModelsFiltersDisabledAndUnpricedModels(t *testing.T) {
+func TestPreviewTokenModelsFiltersDisabledChannelsAndUnpricedModels(t *testing.T) {
 	db, user := setupTokenModelsControllerTest(t)
 	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"priced-model":1,"disabled-model":1}`))
 	seedTokenModelsAbility(t, db, "b", "priced-model", constant.ChannelTypeOpenAI, true)
-	seedTokenModelsAbility(t, db, "b", "disabled-model", constant.ChannelTypeOpenAI, false)
+	disabledChannel := seedTokenModelsAbility(t, db, "b", "disabled-model", constant.ChannelTypeOpenAI, true)
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", disabledChannel.Id).Update("status", common.ChannelStatusManuallyDisabled).Error)
 	seedTokenModelsAbility(t, db, "b", "unpriced-model", constant.ChannelTypeOpenAI, true)
 
 	models, response := requestTokenModelScope(t, user.Id, "b", nil)
 	require.True(t, response.Success, response.Message)
 	assert.Equal(t, []string{"priced-model"}, models)
+}
+
+func TestPreviewTokenModelsRespectsUserGroupPermissions(t *testing.T) {
+	db, user := setupTokenModelsControllerTest(t)
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","a":"A"}`))
+	seedTokenModelsAbility(t, db, "a", "gpt-4o", constant.ChannelTypeOpenAI, true)
+	seedTokenModelsAbility(t, db, "b", "gpt-4.1", constant.ChannelTypeOpenAI, true)
+
+	models, response := requestTokenModelScope(t, user.Id, "b", nil)
+	require.True(t, response.Success, response.Message)
+	assert.Empty(t, models)
 }
 
 func TestGetTokenModelsUsesConcreteTokenGroup(t *testing.T) {
