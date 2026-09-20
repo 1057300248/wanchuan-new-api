@@ -279,6 +279,57 @@ func testGroupNamespaceSubscriptionPlanMapWriter(t *testing.T) {
 	assert.Equal(t, "new", stored.DowngradeGroup)
 }
 
+func testSubscriptionPlanLegacyGroupEdits(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		upgrade       *string
+		downgrade     *string
+		wantUpgrade   string
+		wantDowngrade string
+		wantError     bool
+	}{
+		{"omitted", nil, nil, "old", "old", false},
+		{"clear_upgrade_preserve_downgrade", common.GetPointer(""), nil, "", "old", false},
+		{"change_downgrade_preserve_upgrade", nil, common.GetPointer("new"), "old", "new", false},
+		{"explicit_retired_rolls_back", common.GetPointer("new"), common.GetPointer("old"), "old", "old", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupGroupRenameTest(t)
+			seedGroupRenameOption(t, "GroupRatio", `{"old":1}`)
+			plan := SubscriptionPlan{Title: "original", UpgradeGroup: "old", DowngradeGroup: "old", Enabled: true, PriceAmount: 9}
+			require.NoError(t, DB.Create(&plan).Error)
+			require.NoError(t, DB.Model(&Option{}).Where(&Option{Key: "GroupRatio"}).Update("value", `{"new":1}`).Error)
+			seedGroupRenameOption(t, "GroupRenameAliases", `{"old":"new"}`)
+			require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"new":1}`))
+
+			err := DB.Transaction(func(tx *gorm.DB) error {
+				return UpdateSubscriptionPlanTx(tx, plan.Id, SubscriptionPlanUpdate{
+					Plan:         SubscriptionPlan{Title: "edited", PriceAmount: 0, Enabled: false},
+					UpgradeGroup: tc.upgrade, DowngradeGroup: tc.downgrade,
+				})
+			})
+			if tc.wantError {
+				require.ErrorIs(t, err, ErrGroupReferenceRenamed)
+			} else {
+				require.NoError(t, err)
+			}
+			var stored SubscriptionPlan
+			require.NoError(t, DB.First(&stored, plan.Id).Error)
+			assert.Equal(t, tc.wantUpgrade, stored.UpgradeGroup)
+			assert.Equal(t, tc.wantDowngrade, stored.DowngradeGroup)
+			if tc.wantError {
+				assert.Equal(t, plan.Title, stored.Title)
+				assert.Equal(t, plan.PriceAmount, stored.PriceAmount)
+				assert.Equal(t, plan.Enabled, stored.Enabled)
+			} else {
+				assert.Equal(t, "edited", stored.Title)
+				assert.Zero(t, stored.PriceAmount)
+				assert.False(t, stored.Enabled)
+			}
+		})
+	}
+}
+
 func testGroupConfigPubSubAndFallback(t *testing.T) {
 	setupGroupRenameTest(t)
 	seedGroupRenameOption(t, "GroupRatio", `{"old":0.8}`)
@@ -328,7 +379,6 @@ func testGroupConfigPubSubAndFallback(t *testing.T) {
 	assert.False(t, ratio_setting.ContainsGroupRatio("old"))
 	assert.Equal(t, version, groupConfigAppliedVersion.Load())
 }
-
 
 func TestGroupConfigSecondProcessHelper(t *testing.T) {
 	mode := os.Getenv("TEST_GROUP_CONFIG_CHILD_MODE")
