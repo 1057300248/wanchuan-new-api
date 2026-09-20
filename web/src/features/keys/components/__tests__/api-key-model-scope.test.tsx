@@ -16,14 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
+import type { ReactNode } from 'react'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import type { ApiKey } from '../../types'
 import { ApiKeysMutateDrawer } from '../api-keys-mutate-drawer'
 
 const mocks = vi.hoisted(() => ({
@@ -90,20 +91,30 @@ vi.mock('@/components/multi-select', () => ({
     selected,
     onChange,
   }: {
-    options: Array<{ value: string }>
+    options: Array<{ value: string; hint?: string }>
     selected: string[]
     onChange: (values: string[]) => void
   }) => (
     <div>
       <div data-testid='model-options'>
         {options.map((option) => (
-          <button
-            key={option.value}
-            type='button'
-            onClick={() => onChange([...selected, option.value])}
-          >
-            {`model:${option.value}`}
-          </button>
+          <div key={option.value}>
+            <button
+              type='button'
+              onClick={() =>
+                onChange(
+                  selected.includes(option.value)
+                    ? selected.filter((value) => value !== option.value)
+                    : [...selected, option.value]
+                )
+              }
+            >
+              {`model:${option.value}`}
+            </button>
+            {option.hint && (
+              <span>{`hint:${option.value}:${option.hint}`}</span>
+            )}
+          </div>
         ))}
       </div>
       <div data-testid='selected-models'>{selected.join(',')}</div>
@@ -112,9 +123,7 @@ vi.mock('@/components/multi-select', () => ({
 }))
 
 vi.mock('@/components/ui/collapsible', () => ({
-  Collapsible: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
+  Collapsible: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   CollapsibleTrigger: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
@@ -124,13 +133,8 @@ vi.mock('@/components/ui/collapsible', () => ({
 }))
 
 vi.mock('@/components/ui/sheet', () => ({
-  Sheet: ({
-    open,
-    children,
-  }: {
-    open: boolean
-    children: ReactNode
-  }) => (open ? <div>{children}</div> : null),
+  Sheet: ({ open, children }: { open: boolean; children: ReactNode }) =>
+    open ? <div>{children}</div> : null,
   SheetContent: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
@@ -169,7 +173,40 @@ await i18n.init({
   initAsync: false,
 })
 
+const restrictedKey: ApiKey = {
+  id: 7,
+  name: 'restricted',
+  key: 'demo********1234',
+  status: 1,
+  remain_quota: 0,
+  used_quota: 0,
+  unlimited_quota: true,
+  expired_time: -1,
+  created_time: 0,
+  accessed_time: 0,
+  group: 'a',
+  auto_groups: [],
+  cross_group_retry: false,
+  model_limits_enabled: true,
+  model_limits: 'a-only',
+  allow_ips: '',
+}
+
 let client: QueryClient
+
+function renderDrawer(currentRow?: ApiKey) {
+  return render(
+    <I18nextProvider i18n={i18n}>
+      <QueryClientProvider client={client}>
+        <ApiKeysMutateDrawer
+          open
+          onOpenChange={vi.fn()}
+          currentRow={currentRow}
+        />
+      </QueryClientProvider>
+    </I18nextProvider>
+  )
+}
 
 beforeEach(() => {
   client = new QueryClient({
@@ -186,12 +223,22 @@ beforeEach(() => {
     success: true,
     data: { groups: ['a', 'b'], max_count: 5 },
   })
+  mocks.getApiKey.mockResolvedValue({
+    success: true,
+    data: restrictedKey,
+  })
+  mocks.createApiKey.mockResolvedValue({
+    success: true,
+    data: restrictedKey,
+  })
+  mocks.updateApiKey.mockResolvedValue({
+    success: true,
+    data: restrictedKey,
+  })
   mocks.getApiKeyScopeModels.mockImplementation(
     async ({ group }: { group: string }) => {
-      let data: string[] = []
-      if (group === 'a') {
-        data = ['a-only', 'shared']
-      } else if (group === 'b') {
+      let data = ['a-only', 'shared']
+      if (group === 'b') {
         data = ['b-only', 'shared']
       }
       return { success: true, data }
@@ -205,32 +252,24 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-it('updates create-form model choices by group and clears a model that becomes invalid', async () => {
+it('queries the effective default scope for a new key and updates candidates when the group changes', async () => {
   const user = userEvent.setup()
-
-  render(
-    <I18nextProvider i18n={i18n}>
-      <QueryClientProvider client={client}>
-        <ApiKeysMutateDrawer open onOpenChange={vi.fn()} />
-      </QueryClientProvider>
-    </I18nextProvider>
-  )
+  renderDrawer()
 
   await waitFor(() =>
     expect(mocks.getApiKeyScopeModels).toHaveBeenCalledWith({
-      group: 'a',
+      group: '',
       auto_groups_mode: 'inherit',
       auto_groups: [],
     })
   )
 
-  const aOnly = await screen.findByRole('button', { name: 'model:a-only' })
+  expect(
+    await screen.findByRole('button', { name: 'model:a-only' })
+  ).toBeInTheDocument()
   expect(
     screen.queryByRole('button', { name: 'model:b-only' })
   ).not.toBeInTheDocument()
-
-  await user.click(aOnly)
-  expect(screen.getByTestId('selected-models')).toHaveTextContent('a-only')
 
   await user.click(screen.getByRole('button', { name: 'group:b' }))
 
@@ -250,7 +289,90 @@ it('updates create-form model choices by group and clears a model that becomes i
   expect(
     screen.getByRole('button', { name: 'model:b-only' })
   ).toBeInTheDocument()
+})
+
+it('keeps an existing restricted whitelist when candidates are temporarily unavailable', async () => {
+  const user = userEvent.setup()
+  mocks.getApiKeyScopeModels.mockResolvedValue({
+    success: true,
+    data: [],
+  })
+
+  renderDrawer(restrictedKey)
+
   await waitFor(() =>
-    expect(screen.getByTestId('selected-models')).toBeEmptyDOMElement()
+    expect(mocks.getApiKeyScopeModels).toHaveBeenCalledWith({
+      group: 'a',
+      auto_groups_mode: 'inherit',
+      auto_groups: [],
+    })
+  )
+
+  expect(screen.getByTestId('selected-models')).toHaveTextContent('a-only')
+  expect(
+    screen.getByText(
+      'hint:a-only:Unavailable for current routing scope'
+    )
+  ).toBeInTheDocument()
+
+  const nameInput = screen.getByPlaceholderText('Enter a name')
+  await user.clear(nameInput)
+  await user.type(nameInput, 'renamed')
+  await user.click(screen.getByRole('button', { name: 'Save changes' }))
+
+  await waitFor(() => expect(mocks.updateApiKey).toHaveBeenCalledTimes(1))
+  expect(mocks.updateApiKey).toHaveBeenCalledWith(
+    expect.objectContaining({
+      id: restrictedKey.id,
+      name: 'renamed',
+      group: 'a',
+      model_limits_enabled: true,
+      model_limits: 'a-only',
+    })
+  )
+})
+
+it('keeps a restricted payload after a group switch instead of turning it into allow-all', async () => {
+  const user = userEvent.setup()
+  renderDrawer(restrictedKey)
+
+  await waitFor(() =>
+    expect(mocks.getApiKeyScopeModels).toHaveBeenCalledWith({
+      group: 'a',
+      auto_groups_mode: 'inherit',
+      auto_groups: [],
+    })
+  )
+
+  await user.click(screen.getByRole('button', { name: 'group:b' }))
+
+  await waitFor(() =>
+    expect(mocks.getApiKeyScopeModels).toHaveBeenLastCalledWith({
+      group: 'b',
+      auto_groups_mode: 'inherit',
+      auto_groups: [],
+    })
+  )
+
+  expect(screen.getByTestId('selected-models')).toHaveTextContent('a-only')
+  expect(
+    screen.getByText(
+      'hint:a-only:Unavailable for current routing scope'
+    )
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: 'model:b-only' })
+  ).toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: 'Save changes' }))
+
+  await waitFor(() => expect(mocks.updateApiKey).toHaveBeenCalledTimes(1))
+  expect(mocks.updateApiKey).toHaveBeenCalledWith(
+    expect.objectContaining({
+      id: restrictedKey.id,
+      group: 'b',
+      model_limits_enabled: true,
+      model_limits: 'a-only',
+    })
   )
 })
