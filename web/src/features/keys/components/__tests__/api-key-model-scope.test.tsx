@@ -123,7 +123,7 @@ vi.mock('@/components/multi-select', () => ({
 }))
 
 vi.mock('@/components/ui/collapsible', () => ({
-  Collapsible: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  Collapsible: ({ children }: { children: ReactNode }) => (\n    <div>{children}</div>\n  ),
   CollapsibleTrigger: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
@@ -252,7 +252,7 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-it('queries the effective default scope for a new key and updates candidates when the group changes', async () => {
+it('queries default scope and refreshes candidates after a group change', async () => {
   const user = userEvent.setup()
   renderDrawer()
 
@@ -291,7 +291,7 @@ it('queries the effective default scope for a new key and updates candidates whe
   ).toBeInTheDocument()
 })
 
-it('keeps an existing restricted whitelist when candidates are temporarily unavailable', async () => {
+it('preserves a restricted whitelist when candidates are unavailable', async () => {
   const user = userEvent.setup()
   mocks.getApiKeyScopeModels.mockResolvedValue({
     success: true,
@@ -332,7 +332,7 @@ it('keeps an existing restricted whitelist when candidates are temporarily unava
   )
 })
 
-it('keeps a restricted payload after a group switch instead of turning it into allow-all', async () => {
+it('keeps a restricted payload after switching groups', async () => {
   const user = userEvent.setup()
   renderDrawer(restrictedKey)
 
