@@ -195,7 +195,7 @@ type tokenModelScopeRequest struct {
 	AutoGroups     []string `json:"auto_groups"`
 }
 
-func getRoutableModelsForGroups(user *model.User, groups []string, allow func(*model.Channel, string) bool) ([]string, error) {
+func getRoutableModelsForGroups(user *model.UserBase, groups []string, allow func(*model.Channel, string) bool) ([]string, error) {
 	abilities, err := model.GetEnabledAbilitiesWithChannelsForGroups(groups)
 	if err != nil {
 		return nil, err
