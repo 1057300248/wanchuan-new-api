@@ -566,7 +566,7 @@ describe('checked-in baseline', () => {
   test('tracks the pinned upstream revision and every entry has a content hash', () => {
     expect(baseline.version).toBe(1)
     expect(baseline.upstreamRevision).toBe(
-      '7fd06381976cbea126d1f20973548bf60f20e37d'
+      'b0bf2580e2491869ee9fe861c12b86153c3fe5f4'
     )
     expect(baseline.oxlintVersion).toBe('1.74.0')
     expect(baseline.configSha256).toMatch(/^[0-9a-f]{64}$/)
