@@ -15,9 +15,11 @@ import (
 )
 
 type clineErrorDetail struct {
-	Message string
-	Type    string
-	Code    string
+	Message    string
+	Type       string
+	Code       string
+	Param      string
+	StatusCode int
 }
 
 func newClineEnvelopeError(detail clineErrorDetail) *types.NewAPIError {
@@ -31,52 +33,23 @@ func newClineEnvelopeError(detail clineErrorDetail) *types.NewAPIError {
 	if detail.Code != "" {
 		code = detail.Code
 	}
+	statusCode := detail.StatusCode
+	if statusCode < 400 || statusCode > 599 {
+		statusCode = http.StatusBadGateway
+	}
 	return types.WithOpenAIError(types.OpenAIError{
 		Message: detail.Message,
 		Type:    detail.Type,
 		Code:    code,
-	}, http.StatusBadGateway)
+		Param:   detail.Param,
+	}, statusCode)
 }
 
 func clineErrorDetailFromValue(value gjson.Result) clineErrorDetail {
-	switch {
-	case value.Type == gjson.String:
-		return clineErrorDetail{Message: strings.TrimSpace(value.Str)}
-	case value.IsObject():
-		detail := clineErrorDetail{
-			Message: strings.TrimSpace(value.Get("message").Str),
-			Type:    strings.TrimSpace(value.Get("type").Str),
-		}
-		code := value.Get("code")
-		if code.Type == gjson.String {
-			detail.Code = strings.TrimSpace(code.Str)
-		} else if code.Type == gjson.Number {
-			detail.Code = code.String()
-		}
-		if detail.Message == "" {
-			detail.Message = strings.TrimSpace(value.Get("detail").Str)
-		}
-		return detail
-	case value.IsArray():
-		messages := make([]string, 0, len(value.Array()))
-		for _, item := range value.Array() {
-			itemDetail := clineErrorDetailFromValue(item)
-			if itemDetail.Message != "" {
-				messages = append(messages, itemDetail.Message)
-			}
-		}
-		return clineErrorDetail{Message: strings.Join(messages, "; ")}
-	default:
-		return clineErrorDetail{}
-	}
+	return clineErrorDetailAtDepth(value, 0)
 }
 
 func clineErrorDetailFromBody(body []byte) clineErrorDetail {
-	for _, path := range []string{"error", "errors"} {
-		if value := gjson.GetBytes(body, path); value.Exists() && value.Type != gjson.Null {
-			return clineErrorDetailFromValue(value)
-		}
-	}
 	return clineErrorDetailFromValue(gjson.ParseBytes(body))
 }
 
@@ -119,7 +92,7 @@ func normalizeClinePayload(payload []byte) ([]byte, *types.NewAPIError) {
 	}
 	if errorsValue := gjson.GetBytes(payload, "errors"); errorsValue.Exists() && errorsValue.Type != gjson.Null &&
 		!gjson.GetBytes(payload, "error").Exists() && !gjson.GetBytes(payload, "choices").Exists() {
-		return nil, newClineEnvelopeError(clineErrorDetailFromValue(errorsValue))
+		return nil, newClineEnvelopeError(clineErrorDetailFromBody(payload))
 	}
 	return normalizeClineReasoning(payload), nil
 }
@@ -228,13 +201,13 @@ func normalizeClineStreamObject(eventType string, payload []byte) ([]byte, *type
 func clineStreamErrorDetail(eventType string, payload []byte) (clineErrorDetail, bool) {
 	value := gjson.ParseBytes(payload)
 	if nested := value.Get("data.error"); nested.Exists() && nested.Type != gjson.Null {
-		return clineErrorDetailFromValue(nested), true
+		return clineErrorDetailFromBody(payload), true
 	}
 	if errValue := value.Get("error"); errValue.Exists() && errValue.Type != gjson.Null {
-		return clineErrorDetailFromValue(errValue), true
+		return clineErrorDetailFromBody(payload), true
 	}
 	if errorsValue := value.Get("errors"); errorsValue.Exists() && errorsValue.Type != gjson.Null {
-		return clineErrorDetailFromValue(errorsValue), true
+		return clineErrorDetailFromBody(payload), true
 	}
 	if eventType == "error" || value.Get("event").Str == "error" {
 		return clineErrorDetailFromValue(value), true
@@ -255,6 +228,9 @@ func clineErrorFrame(apiErr *types.NewAPIError) string {
 	}
 	if code, ok := openAIError.Code.(string); ok && code != "" {
 		frame["error"].(map[string]any)["code"] = code
+	}
+	if openAIError.Param != "" {
+		frame["error"].(map[string]any)["param"] = openAIError.Param
 	}
 	encoded, err := common.Marshal(frame)
 	if err != nil {

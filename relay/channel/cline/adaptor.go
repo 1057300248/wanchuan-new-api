@@ -75,7 +75,9 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		return converted, nil
 	}
 	restoreClineStreamOptions(info, convertedRequest, streamOptions, false)
-	normalizeClineEmptyMessageContent(convertedRequest)
+	if err := normalizeClineMessageContent(convertedRequest); err != nil {
+		return nil, err
+	}
 	return convertedRequest, nil
 }
 
@@ -89,7 +91,9 @@ func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayIn
 		return converted, nil
 	}
 	restoreClineStreamOptions(info, convertedRequest, nil, true)
-	normalizeClineEmptyMessageContent(convertedRequest)
+	if err := normalizeClineMessageContent(convertedRequest); err != nil {
+		return nil, err
+	}
 	return convertedRequest, nil
 }
 
@@ -103,7 +107,9 @@ func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayIn
 		return converted, nil
 	}
 	restoreClineStreamOptions(info, convertedRequest, nil, true)
-	normalizeClineEmptyMessageContent(convertedRequest)
+	if err := normalizeClineMessageContent(convertedRequest); err != nil {
+		return nil, err
+	}
 	return convertedRequest, nil
 }
 
@@ -132,7 +138,13 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 	if !supportsClineRelay(info) {
 		return nil, unsupportedRelayError(info)
 	}
-	return channel.DoApiRequest(a, c, info, requestBody)
+	// Validate the final wire representation as well: channel overrides and
+	// DTO omitempty fields can otherwise reintroduce invalid content.
+	normalized, err := normalizeClineWireRequest(requestBody)
+	if err != nil {
+		return nil, err
+	}
+	return channel.DoApiRequest(a, c, info, normalized)
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (any, *types.NewAPIError) {
@@ -210,64 +222,5 @@ func restoreClineStreamOptions(info *relaycommon.RelayInfo, request *dto.General
 	}
 	if applyDefault && info.IsStream {
 		request.StreamOptions = &dto.StreamOptions{IncludeUsage: true}
-	}
-}
-
-func normalizeClineEmptyMessageContent(request *dto.GeneralOpenAIRequest) {
-	for i := range request.Messages {
-		message := &request.Messages[i]
-		if !clineRequiresContent(message.Role) || !isEmptyClineContent(message.Content) {
-			continue
-		}
-		message.Content = []map[string]any{{"type": "text", "text": ""}}
-	}
-}
-
-func clineRequiresContent(role string) bool {
-	switch role {
-	case "user", "system", "developer":
-		return true
-	default:
-		return false
-	}
-}
-
-func isEmptyClineContent(content any) bool {
-	switch value := content.(type) {
-	case nil:
-		return true
-	case string:
-		return value == ""
-	case []any:
-		if len(value) == 0 {
-			return true
-		}
-		return len(value) == 1 && isClineEmptyTextPart(value[0])
-	case []dto.MediaContent:
-		if len(value) == 0 {
-			return true
-		}
-		return len(value) == 1 && value[0].Type == "text" && value[0].Text == ""
-	default:
-		return false
-	}
-}
-
-func isClineEmptyTextPart(part any) bool {
-	switch value := part.(type) {
-	case map[string]any:
-		if value["type"] != "text" {
-			return false
-		}
-		text, ok := value["text"]
-		if !ok || text == nil {
-			return true
-		}
-		textValue, ok := text.(string)
-		return !ok || textValue == ""
-	case dto.MediaContent:
-		return value.Type == "text" && value.Text == ""
-	default:
-		return false
 	}
 }
