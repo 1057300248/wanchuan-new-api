@@ -187,15 +187,15 @@ beforeEach(() => {
     data: { groups: ['a', 'b'], max_count: 5 },
   })
   mocks.getApiKeyScopeModels.mockImplementation(
-    async ({ group }: { group: string }) => ({
-      success: true,
-      data:
-        group === 'a'
-          ? ['a-only', 'shared']
-          : group === 'b'
-            ? ['b-only', 'shared']
-            : [],
-    })
+    async ({ group }: { group: string }) => {
+      let data: string[] = []
+      if (group === 'a') {
+        data = ['a-only', 'shared']
+      } else if (group === 'b') {
+        data = ['b-only', 'shared']
+      }
+      return { success: true, data }
+    }
   )
 })
 
@@ -251,6 +251,6 @@ it('updates create-form model choices by group and clears a model that becomes i
     screen.getByRole('button', { name: 'model:b-only' })
   ).toBeInTheDocument()
   await waitFor(() =>
-    expect(screen.getByTestId('selected-models')).toHaveTextContent('')
+    expect(screen.getByTestId('selected-models')).toBeEmptyDOMElement()
   )
 })
