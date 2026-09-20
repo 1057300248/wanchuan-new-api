@@ -286,13 +286,14 @@ it('rejects unverified overrides and preserves Unicode group names losslessly', 
   expect(build('b', ['b'], 'sk-testkey-123')).toBeNull()
   const group = '<国模>-稳定'
   const result = build(group, [group])
-  expect(result).not.toBeNull()
-  const key = new URL(result!).searchParams.get('apiKey')!
+  if (!result) throw new Error('expected a CC Switch URL for a validated group')
+  const key = new URL(result).searchParams.get('apiKey')
+  if (!key) throw new Error('expected an imported API key')
   expect(key.startsWith('sk-testkey-grp-')).toBe(true)
   const encoded = key.slice('sk-testkey-grp-'.length)
-  const bytes = Uint8Array.from(
-    encoded.match(/../g)!.map((part) => Number.parseInt(part, 16))
-  )
+  const pairs = encoded.match(/../g)
+  if (!pairs) throw new Error('expected hex-encoded group bytes')
+  const bytes = Uint8Array.from(pairs.map((part) => Number.parseInt(part, 16)))
   expect(new TextDecoder().decode(bytes)).toBe(group)
 })
 

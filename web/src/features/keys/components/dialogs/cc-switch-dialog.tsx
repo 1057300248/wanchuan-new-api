@@ -28,8 +28,7 @@ import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import { getCCSwitchTokenModels } from '../../api'
-import type { CCSwitchModelsResponse } from '../../api'
+import { getCCSwitchTokenModels, type CCSwitchModelsResponse } from '../../api'
 import type { ApiKey, CCSwitchApp } from '../../types'
 import { ApiKeyGroupCombobox } from '../api-key-group-combobox'
 import {
@@ -273,10 +272,7 @@ function CCSwitchDialogContent(props: Props) {
 
         {currentConfig.modelFields.map((field) => (
           <div key={field.key} className='space-y-2'>
-            <Label
-              htmlFor={`cc-switch-${field.key}`}
-              required={field.required}
-            >
+            <Label htmlFor={`cc-switch-${field.key}`} required={field.required}>
               {t(field.labelKey)}
             </Label>
             <ComboboxInput

@@ -92,7 +92,9 @@ export async function getCCSwitchTokenModels(
 ): Promise<CCSwitchModelsResponse> {
   const params = new URLSearchParams({ app })
   if (group) params.set('group', group)
-  const res = await api.get(`/api/user/tokens/${id}/models?${params.toString()}`)
+  const res = await api.get(
+    `/api/user/tokens/${id}/models?${params.toString()}`
+  )
   return res.data
 }
 
