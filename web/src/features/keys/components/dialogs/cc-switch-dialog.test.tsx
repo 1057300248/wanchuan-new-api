@@ -22,7 +22,7 @@ import type { ApiKey } from '../../types'
 import {
   buildValidatedCCSwitchURL,
   ccSwitchModelsQueryKey,
-} from './cc-switch-dialog'
+} from './cc-switch-utils'
 
 const baseToken: ApiKey = {
   id: 1,

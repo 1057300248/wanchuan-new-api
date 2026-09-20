@@ -26,11 +26,14 @@ import { Button } from '@/components/ui/button'
 import { ComboboxInput } from '@/components/ui/combobox-input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { API_BASE_URL } from '@/lib/api-url'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { getCCSwitchTokenModels } from '../../api'
 import type { ApiKey, CCSwitchApp } from '../../types'
+import {
+  buildValidatedCCSwitchURL,
+  ccSwitchModelsQueryKey,
+} from './cc-switch-utils'
 
 const APP_CONFIGS = {
   claude: {
@@ -56,70 +59,6 @@ const APP_CONFIGS = {
 } as const
 
 type AppType = CCSwitchApp
-
-function getServerAddress(): string {
-  if (API_BASE_URL) return API_BASE_URL
-  try {
-    const raw = localStorage.getItem('status')
-    if (raw) {
-      const status = JSON.parse(raw)
-      if (status.server_address) return status.server_address
-    }
-  } catch {
-    /* empty */
-  }
-  return window.location.origin
-}
-
-function buildCCSwitchURL(
-  app: string,
-  name: string,
-  models: Record<string, string>,
-  apiKey: string
-): string {
-  const serverAddress = getServerAddress()
-  const endpoint = app === 'codex' ? `${serverAddress}/v1` : serverAddress
-  const params = new URLSearchParams()
-  params.set('resource', 'provider')
-  params.set('app', app)
-  params.set('name', name)
-  params.set('endpoint', endpoint)
-  params.set('apiKey', apiKey)
-  for (const [k, v] of Object.entries(models)) {
-    if (v) params.set(k, v)
-  }
-  params.set('homepage', serverAddress)
-  params.set('enabled', 'true')
-  return `ccswitch://v1/import?${params.toString()}`
-}
-
-export function ccSwitchModelsQueryKey(token: ApiKey | null, app: AppType) {
-  return [
-    'ccswitch-models',
-    token?.id ?? 0,
-    token?.group ?? '',
-    (token?.auto_groups ?? []).join('\u001f'),
-    token?.model_limits_enabled ?? false,
-    token?.model_limits ?? '',
-    app,
-  ] as const
-}
-
-export function buildValidatedCCSwitchURL(
-  app: AppType,
-  name: string,
-  models: Record<string, string>,
-  apiKey: string,
-  availableModels: string[]
-): string | null {
-  if (!models.model || availableModels.length === 0) return null
-  const available = new Set(availableModels)
-  for (const modelName of Object.values(models)) {
-    if (modelName && !available.has(modelName)) return null
-  }
-  const key = apiKey.startsWith('sk-') ? apiKey : `sk-${apiKey}`
-  return buildCCSwitchURL(app, name, models, key)
-}
 
 interface Props {
   open: boolean
