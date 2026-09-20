@@ -77,7 +77,7 @@ vi.mock('../api-key-group-combobox', () => ({
           data-selected={value === option.value}
           onClick={() => onValueChange(option.value)}
         >
-          {'group:' + option.value}
+          {`group:${option.value}`}
         </button>
       ))}
     </div>
@@ -102,7 +102,7 @@ vi.mock('@/components/multi-select', () => ({
             type='button'
             onClick={() => onChange([...selected, option.value])}
           >
-            {'model:' + option.value}
+            {`model:${option.value}`}
           </button>
         ))}
       </div>
