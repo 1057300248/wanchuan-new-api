@@ -123,7 +123,9 @@ vi.mock('@/components/multi-select', () => ({
 }))
 
 vi.mock('@/components/ui/collapsible', () => ({
-  Collapsible: ({ children }: { children: ReactNode }) => (\n    <div>{children}</div>\n  ),
+  Collapsible: ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  ),
   CollapsibleTrigger: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
