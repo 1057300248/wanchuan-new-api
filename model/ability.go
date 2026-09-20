@@ -40,6 +40,23 @@ func GetAllEnableAbilityWithChannels() ([]AbilityWithChannel, error) {
 	return abilities, err
 }
 
+// GetEnabledAbilitiesWithChannelsForGroups returns only abilities that are
+// enabled and backed by a currently enabled channel. It is intended for
+// pre-flight capability listings, so disabled channels are never advertised.
+func GetEnabledAbilitiesWithChannelsForGroups(groups []string) ([]AbilityWithChannel, error) {
+	if len(groups) == 0 {
+		return []AbilityWithChannel{}, nil
+	}
+	var abilities []AbilityWithChannel
+	err := DB.Table("abilities").
+		Select("abilities.*, channels.type as channel_type").
+		Joins("join channels on abilities.channel_id = channels.id").
+		Where("abilities.enabled = ? AND channels.status = ?", true, common.ChannelStatusEnabled).
+		Where("abilities."+commonGroupCol+" IN ?", groups).
+		Scan(&abilities).Error
+	return abilities, err
+}
+
 func (ability *Ability) BeforeUpdate(tx *gorm.DB) error {
 	groupSelected := len(tx.Statement.Selects) == 0
 	for _, field := range tx.Statement.Selects {

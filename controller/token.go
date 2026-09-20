@@ -3,13 +3,17 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay"
+	relayhelper "github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -183,6 +187,92 @@ func GetTokenAutoGroups(c *gin.Context) {
 		"groups":    service.GetUserAutoGroup(userGroup),
 		"max_count": setting.GetMaxTokenAutoGroups(),
 	})
+}
+
+func GetTokenModels(c *gin.Context) {
+	tokenID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || tokenID <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	app, ok := relay.NormalizeCCSwitchApp(c.Query("app"))
+	if !ok {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	userID := c.GetInt("id")
+	token, err := model.GetTokenByIds(tokenID, userID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	user, err := model.GetUserCache(userID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	groups, err := service.GetTokenEffectiveGroups(user.Group, token)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	abilities, err := model.GetEnabledAbilitiesWithChannelsForGroups(groups)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if len(abilities) == 0 {
+		common.ApiSuccess(c, []string{})
+		return
+	}
+
+	channelIDs := make([]int, 0, len(abilities))
+	seenChannelIDs := make(map[int]struct{}, len(abilities))
+	for _, ability := range abilities {
+		if _, exists := seenChannelIDs[ability.ChannelId]; exists {
+			continue
+		}
+		seenChannelIDs[ability.ChannelId] = struct{}{}
+		channelIDs = append(channelIDs, ability.ChannelId)
+	}
+	channels, err := model.GetChannelsByIds(channelIDs)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	channelByID := make(map[int]*model.Channel, len(channels))
+	for _, channel := range channels {
+		if channel != nil && channel.Status == common.ChannelStatusEnabled {
+			channelByID[channel.Id] = channel
+		}
+	}
+
+	modelLimit := token.GetModelLimitsMap()
+	acceptUnsetPricing := user.GetSetting().AcceptUnsetRatioModel
+	modelSet := make(map[string]struct{})
+	for _, ability := range abilities {
+		modelName := strings.TrimSpace(ability.Model)
+		if modelName == "" {
+			continue
+		}
+		if token.ModelLimitsEnabled && !middleware.TokenModelLimitAllows(modelLimit, modelName) {
+			continue
+		}
+		if !acceptUnsetPricing && !relayhelper.HasModelBillingConfig(modelName) {
+			continue
+		}
+		channel := channelByID[ability.ChannelId]
+		if channel == nil || !relay.SupportsCCSwitchModel(channel, app, modelName) {
+			continue
+		}
+		modelSet[modelName] = struct{}{}
+	}
+	models := make([]string, 0, len(modelSet))
+	for modelName := range modelSet {
+		models = append(models, modelName)
+	}
+	sort.Strings(models)
+	common.ApiSuccess(c, models)
 }
 
 func GetTokenKey(c *gin.Context) {
