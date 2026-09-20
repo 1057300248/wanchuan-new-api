@@ -280,7 +280,7 @@ export function ApiKeysMutateDrawer({
           auto_groups: scopeAutoGroups,
         })
       ),
-    enabled: open && isFormInitialized && !!selectedGroup,
+    enabled: open && isFormInitialized,
     staleTime: 0,
   })
 
