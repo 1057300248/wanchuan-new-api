@@ -20,7 +20,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
-import type { ReactNode } from 'react'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
@@ -48,28 +47,6 @@ vi.mock('@/lib/api', async (importOriginal) => {
 })
 
 vi.mock('sonner', () => ({ toast: { warning: mocks.warning } }))
-
-// Keep the actual group picker, model picker, radio inputs and query client.
-// Only the dialog shell is simplified to avoid animation/portal timing.
-vi.mock('@/components/dialog', () => ({
-  Dialog: ({
-    open,
-    title,
-    children,
-    footer,
-  }: {
-    open: boolean
-    title: string
-    children: ReactNode
-    footer: ReactNode
-  }) =>
-    open ? (
-      <section role='dialog' aria-label={title}>
-        {children}
-        {footer}
-      </section>
-    ) : null,
-}))
 
 const i18n = createInstance()
 await i18n.init({
@@ -144,7 +121,7 @@ async function selectGroup(
   user: ReturnType<typeof userEvent.setup>,
   group: string
 ) {
-  const picker = screen.getByLabelText('Group')
+  const picker = await screen.findByLabelText('Group')
   await waitFor(() => expect(picker).not.toBeDisabled())
   await user.click(picker)
   await user.click(await screen.findByRole('option', { name: group }))
@@ -257,6 +234,52 @@ it('retains the canonical API key when following its original routing settings',
   await waitFor(() => expect(mocks.open).toHaveBeenCalledTimes(1))
   const imported = new URL(mocks.open.mock.calls[0][0])
   expect(imported.searchParams.get('apiKey')).toBe('sk-testkey')
+})
+
+it.each(['a', ''])(
+  'does not offer a group override for a fixed-group key (%s)',
+  async (group) => {
+    const user = userEvent.setup()
+    mocks.get.mockResolvedValue({
+      data: { success: true, data: ['a-only'], groups: ['a'] },
+    })
+    render(view({ ...token, group, auto_groups: [] }))
+    await waitFor(() =>
+      expect(screen.getByLabelText(/Primary Model/)).not.toBeDisabled()
+    )
+    expect(screen.queryByLabelText('Group')).not.toBeInTheDocument()
+    await selectModel(user, 'a-only')
+    await user.click(screen.getByRole('button', { name: 'Open CC Switch' }))
+    await waitFor(() => expect(mocks.open).toHaveBeenCalledTimes(1))
+    expect(
+      new URL(mocks.open.mock.calls[0][0]).searchParams.get('apiKey')
+    ).toBe('sk-testkey')
+    expect(
+      mocks.get.mock.calls.every(([path]) => !path.includes('&group='))
+    ).toBe(true)
+  }
+)
+
+it('opens model options outside the clipping dialog and supports search and keyboard selection', async () => {
+  const user = userEvent.setup()
+  render(view())
+  const picker = screen.getByLabelText(/Primary Model/)
+  await waitFor(() => expect(picker).not.toBeDisabled())
+  await user.click(picker)
+  expect(picker).toHaveAttribute('aria-expanded', 'true')
+  expect(await screen.findByRole('option', { name: 'a-only' })).toBeVisible()
+  // The centered dialog clips overflow; model options must escape that surface.
+  expect(screen.getByRole('dialog')).not.toContainElement(
+    screen.getByRole('listbox')
+  )
+  await user.type(picker, 'b-only')
+  expect(
+    screen.queryByRole('option', { name: 'a-only' })
+  ).not.toBeInTheDocument()
+  await user.keyboard('{ArrowDown}{Enter}')
+  await waitFor(() => expect(picker).toHaveValue('b-only'))
+  expect(picker).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.getByRole('dialog')).toBeVisible()
 })
 
 it('fails closed when the server cannot load token capabilities', async () => {

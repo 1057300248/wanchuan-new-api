@@ -23,7 +23,8 @@ import { toast } from 'sonner'
 
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
-import { ComboboxInput } from '@/components/ui/combobox-input'
+import { Combobox } from '@/components/ui/combobox'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { requireServerSuccess } from '@/lib/server-error-message'
@@ -127,6 +128,8 @@ function CCSwitchDialogContent(props: Props) {
     },
     ...(modelsData?.groups ?? []).map((value) => ({ value, label: value })),
   ]
+  const canSelectGroup =
+    props.token?.group === 'auto' && (modelsData?.groups?.length ?? 0) > 1
   const currentConfig = APP_CONFIGS[app]
   const noModelsMessage = `${t('API Key')} ${t('Group')}: ${t('No models found')}`
   const hasNoModels = !isFetching && !isError && modelOptions.length === 0
@@ -200,9 +203,7 @@ function CCSwitchDialogContent(props: Props) {
       title={t('Import to CC Switch')}
       contentClassName='sm:max-w-md'
       contentHeight='auto'
-      bodyClassName={
-        currentConfig.modelFields.length === 1 ? 'space-y-4 pb-52' : 'space-y-4'
-      }
+      bodyClassName='space-y-4'
       footer={
         <>
           <Button variant='outline' onClick={() => props.onOpenChange(false)}>
@@ -239,27 +240,26 @@ function CCSwitchDialogContent(props: Props) {
           </RadioGroup>
         </div>
 
-        <div className='space-y-2'>
-          <Label htmlFor='cc-switch-group'>{t('Group')}</Label>
-          <ApiKeyGroupCombobox
-            id='cc-switch-group'
-            options={groupOptions}
-            value={group}
-            onValueChange={handleGroupChange}
-            disabled={isFetching || isSubmitting || !props.token}
-          />
-        </div>
+        {canSelectGroup && (
+          <div className='space-y-2'>
+            <Label htmlFor='cc-switch-group'>{t('Group')}</Label>
+            <ApiKeyGroupCombobox
+              id='cc-switch-group'
+              options={groupOptions}
+              value={group}
+              onValueChange={handleGroupChange}
+              disabled={isFetching || isSubmitting}
+            />
+          </div>
+        )}
 
         <div className='space-y-2'>
           <Label htmlFor='cc-switch-name'>{t('Name')}</Label>
-          <ComboboxInput
+          <Input
             id='cc-switch-name'
-            options={[]}
             value={name}
-            onValueChange={setName}
+            onChange={(event) => setName(event.target.value)}
             placeholder={currentConfig.defaultName}
-            emptyText=''
-            allowCustomValue
             disabled={isSubmitting}
           />
         </div>
@@ -275,12 +275,12 @@ function CCSwitchDialogContent(props: Props) {
             <Label htmlFor={`cc-switch-${field.key}`} required={field.required}>
               {t(field.labelKey)}
             </Label>
-            <ComboboxInput
+            <Combobox
               id={`cc-switch-${field.key}`}
               options={modelOptions}
               value={models[field.key] || ''}
               onValueChange={(value) =>
-                setModels((prev) => ({ ...prev, [field.key]: value }))
+                setModels((prev) => ({ ...prev, [field.key]: value ?? '' }))
               }
               placeholder={t('Select or enter model name')}
               emptyText={t('No models found')}
