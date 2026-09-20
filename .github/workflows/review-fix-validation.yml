@@ -89,8 +89,8 @@ jobs:
       - name: Subscription plan HTTP update regressions
         run: go test ./controller -run '^TestAdminUpdateSubscriptionPlan' -count=1 -v
 
-      - name: CC Switch token-scoped model regressions
-        run: go test ./controller -run '^TestGetTokenModels' -count=1 -v
+      - name: API key token-scoped model regressions
+        run: go test ./controller -run '^(TestGetTokenModels|TestPreviewTokenModels)' -count=1 -v
 
       - name: CC Switch protocol capability regressions
         run: go test ./relay -run '^TestSupportsCCSwitchModel' -count=1 -v
