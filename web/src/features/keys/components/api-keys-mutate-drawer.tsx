@@ -285,26 +285,30 @@ export function ApiKeysMutateDrawer({
   })
 
   const models = useMemo(() => modelsData?.data ?? [], [modelsData?.data])
-
-  useEffect(() => {
-    if (!isFormInitialized || !modelsData?.success) return
-    const availableModels = new Set(models)
-    const validModels = selectedModelLimits.filter((modelName) =>
-      availableModels.has(modelName)
-    )
-    if (validModels.length !== selectedModelLimits.length) {
-      form.setValue('model_limits', validModels, {
-        shouldDirty: true,
-        shouldValidate: true,
-      })
-    }
-  }, [
-    form,
-    isFormInitialized,
-    models,
-    modelsData?.success,
-    selectedModelLimits,
-  ])
+  const availableModelSet = useMemo(() => new Set(models), [models])
+  const unavailableSelectedModels = useMemo(
+    () =>
+      modelsData?.success
+        ? selectedModelLimits.filter(
+            (modelName) => !availableModelSet.has(modelName)
+          )
+        : [],
+    [availableModelSet, modelsData?.success, selectedModelLimits]
+  )
+  const modelOptions = useMemo(
+    () => [
+      ...models.map((modelName) => ({
+        label: modelName,
+        value: modelName,
+      })),
+      ...unavailableSelectedModels.map((modelName) => ({
+        label: modelName,
+        value: modelName,
+        hint: t('Unavailable for current routing scope'),
+      })),
+    ],
+    [models, t, unavailableSelectedModels]
+  )
 
   // Correct group after groups load: if the form value is not in available groups, fall back
   useEffect(() => {
@@ -745,10 +749,7 @@ export function ApiKeysMutateDrawer({
                           <FormLabel>{t('Model Limits')}</FormLabel>
                           <FormControl>
                             <MultiSelect
-                              options={models.map((m) => ({
-                                label: m,
-                                value: m,
-                              }))}
+                              options={modelOptions}
                               selected={field.value}
                               onChange={field.onChange}
                               placeholder={t(
@@ -757,7 +758,16 @@ export function ApiKeysMutateDrawer({
                             />
                           </FormControl>
                           <FormDescription>
-                            {t('Limit which models can be used with this key')}
+                            {unavailableSelectedModels.length > 0
+                              ? t(
+                                  '{{count}} selected model(s) are unavailable for the current routing scope. They remain in the whitelist until you remove or replace them.',
+                                  {
+                                    count: unavailableSelectedModels.length,
+                                  }
+                                )
+                              : t(
+                                  'Limit which models can be used with this key'
+                                )}
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
