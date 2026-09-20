@@ -25,13 +25,16 @@ func setupTokenModelsControllerTest(t *testing.T) (*gorm.DB, *model.User) {
 	previousAuto := setting.AutoGroups2JsonString()
 	previousUsable := setting.UserUsableGroups2JSONString()
 	previousRatios := ratio_setting.GroupRatio2JSONString()
+	previousModelRatios := ratio_setting.ModelRatio2JSONString()
 	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["a","b","default"]`))
 	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","a":"A","b":"B"}`))
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"a":1,"b":1}`))
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-4o":1,"gpt-4.1":1}`))
 	t.Cleanup(func() {
 		require.NoError(t, setting.UpdateAutoGroupsByJsonString(previousAuto))
 		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(previousUsable))
 		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(previousRatios))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(previousModelRatios))
 	})
 
 	user := &model.User{
@@ -152,6 +155,18 @@ func TestGetTokenModelsFiltersByApplicationProtocolCapability(t *testing.T) {
 	models, response := requestTokenModels(t, token.Id, user.Id, "codex")
 	require.True(t, response.Success, response.Message)
 	assert.Equal(t, []string{"gpt-4.1"}, models)
+}
+
+func TestGetTokenModelsFiltersModelsWithoutBillingConfig(t *testing.T) {
+	db, user := setupTokenModelsControllerTest(t)
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"priced-model":1}`))
+	token := seedTokenModelsToken(t, db, user.Id, "pricing", "a", nil)
+	seedTokenModelsAbility(t, db, "a", "priced-model", constant.ChannelTypeOpenAI, true)
+	seedTokenModelsAbility(t, db, "a", "unpriced-model", constant.ChannelTypeOpenAI, true)
+
+	models, response := requestTokenModels(t, token.Id, user.Id, "codex")
+	require.True(t, response.Success, response.Message)
+	assert.Equal(t, []string{"priced-model"}, models)
 }
 
 func TestGetTokenModelsRejectsOtherUsersToken(t *testing.T) {
