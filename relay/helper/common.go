@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/privacy"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 
@@ -68,6 +69,7 @@ func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
 	if err != nil {
 		common.SysError("error marshalling stream response: " + err.Error())
 	} else {
+		jsonData = privacy.SanitizeClientPayload(c, jsonData)
 		c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
 		c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
 	}
@@ -80,6 +82,7 @@ func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
 		return
 	}
 
+	data = string(privacy.SanitizeClientPayload(c, []byte(data)))
 	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
 	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s\n", data)})
 	_ = FlushWriter(c)
@@ -96,6 +99,7 @@ func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data st
 	}
 	SetEventStreamHeaders(c)
 
+	data = string(privacy.SanitizeClientPayload(c, []byte(data)))
 	// CustomEvent discards write errors. Responses handlers need the actual
 	// result so a broken client connection is not recorded as a completed stream.
 	frame := fmt.Sprintf("event: %s\ndata: %s\n\n", resp.Type, data)
@@ -125,6 +129,7 @@ func StringData(c *gin.Context, str string) error {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
+	str = string(privacy.SanitizeClientPayload(c, []byte(str)))
 	c.Render(-1, common.CustomEvent{Data: "data: " + str})
 	return FlushWriter(c)
 }
@@ -173,6 +178,7 @@ func WssObject(c *gin.Context, ws *websocket.Conn, object any) error {
 	if err != nil {
 		return fmt.Errorf("error marshalling object: %w", err)
 	}
+	jsonData = privacy.SanitizeClientPayload(c, jsonData)
 	if ws == nil {
 		logger.LogError(c, "websocket connection is nil")
 		return errors.New("websocket connection is nil")
@@ -181,10 +187,11 @@ func WssObject(c *gin.Context, ws *websocket.Conn, object any) error {
 	return ws.WriteMessage(1, jsonData)
 }
 
-func WssError(c *gin.Context, ws *websocket.Conn, openaiError types.OpenAIError) {
-	if ws == nil {
+func WssError(c *gin.Context, ws *websocket.Conn, apiErr *types.NewAPIError) {
+	if ws == nil || apiErr == nil {
 		return
 	}
+	openaiError := privacy.SanitizeClientOpenAIError(c, apiErr.StatusCode, apiErr.ToOpenAIError())
 	errorObj := &dto.RealtimeEvent{
 		Type:    "error",
 		EventId: GetLocalRealtimeID(c),

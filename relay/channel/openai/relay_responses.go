@@ -39,6 +39,13 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
+	info.ObserveResponseModel(responsesResponse.Model)
+	if info.OriginModelName != "" && gjson.GetBytes(responseBody, "model").Exists() {
+		responseBody, err = sjson.SetBytes(responseBody, "model", info.OriginModelName)
+		if err != nil {
+			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		}
+	}
 	responseBody = rewriteSGLangResponsesCreatedAt(info, responseBody, "created_at", responsesResponse.CreatedAt)
 
 	// 写入新的 response body
@@ -86,7 +93,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	sequenceNumber := 0
 	failureResponse := dto.OpenAIResponsesResponse{
 		ID: "resp_" + common.GetUUID(), Object: "response",
-		CreatedAt: dto.IntValue(time.Now().Unix()), Model: info.UpstreamModelName,
+		CreatedAt: dto.IntValue(time.Now().Unix()), Model: info.OriginModelName,
 		Status: []byte(`"failed"`), Output: []dto.ResponsesOutput{},
 	}
 
@@ -112,14 +119,21 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sequenceNumber++
 		}
 		if response := streamResponse.Response; response != nil {
+			info.ObserveResponseModel(response.Model)
 			if response.ID != "" {
 				failureResponse.ID = response.ID
 			}
 			if response.CreatedAt != 0 {
 				failureResponse.CreatedAt = response.CreatedAt
 			}
-			if response.Model != "" {
-				failureResponse.Model = response.Model
+			if info.OriginModelName != "" && gjson.Get(data, "response.model").Exists() {
+				var rewriteErr error
+				data, rewriteErr = sjson.Set(data, "response.model", info.OriginModelName)
+				if rewriteErr != nil {
+					streamErr = types.NewErrorWithStatusCode(rewriteErr, types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+					sr.Stop(streamErr)
+					return
+				}
 			}
 			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", response.CreatedAt))
 		}
@@ -158,6 +172,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 	})
 
+	common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, info.StreamStatus)
+	info.StreamStatus.RequireTerminal()
 	if streamErr == nil && !terminalSeen {
 		statusCode := http.StatusBadGateway
 		var err error = fmt.Errorf("upstream response stream ended before a terminal event")

@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/privacy"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -34,6 +35,33 @@ func HandleStreamFormat(c *gin.Context, info *relaycommon.RelayInfo, data string
 		return handleGeminiFormat(c, data, info)
 	}
 	return nil
+}
+
+// HandleStreamFailure emits one protocol-shaped, privacy-sanitized error after
+// partial stream output. It deliberately does not emit a normal terminal.
+func HandleStreamFailure(c *gin.Context, info *relaycommon.RelayInfo, apiErr *types.NewAPIError) error {
+	if c == nil || info == nil || apiErr == nil {
+		return fmt.Errorf("invalid stream failure")
+	}
+	switch info.RelayFormat {
+	case types.RelayFormatOpenAI:
+		safe := privacy.SanitizeClientOpenAIError(c, apiErr.StatusCode, apiErr.ToOpenAIError())
+		return helper.ObjectData(c, map[string]any{"error": safe})
+	case types.RelayFormatClaude:
+		safe := privacy.SanitizeClientClaudeError(c, apiErr.StatusCode, apiErr.ToClaudeError())
+		return helper.ClaudeData(c, dto.ClaudeResponse{Type: "error", Error: safe})
+	case types.RelayFormatGemini:
+		safe := privacy.SanitizeClientOpenAIError(c, apiErr.StatusCode, apiErr.ToOpenAIError())
+		return helper.ObjectData(c, map[string]any{
+			"error": map[string]any{
+				"code":    apiErr.StatusCode,
+				"message": safe.Message,
+				"status":  "INTERNAL",
+			},
+		})
+	default:
+		return fmt.Errorf("unsupported stream failure format %s", info.RelayFormat)
+	}
 }
 
 func handleClaudeFormat(c *gin.Context, data string, info *relaycommon.RelayInfo) error {
@@ -137,13 +165,14 @@ func ProcessStreamResponse(streamResponse dto.ChatCompletionsStreamResponse, res
 	return nil
 }
 
-func processTokenData(relayMode int, data string, responseTextBuilder *strings.Builder, toolCount *int) error {
-	switch relayMode {
+func processTokenData(info *relaycommon.RelayInfo, data string, responseTextBuilder *strings.Builder, toolCount *int) error {
+	switch info.RelayMode {
 	case relayconstant.RelayModeChatCompletions:
 		var streamResponse dto.ChatCompletionsStreamResponse
 		if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
 			return err
 		}
+		info.ObserveResponseModel(streamResponse.Model)
 		return ProcessStreamResponse(streamResponse, responseTextBuilder, toolCount)
 	case relayconstant.RelayModeCompletions:
 		var streamResponse dto.CompletionsStreamResponse

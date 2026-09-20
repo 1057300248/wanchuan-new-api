@@ -11,6 +11,7 @@ import (
 )
 
 const ExternalIdentityProviderTelegram = "telegram"
+const ExternalIdentityProviderGitHub = "github"
 
 var ErrExternalIdentityAlreadyClaimed = errors.New("external identity is already claimed")
 
@@ -74,6 +75,35 @@ func ReleaseExternalIdentityWithTx(tx *gorm.DB, provider string, userId int) err
 	}
 	return tx.Where("provider = ? AND user_id = ?", provider, userId).
 		Delete(&ExternalIdentityClaim{}).Error
+}
+
+// UpdateGitHubBindingWithTx reserves the unique subject before writing the
+// legacy users column. The caller owns the transaction, including rollback.
+func UpdateGitHubBindingWithTx(tx *gorm.DB, userID int, subject string) error {
+	var user User
+	if err := lockForUpdate(tx).Select("id", "github_id").First(&user, userID).Error; err != nil {
+		return err
+	}
+	if subject != "" {
+		var count int64
+		if err := tx.Unscoped().Model(&User{}).Where("github_id = ? AND id <> ?", subject, userID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count != 0 {
+			return ErrExternalIdentityAlreadyClaimed
+		}
+	}
+	if user.GitHubId != subject {
+		if err := ReleaseExternalIdentityWithTx(tx, ExternalIdentityProviderGitHub, userID); err != nil {
+			return err
+		}
+	}
+	if subject != "" {
+		if err := ClaimExternalIdentityWithTx(tx, ExternalIdentityProviderGitHub, subject, userID); err != nil {
+			return err
+		}
+	}
+	return tx.Model(&User{}).Where("id = ?", userID).Update("github_id", subject).Error
 }
 
 func GetUserByTelegramID(telegramID string) (*User, error) {

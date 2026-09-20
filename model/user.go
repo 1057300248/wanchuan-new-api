@@ -232,6 +232,9 @@ func UpdateUserBindColumn(userId int, column string, value string) error {
 	if !userBindColumns[column] {
 		return fmt.Errorf("invalid user bind column: %s", column)
 	}
+	if column == "github_id" {
+		return DB.Transaction(func(tx *gorm.DB) error { return UpdateGitHubBindingWithTx(tx, userId, value) })
+	}
 	return DB.Model(&User{}).Where("id = ?", userId).Update(column, value).Error
 }
 
@@ -865,6 +868,19 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 		}
 	}
 	newUser := *user
+	// Updates(struct) writes Group whenever it is non-empty, even if a snapshot
+	// read later says the value is unchanged. Therefore acquire/validate the
+	// namespace before reading current state whenever this request carries a
+	// group value; otherwise a pre-rename stale object could restore old after
+	// waiting on the row lock held by rename.
+	if newUser.Group != "" {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
+		if err := validateGroupNamesForWriteTx(tx, newUser.Group); err != nil {
+			return err
+		}
+	}
 	current := User{}
 	if err = tx.First(&current, user.Id).Error; err != nil {
 		return err
@@ -872,10 +888,11 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 	// Updates(struct) ignores zero values. Match that behavior when deciding
 	// whether this request actually changes authentication-sensitive state;
 	// partial self-profile updates intentionally leave role/status/group empty.
+	groupChanged := newUser.Group != "" && current.Group != newUser.Group
 	authChanged := (updatePassword && current.Password != newUser.Password) ||
 		(newUser.Role != 0 && current.Role != newUser.Role) ||
 		(newUser.Status != 0 && current.Status != newUser.Status) ||
-		(newUser.Group != "" && current.Group != newUser.Group)
+		groupChanged
 	if authChanged {
 		newUser.AuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
 		if err != nil {
@@ -928,11 +945,21 @@ func (user *User) EditWithTx(tx *gorm.DB, updatePassword bool) error {
 		updates["password"] = newUser.Password
 	}
 
+	// Edit always writes the group field. Acquire the namespace lock before
+	// reading the current row so a pre-rename snapshot cannot decide that the
+	// group is "unchanged" and later restore a retired key.
+	if err := lockGroupNamespace(tx); err != nil {
+		return err
+	}
+	if err := validateGroupNamesForWriteTx(tx, newUser.Group); err != nil {
+		return err
+	}
 	current := User{}
 	if err = tx.First(&current, user.Id).Error; err != nil {
 		return err
 	}
-	authChanged := (updatePassword && current.Password != newUser.Password) || current.Group != newUser.Group
+	groupChanged := current.Group != newUser.Group
+	authChanged := (updatePassword && current.Password != newUser.Password) || groupChanged
 	if authChanged {
 		newUser.AuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
 		if err != nil {
@@ -969,8 +996,8 @@ func (user *User) ClearBinding(bindingType string) error {
 		if err := tx.Model(&User{}).Where("id = ?", user.Id).Update(column, "").Error; err != nil {
 			return err
 		}
-		if bindingType == ExternalIdentityProviderTelegram {
-			return ReleaseExternalIdentityWithTx(tx, ExternalIdentityProviderTelegram, user.Id)
+		if bindingType == ExternalIdentityProviderTelegram || bindingType == ExternalIdentityProviderGitHub {
+			return ReleaseExternalIdentityWithTx(tx, bindingType, user.Id)
 		}
 		return nil
 	}); err != nil {
@@ -1133,16 +1160,19 @@ func (user *User) FillUserByGitHubId() error {
 	if user.GitHubId == "" {
 		return errors.New("GitHub id 为空！")
 	}
-	DB.Where(User{GitHubId: user.GitHubId}).First(user)
-	return nil
-}
-
-// UpdateGitHubId updates the user's GitHub ID (used for migration from login to numeric ID)
-func (user *User) UpdateGitHubId(newGitHubId string) error {
-	if user.Id == 0 {
-		return errors.New("user id is empty")
+	var users []User
+	if err := DB.Unscoped().Where("github_id = ?", user.GitHubId).Limit(2).Find(&users).Error; err != nil {
+		return err
 	}
-	return DB.Model(user).Update("github_id", newGitHubId).Error
+	if len(users) > 1 {
+		return ErrExternalIdentityAlreadyClaimed
+	}
+	if len(users) == 0 || users[0].DeletedAt.Valid {
+		user.Id = 0
+		return nil
+	}
+	*user = users[0]
+	return nil
 }
 
 func (user *User) FillUserByDiscordId() error {
@@ -1209,7 +1239,9 @@ func IsWeChatIdAlreadyTaken(wechatId string) bool {
 }
 
 func IsGitHubIdAlreadyTaken(githubId string) bool {
-	return DB.Unscoped().Where("github_id = ?", githubId).Find(&User{}).RowsAffected == 1
+	var count int64
+	err := DB.Unscoped().Model(&User{}).Where("github_id = ?", githubId).Count(&count).Error
+	return err != nil || count > 0
 }
 
 func IsDiscordIdAlreadyTaken(discordId string) bool {

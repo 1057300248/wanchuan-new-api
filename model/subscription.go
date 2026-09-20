@@ -38,6 +38,75 @@ var (
 	ErrSubscriptionOrderStatusInvalid = errors.New("subscription order status invalid")
 )
 
+// SubscriptionPlanUpdate is the authoritative write boundary for an admin
+// plan edit. A nil group pointer means the client omitted that field; a
+// non-nil empty string explicitly clears it.
+type SubscriptionPlanUpdate struct {
+	Plan           SubscriptionPlan
+	UpgradeGroup   *string
+	DowngradeGroup *string
+}
+
+// UpdateSubscriptionPlanTx updates a plan while validating the exact group
+// values that will be written after acquiring the shared namespace lock.
+func UpdateSubscriptionPlanTx(tx *gorm.DB, id int, request SubscriptionPlanUpdate) error {
+	if tx == nil || id <= 0 {
+		return errors.New("invalid subscription plan update")
+	}
+	if err := lockGroupNamespace(tx); err != nil {
+		return err
+	}
+	var current SubscriptionPlan
+	if err := lockForUpdate(tx).Where("id = ?", id).First(&current).Error; err != nil {
+		return err
+	}
+	upgrade, downgrade := current.UpgradeGroup, current.DowngradeGroup
+	if request.UpgradeGroup != nil {
+		upgrade = strings.TrimSpace(*request.UpgradeGroup)
+		if err := validateConfiguredGroupNamesForWriteTx(tx, upgrade); err != nil {
+			return err
+		}
+	}
+	if request.DowngradeGroup != nil {
+		downgrade = strings.TrimSpace(*request.DowngradeGroup)
+		if err := validateConfiguredGroupNamesForWriteTx(tx, downgrade); err != nil {
+			return err
+		}
+	}
+	updateMap := map[string]any{
+		"title":                      request.Plan.Title,
+		"subtitle":                   request.Plan.Subtitle,
+		"price_amount":               request.Plan.PriceAmount,
+		"currency":                   request.Plan.Currency,
+		"duration_unit":              request.Plan.DurationUnit,
+		"duration_value":             request.Plan.DurationValue,
+		"custom_seconds":             request.Plan.CustomSeconds,
+		"enabled":                    request.Plan.Enabled,
+		"sort_order":                 request.Plan.SortOrder,
+		"stripe_price_id":            request.Plan.StripePriceId,
+		"creem_product_id":           request.Plan.CreemProductId,
+		"waffo_pancake_product_id":   request.Plan.WaffoPancakeProductId,
+		"max_purchase_per_user":      request.Plan.MaxPurchasePerUser,
+		"total_amount":               request.Plan.TotalAmount,
+		"upgrade_group":              upgrade,
+		"downgrade_group":            downgrade,
+		"quota_reset_period":         request.Plan.QuotaResetPeriod,
+		"quota_reset_custom_seconds": request.Plan.QuotaResetCustomSeconds,
+		"updated_at":                 common.GetTimestamp(),
+	}
+	if request.Plan.AllowBalancePay != nil {
+		updateMap["allow_balance_pay"] = *request.Plan.AllowBalancePay
+	}
+	if request.Plan.AllowWalletOverflow != nil {
+		updateMap["allow_wallet_overflow"] = *request.Plan.AllowWalletOverflow
+	}
+	// This writer already owns the namespace/row locks, validates the exact
+	// map candidates, and sets updated_at explicitly. Skip SubscriptionPlan's
+	// generic hook here so omitted group fields are not revalidated from the
+	// receiver snapshot as if they were part of this request.
+	return tx.Session(&gorm.Session{SkipHooks: true}).Model(&current).Updates(updateMap).Error
+}
+
 const (
 	subscriptionPlanCacheNamespace     = "new-api:subscription_plan:v1"
 	subscriptionPlanInfoCacheNamespace = "new-api:subscription_plan_info:v1"
@@ -190,6 +259,12 @@ type SubscriptionPlan struct {
 }
 
 func (p *SubscriptionPlan) BeforeCreate(tx *gorm.DB) error {
+	if err := lockGroupNamespace(tx); err != nil {
+		return err
+	}
+	if err := validateGroupNamesForWriteTx(tx, p.UpgradeGroup, p.DowngradeGroup); err != nil {
+		return err
+	}
 	now := common.GetTimestamp()
 	p.CreatedAt = now
 	p.UpdatedAt = now
@@ -197,6 +272,12 @@ func (p *SubscriptionPlan) BeforeCreate(tx *gorm.DB) error {
 }
 
 func (p *SubscriptionPlan) BeforeUpdate(tx *gorm.DB) error {
+	if err := lockGroupNamespace(tx); err != nil {
+		return err
+	}
+	if err := validateGroupNamesForWriteTx(tx, p.UpgradeGroup, p.DowngradeGroup); err != nil {
+		return err
+	}
 	p.UpdatedAt = common.GetTimestamp()
 	return nil
 }
@@ -281,6 +362,12 @@ type UserSubscription struct {
 }
 
 func (s *UserSubscription) BeforeCreate(tx *gorm.DB) error {
+	if err := lockGroupNamespace(tx); err != nil {
+		return err
+	}
+	if err := validateGroupNamesForWriteTx(tx, s.UpgradeGroup, s.PrevUserGroup, s.DowngradeGroup); err != nil {
+		return err
+	}
 	now := common.GetTimestamp()
 	s.CreatedAt = now
 	s.UpdatedAt = now
@@ -288,6 +375,21 @@ func (s *UserSubscription) BeforeCreate(tx *gorm.DB) error {
 }
 
 func (s *UserSubscription) BeforeUpdate(tx *gorm.DB) error {
+	groupFieldsSelected := len(tx.Statement.Selects) == 0
+	for _, field := range tx.Statement.Selects {
+		switch field {
+		case "*", "upgrade_group", "UpgradeGroup", "prev_user_group", "PrevUserGroup", "downgrade_group", "DowngradeGroup":
+			groupFieldsSelected = true
+		}
+	}
+	if groupFieldsSelected {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
+		if err := validateGroupNamesForWriteTx(tx, s.UpgradeGroup, s.PrevUserGroup, s.DowngradeGroup); err != nil {
+			return err
+		}
+	}
 	s.UpdatedAt = common.GetTimestamp()
 	return nil
 }
@@ -441,6 +543,9 @@ func downgradeUserGroupForSubscriptionTx(tx *gorm.DB, sub *UserSubscription, now
 	if tx == nil || sub == nil {
 		return "", errors.New("invalid downgrade args")
 	}
+	if err := lockGroupNamespace(tx); err != nil {
+		return "", err
+	}
 	downgradeGroup := strings.TrimSpace(sub.DowngradeGroup)
 	upgradeGroup := strings.TrimSpace(sub.UpgradeGroup)
 	// Nothing to do if neither an explicit downgrade target nor an upgrade snapshot exists.
@@ -474,8 +579,7 @@ func downgradeUserGroupForSubscriptionTx(tx *gorm.DB, sub *UserSubscription, now
 	if target == "" || target == currentGroup {
 		return "", nil
 	}
-	if err := tx.Model(&User{}).Where("id = ?", sub.UserId).
-		Update("group", target).Error; err != nil {
+	if err := updateUserGroupTx(tx, sub.UserId, target); err != nil {
 		return "", err
 	}
 	return target, nil
@@ -484,6 +588,9 @@ func downgradeUserGroupForSubscriptionTx(tx *gorm.DB, sub *UserSubscription, now
 func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *SubscriptionPlan, source string) (*UserSubscription, error) {
 	if tx == nil {
 		return nil, errors.New("tx is nil")
+	}
+	if err := lockGroupNamespace(tx); err != nil {
+		return nil, err
 	}
 	if plan == nil || plan.Id == 0 {
 		return nil, errors.New("invalid plan")
@@ -523,8 +630,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 		}
 		if currentGroup != upgradeGroup {
 			prevGroup = currentGroup
-			if err := tx.Model(&User{}).Where("id = ?", userId).
-				Update("group", upgradeGroup).Error; err != nil {
+			if err := updateUserGroupTx(tx, userId, upgradeGroup); err != nil {
 				return nil, err
 			}
 		}
@@ -580,6 +686,9 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 	var logPaymentMethod string
 	var upgradeGroup string
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
 		var order SubscriptionOrder
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
 			return ErrSubscriptionOrderNotFound
@@ -718,7 +827,11 @@ func AdminBindSubscription(userId int, planId int, sourceNote string) (string, e
 	}
 	groupChanged := false
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		// 与 CompleteSubscriptionOrder 一致：先锁用户行，再做购买次数检查。
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
+		// Namespace lock precedes the user row lock, matching group rename's
+		// global lock order and preventing a PostgreSQL deadlock cycle.
 		var userRow User
 		if err := lockForUpdate(tx).Select("id").Where("id = ?", userId).First(&userRow).Error; err != nil {
 			return err
@@ -764,6 +877,9 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 	var upgradeGroup string
 	var ledgerTotalAfter int
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
 		plan, err := getSubscriptionPlanByIdTx(tx, planId)
 		if err != nil {
 			return err
@@ -944,6 +1060,9 @@ func AdminInvalidateUserSubscription(userSubscriptionId int) (string, error) {
 	downgradeGroup := ""
 	var userId int
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
 		var sub UserSubscription
 		if err := lockForUpdate(tx).
 			Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
@@ -989,6 +1108,9 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (string, error) {
 	downgradeGroup := ""
 	var userId int
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
 		var sub UserSubscription
 		if err := lockForUpdate(tx).
 			Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
@@ -1034,7 +1156,7 @@ func resetUserSubscriptionTx(tx *gorm.DB, sub *UserSubscription, plan *Subscript
 			sub.LastResetTime = 0
 		}
 	}
-	return tx.Save(sub).Error
+	return tx.Select("amount_used", "last_reset_time", "next_reset_time", "updated_at").Updates(sub).Error
 }
 
 func buildSubscriptionResetResult(plan *SubscriptionPlan, subs []UserSubscription, advanceResetTime bool) *SubscriptionResetResult {
@@ -1173,6 +1295,9 @@ func ExpireDueSubscriptions(limit int) (int, error) {
 	for userId := range userIds {
 		cacheGroup := ""
 		err := DB.Transaction(func(tx *gorm.DB) error {
+			if err := lockGroupNamespace(tx); err != nil {
+				return err
+			}
 			res := tx.Model(&UserSubscription{}).
 				Where("user_id = ? AND status = ? AND end_time > 0 AND end_time <= ?", userId, "active", now).
 				Updates(map[string]any{
@@ -1228,8 +1353,7 @@ func ExpireDueSubscriptions(limit int) (int, error) {
 			if target == "" || target == currentGroup {
 				return nil
 			}
-			if err := tx.Model(&User{}).Where("id = ?", userId).
-				Update("group", target).Error; err != nil {
+			if err := updateUserGroupTx(tx, userId, target); err != nil {
 				return err
 			}
 			cacheGroup = target
@@ -1295,14 +1419,14 @@ func maybeResetUserSubscriptionWithPlanTx(tx *gorm.DB, sub *UserSubscription, pl
 		if sub.NextResetTime == 0 && next > 0 {
 			sub.NextResetTime = next
 			sub.LastResetTime = base.Unix()
-			return tx.Save(sub).Error
+			return tx.Select("next_reset_time", "last_reset_time", "updated_at").Updates(sub).Error
 		}
 		return nil
 	}
 	sub.AmountUsed = 0
 	sub.LastResetTime = base.Unix()
 	sub.NextResetTime = next
-	return tx.Save(sub).Error
+	return tx.Select("amount_used", "last_reset_time", "next_reset_time", "updated_at").Updates(sub).Error
 }
 
 // PreConsumeUserSubscription pre-consumes from any active subscription total quota.
@@ -1391,7 +1515,7 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 				return err
 			}
 			sub.AmountUsed += amount
-			if err := tx.Save(&sub).Error; err != nil {
+			if err := tx.Select("amount_used", "updated_at").Updates(&sub).Error; err != nil {
 				return err
 			}
 			returnValue.UserSubscriptionId = sub.Id
@@ -1537,6 +1661,6 @@ func PostConsumeUserSubscriptionDelta(userSubscriptionId int, delta int64) error
 			return fmt.Errorf("subscription used exceeds total, used=%d total=%d", newUsed, sub.AmountTotal)
 		}
 		sub.AmountUsed = newUsed
-		return tx.Save(&sub).Error
+		return tx.Select("amount_used", "updated_at").Updates(&sub).Error
 	})
 }

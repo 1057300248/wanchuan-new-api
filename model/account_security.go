@@ -121,6 +121,9 @@ func UpdateUserBindColumnForSessionWithTx(tx *gorm.DB, identity AuthSessionIdent
 	}
 	// Preserve the existing ownership check within the transaction and update
 	// only the chosen binding column, never a complete user snapshot.
+	if column == "github_id" {
+		return UpdateGitHubBindingWithTx(tx, identity.UserID, value)
+	}
 	var count int64
 	if err := tx.Model(&User{}).Where(column+" = ? AND id <> ?", value, identity.UserID).Count(&count).Error; err != nil {
 		return err
@@ -148,4 +151,29 @@ func UpdateUserOAuthBindingForSessionWithTx(tx *gorm.DB, identity AuthSessionIde
 	}
 	// The existing unique provider/subject index rejects concurrent ownership.
 	return tx.Model(&binding).Update("provider_user_id", subject).Error
+}
+
+// MigrateLegacyGitHubBindingWithTx rewrites a login-name GitHub binding to the
+// numeric account ID once the login flow has confirmed the account. It reports
+// whether the row was rewritten; a row whose binding changed since it was read
+// is left untouched.
+func MigrateLegacyGitHubBindingWithTx(tx *gorm.DB, userID int, legacyID, gitHubID string, emailEvidence *User) (bool, error) {
+	if userID <= 0 || legacyID == "" || gitHubID == "" {
+		return false, ErrAccountBindingChanged
+	}
+	var current User
+	if err := lockForUpdate(tx).First(&current, userID).Error; err != nil {
+		return false, err
+	}
+	if emailEvidence != nil && (current.AuthVersion != emailEvidence.AuthVersion || current.Status != common.UserStatusEnabled ||
+		NormalizeEmail(current.Email) == "" || NormalizeEmail(current.Email) != NormalizeEmail(emailEvidence.Email)) {
+		return false, ErrAccountBindingChanged
+	}
+	if current.GitHubId != legacyID {
+		return false, nil
+	}
+	if err := UpdateGitHubBindingWithTx(tx, userID, gitHubID); err != nil {
+		return false, err
+	}
+	return true, nil
 }

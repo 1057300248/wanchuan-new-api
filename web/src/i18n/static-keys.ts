@@ -90,6 +90,11 @@ export const STATIC_I18N_KEYS = [
   'Connect to self-hosted models served by vLLM',
   'vLLM server address, without /v1',
   'vLLM API key, or EMPTY if authentication is disabled',
+  'Cline',
+  'Connect to the Cline API with an API key or access token',
+  'Cline API base URL, including /api/v1',
+  'Cline API key or access token',
+  'Models fetched from the Cline recommended-models catalog',
 
   'Price per image',
   'Per image',

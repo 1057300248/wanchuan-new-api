@@ -54,20 +54,20 @@ func responsesStreamEvents(t *testing.T, body string) []dto.ResponsesStreamRespo
 
 func TestOaiResponsesStreamHandlerReportsUpstreamFailure(t *testing.T) {
 	cases := []struct {
-		name, event, message, code string
-		wantEvents                 int
+		name, event, message, code, clientMessage string
+		wantEvents                                int
 	}{
-		{"grok model error with null code", `{"code":null,"message":"Internal server error from model.","param":null,"type":"error"}`, "Internal server error from model.", "server_error", 2},
-		{"provider error code", `{"type":"error","code":"rate_limit_exceeded","message":"Slow down"}`, "Slow down", "rate_limit_exceeded", 2},
-		{"native failed without error type", `{"type":"response.failed","response":{"id":"resp_failed","status":"failed","error":{"code":"server_error","message":"Generation failed"}}}`, "Generation failed", "server_error", 1},
-		{"cancelled response", `{"type":"response.cancelled","response":{"status":"cancelled"}}`, "upstream response stream failed: response.cancelled", "server_error", 1},
+		{"grok model error with null code", `{"code":null,"message":"Internal server error from model.","param":null,"type":"error"}`, "Internal server error from model.", "server_error", "upstream request failed (request id: responses-stream-regression)", 2},
+		{"provider error code", `{"type":"error","code":"rate_limit_exceeded","message":"Slow down"}`, "Slow down", "rate_limit_exceeded", "too many requests (request id: responses-stream-regression)", 2},
+		{"native failed without error type", `{"type":"response.failed","response":{"id":"resp_failed","status":"failed","error":{"code":"server_error","message":"Generation failed"}}}`, "Generation failed", "server_error", "upstream request failed (request id: responses-stream-regression)", 1},
+		{"cancelled response", `{"type":"response.cancelled","response":{"status":"cancelled"}}`, "upstream response stream failed: response.cancelled", "server_error", "", 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c, w, info, resp := responsesStreamFixture(t, strings.NewReader("data: "+tc.event+"\n\n"))
 			usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
 			require.NotNil(t, apiErr)
-			assert.Equal(t, tc.message, apiErr.Error())
+			assert.Equal(t, tc.message, apiErr.Error(), "the internal error keeps upstream diagnostics for retries and admin logs")
 			assert.Equal(t, types.ErrorCode(tc.code), apiErr.GetErrorCode())
 			assert.True(t, types.IsSkipRetryError(apiErr))
 			assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyResponsesStreamErrorHandled))
@@ -78,13 +78,20 @@ func TestOaiResponsesStreamHandlerReportsUpstreamFailure(t *testing.T) {
 			assert.NotContains(t, w.Body.String(), "event: response.completed")
 			events := responsesStreamEvents(t, w.Body.String())
 			require.Len(t, events, tc.wantEvents)
-			assert.Contains(t, w.Body.String(), "data: "+tc.event+"\n\n", "preserve the original error payload")
+			assert.NotContains(t, w.Body.String(), "Internal server error from model.")
+			assert.NotContains(t, w.Body.String(), "Slow down")
+			assert.NotContains(t, w.Body.String(), "Generation failed")
 			if tc.wantEvents == 2 {
 				last := events[1]
 				assert.Equal(t, "response.failed", last.Type)
 				require.NotNil(t, last.Response)
 				assert.JSONEq(t, `"failed"`, string(last.Response.Status))
-				assert.Equal(t, tc.message, last.Response.GetOpenAIError().Message)
+				require.NotNil(t, last.Response.GetOpenAIError())
+				assert.Equal(t, tc.clientMessage, last.Response.GetOpenAIError().Message)
+			} else if tc.clientMessage == "" {
+				assert.Equal(t, "response.cancelled", events[0].Type)
+			} else {
+				assert.Equal(t, "response.failed", events[0].Type)
 			}
 		})
 	}

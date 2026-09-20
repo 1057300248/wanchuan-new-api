@@ -12,6 +12,11 @@ const (
 	// The Responses handler owns the SSE error response, even when the client
 	// disconnected or a write failed. Do not retry or append a JSON HTTP error.
 	ContextKeyResponsesStreamErrorHandled ContextKey = "responses_stream_error_handled"
+	// ContextKeyStreamErrorHandled marks a non-Responses SSE failure that has
+	// already emitted an in-band protocol error. The outer relay must still
+	// record the request as failed, but must not append a JSON HTTP error or retry
+	// after partial output has reached the client.
+	ContextKeyStreamErrorHandled ContextKey = "stream_error_handled"
 
 	/* token related keys */
 	ContextKeyTokenUnlimited         ContextKey = "token_unlimited_quota"
@@ -69,8 +74,9 @@ const (
 	ContextKeyAdminRejectReason ContextKey = "admin_reject_reason"
 
 	// ContextKeyLanguage stores the user's language preference for i18n
-	ContextKeyLanguage ContextKey = "language"
-	ContextKeyIsStream ContextKey = "is_stream"
+	ContextKeyLanguage             ContextKey = "language"
+	ContextKeyIsStream             ContextKey = "is_stream"
+	ContextKeyResponseStreamStatus ContextKey = "response_stream_status"
 
 	// ContextKeyAuditLogged marks that the current request has already recorded
 	// a manage/operation audit log inside the handler. When set, the admin-audit
@@ -82,4 +88,9 @@ const (
 	ContextKeyTokenAuditParams ContextKey = "token_audit_params"
 	// ContextKeyTokenAuditSucceeded disambiguates token responses that exceed the audit buffer.
 	ContextKeyTokenAuditSucceeded ContextKey = "token_audit_succeeded"
+
+	// ContextKeyChannelTest marks an administrator-triggered channel test. Its
+	// synthetic request carries no end-user credential, so the client privacy
+	// boundary must not rewrite the upstream model or scrub diagnostics.
+	ContextKeyChannelTest ContextKey = "channel_test"
 )

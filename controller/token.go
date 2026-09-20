@@ -3,13 +3,17 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay"
+	relayhelper "github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -183,6 +187,154 @@ func GetTokenAutoGroups(c *gin.Context) {
 		"groups":    service.GetUserAutoGroup(userGroup),
 		"max_count": setting.GetMaxTokenAutoGroups(),
 	})
+}
+
+type tokenModelScopeRequest struct {
+	Group          string   `json:"group"`
+	AutoGroupsMode string   `json:"auto_groups_mode"`
+	AutoGroups     []string `json:"auto_groups"`
+}
+
+func getRoutableModelsForGroups(user *model.UserBase, groups []string, allow func(*model.Channel, string) bool) ([]string, error) {
+	abilities, err := model.GetEnabledAbilitiesWithChannelsForGroups(groups)
+	if err != nil {
+		return nil, err
+	}
+	if len(abilities) == 0 {
+		return []string{}, nil
+	}
+
+	channelIDs := make([]int, 0, len(abilities))
+	seenChannelIDs := make(map[int]struct{}, len(abilities))
+	for _, ability := range abilities {
+		if _, exists := seenChannelIDs[ability.ChannelId]; exists {
+			continue
+		}
+		seenChannelIDs[ability.ChannelId] = struct{}{}
+		channelIDs = append(channelIDs, ability.ChannelId)
+	}
+	channels, err := model.GetChannelsByIds(channelIDs)
+	if err != nil {
+		return nil, err
+	}
+	channelByID := make(map[int]*model.Channel, len(channels))
+	for _, channel := range channels {
+		if channel != nil && channel.Status == common.ChannelStatusEnabled {
+			channelByID[channel.Id] = channel
+		}
+	}
+
+	acceptUnsetPricing := user.GetSetting().AcceptUnsetRatioModel
+	modelSet := make(map[string]struct{})
+	for _, ability := range abilities {
+		modelName := strings.TrimSpace(ability.Model)
+		if modelName == "" {
+			continue
+		}
+		if !acceptUnsetPricing && !relayhelper.HasModelBillingConfig(modelName) {
+			continue
+		}
+		channel := channelByID[ability.ChannelId]
+		if channel == nil {
+			continue
+		}
+		if allow != nil && !allow(channel, modelName) {
+			continue
+		}
+		modelSet[modelName] = struct{}{}
+	}
+
+	models := make([]string, 0, len(modelSet))
+	for modelName := range modelSet {
+		models = append(models, modelName)
+	}
+	sort.Strings(models)
+	return models, nil
+}
+
+// PreviewTokenModels returns models routable by the API key routing scope being
+// edited. It intentionally ignores model_limits so the selector can add any
+// model that is valid for the selected group(s); the frontend removes selected
+// limits that become invalid when the routing scope changes.
+func PreviewTokenModels(c *gin.Context) {
+	request := tokenModelScopeRequest{}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	userID := c.GetInt("id")
+	user, err := model.GetUserCache(userID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	token := &model.Token{Group: strings.TrimSpace(request.Group)}
+	var groups []string
+	if token.Group == "auto" && request.AutoGroupsMode == "custom" {
+		groups = service.FilterUserTokenAutoGroups(user.Group, request.AutoGroups)
+	} else {
+		if token.Group == "auto" && len(request.AutoGroups) > 0 {
+			if err := token.SetAutoGroups(request.AutoGroups); err != nil {
+				common.ApiError(c, err)
+				return
+			}
+		}
+		groups, err = service.GetTokenEffectiveGroups(user.Group, token)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	models, err := getRoutableModelsForGroups(user, groups, nil)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, models)
+}
+
+func GetTokenModels(c *gin.Context) {
+	tokenID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || tokenID <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	app, ok := relay.NormalizeCCSwitchApp(c.Query("app"))
+	if !ok {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	userID := c.GetInt("id")
+	token, err := model.GetTokenByIds(tokenID, userID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	user, err := model.GetUserCache(userID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	groups, err := service.GetTokenEffectiveGroups(user.Group, token)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	modelLimit := token.GetModelLimitsMap()
+	models, err := getRoutableModelsForGroups(user, groups, func(channel *model.Channel, modelName string) bool {
+		if token.ModelLimitsEnabled && !middleware.TokenModelLimitAllows(modelLimit, modelName) {
+			return false
+		}
+		return relay.SupportsCCSwitchModel(channel, app, modelName)
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, models)
 }
 
 func GetTokenKey(c *gin.Context) {

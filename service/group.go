@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -89,6 +90,38 @@ func FilterUserTokenAutoGroups(userGroup string, groups []string) []string {
 		}
 	}
 	return filtered
+}
+
+// GetTokenEffectiveGroups mirrors TokenAuth + auto-group routing for read-only
+// capability discovery. A concrete token group is authoritative; "auto" uses
+// the token snapshot when present and otherwise inherits the user's global Auto
+// order. An empty token group follows the user's own group, matching TokenAuth.
+func GetTokenEffectiveGroups(userGroup string, token *model.Token) ([]string, error) {
+	if token == nil {
+		return nil, fmt.Errorf("token is nil")
+	}
+	tokenGroup := strings.TrimSpace(token.Group)
+	switch tokenGroup {
+	case "":
+		if !IsUserSelectableGroup(userGroup, userGroup) {
+			return []string{}, nil
+		}
+		return []string{userGroup}, nil
+	case "auto":
+		if strings.TrimSpace(token.AutoGroups) == "" {
+			return GetUserAutoGroup(userGroup), nil
+		}
+		groups, err := token.GetAutoGroups()
+		if err != nil {
+			return nil, err
+		}
+		return FilterUserTokenAutoGroups(userGroup, groups), nil
+	default:
+		if !IsUserSelectableGroup(userGroup, tokenGroup) {
+			return []string{}, nil
+		}
+		return []string{tokenGroup}, nil
+	}
 }
 
 // GetRequestAutoGroups resolves the ordered Auto groups for the current token.

@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/privacy"
 )
 
 const (
@@ -20,7 +21,22 @@ var legacySensitiveLogOtherKeys = []string{
 	"channel_id",
 	"channel_name",
 	"channel_type",
+}
+
+// These legacy diagnostics are promoted to admin_info when administrators read
+// old records, without rewriting the stored log or overriding scoped values.
+var legacyAdminLogOtherKeys = []string{
 	"reject_reason",
+	"upstream_model_name",
+	"po",
+	"request_conversion",
+	"response_model",
+	"billing_model",
+	"conversion_diagnostics",
+	"conversion_diagnostics_truncated",
+	"request_policy",
+	"stream_diagnostics",
+	"stream_status",
 }
 
 type logOtherVisibility int
@@ -50,7 +66,7 @@ func isReservedLogOtherKey(key string) bool {
 	case logOtherAdminInfoKey, logOtherRootInfoKey, logOtherAuditInfoKey:
 		return true
 	default:
-		return slices.Contains(legacySensitiveLogOtherKeys, key)
+		return slices.Contains(legacySensitiveLogOtherKeys, key) || slices.Contains(legacyAdminLogOtherKeys, key)
 	}
 }
 
@@ -184,12 +200,7 @@ func (o *LogOther) MarshalJSON() ([]byte, error) {
 	return common.Marshal(o.toMap())
 }
 
-func normalizeLegacyRejectReason(values map[string]json.RawMessage) bool {
-	rejectReason, ok := values["reject_reason"]
-	if !ok {
-		return false
-	}
-
+func normalizeLegacyAdminInfo(values map[string]json.RawMessage) bool {
 	adminInfo := make(map[string]json.RawMessage)
 	if rawAdminInfo, exists := values[logOtherAdminInfoKey]; exists {
 		_ = common.Unmarshal(rawAdminInfo, &adminInfo)
@@ -197,15 +208,28 @@ func normalizeLegacyRejectReason(values map[string]json.RawMessage) bool {
 	if adminInfo == nil {
 		adminInfo = make(map[string]json.RawMessage)
 	}
-	if _, exists := adminInfo["reject_reason"]; !exists {
-		adminInfo["reject_reason"] = rejectReason
+	changed := false
+	for _, key := range legacyAdminLogOtherKeys {
+		value, exists := values[key]
+		if !exists {
+			continue
+		}
+		if _, scoped := adminInfo[key]; !scoped {
+			adminInfo[key] = value
+		}
+		changed = true
+	}
+	if !changed {
+		return false
 	}
 	encodedAdminInfo, err := common.Marshal(adminInfo)
 	if err != nil {
 		return false
 	}
 	values[logOtherAdminInfoKey] = encodedAdminInfo
-	delete(values, "reject_reason")
+	for _, key := range legacyAdminLogOtherKeys {
+		delete(values, key)
+	}
 	return true
 }
 
@@ -239,8 +263,21 @@ func formatLogOtherJSON(value string, visibility logOtherVisibility) string {
 				changed = true
 			}
 		}
+		for _, key := range legacyAdminLogOtherKeys {
+			if _, exists := values[key]; exists {
+				delete(values, key)
+				changed = true
+			}
+		}
+		if rawCode, exists := values["error_code"]; exists {
+			var code string
+			if common.Unmarshal(rawCode, &code) != nil || !privacy.IsSafeErrorCode(code) {
+				delete(values, "error_code")
+				changed = true
+			}
+		}
 	} else {
-		changed = normalizeLegacyRejectReason(values)
+		changed = normalizeLegacyAdminInfo(values)
 		if visibility == logOtherVisibilityAdmin {
 			if _, exists := values[logOtherRootInfoKey]; exists {
 				delete(values, logOtherRootInfoKey)

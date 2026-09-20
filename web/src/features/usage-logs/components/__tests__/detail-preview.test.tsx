@@ -28,6 +28,7 @@ import { I18nextProvider } from 'react-i18next'
 import { afterAll, afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import en from '@/i18n/locales/en.json'
+import { useAuthStore } from '@/stores/auth-store'
 import {
   DEFAULT_CURRENCY_CONFIG,
   useSystemConfigStore,
@@ -96,6 +97,10 @@ const previousConfig = useSystemConfigStore.getState().config
 let client: QueryClient
 const i18n = createInstance()
 beforeEach(async () => {
+  useAuthStore.getState().auth.reset()
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'pricing-viewer', role: 100 })
   await i18n.init({
     lng: 'en',
     resources: { en },
@@ -107,12 +112,13 @@ beforeEach(async () => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   client.setQueryData(['status'], {}, { updatedAt: Date.now() + 60_000 })
   client.setQueryData(
-    ['pricing'],
+    ['pricing', 'user:1:'],
     { data: [], vendors: [] },
     { updatedAt: Date.now() + 60_000 }
   )
 })
 afterEach(() => {
+  useAuthStore.getState().auth.reset()
   client.clear()
   useSystemConfigStore.getState().setConfig(previousConfig)
 })
@@ -244,7 +250,7 @@ test.each([
 ])(
   'task expression $tier shows its recorded unit price',
   ({ expression, tier, expected }) => {
-    client.setQueryData(['pricing'], {
+    client.setQueryData(['pricing', 'user:1:'], {
       data: [
         {
           model_name: 'wan2.5-i2v-preview',
@@ -273,7 +279,7 @@ test.each([
 )
 
 test('task log prices use localized unit labels from pricing metadata', async () => {
-  client.setQueryData(['pricing'], {
+  client.setQueryData(['pricing', 'user:1:'], {
     data: [
       {
         model_name: 'wan2.5-i2v-preview',
@@ -302,7 +308,7 @@ test('task log prices use localized unit labels from pricing metadata', async ()
 })
 
 test('task log prices select the executing provider’s schema', () => {
-  client.setQueryData(['pricing'], {
+  client.setQueryData(['pricing', 'user:1:'], {
     data: [
       {
         model_name: 'wan2.5-i2v-preview',
@@ -341,7 +347,7 @@ test.each(['missing schema', 'unsupported expression', 'unknown tier'])(
   'task pricing with %s shows an explicit unavailable summary',
   (scenario) => {
     if (scenario !== 'missing schema') {
-      client.setQueryData(['pricing'], {
+      client.setQueryData(['pricing', 'user:1:'], {
         data: [
           {
             model_name: 'wan2.5-i2v-preview',

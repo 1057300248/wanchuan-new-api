@@ -59,12 +59,23 @@ import {
   SettingsSwitchItem,
 } from '../components/settings-form-layout'
 import { SettingsPageActionsPortal } from '../components/settings-page-context'
+import type { GroupRenameMapping } from '../types'
 import { safeJsonParse } from '../utils/json-parser'
 import { safeNumberFieldProps } from '../utils/numeric-field'
 import { GroupRatioVisualEditor } from './group-ratio-visual-editor'
+import {
+  applyGroupRenamesToValues,
+  collectGroupRenamePlan,
+  collectResolutionMappings,
+  mergeGroupRenameMappings,
+  type GroupRatioSaveOutcome,
+  type GroupRenameEditableValues,
+  type GroupRenameResolutions,
+} from './group-rename'
+import { GroupRenamePanel } from './group-rename-panel'
 import { GroupSpecialUsableRulesEditor } from './group-special-usable-editor'
 
-type GroupFormValues = {
+export type GroupFormValues = {
   GroupRatio: string
   TopupGroupRatio: string
   UserUsableGroups: string
@@ -77,18 +88,28 @@ type GroupFormValues = {
 
 type GroupRatioFormProps = {
   form: UseFormReturn<GroupFormValues>
-  onSave: (values: GroupFormValues) => Promise<void>
+  baseline: GroupRenameEditableValues
+  onSave: (
+    values: GroupFormValues,
+    renames: GroupRenameMapping[]
+  ) => Promise<GroupRatioSaveOutcome>
   isSaving: boolean
 }
 
 export const GroupRatioForm = memo(function GroupRatioForm({
   form,
+  baseline,
   onSave,
   isSaving,
 }: GroupRatioFormProps) {
   const { t } = useTranslation()
   const [editMode, setEditMode] = useState<'visual' | 'json'>('visual')
   const [guideOpen, setGuideOpen] = useState(false)
+  const [groupRenames, setGroupRenames] = useState<GroupRenameMapping[]>([])
+  const [resolutions, setResolutions] = useState<GroupRenameResolutions>({})
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [renameSaveVersion, setRenameSaveVersion] = useState(0)
+  const submitting = isSaving || form.formState.isSubmitting
 
   const handleFieldChange = useCallback(
     (field: keyof GroupFormValues, value: string) => {
@@ -100,13 +121,81 @@ export const GroupRatioForm = memo(function GroupRatioForm({
     [form]
   )
 
+  const handleRenamesChange = useCallback((renames: GroupRenameMapping[]) => {
+    setGroupRenames(renames)
+  }, [])
+
+  const watchedGroupRatio = form.watch('GroupRatio')
+  const watchedTopupGroupRatio = form.watch('TopupGroupRatio')
+  const watchedUserUsableGroups = form.watch('UserUsableGroups')
+  const watchedGroupGroupRatio = form.watch('GroupGroupRatio')
+  const watchedAutoGroups = form.watch('AutoGroups')
+  const watchedGroupSpecialUsableGroup = form.watch('GroupSpecialUsableGroup')
+
+  const submittedValues = useMemo<GroupRenameEditableValues>(
+    () => ({
+      GroupRatio: watchedGroupRatio,
+      TopupGroupRatio: watchedTopupGroupRatio,
+      UserUsableGroups: watchedUserUsableGroups,
+      GroupGroupRatio: watchedGroupGroupRatio,
+      AutoGroups: watchedAutoGroups,
+      GroupSpecialUsableGroup: watchedGroupSpecialUsableGroup,
+    }),
+    [
+      watchedGroupRatio,
+      watchedTopupGroupRatio,
+      watchedUserUsableGroups,
+      watchedGroupGroupRatio,
+      watchedAutoGroups,
+      watchedGroupSpecialUsableGroup,
+    ]
+  )
+
+  const renamePlan = useMemo(
+    () =>
+      collectGroupRenamePlan(
+        baseline,
+        submittedValues,
+        groupRenames,
+        resolutions
+      ),
+    [baseline, submittedValues, groupRenames, resolutions]
+  )
+
+  const handleSave = useCallback(
+    async (values: GroupFormValues) => {
+      setSaveError(null)
+      const renames = mergeGroupRenameMappings(
+        groupRenames,
+        collectResolutionMappings(resolutions)
+      )
+      const plan = collectGroupRenamePlan(
+        baseline,
+        values,
+        renames,
+        resolutions
+      )
+      if (plan.reservedViolations.length > 0 || plan.unresolved.length > 0) {
+        setSaveError(t('Resolve the group changes before saving.'))
+        return
+      }
+      const outcome = await onSave(
+        applyGroupRenamesToValues(values, renames),
+        renames
+      )
+      if (outcome !== 'failed') {
+        setGroupRenames([])
+        setResolutions({})
+        setRenameSaveVersion((version) => version + 1)
+      }
+    },
+    [baseline, groupRenames, onSave, resolutions, t]
+  )
+
   const toggleEditMode = useCallback(() => {
     setEditMode((prev) => (prev === 'visual' ? 'json' : 'visual'))
   }, [])
 
-  const watchedGroupRatio = form.watch('GroupRatio')
-  const watchedUserUsableGroups = form.watch('UserUsableGroups')
-  const watchedTopupGroupRatio = form.watch('TopupGroupRatio')
   const groupNames = useMemo(() => {
     const ratioMap = safeJsonParse<Record<string, number>>(watchedGroupRatio, {
       fallback: {},
@@ -158,20 +247,33 @@ export const GroupRatioForm = memo(function GroupRatioForm({
           <Button
             type='button'
             size='sm'
-            onClick={form.handleSubmit(onSave)}
-            disabled={isSaving}
+            onClick={form.handleSubmit(handleSave)}
+            disabled={submitting}
           >
-            {isSaving ? t('Saving...') : t('Save group ratios')}
+            {submitting ? t('Saving...') : t('Save group ratios')}
           </Button>
         </SettingsPageActionsPortal>
+        {saveError && (
+          <p className='text-destructive text-sm' role='alert'>
+            {saveError}
+          </p>
+        )}
+        <GroupRenamePanel
+          issues={renamePlan.unresolved}
+          reservedViolations={renamePlan.reservedViolations}
+          resolutions={resolutions}
+          onResolutionsChange={setResolutions}
+        />
         {editMode === 'visual' ? (
           <div className='space-y-6'>
             <GroupRatioVisualEditor
+              key={renameSaveVersion}
               groupRatio={form.watch('GroupRatio')}
               topupGroupRatio={form.watch('TopupGroupRatio')}
               userUsableGroups={form.watch('UserUsableGroups')}
               groupGroupRatio={form.watch('GroupGroupRatio')}
               autoGroups={form.watch('AutoGroups')}
+              pendingRenames={groupRenames}
               maxTokenAutoGroupsField={
                 <FormField
                   control={form.control}
@@ -204,6 +306,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
               onChange={(field, value) =>
                 handleFieldChange(field as keyof GroupFormValues, value)
               }
+              onRenamesChange={handleRenamesChange}
             />
 
             <GroupSpecialUsableRulesEditor
@@ -238,7 +341,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
             />
           </div>
         ) : (
-          <SettingsForm onSubmit={form.handleSubmit(onSave)}>
+          <SettingsForm onSubmit={form.handleSubmit(handleSave)}>
             <FormField
               control={form.control}
               name='GroupRatio'
