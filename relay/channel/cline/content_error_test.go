@@ -32,3 +32,13 @@ func TestClineContentErrorDoesNotInventAClientStatus(t *testing.T) {
 	require.NotNil(t, apiErr)
 	assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
 }
+
+func TestClineContentErrorPreservesStructuredFieldsFromErrorArray(t *testing.T) {
+	_, apiErr := normalizeClineResponseBody([]byte(`{"success":false,"errors":[{"message":"Invalid input","type":"invalid_request_error","code":"invalid_content","status":400}]}`))
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	openAIError := apiErr.ToOpenAIError()
+	assert.Equal(t, "Invalid input", openAIError.Message)
+	assert.Equal(t, "invalid_request_error", openAIError.Type)
+	assert.Equal(t, "invalid_content", openAIError.Code)
+}

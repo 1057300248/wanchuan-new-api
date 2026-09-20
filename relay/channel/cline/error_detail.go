@@ -24,8 +24,17 @@ func clineErrorDetailAtDepth(value gjson.Result, depth int) clineErrorDetail {
 			if child.Message != "" {
 				messages = append(messages, child.Message)
 			}
+			if detail.Type == "" && child.Type != "" {
+				detail.Type = child.Type
+			}
+			if detail.Code == "" && child.Code != "" {
+				detail.Code = child.Code
+			}
 			if detail.Param == "" && child.Param != "" {
-				detail = child
+				detail.Param = child.Param
+			}
+			if detail.StatusCode == 0 && child.StatusCode != 0 {
+				detail.StatusCode = child.StatusCode
 			}
 		}
 		detail.Message = strings.Join(messages, "; ")
