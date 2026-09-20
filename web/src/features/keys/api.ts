@@ -26,6 +26,7 @@ import type {
   SearchApiKeysParams,
   ApiKeyFormData,
   TokenAutoGroupsConfig,
+  CCSwitchApp,
 } from './types'
 
 // ============================================================================
@@ -66,6 +67,18 @@ export async function getTokenAutoGroups(): Promise<
   ApiResponse<TokenAutoGroupsConfig>
 > {
   const res = await api.get('/api/token/auto-groups')
+  return res.data
+}
+
+// Models that this exact API key can route for the selected CC Switch app.
+export async function getCCSwitchTokenModels(
+  id: number,
+  app: CCSwitchApp
+): Promise<ApiResponse<string[]>> {
+  const params = new URLSearchParams({ app })
+  const res = await api.get(
+    `/api/user/tokens/${id}/models?${params.toString()}`
+  )
   return res.data
 }
 
