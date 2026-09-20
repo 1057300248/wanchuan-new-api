@@ -123,9 +123,7 @@ vi.mock('@/components/multi-select', () => ({
 }))
 
 vi.mock('@/components/ui/collapsible', () => ({
-  Collapsible: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
+  Collapsible: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   CollapsibleTrigger: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
@@ -143,18 +141,10 @@ vi.mock('@/components/ui/sheet', () => ({
   SheetDescription: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
-  SheetFooter: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
-  SheetHeader: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
-  SheetTitle: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
-  SheetClose: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
+  SheetFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SheetHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SheetTitle: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SheetClose: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }))
 
 vi.mock('@/components/datetime-picker', () => ({
@@ -254,7 +244,7 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-it('queries default scope and refreshes candidates after a group change', async () => {
+it('refreshes model candidates when the group changes', async () => {
   const user = userEvent.setup()
   renderDrawer()
 
@@ -293,7 +283,7 @@ it('queries default scope and refreshes candidates after a group change', async 
   ).toBeInTheDocument()
 })
 
-it('preserves a restricted whitelist when candidates are unavailable', async () => {
+it('preserves a restricted whitelist when candidates disappear', async () => {
   const user = userEvent.setup()
   mocks.getApiKeyScopeModels.mockResolvedValue({
     success: true,
@@ -312,9 +302,7 @@ it('preserves a restricted whitelist when candidates are unavailable', async () 
 
   expect(screen.getByTestId('selected-models')).toHaveTextContent('a-only')
   expect(
-    screen.getByText(
-      'hint:a-only:Unavailable for current routing scope'
-    )
+    screen.getByText('hint:a-only:Unavailable for current routing scope')
   ).toBeInTheDocument()
 
   const nameInput = screen.getByPlaceholderText('Enter a name')
@@ -358,9 +346,7 @@ it('keeps a restricted payload after switching groups', async () => {
 
   expect(screen.getByTestId('selected-models')).toHaveTextContent('a-only')
   expect(
-    screen.getByText(
-      'hint:a-only:Unavailable for current routing scope'
-    )
+    screen.getByText('hint:a-only:Unavailable for current routing scope')
   ).toBeInTheDocument()
   expect(
     screen.getByRole('button', { name: 'model:b-only' })
