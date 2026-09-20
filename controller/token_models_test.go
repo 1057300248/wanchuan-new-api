@@ -151,6 +151,25 @@ func TestPreviewTokenModelsUsesEditedAutoGroups(t *testing.T) {
 	assert.NotContains(t, models, "gpt-4o")
 }
 
+func TestPreviewTokenModelsCustomAutoEmptyDoesNotInheritGlobalGroups(t *testing.T) {
+	db, user := setupTokenModelsControllerTest(t)
+	seedTokenModelsAbility(t, db, "a", "gpt-4o", constant.ChannelTypeOpenAI, true)
+
+	body := tokenModelScopeRequest{
+		Group:          "auto",
+		AutoGroupsMode: "custom",
+		AutoGroups:     []string{},
+	}
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/models", body, user.Id)
+	PreviewTokenModels(ctx)
+	response := decodeAPIResponse(t, recorder)
+	require.True(t, response.Success, response.Message)
+
+	var models []string
+	require.NoError(t, common.Unmarshal(response.Data, &models))
+	assert.Empty(t, models)
+}
+
 func TestPreviewTokenModelsFiltersDisabledAndUnpricedModels(t *testing.T) {
 	db, user := setupTokenModelsControllerTest(t)
 	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"priced-model":1,"disabled-model":1}`))
