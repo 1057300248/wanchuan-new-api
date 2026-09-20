@@ -82,3 +82,65 @@ func TestAdminUpdateSubscriptionPlanGroupFields(t *testing.T) {
 		})
 	}
 }
+
+func TestAdminUpdateSubscriptionPlanOmittedGroupsPreservePersistedLegacyValues(t *testing.T) {
+	previousDB, previousLog := model.DB, model.LOG_DB
+	previousMain, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
+	previousRedis := common.RedisEnabled
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = previousDB, previousLog
+		common.SetDatabaseTypes(previousMain, previousLogType)
+		common.RedisEnabled = previousRedis
+	})
+
+	db := setupGroupRenameControllerTest(t)
+	payment := operation_setting.GetPaymentSetting()
+	previousPayment := *payment
+	t.Cleanup(func() { *payment = previousPayment })
+	payment.ComplianceConfirmed = true
+	payment.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
+
+	// Seed a plan while "old" is still configured, then simulate persisted
+	// legacy state after that group has been retired. A non-group edit must not
+	// revalidate or rewrite the omitted group fields.
+	require.NoError(t, db.Create(&model.Option{Key: "GroupRatio", Value: `{"old":1}`}).Error)
+	plan := model.SubscriptionPlan{
+		Title:          "original",
+		UpgradeGroup:   "old",
+		DowngradeGroup: "old",
+		Enabled:        true,
+		PriceAmount:    9,
+	}
+	require.NoError(t, db.Create(&plan).Error)
+	require.NoError(t, db.Model(&model.Option{}).
+		Where("key = ?", "GroupRatio").
+		Update("value", `{"new":1}`).Error)
+	require.NoError(t, db.Create(&model.Option{Key: "GroupRenameAliases", Value: `{"old":"new"}`}).Error)
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"new":1}`))
+
+	router := gin.New()
+	router.PUT("/plans/:id", AdminUpdateSubscriptionPlan)
+	request := httptest.NewRequest(
+		http.MethodPut,
+		"/plans/1",
+		strings.NewReader(`{"plan":{"title":"edited","price_amount":0,"enabled":false}}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	var response struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success, response.Message)
+
+	var stored model.SubscriptionPlan
+	require.NoError(t, db.First(&stored, plan.Id).Error)
+	assert.Equal(t, "edited", stored.Title)
+	assert.Zero(t, stored.PriceAmount)
+	assert.False(t, stored.Enabled)
+	assert.Equal(t, "old", stored.UpgradeGroup)
+	assert.Equal(t, "old", stored.DowngradeGroup)
+}

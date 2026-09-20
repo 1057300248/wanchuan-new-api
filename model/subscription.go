@@ -63,12 +63,15 @@ func UpdateSubscriptionPlanTx(tx *gorm.DB, id int, request SubscriptionPlanUpdat
 	upgrade, downgrade := current.UpgradeGroup, current.DowngradeGroup
 	if request.UpgradeGroup != nil {
 		upgrade = strings.TrimSpace(*request.UpgradeGroup)
+		if err := validateConfiguredGroupNamesForWriteTx(tx, upgrade); err != nil {
+			return err
+		}
 	}
 	if request.DowngradeGroup != nil {
 		downgrade = strings.TrimSpace(*request.DowngradeGroup)
-	}
-	if err := validateConfiguredGroupNamesForWriteTx(tx, upgrade, downgrade); err != nil {
-		return err
+		if err := validateConfiguredGroupNamesForWriteTx(tx, downgrade); err != nil {
+			return err
+		}
 	}
 	updateMap := map[string]any{
 		"title":                      request.Plan.Title,
@@ -97,7 +100,11 @@ func UpdateSubscriptionPlanTx(tx *gorm.DB, id int, request SubscriptionPlanUpdat
 	if request.Plan.AllowWalletOverflow != nil {
 		updateMap["allow_wallet_overflow"] = *request.Plan.AllowWalletOverflow
 	}
-	return tx.Model(&current).Updates(updateMap).Error
+	// This writer already owns the namespace/row locks, validates the exact
+	// map candidates, and sets updated_at explicitly. Skip SubscriptionPlan's
+	// generic hook here so omitted group fields are not revalidated from the
+	// receiver snapshot as if they were part of this request.
+	return tx.Session(&gorm.Session{SkipHooks: true}).Model(&current).Updates(updateMap).Error
 }
 
 const (
