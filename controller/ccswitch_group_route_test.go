@@ -29,6 +29,18 @@ func requestCCSwitchGroupModels(t *testing.T, tokenID, userID int, group string)
 	return recorder
 }
 
+func initializeCCSwitchTokenLookup(t *testing.T) {
+	t.Helper()
+	// Reuse the isolated SQLite fixture, but run the normal column-name
+	// initialization required by GetTokenByKey. No connection or migration is
+	// created: an empty log DSN reuses model.DB and non-master skips migrations.
+	t.Setenv("LOG_SQL_DSN", "")
+	previousMaster := common.IsMasterNode
+	common.IsMasterNode = false
+	defer func() { common.IsMasterNode = previousMaster }()
+	require.NoError(t, model.InitLogDB())
+}
+
 func TestCCSwitchGroupsNarrowModelsWithoutWritingToken(t *testing.T) {
 	db, user := setupTokenModelsControllerTest(t)
 	token := seedTokenModelsToken(t, db, user.Id, "group-models", "auto", []string{"a", "b"}, "gpt-4o", "gpt-4.1")
@@ -97,6 +109,7 @@ func TestCCSwitchGroupsRejectRevokedGroup(t *testing.T) {
 
 func TestCCSwitchGroupHintRoutesOnlyWithinAuthenticatedToken(t *testing.T) {
 	db, user := setupTokenModelsControllerTest(t)
+	initializeCCSwitchTokenLookup(t)
 	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","auto":"Auto","a":"A","b":"B"}`))
 	token := seedTokenModelsToken(t, db, user.Id, "routing", "auto", []string{"a", "b"}, "gpt-4o")
 	key, err := common.GenerateKey()
@@ -151,6 +164,7 @@ func TestCCSwitchGroupHintRoutesOnlyWithinAuthenticatedToken(t *testing.T) {
 
 func TestCCSwitchGroupHintRejectsInvalidOrUnauthorizedRouting(t *testing.T) {
 	db, user := setupTokenModelsControllerTest(t)
+	initializeCCSwitchTokenLookup(t)
 	token := seedTokenModelsToken(t, db, user.Id, "fixed-route", "a", nil)
 	key, err := common.GenerateKey()
 	require.NoError(t, err)
@@ -187,6 +201,7 @@ func TestCCSwitchGroupHintRejectsInvalidOrUnauthorizedRouting(t *testing.T) {
 
 func TestCCSwitchGroupHintKeepsReadOnlyUsageWorking(t *testing.T) {
 	db, user := setupTokenModelsControllerTest(t)
+	initializeCCSwitchTokenLookup(t)
 	token := seedTokenModelsToken(t, db, user.Id, "usage", "a", nil, "gpt-4o")
 	key, err := common.GenerateKey()
 	require.NoError(t, err)
