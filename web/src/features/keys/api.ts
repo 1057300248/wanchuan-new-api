@@ -70,6 +70,14 @@ export async function getTokenAutoGroups(): Promise<
   return res.data
 }
 
+// Models routable by the API key routing scope currently selected in the form.
+export async function getApiKeyScopeModels(
+  data: Pick<ApiKeyFormData, 'group' | 'auto_groups'>
+): Promise<ApiResponse<string[]>> {
+  const res = await api.post('/api/token/models', data)
+  return res.data
+}
+
 // Models that this exact API key can route for the selected CC Switch app.
 export async function getCCSwitchTokenModels(
   id: number,
