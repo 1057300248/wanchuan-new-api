@@ -64,7 +64,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { RelatedPolicyLink } from '@/features/system-settings/request-policies/related-policy-link'
 import { useStatus } from '@/hooks/use-status'
-import { getUserModels, getUserGroups } from '@/lib/api'
+import { getUserGroups } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
@@ -75,6 +75,7 @@ import {
   updateApiKey,
   getApiKey,
   getTokenAutoGroups,
+  getApiKeyScopeModels,
 } from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
@@ -115,14 +116,6 @@ export function ApiKeysMutateDrawer({
   )
   const defaultUseAutoGroup = status?.default_use_auto_group === true
 
-  // Fetch models
-  const { data: modelsData } = useQuery({
-    queryKey: ['user-models'],
-    queryFn: async () => requireServerSuccess(await getUserModels()),
-    enabled: open,
-    staleTime: 0,
-  })
-
   // Fetch groups
   const {
     data: groupsData,
@@ -158,7 +151,6 @@ export function ApiKeysMutateDrawer({
     staleTime: 0,
   })
 
-  const models = modelsData?.data || []
   const groups = useMemo<ApiKeyGroupOption[]>(
     () =>
       Object.entries(groupsData?.data || {}).map(([key, info]) => ({
@@ -262,6 +254,57 @@ export function ApiKeysMutateDrawer({
     isUpdate && currentRow ? `update:${currentRow.id}` : 'create'
   const isFormInitialized = initializedTarget === formTarget
   const selectedGroup = form.watch('group')
+  const autoGroupsMode = form.watch('auto_groups_mode')
+  const selectedAutoGroups = form.watch('auto_groups')
+  const selectedModelLimits = form.watch('model_limits')
+  const scopeAutoGroups = useMemo(
+    () =>
+      selectedGroup === 'auto' && autoGroupsMode === 'custom'
+        ? selectedAutoGroups
+        : [],
+    [selectedGroup, autoGroupsMode, selectedAutoGroups]
+  )
+
+  const { data: modelsData } = useQuery({
+    queryKey: [
+      'api-key-scope-models',
+      selectedGroup || '',
+      autoGroupsMode,
+      scopeAutoGroups,
+    ],
+    queryFn: async () =>
+      requireServerSuccess(
+        await getApiKeyScopeModels({
+          group: selectedGroup || '',
+          auto_groups_mode: autoGroupsMode,
+          auto_groups: scopeAutoGroups,
+        })
+      ),
+    enabled: open && isFormInitialized && !!selectedGroup,
+    staleTime: 0,
+  })
+
+  const models = useMemo(() => modelsData?.data ?? [], [modelsData?.data])
+
+  useEffect(() => {
+    if (!isFormInitialized || !modelsData?.success) return
+    const availableModels = new Set(models)
+    const validModels = selectedModelLimits.filter((modelName) =>
+      availableModels.has(modelName)
+    )
+    if (validModels.length !== selectedModelLimits.length) {
+      form.setValue('model_limits', validModels, {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+    }
+  }, [
+    form,
+    isFormInitialized,
+    models,
+    modelsData?.success,
+    selectedModelLimits,
+  ])
 
   // Correct group after groups load: if the form value is not in available groups, fall back
   useEffect(() => {
@@ -361,7 +404,6 @@ export function ApiKeysMutateDrawer({
   const quotaPlaceholder = tokensOnly
     ? t('Enter quota in tokens')
     : t('Enter quota in {{currency}}', { currency: currencyLabel })
-  const autoGroupsMode = form.watch('auto_groups_mode')
   const unlimitedQuota = form.watch('unlimited_quota')
 
   return (
