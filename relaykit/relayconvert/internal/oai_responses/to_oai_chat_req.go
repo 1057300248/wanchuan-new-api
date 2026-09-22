@@ -458,9 +458,23 @@ func RequestTextToChatResponseFormat(raw json.RawMessage) (*dto.ResponseFormat, 
 	return responsesRequestTextToChatResponseFormat(raw)
 }
 
+// responsesImagePartToChatImageURL converts a Responses input_image part into
+// the Chat Completions wire shape. The Responses API carries image_url as a
+// plain string, while Chat Completions requires an object with a url field;
+// strict upstreams reject the bare string with "Invalid input" against
+// messages.N.content. A string URL is therefore wrapped, and an already
+// object-shaped image_url passes through unchanged.
 func responsesImagePartToChatImageURL(part map[string]any) any {
 	if imageURL, ok := part["image_url"]; ok {
-		return imageURL
+		url, isString := imageURL.(string)
+		if !isString {
+			return imageURL
+		}
+		wrapped := map[string]any{"url": url}
+		if detail, exists := part["detail"]; exists {
+			wrapped["detail"] = detail
+		}
+		return wrapped
 	}
 	imageURL := map[string]any{}
 	for _, key := range []string{"url", "file_id", "detail"} {
