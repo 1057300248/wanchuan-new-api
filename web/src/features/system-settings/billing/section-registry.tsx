@@ -61,16 +61,15 @@ const BILLING_SECTIONS = [
       <QuotaSettingsSection
         defaultValues={{
           QuotaForNewUser: settings.QuotaForNewUser,
-          PreConsumedQuota: settings.PreConsumedQuota,
           SignupBonusEnabled: settings.SignupBonusEnabled ?? false,
           QuotaForSignupBonus: settings.QuotaForSignupBonus ?? 0,
           AffiliateRewardEnabled: settings.AffiliateRewardEnabled ?? false,
           AffiliateRewardRate: settings.AffiliateRewardRate ?? 0.05,
           TopUpLink: settings.TopUpLink,
-          general_setting: {
-            docs_link: settings['general_setting.docs_link'],
-          },
           quota_setting: {
+            trust_quota_usd: settings['quota_setting.trust_quota_usd'],
+            pre_consume_multiplier:
+              settings['quota_setting.pre_consume_multiplier'],
             enable_free_model_pre_consume:
               settings['quota_setting.enable_free_model_pre_consume'],
           },
