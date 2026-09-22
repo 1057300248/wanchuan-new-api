@@ -19,23 +19,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/rc40-diagnostics"
+          OUT="$RUNNER_TEMP/rc40-diagnostics"
+          mkdir -p "$OUT"
+          curl --fail --silent --show-error --location --max-time 90 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' 'https://api.github.com/repos/1057300248/wanchuan-new-api/actions/jobs/106654014451/logs' -o "$OUT/frontend.log"
           python3 - <<'PY'
-          import os, pathlib, re, urllib.request
-          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'rc40-diagnostics'
-          for label, job in [('frontend',106654014451),('backend',106654014388)]:
-              req=urllib.request.Request(f'https://api.github.com/repos/1057300248/wanchuan-new-api/actions/jobs/{job}/logs',headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
-              with urllib.request.urlopen(req,timeout=60) as response:
-                  text=response.read().decode('utf-8')
-              text=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','',text)
-              text=re.sub(r'^\d{4}-\d{2}-\d{2}T\S+ ', '', text, flags=re.M)
-              (out/(label+'.log')).write_text(text)
-              marker=text.find('Failed Tests')
-              if marker<0: marker=text.find('FAIL:')
-              excerpt=text[max(0,marker-200):]
-              (out/(label+'-failures.log')).write_text(excerpt)
-              print(label, 'evidence bytes',len(text), 'failure excerpt bytes',len(excerpt))
-          print('Historical diagnostic evidence, not an acceptance gate.')
+          import os, pathlib, re
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'rc40-diagnostics'
+          text=(out/'frontend.log').read_text()
+          text=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','',text)
+          text=re.sub(r'^\d{4}-\d{2}-\d{2}T\S+ ', '', text, flags=re.M)
+          marker=text.find('Failed Tests')
+          (out/'failures.log').write_text(text[max(0,marker-200):])
+          print('Historical frontend log captured; diagnostic only, not acceptance.')
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
