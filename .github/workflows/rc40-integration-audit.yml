@@ -1,0 +1,119 @@
+name: RC40 integration audit
+
+on:
+  push:
+    branches: [codex/rc40-full-integration-20260922]
+    paths:
+      - .github/workflows/rc40-integration-audit.yml
+      - .github/rc40/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rc40-integration-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/rc40-full-integration-20260922'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out isolated integration branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin official rc40 and inventory three-way changes
+        shell: bash
+        env:
+          EXPECTED_MAIN: 7e8c2e633d18c15c1ef319728345363b1c3f9028
+          EXPECTED_RC40: 0aec08fee811ec6136828fda790551b49e410301
+        run: |
+          set -euo pipefail
+          git fetch --no-tags https://github.com/QuantumNous/new-api.git refs/tags/v1.0.0-rc.40
+          test "$(git rev-parse FETCH_HEAD)" = "$EXPECTED_RC40"
+          git merge-base --is-ancestor "$EXPECTED_MAIN" HEAD
+          git update-ref refs/heads/rc40-audit-current HEAD
+          git update-ref refs/heads/rc40-audit-upstream "$EXPECTED_RC40"
+          OUT="$RUNNER_TEMP/rc40-audit"
+          mkdir -p "$OUT"
+          export OUT
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          out = pathlib.Path(os.environ['OUT'])
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          ours = os.environ['EXPECTED_MAIN']
+          upstream = os.environ['EXPECTED_RC40']
+          base = git('merge-base', ours, upstream)
+          def changes(left, right):
+              return set(filter(None, git('diff', '--name-only', left, right).splitlines()))
+          custom = changes(base, ours)
+          incoming = changes(base, upstream)
+          inventory = {
+              'main_sha': ours,
+              'integration_sha': git('rev-parse', 'HEAD'),
+              'upstream_tag': 'v1.0.0-rc.40',
+              'upstream_sha': upstream,
+              'merge_base': base,
+              'divergence': git('rev-list', '--left-right', '--count', f'{ours}...{upstream}'),
+              'custom_changed_files': sorted(custom),
+              'incoming_changed_files': sorted(incoming),
+              'overlap_files': sorted(custom & incoming),
+              'upstream_deleted_files': git('diff', '--name-only', '--diff-filter=D', base, upstream).splitlines(),
+              'custom_modules': git('ls-tree', '-d', '--name-only', ours + ':modules').splitlines(),
+          }
+          (out / 'inventory.json').write_text(json.dumps(inventory, indent=2) + '\n')
+          print(json.dumps({k:v for k,v in inventory.items() if not isinstance(v,list)}, indent=2))
+          print('CUSTOM_FILES', len(custom), 'INCOMING_FILES', len(incoming), 'OVERLAP_FILES', len(custom & incoming))
+          (out / 'incoming-commits.txt').write_text(git('log', '--format=%H %s', f'{base}..{upstream}') + '\n')
+          (out / 'custom-commits.txt').write_text(git('log', '--format=%H %s', f'{base}..{ours}') + '\n')
+          PY
+          git config user.name 'RC40 integration audit'
+          git config user.email 'rc40-audit@users.noreply.github.com'
+          set +e
+          git merge --no-commit --no-ff "$EXPECTED_RC40" > "$OUT/merge.log" 2>&1
+          MERGE_STATUS=$?
+          set -e
+          if [ "$MERGE_STATUS" -gt 1 ]; then cat "$OUT/merge.log"; exit "$MERGE_STATUS"; fi
+          export MERGE_STATUS
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          out = pathlib.Path(os.environ['OUT'])
+          conflicts = subprocess.check_output(['git','diff','--name-only','--diff-filter=U'],text=True).splitlines()
+          (out / 'conflicts.json').write_text(json.dumps(conflicts, indent=2) + '\n')
+          print('MERGE_EXIT', os.environ['MERGE_STATUS'], 'CONFLICT_COUNT', len(conflicts))
+          print(json.dumps(conflicts, indent=2))
+          for path in conflicts:
+              dest = out / 'conflict-stages' / path
+              dest.parent.mkdir(parents=True, exist_ok=True)
+              for stage, name in [(1,'base'),(2,'ours'),(3,'theirs')]:
+                  result = subprocess.run(['git','show',f':{stage}:{path}'], capture_output=True)
+                  if result.returncode == 0:
+                      pathlib.Path(str(dest) + '.' + name).write_bytes(result.stdout)
+              source = pathlib.Path(path)
+              if source.is_file():
+                  pathlib.Path(str(dest) + '.merged').write_bytes(source.read_bytes())
+          PY
+          git diff --cached --stat > "$OUT/staged-stat.txt"
+          git bundle create "$OUT/source.bundle" refs/heads/rc40-audit-current refs/heads/rc40-audit-upstream
+          sha256sum "$OUT/source.bundle" > "$OUT/source.bundle.sha256"
+          {
+            echo '## RC40 three-way integration audit'
+            echo 'Read-only audit in an ephemeral runner. No push, release, deployment, production database, or paid upstream calls.'
+            echo '```json'
+            cat "$OUT/conflicts.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve source and merge evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rc40-integration-audit-${{ github.sha }}
+          path: ${{ runner.temp }}/rc40-audit/
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 1
