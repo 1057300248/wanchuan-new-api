@@ -6,41 +6,41 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 jobs:
   diagnostics:
     if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/rc40-full-integration-20260922'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          ref: a1ee61c51d727f74880d5570628e65f0c9b5177a
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version: '1.4.0'
-      - name: Capture separate compiler and lint diagnostics
-        working-directory: web
+      - name: Capture completed candidate test evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          bun install --frozen-lockfile
-          OUT="$RUNNER_TEMP/rc40-diagnostics"
-          mkdir -p "$OUT"
-          git rev-parse HEAD > "$OUT/commit.txt"
-          for SCRIPT in typecheck lint:ci copyright:check; do
-            set +e
-            bun run "$SCRIPT" > "$OUT/${SCRIPT//:/-}.log" 2>&1
-            STATUS=$?
-            set -e
-            echo "$SCRIPT=$STATUS" | tee -a "$OUT/status.txt"
-            cat "$OUT/${SCRIPT//:/-}.log"
-          done
-          echo 'Diagnostics only; status.txt contains failures. This job is not an acceptance gate.' >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p "$RUNNER_TEMP/rc40-diagnostics"
+          python3 - <<'PY'
+          import os, pathlib, re, urllib.request
+          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'rc40-diagnostics'
+          for label, job in [('frontend',106654014451),('backend',106654014388)]:
+              req=urllib.request.Request(f'https://api.github.com/repos/1057300248/wanchuan-new-api/actions/jobs/{job}/logs',headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req,timeout=60) as response:
+                  text=response.read().decode('utf-8')
+              text=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','',text)
+              text=re.sub(r'^\d{4}-\d{2}-\d{2}T\S+ ', '', text, flags=re.M)
+              (out/(label+'.log')).write_text(text)
+              marker=text.find('Failed Tests')
+              if marker<0: marker=text.find('FAIL:')
+              excerpt=text[max(0,marker-200):]
+              (out/(label+'-failures.log')).write_text(excerpt)
+              print(label, 'evidence bytes',len(text), 'failure excerpt bytes',len(excerpt))
+          print('Historical diagnostic evidence, not an acceptance gate.')
+          PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: rc40-focused-diagnostics
+          name: rc40-full-failure-evidence
           path: ${{ runner.temp }}/rc40-diagnostics/
           retention-days: 7
           if-no-files-found: error
