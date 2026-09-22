@@ -21,7 +21,17 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { ApiKey, CCSwitchApp } from '../../../types'
 import { CCSwitchDialog } from '../cc-switch-dialog'
+import { ccSwitchModelsQueryKey } from '../cc-switch-utils'
+
+const token: ApiKey = {
+  id: 1, name: 'Scoped fixture', key: 'masked', status: 1,
+  remain_quota: 0, used_quota: 0, unlimited_quota: true,
+  expired_time: -1, created_time: 1, accessed_time: 1,
+  group: 'default', auto_groups: ['default'], cross_group_retry: false,
+  model_limits_enabled: false, model_limits: '', allow_ips: '',
+}
 
 let queryClient: QueryClient
 
@@ -36,13 +46,15 @@ afterEach(() => {
 })
 
 function renderDialog(models = ['gpt-5.4', 'claude-sonnet-4-6']) {
-  queryClient.setQueryData(['user-models-ccswitch'], {
-    success: true,
-    data: models,
-  })
+  for (const app of ['claude', 'codex', 'gemini'] satisfies CCSwitchApp[]) {
+    queryClient.setQueryData(ccSwitchModelsQueryKey(token, app), {
+      success: true,
+      data: models,
+    })
+  }
   render(
     <QueryClientProvider client={queryClient}>
-      <CCSwitchDialog open onOpenChange={vi.fn()} tokenKey='test-only' />
+      <CCSwitchDialog open onOpenChange={vi.fn()} tokenKey='test-only' token={token} />
     </QueryClientProvider>
   )
 }
@@ -104,7 +116,7 @@ describe('CC Switch model selection', () => {
 
     expect(await screen.findByText('No models found')).toBeVisible()
     await act(async () => {
-      queryClient.setQueryData(['user-models-ccswitch'], {
+      queryClient.setQueryData(ccSwitchModelsQueryKey(token, 'codex'), {
         success: true,
         data: ['gpt-5.4'],
       })

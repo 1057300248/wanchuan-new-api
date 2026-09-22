@@ -71,7 +71,11 @@ function Fixture(props: {
       <div ref={setActions} />
       <GroupRatioForm
         form={form}
-        onSave={props.onSave ?? (async () => {})}
+        baseline={{ ...defaults, ...props.initial }}
+        onSave={async (values) => {
+          await props.onSave?.(values)
+          return 'saved'
+        }}
         isSaving={props.isSaving ?? false}
       />
     </SettingsPageProvider>
@@ -113,7 +117,7 @@ describe('group settings workspace', () => {
     render(
       <Fixture
         initial={{
-          GroupSpecialUsableGroup: '{"vip":{"+:default":"Standard"}}',
+          GroupSpecialUsableGroup: '{"vip":{ "+:default":"Standard"}}',
         }}
       />
     )

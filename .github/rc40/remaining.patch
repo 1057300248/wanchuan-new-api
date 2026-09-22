@@ -1,0 +1,108 @@
+diff --git a/controller/plugin_protocol_test.go b/controller/plugin_protocol_test.go
+index 278b32f6f..32989402b 100644
+--- a/controller/plugin_protocol_test.go
++++ b/controller/plugin_protocol_test.go
+@@ -1614,7 +1614,7 @@ export const protocols = {openai_image: {
+   decodeRequest: function(ctx) { return {kind:"submit", model: ctx.model, requestBody: ctx.body.value}; },
+   render: function(ctx, task) {
+     const data = (task.data && task.data.images || []).map(function(url) { return {url: url}; });
+-    return {data: data, vendor: "test"};
++    return {data: data, vendor: "test", model: "private-provider-image-model"};
+   },
+ }};
+ `
+@@ -1640,6 +1640,7 @@ func newImageProtocolTestContext(responseFormat string) (*gin.Context, *httptest
+ 	common.SetContextKey(c, constant.ContextKeyTokenId, 81)
+ 	common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+ 	c.Set("resolved_task_model", "image-model")
++	common.SetContextKey(c, constant.ContextKeyOriginalModel, "image-model")
+ 	value := map[string]any{"model": "image-model", "prompt": "a cat", "n": 2}
+ 	if responseFormat != "" {
+ 		value["response_format"] = responseFormat
+@@ -1696,6 +1697,8 @@ func TestServeTaskPluginImageProtocolRendersImmediateResultAndInlinesBase64(t *t
+ 			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+ 			assert.Equal(t, float64(1_710_000_000), response["created"])
+ 			assert.Equal(t, "test", response["vendor"], "plugin fields are preserved")
++			assert.Equal(t, "image-model", response["model"])
++			assert.NotContains(t, recorder.Body.String(), "private-provider-image-model")
+ 			data, ok := response["data"].([]any)
+ 			require.True(t, ok)
+ 			require.Len(t, data, 2)
+@@ -1725,8 +1728,8 @@ func TestServeTaskPluginImageProtocolWaitsForAsynchronousTask(t *testing.T) {
+ 		wantMessage string
+ 	}{
+ 		{"success", model.TaskStatusSuccess, http.StatusOK, "", ""},
+-		{"failure", model.TaskStatusFailure, http.StatusBadRequest, "image_generation_failed", "DataInspectionFailed"},
+-		{"timeout", "", http.StatusGatewayTimeout, "task_timeout", "still running"},
++		{"failure", model.TaskStatusFailure, http.StatusBadRequest, "image_generation_failed", "invalid request"},
++		{"timeout", "", http.StatusGatewayTimeout, "task_timeout", "upstream request failed"},
+ 	} {
+ 		t.Run(tc.name, func(t *testing.T) {
+ 			pinned := imageProtocolTestEndpoint(t)
+@@ -1767,8 +1770,8 @@ func TestServeTaskPluginImageProtocolWaitsForAsynchronousTask(t *testing.T) {
+ 	}
+ }
+ 
+-// Submission failures use the OpenAI error envelope and surface a DashScope
+-// {code, message} failure body as a readable vendor message.
++// Submission failures keep the OpenAI envelope but never expose vendor diagnostics
++// to ordinary callers. Administrator channel tests are covered separately.
+ func TestServeTaskPluginImageProtocolSubmissionErrorUsesOpenAIEnvelope(t *testing.T) {
+ 	pinned := imageProtocolTestEndpoint(t)
+ 	c, recorder := newImageProtocolTestContext("")
+@@ -1781,9 +1784,10 @@ func TestServeTaskPluginImageProtocolSubmissionErrorUsesOpenAIEnvelope(t *testin
+ 	var response map[string]any
+ 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+ 	errorBody := response["error"].(map[string]any)
+-	assert.Equal(t, "InvalidParameter", errorBody["code"])
++	assert.Nil(t, errorBody["code"])
+ 	assert.Equal(t, "invalid_request_error", errorBody["type"])
+-	assert.Contains(t, errorBody["message"], "n must be 1")
++	assert.Equal(t, "invalid request", errorBody["message"])
++	assert.NotContains(t, recorder.Body.String(), "InvalidParameter")
+ 	assert.NotContains(t, errorBody["message"], "request_id")
+ }
+ 
+ diff --git a/controller/relay.go b/controller/relay.go
+index f26f7c899..e77f7c952 100644
+--- a/controller/relay.go
++++ b/controller/relay.go
+@@ -298,14 +298,6 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
+ 	return channel, nil
+ }
+ 
+-func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
+-	if common.GetContextKeyBool(c, constant.ContextKeyResponsesStreamErrorHandled) ||
+-		common.GetContextKeyBool(c, constant.ContextKeyStreamErrorHandled) {
+-		return false
+-	}
+-	return service.ShouldRetryRelayError(c, openaiErr, retryTimes)
+-}
+-
+ func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo) {
+ 	service.ProcessChannelError(c, channelError, err, relayInfo)
+ }
+ diff --git a/web/src/features/channels/lib/header-passthrough.ts b/web/src/features/channels/lib/header-passthrough.ts
+index 48bd7e324..b8baa69e2 100644
+--- a/web/src/features/channels/lib/header-passthrough.ts
++++ b/web/src/features/channels/lib/header-passthrough.ts
+@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
+ */
+-
+ /**
+  * The header override rule key the relay treats as "forward every client
+  * request header" (see processHeaderOverride in relay/channel/api_request.go).
+ diff --git a/web/src/features/channels/lib/model-mapping-rules.ts b/web/src/features/channels/lib/model-mapping-rules.ts
+index f9803a445..5ea6f014e 100644
+--- a/web/src/features/channels/lib/model-mapping-rules.ts
++++ b/web/src/features/channels/lib/model-mapping-rules.ts
+@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
+ */
+-
+ export type ModelMappingPair = {
+   /** Request model name that users call. */
+   from: string

@@ -308,6 +308,8 @@ export function useUsersColumns(): ColumnDef<User>[] {
         meta: { pinned: 'right' as const },
       },
     ],
+    // formatQuota reads the currency configuration from the store.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [t, quotaUnit, currencyConfig]
   )
 }

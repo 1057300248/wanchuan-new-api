@@ -38,10 +38,10 @@ func TestShouldRetryNeverReplaysHandledResponsesStream(t *testing.T) {
 	common.SetContextKey(c, constant.ContextKeyResponsesStreamErrorHandled, true)
 	for _, code := range []types.ErrorCode{types.ErrorCodeBadResponse, types.ErrorCodeChannelNoAvailableKey} {
 		apiErr := types.NewOpenAIError(errors.New("stream already failed"), code, http.StatusBadGateway)
-		assert.False(t, shouldRetry(c, apiErr, 3), "even a channel-classified error must not splice a new response into an existing SSE stream")
+		assert.Equal(t, "stop", service.DecideRelayRetry(c, apiErr, 3).Action)
+		assert.False(t, service.ShouldRetryRelayError(c, apiErr, 3), "even a channel-classified error must not splice a new response into an existing SSE stream")
 	}
 }
-
 
 func TestRelayPreservesHandledChatStreamFailureAndRecordsPolicyStop(t *testing.T) {
 	w := httptest.NewRecorder()
@@ -71,6 +71,7 @@ func TestShouldRetryNeverReplaysHandledChatStream(t *testing.T) {
 	common.SetContextKey(c, constant.ContextKeyStreamErrorHandled, true)
 	for _, code := range []types.ErrorCode{types.ErrorCodeBadResponse, types.ErrorCodeChannelNoAvailableKey} {
 		apiErr := types.NewOpenAIError(errors.New("partial stream failed"), code, http.StatusBadGateway)
-		assert.False(t, shouldRetry(c, apiErr, 3), "partial output must not be spliced with a retry")
+		assert.Equal(t, "stop", service.DecideRelayRetry(c, apiErr, 3).Action)
+		assert.False(t, service.ShouldRetryRelayError(c, apiErr, 3), "partial output must not be spliced with a retry")
 	}
 }

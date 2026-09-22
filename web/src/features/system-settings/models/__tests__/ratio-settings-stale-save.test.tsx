@@ -151,7 +151,7 @@ async function renameVipAndSave() {
   fireEvent.change(await screen.findByDisplayValue('vip'), {
     target: { value: 'vip2' },
   })
-  fireEvent.click(screen.getByRole('button', { name: 'Save group ratios' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
 }
 
 describe('group settings save conflict handling', () => {
@@ -177,7 +177,7 @@ describe('group settings save conflict handling', () => {
     expect(screen.getByDisplayValue('vip2')).toBeInTheDocument()
 
     // Retrying keeps the explicit mapping instead of dropping it.
-    fireEvent.click(screen.getByRole('button', { name: 'Save group ratios' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
     await waitFor(() => expect(renameSystemGroupsMock).toHaveBeenCalledTimes(2))
     const retryPayload = renameSystemGroupsMock.mock.calls[1]?.[0] as {
       renames: Array<{ from: string; to: string }>
@@ -217,7 +217,7 @@ describe('group settings save conflict handling', () => {
       queryKey: ['system-options'],
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save group ratios' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
     await waitFor(() =>
       expect(vi.mocked(toast.info)).toHaveBeenCalledWith('No changes to save')
     )

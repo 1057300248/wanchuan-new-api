@@ -94,6 +94,9 @@ var clientSafeErrorCodes = map[string]struct{}{
 	"invalid_request_error":      {},
 	"request_too_large":          {},
 	"billing_hard_limit_reached": {},
+	"image_generation_failed":    {},
+	"task_timeout":               {},
+	"request_cancelled":          {},
 }
 
 // clientSafeGoogleStatuses are the canonical google.rpc.Status codes carried by

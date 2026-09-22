@@ -31,7 +31,7 @@ import { assert, expect, test, vi } from 'vitest'
 import { SettingsPageProvider } from '../../components/settings-page-context'
 import type { GroupRenameMapping } from '../../types'
 import { GroupRatioForm, type GroupFormValues } from '../group-ratio-form'
-import { GroupRatioVisualEditor } from '../group-ratio-visual-editor'
+import { GroupRatioVisualEditor, type GroupSettingsSection } from '../group-ratio-visual-editor'
 import {
   applyGroupRenamesToValues,
   collectGroupRenamePlan,
@@ -61,7 +61,7 @@ test('applyGroupRenamesToValues rewrites every group-keyed JSON field', () => {
       GroupGroupRatio: '{"old":{"keep":0.5,"old":0.4},"keep":{"old":0.9}}',
       AutoGroups: '["old","keep"]',
       GroupSpecialUsableGroup:
-        '{"old":{"+:keep":"k","-:old":"h","plain":"p"},"keep":{"+:old":"o"}}',
+        '{"old":{ "+:keep":"k","-:old":"h","plain":"p"},"keep":{ "+:old":"o"}}',
     },
     [{ from: 'old', to: 'new' }]
   )
@@ -151,6 +151,7 @@ test('collectGroupRenamePlan reports reserved group removals separately', () => 
 function PricingFixture(props: {
   onRenamesChange: (renames: GroupRenameMapping[]) => void
 }) {
+  const [section, setSection] = useState<GroupSettingsSection>('pricing')
   const [settings, setSettings] = useState<Record<string, string>>({
     GroupRatio: '{"default":1,"vip":1}',
     TopupGroupRatio: '{}',
@@ -158,6 +159,9 @@ function PricingFixture(props: {
   })
   return (
     <GroupRatioVisualEditor
+      section={section}
+      onSectionChange={setSection}
+      defaultUseAutoGroupField={null}
       groupRatio={settings.GroupRatio}
       topupGroupRatio={settings.TopupGroupRatio}
       userUsableGroups={settings.UserUsableGroups}
@@ -301,7 +305,7 @@ test('saving group changes disables repeated submissions until the result arrive
   const onSave = vi.fn(() => pendingSave)
   render(<GroupFormFixture onSave={onSave} />)
 
-  fireEvent.click(screen.getByRole('button', { name: 'Save group ratios' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
   await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
   const saving = screen.getByRole('button', { name: 'Saving...' })
   expect(saving).toBeDisabled()
@@ -310,7 +314,7 @@ test('saving group changes disables repeated submissions until the result arrive
 
   await act(async () => finishSave('saved'))
   expect(
-    screen.getByRole('button', { name: 'Save group ratios' })
+    screen.getByRole('button', { name: 'Save group settings' })
   ).toBeEnabled()
 })
 
@@ -321,7 +325,7 @@ test('saving in visual mode forwards explicit renames', async () => {
   fireEvent.change(screen.getByDisplayValue('vip'), {
     target: { value: 'vip2' },
   })
-  fireEvent.click(screen.getByRole('button', { name: 'Save group ratios' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
 
   await waitFor(() => expect(calls).toHaveLength(1))
   expect(calls[0].renames).toEqual([{ from: 'vip', to: 'vip2' }])
@@ -346,7 +350,7 @@ test('a pending rename survives a mode round-trip and is still saved', async () 
   fireEvent.click(screen.getByRole('button', { name: 'Switch to Visual' }))
 
   expect(screen.getByDisplayValue('vip2')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'Save group ratios' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
 
   await waitFor(() => expect(calls).toHaveLength(1))
   expect(calls[0].renames).toEqual([{ from: 'vip', to: 'vip2' }])
@@ -370,7 +374,7 @@ test('JSON mode raw replacement blocks save until the mapping is resolved', asyn
   fireEvent.input(screen.getByLabelText('Group ratios'), {
     target: { value: '{"gold":1}' },
   })
-  fireEvent.click(screen.getByRole('button', { name: 'Save group ratios' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
 
   await waitFor(() =>
     expect(screen.getByText('vip was removed')).toBeInTheDocument()
@@ -392,7 +396,7 @@ test('JSON mode reserved group rename blocks save', async () => {
   fireEvent.input(screen.getByLabelText('Group ratios'), {
     target: { value: '{"standard":1,"vip":1}' },
   })
-  fireEvent.click(screen.getByRole('button', { name: 'Save group ratios' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
 
   await waitFor(() =>
     expect(

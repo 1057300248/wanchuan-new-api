@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/privacy"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -162,7 +163,12 @@ func serveTaskPluginImageProtocol(c *gin.Context, pinned pluginruntime.PinnedEnd
 			item["b64_json"] = encoded
 		}
 	}
-	c.JSON(http.StatusOK, response)
+	payloadJSON, err := common.Marshal(response)
+	if err != nil {
+		respondPluginProtocolError(c, http.StatusInternalServerError, "task_protocol_error", "Task protocol request failed")
+		return
+	}
+	c.Data(http.StatusOK, "application/json; charset=utf-8", privacy.SanitizeClientPayload(c, payloadJSON))
 }
 
 // waitTaskPluginImageTask polls an asynchronous image task inside the client
@@ -225,8 +231,8 @@ func taskPluginImageResponseFormat(request pluginruntime.ProtocolRequestContext)
 }
 
 // respondTaskPluginImageError writes an OpenAI error envelope for the Images
-// API. DashScope failure bodies arrive as JSON {code, message}; their message
-// is surfaced so a client sees the vendor reason instead of raw JSON.
+// API. Keep provider diagnostics only for administrator channel tests; ordinary
+// relay callers use the same allowlisted privacy boundary as chat and Responses.
 func respondTaskPluginImageError(c *gin.Context, taskErr *dto.TaskError) {
 	service.RecordRequestPolicyTermination(c, taskSubmissionAPIError(taskErr))
 	status := http.StatusInternalServerError
@@ -249,9 +255,10 @@ func respondTaskPluginImageError(c *gin.Context, taskErr *dto.TaskError) {
 	if status < http.StatusInternalServerError {
 		errorType = "invalid_request_error"
 	}
-	c.JSON(status, gin.H{"error": gin.H{
-		"message": common.MessageWithRequestId(message, c.GetString(common.RequestIdKey)),
-		"type":    errorType,
-		"code":    code,
-	}})
+	clientError := privacy.SanitizeClientOpenAIError(c, status, types.OpenAIError{
+		Message: common.MessageWithRequestId(message, c.GetString(common.RequestIdKey)),
+		Type:    errorType,
+		Code:    code,
+	})
+	c.JSON(status, gin.H{"error": clientError})
 }

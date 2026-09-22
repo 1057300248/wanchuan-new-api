@@ -42,8 +42,10 @@ function Fixture() {
         <QuotaSettingsSection
           defaultValues={{
             QuotaForNewUser: 0,
-            QuotaForInviter: 0,
-            QuotaForInvitee: 0,
+            SignupBonusEnabled: false,
+            QuotaForSignupBonus: 0,
+            AffiliateRewardEnabled: false,
+            AffiliateRewardRate: 0,
             TopUpLink: '',
             quota_setting: {
               enable_free_model_pre_consume: true,
