@@ -1,18 +1,14 @@
 name: RC40 full integration
-
 on:
   push:
     branches: [codex/rc40-full-integration-20260922]
     paths: [.github/workflows/rc40-integrate.yml]
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: rc40-full-integration
   cancel-in-progress: false
-
 jobs:
   integrate:
     if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/rc40-full-integration-20260922'
@@ -35,36 +31,19 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: '1.4.0'
-      - name: Merge pinned upstream and replay reviewed resolutions
-        shell: bash
+      - name: Verify ancestry and apply reviewed post-merge corrections
         run: |
           set -euo pipefail
-          UPSTREAM=0aec08fee811ec6136828fda790551b49e410301
-          git fetch --no-tags https://github.com/QuantumNous/new-api.git refs/tags/v1.0.0-rc.40
-          test "$(git rev-parse FETCH_HEAD)" = "$UPSTREAM"
           git merge-base --is-ancestor 7e8c2e633d18c15c1ef319728345363b1c3f9028 HEAD
-          if git merge-base --is-ancestor "$UPSTREAM" HEAD; then
-            echo 'Already integrated; no merge replay necessary.'
-            exit 0
-          fi
-          git config user.name 'RC40 Integration'
-          git config user.email 'rc40-integration@users.noreply.github.com'
-          set +e
-          git merge --no-commit --no-ff "$UPSTREAM"
-          STATUS=$?
-          set -e
-          test "$STATUS" -le 1
-          python3 .github/rc40/replay.py
-          printf '%s\n' 'v1.0.0-rc.40.chuanapi.20260922.integration' > VERSION
-          git add VERSION
-      - name: Install and format the candidate with protected copyright headers
+          git merge-base --is-ancestor 0aec08fee811ec6136828fda790551b49e410301 HEAD
+          python3 .github/rc40/followup.py
+      - name: Format with protected copyright headers
         working-directory: web
         run: |
           bun install --frozen-lockfile
           bun run format
-      - name: Commit candidate to integration branch only
+      - name: Commit corrected candidate to integration branch only
         id: commit
-        shell: bash
         run: |
           set -euo pipefail
           BRANCH=codex/rc40-full-integration-20260922
@@ -73,24 +52,20 @@ jobs:
           git add --all
           git diff --cached --check
           test -z "$(git ls-files -u)"
-          if test -f .git/MERGE_HEAD; then
-            test "$(cat .git/MERGE_HEAD)" = 0aec08fee811ec6136828fda790551b49e410301
-            git -c user.name='RC40 Integration' -c user.email='rc40-integration@users.noreply.github.com' commit -m 'Merge official rc40 into ChuanAPI integration candidate' -m 'Preserve custom money ports, privacy, identity revalidation, Cline, token-scoped CC Switch and group rename protections. Resolve all 78 inventoried conflicts. Candidate only: validation is not yet complete; no main merge or production release.'
-          elif ! git diff --cached --quiet; then
-            git -c user.name='RC40 Integration' -c user.email='rc40-integration@users.noreply.github.com' commit -m 'style: normalize rc40 integration formatting'
+          if ! git diff --cached --quiet; then
+            git -c user.name='RC40 Integration' -c user.email='rc40-integration@users.noreply.github.com' commit -m 'fix: preserve stream privacy wallet and UI contracts after rc40 merge' -m 'Guard the real retry decision entry point; sanitize task-plugin Images; keep split wallet reservation and replay assertions; adapt token-scoped model and group rename regression fixtures. Candidate only: exact-SHA validation follows; no main merge or production release.'
           fi
           git merge-base --is-ancestor 0aec08fee811ec6136828fda790551b49e410301 HEAD
           git push origin "HEAD:refs/heads/$BRANCH"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           git log -1 --format='%H%n%P%n%s' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Candidate only. Main and production are untouched. Full checks run against the exact candidate SHA.' >> "$GITHUB_STEP_SUMMARY"
-      - name: Preserve candidate source and patch
+      - name: Preserve candidate source and changes
         if: always()
-        shell: bash
         run: |
           OUT="$RUNNER_TEMP/rc40-candidate"
           mkdir -p "$OUT"
           cp .github/rc40/resolutions.json "$OUT/" 2>/dev/null || true
+          cp .github/rc40/followup-applied.json "$OUT/" 2>/dev/null || true
           git diff HEAD --binary > "$OUT/uncommitted.patch"
           git diff --cached --binary > "$OUT/staged.patch"
           git status --short > "$OUT/status.txt"
@@ -121,30 +96,35 @@ jobs:
             go.sum
             relaykit/go.sum
       - run: mkdir -p web/dist && touch web/dist/index.html
-      - name: Root build
-        run: go build ./...
-      - name: Independent relaykit build
+      - name: Build and vet
+        run: |
+          set -euo pipefail
+          go build ./... 2>&1 | tee "$RUNNER_TEMP/build.log"
+          go vet ./... 2>&1 | tee "$RUNNER_TEMP/vet.log"
+      - name: Complete root suite
+        if: success() || failure()
+        run: set -o pipefail; go test ./... -count=1 2>&1 | tee "$RUNNER_TEMP/root-tests.log"
+      - name: Independent relaykit build and complete suite
         if: success() || failure()
         working-directory: relaykit
-        run: GOWORK=off go build ./...
-      - name: Root vet
-        if: success() || failure()
-        run: go vet ./...
-      - name: Full root tests
-        if: success() || failure()
-        run: go test ./... -count=1
-      - name: Independent relaykit tests
-        if: success() || failure()
-        working-directory: relaykit
-        run: GOWORK=off go test ./... -count=1
-      - name: Release evidence gate tests
+        run: |
+          set -euo pipefail
+          GOWORK=off go build ./...
+          GOWORK=off go test ./... -count=1 2>&1 | tee "$RUNNER_TEMP/relaykit-tests.log"
+      - name: Release gate regressions
         if: success() || failure()
         run: python3 -m unittest discover -s ops/server/tests -p test_release_gate.py -v
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: rc40-backend-${{ needs.integrate.outputs.candidate }}
+          path: ${{ runner.temp }}/*.log
+          retention-days: 7
 
   frontend:
     needs: integrate
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: web
@@ -158,19 +138,119 @@ jobs:
           bun-version: '1.4.0'
       - run: bun install --frozen-lockfile
       - name: Typecheck
-        run: bun run typecheck
+        run: set -o pipefail; bun run typecheck 2>&1 | tee "$RUNNER_TEMP/typecheck.log"
       - name: Lint
         if: success() || failure()
-        run: bun run lint:ci
+        run: set -o pipefail; bun run lint:ci 2>&1 | tee "$RUNNER_TEMP/lint.log"
       - name: Format and copyright
         if: success() || failure()
-        run: bun run format:check && bun run copyright:check
-      - name: Full frontend tests
+        run: |
+          set -euo pipefail
+          bun run format:check 2>&1 | tee "$RUNNER_TEMP/format.log"
+          bun run copyright:check 2>&1 | tee "$RUNNER_TEMP/copyright.log"
+      - name: Build without publishing
         if: success() || failure()
-        run: bun run test
-      - name: Production build only, no publish
-        if: success() || failure()
-        run: bun run build
+        run: set -o pipefail; bun run build 2>&1 | tee "$RUNNER_TEMP/frontend-build.log"
       - name: Production dependency audit
         if: success() || failure()
-        run: bun audit --production
+        run: set -o pipefail; bun audit --production 2>&1 | tee "$RUNNER_TEMP/dependencies.log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: rc40-frontend-${{ needs.integrate.outputs.candidate }}
+          path: ${{ runner.temp }}/*.log
+          retention-days: 7
+
+  frontend-tests:
+    needs: integrate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ needs.integrate.outputs.candidate }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.0'
+      - run: cd web && bun install --frozen-lockfile
+      - name: Complete frontend suite shard, no exclusions
+        working-directory: web
+        run: |
+          set -o pipefail
+          bun run test --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/vitest.json" 2>&1 | tee "$RUNNER_TEMP/vitest.log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: rc40-tests-${{ matrix.shard }}-${{ needs.integrate.outputs.candidate }}
+          path: |
+            ${{ runner.temp }}/vitest.json
+            ${{ runner.temp }}/vitest.log
+          retention-days: 7
+
+  databases:
+    needs: integrate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      mysql:
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: compat
+          MYSQL_DATABASE: newapi_compat
+        ports: ['3306:3306']
+        options: --health-cmd="mysqladmin ping -h 127.0.0.1 -pcompat --silent" --health-interval=10s --health-timeout=5s --health-retries=12
+      postgres:
+        image: postgres:9.6
+        env:
+          POSTGRES_PASSWORD: compat
+          POSTGRES_DB: newapi_compat
+        ports: ['5432:5432']
+        options: --health-cmd="pg_isready -U postgres -d newapi_compat" --health-interval=10s --health-timeout=5s --health-retries=12
+    env:
+      GOWORK: 'off'
+      TEST_DATABASE_COMPAT: '1'
+      TEST_MYSQL_DSN: root:compat@tcp(127.0.0.1:3306)/newapi_compat?charset=utf8mb4&parseTime=true&loc=UTC
+      TEST_POSTGRES_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat?sslmode=disable
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ needs.integrate.outputs.candidate }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+      - name: Create independent disposable log databases
+        run: |
+          docker exec '${{ job.services.mysql.id }}' mysql -uroot -pcompat -e 'ALTER DATABASE newapi_compat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE newapi_compat_log CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
+          docker exec '${{ job.services.postgres.id }}' createdb -U postgres newapi_compat_log
+          mkdir -p web/dist && touch web/dist/index.html
+      - name: SQLite, MySQL 5.7, PostgreSQL 9.6 real migrations and payment constraints
+        run: |
+          set -euo pipefail
+          for DIALECT in sqlite mysql postgres; do
+            export TEST_DATABASE_DIALECT="$DIALECT"
+            case "$DIALECT" in
+              sqlite) export TEST_DATABASE_DSN='' TEST_LOG_DATABASE_DSN='' ;;
+              mysql) export TEST_DATABASE_DSN="$TEST_MYSQL_DSN" TEST_LOG_DATABASE_DSN='root:compat@tcp(127.0.0.1:3306)/newapi_compat_log?charset=utf8mb4&parseTime=true&loc=UTC' ;;
+              postgres) export TEST_DATABASE_DSN="$TEST_POSTGRES_DSN" TEST_LOG_DATABASE_DSN='postgres://postgres:compat@127.0.0.1:5432/newapi_compat_log?sslmode=disable' ;;
+            esac
+            go test ./model -run '^(TestDatabaseCompatibilityReal|TestMoneyColumnsAre64BitOnConfiguredDatabases|TestSupportTicketSchemaConfiguredDatabases|TestSupportTicketSchemaSQLite)$' -count=1 -v 2>&1 | tee "$RUNNER_TEMP/$DIALECT-model.log"
+            go test ./modules/chuanapi/payment -run '^TestPaymentOrderBindingDatabaseCompatibilityReal$' -count=1 -v 2>&1 | tee "$RUNNER_TEMP/$DIALECT-payment.log"
+          done
+      - name: Pre-consume policy through split wallets on three database engines
+        if: success() || failure()
+        run: set -o pipefail; go test ./controller -run '^TestPreConsumePolicyDatabaseMatrix$' -count=1 -v 2>&1 | tee "$RUNNER_TEMP/preconsume-matrix.log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: rc40-databases-${{ needs.integrate.outputs.candidate }}
+          path: ${{ runner.temp }}/*.log
+          retention-days: 7
