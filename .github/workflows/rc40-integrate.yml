@@ -1,0 +1,176 @@
+name: RC40 full integration
+
+on:
+  push:
+    branches: [codex/rc40-full-integration-20260922]
+    paths: [.github/workflows/rc40-integrate.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rc40-full-integration
+  cancel-in-progress: false
+
+jobs:
+  integrate:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/rc40-full-integration-20260922'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    outputs:
+      candidate: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.0'
+      - name: Merge pinned upstream and replay reviewed resolutions
+        shell: bash
+        run: |
+          set -euo pipefail
+          UPSTREAM=0aec08fee811ec6136828fda790551b49e410301
+          git fetch --no-tags https://github.com/QuantumNous/new-api.git refs/tags/v1.0.0-rc.40
+          test "$(git rev-parse FETCH_HEAD)" = "$UPSTREAM"
+          git merge-base --is-ancestor 7e8c2e633d18c15c1ef319728345363b1c3f9028 HEAD
+          if git merge-base --is-ancestor "$UPSTREAM" HEAD; then
+            echo 'Already integrated; no merge replay necessary.'
+            exit 0
+          fi
+          git config user.name 'RC40 Integration'
+          git config user.email 'rc40-integration@users.noreply.github.com'
+          set +e
+          git merge --no-commit --no-ff "$UPSTREAM"
+          STATUS=$?
+          set -e
+          test "$STATUS" -le 1
+          python3 .github/rc40/replay.py
+          printf '%s\n' 'v1.0.0-rc.40.chuanapi.20260922.integration' > VERSION
+          git add VERSION
+      - name: Install and format the candidate with protected copyright headers
+        working-directory: web
+        run: |
+          bun install --frozen-lockfile
+          bun run format
+      - name: Commit candidate to integration branch only
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH=codex/rc40-full-integration-20260922
+          test "$GITHUB_REF" = "refs/heads/$BRANCH"
+          test "$(git ls-remote origin "refs/heads/$BRANCH" | cut -f1)" = "$GITHUB_SHA"
+          git add --all
+          git diff --cached --check
+          test -z "$(git ls-files -u)"
+          if test -f .git/MERGE_HEAD; then
+            test "$(cat .git/MERGE_HEAD)" = 0aec08fee811ec6136828fda790551b49e410301
+            git -c user.name='RC40 Integration' -c user.email='rc40-integration@users.noreply.github.com' commit -m 'Merge official rc40 into ChuanAPI integration candidate' -m 'Preserve custom money ports, privacy, identity revalidation, Cline, token-scoped CC Switch and group rename protections. Resolve all 78 inventoried conflicts. Candidate only: validation is not yet complete; no main merge or production release.'
+          elif ! git diff --cached --quiet; then
+            git -c user.name='RC40 Integration' -c user.email='rc40-integration@users.noreply.github.com' commit -m 'style: normalize rc40 integration formatting'
+          fi
+          git merge-base --is-ancestor 0aec08fee811ec6136828fda790551b49e410301 HEAD
+          git push origin "HEAD:refs/heads/$BRANCH"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git log -1 --format='%H%n%P%n%s' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Candidate only. Main and production are untouched. Full checks run against the exact candidate SHA.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve candidate source and patch
+        if: always()
+        shell: bash
+        run: |
+          OUT="$RUNNER_TEMP/rc40-candidate"
+          mkdir -p "$OUT"
+          cp .github/rc40/resolutions.json "$OUT/" 2>/dev/null || true
+          git diff HEAD --binary > "$OUT/uncommitted.patch"
+          git diff --cached --binary > "$OUT/staged.patch"
+          git status --short > "$OUT/status.txt"
+          git update-ref refs/heads/rc40-candidate-evidence HEAD
+          git bundle create "$OUT/candidate.bundle" refs/heads/rc40-candidate-evidence
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: rc40-candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/rc40-candidate/
+          retention-days: 7
+
+  backend:
+    needs: integrate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GOWORK: 'off'
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ needs.integrate.outputs.candidate }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+      - run: mkdir -p web/dist && touch web/dist/index.html
+      - name: Root build
+        run: go build ./...
+      - name: Independent relaykit build
+        if: success() || failure()
+        working-directory: relaykit
+        run: GOWORK=off go build ./...
+      - name: Root vet
+        if: success() || failure()
+        run: go vet ./...
+      - name: Full root tests
+        if: success() || failure()
+        run: go test ./... -count=1
+      - name: Independent relaykit tests
+        if: success() || failure()
+        working-directory: relaykit
+        run: GOWORK=off go test ./... -count=1
+      - name: Release evidence gate tests
+        if: success() || failure()
+        run: python3 -m unittest discover -s ops/server/tests -p test_release_gate.py -v
+
+  frontend:
+    needs: integrate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ needs.integrate.outputs.candidate }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.0'
+      - run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Lint
+        if: success() || failure()
+        run: bun run lint:ci
+      - name: Format and copyright
+        if: success() || failure()
+        run: bun run format:check && bun run copyright:check
+      - name: Full frontend tests
+        if: success() || failure()
+        run: bun run test
+      - name: Production build only, no publish
+        if: success() || failure()
+        run: bun run build
+      - name: Production dependency audit
+        if: success() || failure()
+        run: bun audit --production
