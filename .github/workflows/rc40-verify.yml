@@ -84,6 +84,11 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: '1.4.0'
+      - name: Add runner Node runtime
+        run: |
+          set -euo pipefail
+          test -x /opt/actions-runner-rc40/externals/node20/bin/node
+          echo /opt/actions-runner-rc40/externals/node20/bin >> "$GITHUB_PATH"
       - name: Install locked dependencies
         run: |
           set -euo pipefail
@@ -131,6 +136,11 @@ jobs:
         with:
           bun-version: '1.4.0'
           no-cache: true
+      - name: Add runner Node runtime
+        run: |
+          set -euo pipefail
+          test -x /opt/actions-runner-rc40/externals/node20/bin/node
+          echo /opt/actions-runner-rc40/externals/node20/bin >> "$GITHUB_PATH"
       - name: Install locked dependencies
         working-directory: web
         env:
