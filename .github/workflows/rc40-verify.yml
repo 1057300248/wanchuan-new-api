@@ -130,24 +130,38 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: '1.4.0'
+          no-cache: true
       - name: Install locked dependencies
         working-directory: web
+        env:
+          RC40_CHECK_DIR: ${{ runner.temp }}/rc40-checks/frontend-tests-${{ matrix.shard }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          mkdir -p "$RUNNER_TEMP/rc40-checks"
-          printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/rc40-checks/commit.txt"
-          bun install --frozen-lockfile
+          rm -rf "$RC40_CHECK_DIR"
+          mkdir -p "$RC40_CHECK_DIR"
+          printf '%s\n' "$GITHUB_SHA" > "$RC40_CHECK_DIR/commit.txt"
+          bun install --frozen-lockfile --force
+      - name: Verify Bun module loading
+        working-directory: web
+        env:
+          RC40_CHECK_DIR: ${{ runner.temp }}/rc40-checks/frontend-tests-${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          env | sort | grep -E '^(CI|GITHUB_ACTIONS|GITHUB_RUN|GITHUB_SHA|HOME|PATH|BUN|NODE|RUNNER)' || true
+          bun -e "import { z } from 'zod'; if (typeof z?.object !== 'function') process.exit(1); console.log('zod import ok')"
       - name: Full Vitest shard with no file exclusions
         working-directory: web
+        env:
+          RC40_CHECK_DIR: ${{ runner.temp }}/rc40-checks/frontend-tests-${{ matrix.shard }}
         run: |
           set -o pipefail
-          bun run test --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/rc40-checks/vitest.json" 2>&1 | tee "$RUNNER_TEMP/rc40-checks/vitest.log"
+          bun run test --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile="$RC40_CHECK_DIR/vitest.json" 2>&1 | tee "$RC40_CHECK_DIR/vitest.log"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: rc40-vitest-${{ matrix.shard }}-${{ github.sha }}
-          path: ${{ runner.temp }}/rc40-checks/
+          path: ${{ runner.temp }}/rc40-checks/frontend-tests-${{ matrix.shard }}/
           retention-days: 7
 
   databases:
