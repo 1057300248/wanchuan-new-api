@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/extension"
+	"github.com/QuantumNous/new-api/pkg/dbpool"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/clickhouse"
@@ -223,9 +225,13 @@ func InitDB() (err error) {
 		if err != nil {
 			return err
 		}
-		sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
-		sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
-		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
+		pool, err := dbpool.Load(os.LookupEnv, false)
+		if err != nil {
+			_ = sqlDB.Close()
+			return err
+		}
+		pool.Apply(sqlDB)
+		common.SysLog(fmt.Sprintf("SQL pool log=%t max_open=%d max_idle=%d lifetime=%s idle_time=%s", false, pool.MaxOpen, pool.MaxIdle, pool.Lifetime, pool.IdleTime))
 
 		if !common.IsMasterNode {
 			return nil
@@ -270,9 +276,13 @@ func InitLogDB() (err error) {
 		if err != nil {
 			return err
 		}
-		sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
-		sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
-		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
+		pool, err := dbpool.Load(os.LookupEnv, true)
+		if err != nil {
+			_ = sqlDB.Close()
+			return err
+		}
+		pool.Apply(sqlDB)
+		common.SysLog(fmt.Sprintf("SQL pool log=%t max_open=%d max_idle=%d lifetime=%s idle_time=%s", true, pool.MaxOpen, pool.MaxIdle, pool.Lifetime, pool.IdleTime))
 
 		if !common.IsMasterNode {
 			return nil
@@ -755,6 +765,9 @@ func migrateSubscriptionPlanPriceAmount() {
 }
 
 func closeDB(db *gorm.DB) error {
+	if db == nil {
+		return nil
+	}
 	sqlDB, err := db.DB()
 	if err != nil {
 		return err
@@ -765,10 +778,8 @@ func closeDB(db *gorm.DB) error {
 
 func CloseDB() error {
 	if LOG_DB != DB {
-		err := closeDB(LOG_DB)
-		if err != nil {
-			return err
-		}
+		// A log-pool failure must not prevent the primary pool from closing.
+		return errors.Join(closeDB(LOG_DB), closeDB(DB))
 	}
 	return closeDB(DB)
 }
