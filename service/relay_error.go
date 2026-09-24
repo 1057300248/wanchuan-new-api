@@ -23,6 +23,14 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if err == nil {
 		return PolicyDecision{Action: "stop", Reason: "request_completed", Source: "system"}
 	}
+	// Once an SSE failure was written, another upstream attempt would splice a
+	// second response into the existing stream and can charge the request twice.
+	// Keep this guard in the shared decision entry point, ahead of channel-error
+	// retries (which otherwise bypass the ordinary retry budget).
+	if c != nil && (common.GetContextKeyBool(c, constant.ContextKeyResponsesStreamErrorHandled) ||
+		common.GetContextKeyBool(c, constant.ContextKeyStreamErrorHandled)) {
+		return PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}
+	}
 	if ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		source := RequestPolicy(c).SessionModeSource
 		if source == "" {

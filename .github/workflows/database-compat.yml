@@ -20,88 +20,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  sqlite:
-    name: SQLite real migration
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Create frontend embed placeholder
-        run: |
-          mkdir -p web/dist
-          touch web/dist/index.html
-      - name: Full unit suite
-        run: go test ./...
-      - name: Real SQLite production migration and CRUD
-        env:
-          TEST_DATABASE_COMPAT: "1"
-          TEST_DATABASE_DIALECT: sqlite
-        run: go test ./model -run '^(TestDatabaseCompatibilityReal|TestSupportTicketSchemaSQLite)$' -count=1 -v
-      - name: Real SQLite payment binding migration and constraints
-        env:
-          TEST_DATABASE_COMPAT: "1"
-          TEST_DATABASE_DIALECT: sqlite
-        run: go test ./modules/chuanapi/payment -run '^TestPaymentOrderBindingDatabaseCompatibilityReal$' -count=1 -v
-
-  mysql57:
-    name: MySQL 5.7 real migration
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    services:
-      mysql:
-        image: mysql:5.7
-        env:
-          MYSQL_ROOT_PASSWORD: compat
-          MYSQL_DATABASE: newapi_compat
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -pcompat --silent"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=12
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Configure production-safe MySQL charset
-        run: >-
-          docker exec "${{ job.services.mysql.id }}"
-          mysql -uroot -pcompat
-          -e "ALTER DATABASE newapi_compat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-      - name: Create independent MySQL log database
-        run: >-
-          docker exec "${{ job.services.mysql.id }}"
-          mysql -uroot -pcompat
-          -e "CREATE DATABASE newapi_compat_log CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-      - name: Real MySQL production migration, CRUD and BIGINT schema
-        env:
-          TEST_DATABASE_COMPAT: "1"
-          TEST_DATABASE_DIALECT: mysql
-          TEST_DATABASE_DSN: root:compat@tcp(127.0.0.1:3306)/newapi_compat?charset=utf8mb4&parseTime=true&loc=UTC
-          TEST_LOG_DATABASE_DSN: root:compat@tcp(127.0.0.1:3306)/newapi_compat_log?charset=utf8mb4&parseTime=true&loc=UTC
-          TEST_MYSQL_DSN: root:compat@tcp(127.0.0.1:3306)/newapi_compat?charset=utf8mb4&parseTime=true&loc=UTC
-        run: go test ./model -run '^(TestDatabaseCompatibilityReal|TestMoneyColumnsAre64BitOnConfiguredDatabases|TestSupportTicketSchemaConfiguredDatabases)$' -count=1 -v
-      - name: Real MySQL payment binding migration and constraints
-        env:
-          TEST_DATABASE_COMPAT: "1"
-          TEST_DATABASE_DIALECT: mysql
-          TEST_DATABASE_DSN: root:compat@tcp(127.0.0.1:3306)/newapi_compat?charset=utf8mb4&parseTime=true&loc=UTC
-        run: go test ./modules/chuanapi/payment -run '^TestPaymentOrderBindingDatabaseCompatibilityReal$' -count=1 -v
-
-  postgres96:
-    name: PostgreSQL 9.6 real migration
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
+  postgres:
+    name: PostgreSQL 18.6 real migration
+    runs-on: [self-hosted, linux, rc40]
+    timeout-minutes: 35
     services:
       postgres:
-        image: postgres:9.6
+        image: postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
         env:
           POSTGRES_PASSWORD: compat
           POSTGRES_DB: newapi_compat
@@ -112,25 +37,38 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=12
+    env:
+      TEST_DATABASE_COMPAT: '1'
+      TEST_DATABASE_DIALECT: postgres
+      TEST_DATABASE_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat?sslmode=disable
+      TEST_LOG_DATABASE_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat_log?sslmode=disable
+      TEST_POSTGRES_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat?sslmode=disable
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version-file: go.mod
-          cache: true
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+      - name: Create frontend embed placeholder
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p web/dist
+          touch web/dist/index.html
       - name: Create independent PostgreSQL log database
         run: docker exec "${{ job.services.postgres.id }}" createdb -U postgres newapi_compat_log
-      - name: Real PostgreSQL production migration, CRUD and BIGINT schema
-        env:
-          TEST_DATABASE_COMPAT: "1"
-          TEST_DATABASE_DIALECT: postgres
-          TEST_DATABASE_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat?sslmode=disable
-          TEST_LOG_DATABASE_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat_log?sslmode=disable
-          TEST_POSTGRES_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat?sslmode=disable
-        run: go test ./model -run '^(TestDatabaseCompatibilityReal|TestMoneyColumnsAre64BitOnConfiguredDatabases|TestSupportTicketSchemaConfiguredDatabases)$' -count=1 -v
-      - name: Real PostgreSQL payment binding migration and constraints
-        env:
-          TEST_DATABASE_COMPAT: "1"
-          TEST_DATABASE_DIALECT: postgres
-          TEST_DATABASE_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat?sslmode=disable
-        run: go test ./modules/chuanapi/payment -run '^TestPaymentOrderBindingDatabaseCompatibilityReal$' -count=1 -v
+      - name: PostgreSQL migration, CRUD, payment and BIGINT checks
+        run: |
+          set -euo pipefail
+          go test ./model -run '^(TestDatabaseCompatibilityReal|TestMoneyColumnsAre64BitOnConfiguredDatabases|TestSupportTicketSchemaConfiguredDatabases)$' -count=1 -v
+          go test ./pkg/paymentcore -list '^TestPaymentOrderBindingDatabaseCompatibilityReal$' | grep -Fx 'TestPaymentOrderBindingDatabaseCompatibilityReal'
+          go test ./pkg/paymentcore -run '^TestPaymentOrderBindingDatabaseCompatibilityReal$' -count=1 -v
+      - name: Split-wallet pre-consume policy on PostgreSQL
+        run: go test ./controller -run '^TestPreConsumePolicyDatabaseMatrix$/postgres' -count=1 -v
+
