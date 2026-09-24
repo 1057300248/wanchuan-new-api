@@ -1,0 +1,44 @@
+name: Runtime foundation verification
+
+on:
+  push:
+    branches: [codex/runtime-stability-maintenance-20260924]
+    paths: [.github/workflows/runtime-foundation.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-foundation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
+    runs-on: [self-hosted, linux, rc40]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Capture tracked source only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor 73ab0fa7ebfff72e4ba714338c655a6719ac3996 HEAD
+          OUT="$RUNNER_TEMP/runtime-foundation-$GITHUB_RUN_ID"
+          mkdir -p "$OUT"
+          git archive --format=tar.gz -o "$OUT/source.tar.gz" HEAD
+          git log -1 --format='%H%n%T%n%P%n%s' > "$OUT/revision.txt"
+          git diff 73ab0fa7ebfff72e4ba714338c655a6719ac3996 HEAD --stat > "$OUT/diff-stat.txt"
+          sha256sum "$OUT/source.tar.gz" > "$OUT/source.sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: runtime-source-${{ github.sha }}
+          path: ${{ runner.temp }}/runtime-foundation-${{ github.run_id }}/
+          retention-days: 2
+          if-no-files-found: error
