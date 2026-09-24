@@ -21,7 +21,7 @@ env:
 
 jobs:
   backend:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, rc40]
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -70,7 +70,7 @@ jobs:
           retention-days: 7
 
   frontend:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, rc40]
     timeout-minutes: 25
     defaults:
       run:
@@ -116,7 +116,7 @@ jobs:
           retention-days: 7
 
   frontend-tests:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, rc40]
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -151,7 +151,7 @@ jobs:
           retention-days: 7
 
   databases:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, rc40]
     timeout-minutes: 35
     services:
       postgres:
@@ -206,7 +206,7 @@ jobs:
   acceptance:
     if: always()
     needs: [backend, frontend, frontend-tests, databases]
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, rc40]
     timeout-minutes: 2
     steps:
       - name: Require every exact-SHA check to pass
@@ -222,3 +222,6 @@ jobs:
           test "$FRONTEND" = success
           test "$TESTS" = success
           test "$DATABASES" = success
+
+
+
