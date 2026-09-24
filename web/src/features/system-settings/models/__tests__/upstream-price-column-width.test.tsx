@@ -24,16 +24,19 @@ import { useUpstreamRatioSyncColumns } from '../upstream-ratio-sync-columns'
 test.each([
   { sources: ['primary'], width: 420 },
   { sources: ['primary', 'secondary'], width: 320 },
-])('current price matches $width for all source columns', ({ sources, width }) => {
-  const { result } = renderHook(() =>
-    useUpstreamRatioSyncColumns(sources, false)
-  )
-  const priceColumns = result.current.filter(
-    (column) => column.id === 'current' || column.id?.startsWith('upstream_')
-  )
-  expect(priceColumns).toHaveLength(sources.length + 1)
-  for (const column of priceColumns) {
-    expect(column.size).toBe(width)
-    expect(column.minSize).toBe(280)
+])(
+  'current price matches $width for all source columns',
+  ({ sources, width }) => {
+    const { result } = renderHook(() =>
+      useUpstreamRatioSyncColumns(sources, false)
+    )
+    const priceColumns = result.current.filter(
+      (column) => column.id === 'current' || column.id?.startsWith('upstream_')
+    )
+    expect(priceColumns).toHaveLength(sources.length + 1)
+    for (const column of priceColumns) {
+      expect(column.size).toBe(width)
+      expect(column.minSize).toBe(280)
+    }
   }
-})
+)

@@ -162,9 +162,13 @@ describe('group settings workspace', () => {
     await user.click(
       screen.getByRole('switch', { name: 'Default to auto groups' })
     )
-    await user.click(screen.getByRole('button', { name: 'Remove default' }))
-    expect(screen.getByRole('button', { name: 'Move vip up' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Move vip down' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Remove vip' }))
+    expect(
+      screen.getByRole('button', { name: 'Move default up' })
+    ).toBeDisabled()
+    expect(
+      screen.getByRole('button', { name: 'Move default down' })
+    ).toBeDisabled()
     await user.click(screen.getByRole('tab', { name: 'Pricing groups' }))
     await user.click(
       screen.getByRole('button', { name: 'Save group settings' })
@@ -172,7 +176,7 @@ describe('group settings workspace', () => {
     await waitFor(() => expect(onSave).toHaveBeenCalled())
     expect(onSave.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
-        AutoGroups: '[\n  "vip"\n]',
+        AutoGroups: '[\n  "default"\n]',
         DefaultUseAutoGroup: true,
       })
     )

@@ -31,7 +31,10 @@ import { assert, expect, test, vi } from 'vitest'
 import { SettingsPageProvider } from '../../components/settings-page-context'
 import type { GroupRenameMapping } from '../../types'
 import { GroupRatioForm, type GroupFormValues } from '../group-ratio-form'
-import { GroupRatioVisualEditor, type GroupSettingsSection } from '../group-ratio-visual-editor'
+import {
+  GroupRatioVisualEditor,
+  type GroupSettingsSection,
+} from '../group-ratio-visual-editor'
 import {
   applyGroupRenamesToValues,
   collectGroupRenamePlan,

@@ -22,7 +22,7 @@ import { expect, test, vi } from 'vitest'
 import { PromptInput, PromptInputTextarea } from '../prompt-input'
 
 test('long mixed-language input wraps without modifying the submitted text', async () => {
-  const text = 'https://example.test/' + 'x'.repeat(200) + ' 中文\nconst a = 1'
+  const text = `https://example.test/${'x'.repeat(200)} 中文\nconst a = 1`
   const submit = vi.fn()
   render(
     <PromptInput onSubmit={submit}>

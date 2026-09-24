@@ -26,11 +26,22 @@ import { CCSwitchDialog } from '../cc-switch-dialog'
 import { ccSwitchModelsQueryKey } from '../cc-switch-utils'
 
 const token: ApiKey = {
-  id: 1, name: 'Scoped fixture', key: 'masked', status: 1,
-  remain_quota: 0, used_quota: 0, unlimited_quota: true,
-  expired_time: -1, created_time: 1, accessed_time: 1,
-  group: 'default', auto_groups: ['default'], cross_group_retry: false,
-  model_limits_enabled: false, model_limits: '', allow_ips: '',
+  id: 1,
+  name: 'Scoped fixture',
+  key: 'masked',
+  status: 1,
+  remain_quota: 0,
+  used_quota: 0,
+  unlimited_quota: true,
+  expired_time: -1,
+  created_time: 1,
+  accessed_time: 1,
+  group: 'default',
+  auto_groups: ['default'],
+  cross_group_retry: false,
+  model_limits_enabled: false,
+  model_limits: '',
+  allow_ips: '',
 }
 
 let queryClient: QueryClient
@@ -54,7 +65,12 @@ function renderDialog(models = ['gpt-5.4', 'claude-sonnet-4-6']) {
   }
   render(
     <QueryClientProvider client={queryClient}>
-      <CCSwitchDialog open onOpenChange={vi.fn()} tokenKey='test-only' token={token} />
+      <CCSwitchDialog
+        open
+        onOpenChange={vi.fn()}
+        tokenKey='test-only'
+        token={token}
+      />
     </QueryClientProvider>
   )
 }

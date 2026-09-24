@@ -64,7 +64,11 @@ function makeLog(other: LogOtherData): UsageLog {
   }
 }
 
-function renderDetails(other: LogOtherData, promptTokens = 0, isAdmin = false): QueryClient {
+function renderDetails(
+  other: LogOtherData,
+  promptTokens = 0,
+  isAdmin = false
+): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -95,15 +99,19 @@ function rowValue(label: string): string | null {
 }
 
 test('shows recorded upstream model observations to administrators', () => {
-  const queryClient = renderDetails({
-    admin_info: {
-      response_model: {
-        requested_model: 'requested-model',
-        upstream_model: 'mapped-model',
-        returned_model: 'unexpected-model',
+  const queryClient = renderDetails(
+    {
+      admin_info: {
+        response_model: {
+          requested_model: 'requested-model',
+          upstream_model: 'mapped-model',
+          returned_model: 'unexpected-model',
+        },
       },
     },
-  }, 0, true)
+    0,
+    true
+  )
   expect(screen.getByText('Response model: unexpected-model')).toBeVisible()
   expect(rowValue('Request Model')).toBe('requested-model')
   expect(rowValue('Upstream Model')).toBe('mapped-model')
@@ -121,7 +129,9 @@ test('does not disclose legacy or admin-only upstream model observations to user
     response_model: observation,
     admin_info: { response_model: observation },
   })
-  expect(screen.queryByText('Response model: unexpected-model')).not.toBeInTheDocument()
+  expect(
+    screen.queryByText('Response model: unexpected-model')
+  ).not.toBeInTheDocument()
   expect(screen.queryByText('mapped-model')).not.toBeInTheDocument()
   expect(screen.queryByText('unexpected-model')).not.toBeInTheDocument()
   queryClient.clear()
