@@ -47,9 +47,10 @@ func channelCacheExpired() bool {
 	if last == 0 {
 		return false
 	}
-	seconds := common.GetEnvOrDefault("CHANNEL_CACHE_MAX_STALE_SECONDS", 300)
+	defaultSeconds := max(300, min(common.SyncFrequency, 28800)*3)
+	seconds := common.GetEnvOrDefault("CHANNEL_CACHE_MAX_STALE_SECONDS", defaultSeconds)
 	if seconds <= 0 || seconds > 86400 {
-		seconds = 300
+		seconds = defaultSeconds
 	}
 	return time.Since(time.Unix(0, last)) > time.Duration(seconds)*time.Second
 }

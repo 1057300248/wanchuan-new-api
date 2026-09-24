@@ -282,16 +282,21 @@ func StartGroupConfigSubscriber(ctx context.Context) {
 	if !common.RedisEnabled || common.RDB == nil {
 		return
 	}
+	groupConfigSubscriberOnce.Do(func() { go RunGroupConfigSubscriber(ctx) })
+}
+
+// RunGroupConfigSubscriber blocks until cancellation so the composition root
+// can join the subscriber before closing Redis or the SQL connection pools.
+func RunGroupConfigSubscriber(ctx context.Context) {
+	if !common.RedisEnabled || common.RDB == nil {
+		return
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	groupConfigSubscriberOnce.Do(func() {
-		go func() {
-			pubsub := common.RDB.Subscribe(ctx, groupConfigTopic(common.RDB.Options().DB))
-			defer pubsub.Close()
-			receiveGroupConfigEvents(ctx, pubsub.Channel())
-		}()
-	})
+	pubsub := common.RDB.Subscribe(ctx, groupConfigTopic(common.RDB.Options().DB))
+	defer pubsub.Close()
+	receiveGroupConfigEvents(ctx, pubsub.Channel())
 }
 
 func receiveGroupConfigEvents(ctx context.Context, ch <-chan *redis.Message) {
@@ -397,7 +402,9 @@ func syncGroupConfigVersionAfterOptionLoad(options []*Option) {
 
 func refreshGroupRuntimeCaches(mappings []GroupRenameMapping, full bool) error {
 	InvalidatePricingCache()
-	InitChannelCache()
+	if err := RefreshChannelCache(context.Background()); err != nil {
+		return err // Do not acknowledge an invalidation whose snapshot was not applied.
+	}
 
 	var userIDs []int
 	var tokenKeys []string

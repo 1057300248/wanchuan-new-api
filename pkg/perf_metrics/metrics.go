@@ -14,8 +14,6 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/perf_metrics_setting"
-
-	"github.com/bytedance/gopkg/util/gopool"
 )
 
 var hotBuckets sync.Map
@@ -118,9 +116,7 @@ func Record(sample Sample) {
 	}
 	actual, _ := hotBuckets.LoadOrStore(key, &atomicBucket{})
 	actual.(*atomicBucket).add(sample)
-	gopool.Go(func() {
-		recordRedis(key, sample)
-	})
+	recordRedisBackground(func() { recordRedis(key, sample) })
 }
 
 // queryWindow covers the current partial hour plus the preceding complete
