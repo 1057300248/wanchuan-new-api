@@ -298,14 +298,6 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 	return channel, nil
 }
 
-func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
-	if common.GetContextKeyBool(c, constant.ContextKeyResponsesStreamErrorHandled) ||
-		common.GetContextKeyBool(c, constant.ContextKeyStreamErrorHandled) {
-		return false
-	}
-	return service.ShouldRetryRelayError(c, openaiErr, retryTimes)
-}
-
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo) {
 	service.ProcessChannelError(c, channelError, err, relayInfo)
 }
