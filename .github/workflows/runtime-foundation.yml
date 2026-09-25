@@ -219,6 +219,10 @@ jobs:
           POSTGRES_DB: runtime_compat
         ports: ['127.0.0.1::5432']
         options: --health-cmd="pg_isready -U postgres -d runtime_compat" --health-interval=10s --health-timeout=5s --health-retries=12
+      redis:
+        image: ${{ matrix.name == 'postgres18' && 'redis:7.2-alpine' || '' }}
+        ports: ['127.0.0.1::6379']
+        options: --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=3s --health-retries=12
     env:
       TEST_DATABASE_COMPAT: '1'
       TEST_DATABASE_DIALECT: ${{ matrix.dialect }}
@@ -295,6 +299,59 @@ jobs:
           set -euo pipefail
           go test ./controller -run "^TestPreConsumePolicyDatabaseMatrix$/$TEST_DATABASE_DIALECT$" -count=1 -timeout=10m -json | tee "$OUT/preconsume.jsonl"
           python3 ops/ci/check_go_test_report.py "$OUT/preconsume.jsonl" "TestPreConsumePolicyDatabaseMatrix/$TEST_DATABASE_DIALECT"
+          git diff --exit-code
+      - name: Real performance flush and independent SQL audit logs
+        if: success() || failure()
+        env:
+          TEST_PERF_MYSQL_DSN: ${{ env.TEST_MYSQL_DSN }}
+          TEST_PERF_POSTGRES_DSN: ${{ env.TEST_POSTGRES_DSN }}
+          AUDIT_MYSQL_DSN: ${{ env.TEST_MYSQL_DSN }}
+          AUDIT_POSTGRES_DSN: ${{ env.TEST_POSTGRES_DSN }}
+        run: |
+          set -euo pipefail
+          go test ./pkg/perf_metrics -run "^(TestPerformanceAggregationAndFlush|TestRuntimeFinalFlushRetainsFailedSamplesAndPersistsCurrentBucket)$/$TEST_DATABASE_DIALECT$" -count=1 -json | tee "$OUT/performance.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/performance.jsonl" "TestPerformanceAggregationAndFlush/$TEST_DATABASE_DIALECT" "TestRuntimeFinalFlushRetainsFailedSamplesAndPersistsCurrentBucket/$TEST_DATABASE_DIALECT"
+          if [ "$TEST_DATABASE_DIALECT" != sqlite ]; then
+            go test ./controller -run "^TestIndependentAuditLogStores$/$TEST_DATABASE_DIALECT/" -count=1 -timeout=8m -json | tee "$OUT/audit.jsonl"
+            python3 ops/ci/check_go_test_report.py "$OUT/audit.jsonl" "TestIndependentAuditLogStores/$TEST_DATABASE_DIALECT/upgrade=false" "TestIndependentAuditLogStores/$TEST_DATABASE_DIALECT/upgrade=true"
+          fi
+      - name: Prepare separate PostgreSQL contract fixtures
+        if: (success() || failure()) && matrix.name == 'postgres18'
+        env:
+          PG_ID: ${{ job.services.postgres.id }}
+          PG_PORT: ${{ job.services.postgres.ports['5432'] }}
+          REDIS_PORT: ${{ job.services.redis.ports['6379'] }}
+        run: |
+          set -euo pipefail
+          test -n "$PG_PORT" && test -n "$REDIS_PORT"
+          for database in runtime_groups runtime_identity runtime_websocket; do
+            docker exec "$PG_ID" createdb -U postgres "$database"
+          done
+          printf 'TEST_GROUP_RENAME_POSTGRES_DSN=postgres://postgres:compat@127.0.0.1:%s/runtime_groups?sslmode=disable\n' "$PG_PORT" >> "$GITHUB_ENV"
+          printf 'TEST_RESPONSES_WS_POSTGRES_DSN=postgres://postgres:compat@127.0.0.1:%s/runtime_websocket?sslmode=disable\n' "$PG_PORT" >> "$GITHUB_ENV"
+          printf 'TEST_IDENTITY_POSTGRES_DSN=postgres://postgres:compat@127.0.0.1:%s/runtime_identity?sslmode=disable\n' "$PG_PORT" >> "$GITHUB_ENV"
+          printf 'TEST_REDIS_ADDR=127.0.0.1:%s\n' "$REDIS_PORT" >> "$GITHUB_ENV"
+      - name: Concurrent group writes and two-process cache synchronization
+        if: (success() || failure()) && matrix.name == 'postgres18'
+        run: |
+          set -euo pipefail
+          go test -race ./model -run '^TestGroupRenamePostgresRedis$' -count=1 -timeout=12m -json | tee "$OUT/group-contracts.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/group-contracts.jsonl" TestGroupRenamePostgresRedis 'TestGroupRenamePostgresRedis/two_process_group_runtime' 'TestGroupRenamePostgresRedis/warm_caches'
+      - name: Concurrent identity claims retain a single owner
+        if: (success() || failure()) && matrix.name == 'postgres18'
+        env:
+          TEST_SECURITY_DIALECT: postgres
+          TEST_POSTGRES_DSN: ${{ env.TEST_IDENTITY_POSTGRES_DSN }}
+        run: |
+          set -euo pipefail
+          go test -race ./controller -run '^TestGitHubBindingConcurrentPostgres$' -count=1 -timeout=8m -json | tee "$OUT/identity-contracts.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/identity-contracts.jsonl" TestGitHubBindingConcurrentPostgres
+      - name: PostgreSQL WebSocket settlement, cancellation and rejection
+        if: (success() || failure()) && matrix.name == 'postgres18'
+        run: |
+          set -euo pipefail
+          go test -race ./controller -run '^TestResponses(WSRequestRunner|WebSocket|InterruptedStreamHealth|StreamOutcomesPreserveAccounting|HTTPHealthCountsFinalResult)' -count=1 -timeout=12m -json | tee "$OUT/websocket-contracts.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/websocket-contracts.jsonl" TestResponsesWebSocketDisconnectSettlesDeliveredOutputOnce TestResponsesWebSocketInitialUpstreamRejectionRefundsReservation TestResponsesStreamOutcomesPreserveAccounting TestResponsesWebSocketPreRoutingRejectionsFollowHealthClassification
           git diff --exit-code
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
