@@ -35,7 +35,7 @@ env:
 jobs:
   backend:
     if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
-    runs-on: [self-hosted, linux, rc40]
+    runs-on: ubuntu-24.04
     timeout-minutes: 55
     env:
       REPORT_LABEL: backend
@@ -113,7 +113,7 @@ jobs:
 
   frontend:
     if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
-    runs-on: [self-hosted, linux, rc40]
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       REPORT_LABEL: frontend
@@ -180,7 +180,7 @@ jobs:
 
   databases:
     if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
-    runs-on: [self-hosted, linux, rc40]
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -306,7 +306,7 @@ jobs:
 
   redis:
     if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
-    runs-on: [self-hosted, linux, rc40]
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       redis:
@@ -358,10 +358,63 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  clickhouse:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_DB: runtime_compat
+          CLICKHOUSE_USER: compat
+          CLICKHOUSE_PASSWORD: compat
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: '1'
+        ports: ['127.0.0.1::9000']
+        options: >-
+          --health-cmd="clickhouse-client --user compat --password compat --query 'SELECT 1'"
+          --health-interval=5s --health-timeout=5s --health-retries=24
+          --ulimit nofile=262144:262144
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+      - name: Record isolated ClickHouse identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/clickhouse-checks" web/dist
+          touch web/dist/index.html
+          printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/clickhouse-checks/revision.txt"
+          docker inspect --format '{{.Config.Image}} {{.Image}}' '${{ job.services.clickhouse.id }}' > "$RUNNER_TEMP/clickhouse-checks/image.txt"
+          docker exec '${{ job.services.clickhouse.id }}' clickhouse-client --user compat --password compat --query 'SELECT version()' > "$RUNNER_TEMP/clickhouse-checks/version.txt"
+      - name: Fresh and released-schema independent audit log verification
+        env:
+          AUDIT_CLICKHOUSE_DSN: clickhouse://compat:compat@127.0.0.1:${{ job.services.clickhouse.ports['9000'] }}/runtime_compat
+        run: |
+          set -euo pipefail
+          go test -p 2 ./controller -run '^TestIndependentAuditLogStores$/clickhouse/' -count=1 -timeout=10m -json | tee "$RUNNER_TEMP/clickhouse-checks/audit.jsonl"
+          python3 ops/ci/check_go_test_report.py "$RUNNER_TEMP/clickhouse-checks/audit.jsonl" 'TestIndependentAuditLogStores/clickhouse/upgrade=false' 'TestIndependentAuditLogStores/clickhouse/upgrade=true'
+          git diff --exit-code
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: runtime-clickhouse-${{ github.sha }}
+          path: ${{ runner.temp }}/clickhouse-checks/
+          retention-days: 7
+          if-no-files-found: error
+
   acceptance:
     if: always() && github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
-    needs: [backend, frontend, databases, redis]
-    runs-on: [self-hosted, linux, rc40]
+    needs: [backend, frontend, databases, redis, clickhouse]
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Require all exact-SHA checks, including every database engine
@@ -370,10 +423,12 @@ jobs:
           FRONTEND: ${{ needs.frontend.result }}
           DATABASES: ${{ needs.databases.result }}
           REDIS: ${{ needs.redis.result }}
+          CLICKHOUSE: ${{ needs.clickhouse.result }}
         run: |
           set -euo pipefail
-          printf 'sha=%s backend=%s frontend=%s databases=%s redis=%s\n' "$GITHUB_SHA" "$BACKEND" "$FRONTEND" "$DATABASES" "$REDIS" >> "$GITHUB_STEP_SUMMARY"
+          printf 'sha=%s backend=%s frontend=%s databases=%s redis=%s clickhouse=%s\n' "$GITHUB_SHA" "$BACKEND" "$FRONTEND" "$DATABASES" "$REDIS" "$CLICKHOUSE" >> "$GITHUB_STEP_SUMMARY"
           test "$BACKEND" = success
           test "$FRONTEND" = success
           test "$DATABASES" = success
           test "$REDIS" = success
+          test "$CLICKHOUSE" = success
