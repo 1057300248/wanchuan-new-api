@@ -218,6 +218,12 @@ func runApplication() error {
 		return errors.New("runtime shutdown or finalization did not complete")
 	}
 
+	// A worker may fail after SIGTERM selected the shutdown path. Shutdown
+	// proved the group joined, so this read cannot block and preserves that
+	// late failure instead of returning a successful process exit.
+	if runErr == nil {
+		runErr = app.workers.Wait(context.Background())
+	}
 	common.SysLog("server exited")
 	return runErr
 }
