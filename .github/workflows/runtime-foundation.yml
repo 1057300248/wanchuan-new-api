@@ -315,6 +315,15 @@ jobs:
             go test ./controller -run "^TestIndependentAuditLogStores$/$TEST_DATABASE_DIALECT/" -count=1 -timeout=8m -json | tee "$OUT/audit.jsonl"
             python3 ops/ci/check_go_test_report.py "$OUT/audit.jsonl" "TestIndependentAuditLogStores/$TEST_DATABASE_DIALECT/upgrade=false" "TestIndependentAuditLogStores/$TEST_DATABASE_DIALECT/upgrade=true"
           fi
+      - name: API token audit contracts on shared and separate SQL log stores
+        if: success() || failure()
+        env:
+          AUDIT_MYSQL_DSN: ${{ env.TEST_MYSQL_DSN }}
+          AUDIT_POSTGRES_DSN: ${{ env.TEST_POSTGRES_DSN }}
+        run: |
+          set -euo pipefail
+          go test ./controller -run "^TestAPITokenAuditDatabaseMatrix$/$TEST_DATABASE_DIALECT/" -count=1 -timeout=8m -json | tee "$OUT/token-audit.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/token-audit.jsonl" "TestAPITokenAuditDatabaseMatrix/$TEST_DATABASE_DIALECT/separate_log=false" "TestAPITokenAuditDatabaseMatrix/$TEST_DATABASE_DIALECT/separate_log=true"
       - name: Prepare separate PostgreSQL contract fixtures
         if: (success() || failure()) && matrix.name == 'postgres18'
         env:
