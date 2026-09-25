@@ -14,8 +14,8 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -179,7 +179,7 @@ func checkModelRedisReservationContract(t *testing.T, client *redis.Client) {
 	assert.EqualValues(t, 1, renewed)
 	// Expire the admission without sleeping. A crashed process must not retain
 	// a permanent success slot; a late completion still records its outcome.
-	require.NoError(t, client.ZAdd(ctx, key+":pending-v2", &redis.Z{Score: 0, Member: first.id}).Err())
+	require.NoError(t, client.ZAdd(ctx, key+":pending-v2", redis.Z{Score: 0, Member: first.id}).Err())
 	second, allowed, err := reserveRedisModelSuccess(ctx, client, key, 1, 60, nil)
 	require.NoError(t, err)
 	require.True(t, allowed)

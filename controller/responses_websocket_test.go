@@ -34,8 +34,8 @@ import (
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
@@ -317,7 +317,10 @@ func TestResponsesWSRequestRunnerUsesExistingMemoryRateLimit(t *testing.T) {
 	apiError := runner(httptest.NewRequest(http.MethodPost, "/v1/responses", nil), "limited", handle)
 	require.NotNil(t, apiError)
 	assert.Equal(t, http.StatusTooManyRequests, apiError.StatusCode)
-	assert.Equal(t, http.StatusText(http.StatusTooManyRequests), apiError.Error())
+	// The shared limiter now returns a structured, request-correlated reason
+	// rather than an empty 429 body. Preserve that reason through the WS runner.
+	assert.Equal(t, common.MessageWithRequestId("model_total_request_limit_exceeded", "limited"), apiError.Error())
+	assert.NotContains(t, apiError.Error(), token.Key)
 	assert.Equal(t, 1, called)
 }
 
