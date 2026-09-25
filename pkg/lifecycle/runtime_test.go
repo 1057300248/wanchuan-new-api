@@ -163,3 +163,38 @@ func TestSubmitCountsQueuedWorkBeforeTheExecutorStartsIt(t *testing.T) {
 		t.Fatal("queued work did not execute")
 	}
 }
+
+// Completion and cancellation are both ready here. The result must be based
+// on completed work, not the pseudo-random branch chosen by select.
+func TestCompletedDrainWinsOverCancelledWait(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	group := NewGroup()
+	group.Submit("completed", func(run func()) { run() }, func(context.Context, context.Context) {})
+	group.BeginDrain()
+	if err := group.Wait(ctx); err != nil {
+		t.Fatalf("completed work reported as interrupted: %v", err)
+	}
+
+	gate := NewGate()
+	gate.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	gate.BeginDrain()
+	if err := gate.Wait(ctx); err != nil {
+		t.Fatalf("completed requests reported as interrupted: %v", err)
+	}
+}
+
+func TestCompletedWorkerFailureWinsOverCancelledWait(t *testing.T) {
+	group := NewGroup()
+	group.Submit("failed", func(run func()) { run() }, func(context.Context, context.Context) {
+		panic("provider credential must not appear in the error")
+	})
+	group.BeginDrain()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := group.Wait(ctx); err == nil || err.Error() != "background worker failed panicked" {
+		t.Fatalf("lost the sanitized worker failure: %v", err)
+	}
+}

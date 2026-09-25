@@ -95,7 +95,16 @@ func (g *Group) Wait(ctx context.Context) error {
 		defer g.mu.Unlock()
 		return g.err
 	case <-ctx.Done():
-		return ctx.Err()
+		// Both channels can be ready at the deadline. Prefer proven completion
+		// so a finished group does not hide its worker failure behind ctx.Err().
+		select {
+		case <-g.done:
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			return g.err
+		default:
+			return ctx.Err()
+		}
 	}
 }
 
@@ -176,6 +185,12 @@ func (g *Gate) Wait(ctx context.Context) error {
 	case <-g.done:
 		return nil
 	case <-ctx.Done():
-		return ctx.Err()
+		// A completed drain takes precedence when the deadline is ready too.
+		select {
+		case <-g.done:
+			return nil
+		default:
+			return ctx.Err()
+		}
 	}
 }
