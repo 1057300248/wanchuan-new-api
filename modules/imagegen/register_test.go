@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/extension"
+	"github.com/QuantumNous/new-api/pkg/lifecycle"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,7 +13,8 @@ import (
 func TestRegisterOwnsAsyncImageTaskRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	reg := extension.NewRegistry()
-	require.NoError(t, Register(reg))
+	require.Error(t, Register(reg, nil), "routes must never create untracked background work")
+	require.NoError(t, Register(reg, lifecycle.NewGroup()))
 	require.NoError(t, reg.Freeze())
 	engine := gin.New()
 	require.NoError(t, reg.ApplyRoutes(engine, extension.PriorityBeforePlugin))

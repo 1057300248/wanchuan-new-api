@@ -32,6 +32,10 @@ var channelCacheRevision uint64 // protected by channelSyncLock
 var channelCacheLastRefresh atomic.Int64
 var channelCacheRefreshFailures atomic.Uint64
 
+// ErrChannelCacheStale means routing data is temporarily unavailable, not that
+// a channel was deleted. Existing upstream tasks must remain pending for retry.
+var ErrChannelCacheStale = errors.New("channel cache snapshot exceeded staleness budget")
+
 // ChannelCacheHealth exposes counters, not channel IDs, keys, or DSNs.
 func ChannelCacheHealth() (lastSuccess time.Time, failures uint64) {
 	if ts := channelCacheLastRefresh.Load(); ts != 0 {
@@ -243,7 +247,7 @@ func GetRandomSatisfiedChannel(
 	}
 
 	if channelCacheExpired() {
-		return nil, errors.New("channel cache snapshot exceeded staleness budget")
+		return nil, ErrChannelCacheStale
 	}
 
 	channelSyncLock.RLock()
@@ -342,7 +346,7 @@ func CacheGetChannel(id int) (*Channel, error) {
 		return GetChannelById(id, true)
 	}
 	if channelCacheExpired() {
-		return nil, errors.New("channel cache snapshot exceeded staleness budget")
+		return nil, ErrChannelCacheStale
 	}
 
 	channelSyncLock.RLock()
@@ -364,7 +368,7 @@ func CacheGetChannelInfo(id int) (*ChannelInfo, error) {
 		return &channel.ChannelInfo, nil
 	}
 	if channelCacheExpired() {
-		return nil, errors.New("channel cache snapshot exceeded staleness budget")
+		return nil, ErrChannelCacheStale
 	}
 
 	channelSyncLock.RLock()

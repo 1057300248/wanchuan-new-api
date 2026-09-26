@@ -121,8 +121,14 @@ func TestChannelRefreshRetainsPollingCursorAndBoundsStaleRouting(t *testing.T) {
 	t.Setenv("CHANNEL_CACHE_MAX_STALE_SECONDS", "30")
 	channelCacheLastRefresh.Store(time.Now().Add(-time.Minute).UnixNano())
 	selected, err := GetRandomSatisfiedChannel("default", "test-model", 0, nil)
-	require.ErrorContains(t, err, "staleness budget")
+	require.ErrorIs(t, err, ErrChannelCacheStale)
 	assert.Nil(t, selected, "an expired snapshot must not keep revoked routes usable")
+	cached, err = CacheGetChannel(channel.Id)
+	require.ErrorIs(t, err, ErrChannelCacheStale)
+	assert.Nil(t, cached)
+	info, err := CacheGetChannelInfo(channel.Id)
+	require.ErrorIs(t, err, ErrChannelCacheStale)
+	assert.Nil(t, info)
 }
 
 func TestChannelRefreshCancelledContextDoesNotPublish(t *testing.T) {

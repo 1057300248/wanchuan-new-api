@@ -26,6 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/modules/imagegen"
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/lifecycle"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
 	"github.com/QuantumNous/new-api/relay"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
@@ -72,7 +73,8 @@ func runApplication() error {
 		}
 	}()
 
-	err := InitResources()
+	app := newApplicationRuntime()
+	err := InitResources(app.workers)
 	if err != nil {
 		return fmt.Errorf("failed to initialize resources: %w", err)
 	}
@@ -175,7 +177,6 @@ func runApplication() error {
 		port = strconv.Itoa(*common.Port)
 	}
 
-	app := newApplicationRuntime()
 	srv := &http.Server{
 		Addr:              ":" + port,
 		Handler:           app.gate.Wrap(server),
@@ -271,7 +272,7 @@ func InjectGoogleAnalytics() {
 	indexPage = bytes.ReplaceAll(indexPage, placeholder, analyticsInject)
 }
 
-func InitResources() error {
+func InitResources(workers *lifecycle.Group) error {
 	// Initialize resources here if needed
 	// This is a placeholder function for future resource initialization
 	err := godotenv.Load(".env")
@@ -319,7 +320,7 @@ func InitResources() error {
 	// build-time and explicit, so a wiring failure here must abort startup
 	// rather than silently start with an unmigrated extension schema.
 	registry := extension.NewRegistry()
-	if err := imagegen.Register(registry); err != nil {
+	if err := imagegen.Register(registry, workers); err != nil {
 		common.FatalLog("failed to register image generation module: " + err.Error())
 		return err
 	}

@@ -88,6 +88,12 @@ jobs:
         env:
           CGO_ENABLED: '1'
         run: set -o pipefail; go test -race -p 2 ./... -count=1 -timeout=15m 2>&1 | tee "$OUT/root-race.log"
+      - name: Accepted asynchronous image shutdown and persistence contracts
+        if: success() || failure()
+        run: |
+          set -euo pipefail
+          go test -race ./modules/imagegen -run '^TestAsyncImage(RuntimeDrainWaitsForResult|RuntimeWaitIncludesResultPersistence|DrainRejectsAdmissionWithoutLeavingActiveSlot)$' -count=1 -timeout=3m -json | tee "$OUT/image-drain.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/image-drain.jsonl" TestAsyncImageRuntimeDrainWaitsForResult/graceful TestAsyncImageRuntimeDrainWaitsForResult/forced TestAsyncImageRuntimeWaitIncludesResultPersistence TestAsyncImageDrainRejectsAdmissionWithoutLeavingActiveSlot
       - name: Independent relaykit validation
         if: success() || failure()
         working-directory: relaykit
@@ -300,6 +306,13 @@ jobs:
           go test ./controller -run "^TestPreConsumePolicyDatabaseMatrix$/$TEST_DATABASE_DIALECT$" -count=1 -timeout=10m -json | tee "$OUT/preconsume.jsonl"
           python3 ops/ci/check_go_test_report.py "$OUT/preconsume.jsonl" "TestPreConsumePolicyDatabaseMatrix/$TEST_DATABASE_DIALECT"
           git diff --exit-code
+      - name: Stale cache preserves pending tasks and reserved funds
+        if: success() || failure()
+        run: |
+          set -euo pipefail
+          go test -race ./service -run "^TestTaskPollingDefersStaleChannelCache$/$TEST_DATABASE_DIALECT$" -count=1 -timeout=5m -json | tee "$OUT/task-cache.jsonl"
+          prefix="TestTaskPollingDefersStaleChannelCache/$TEST_DATABASE_DIALECT"
+          python3 ops/ci/check_go_test_report.py "$OUT/task-cache.jsonl" "$prefix/batch=false/wallet" "$prefix/batch=false/subscription" "$prefix/batch=true/wallet" "$prefix/batch=true/subscription"
       - name: Real performance flush and independent SQL audit logs
         if: success() || failure()
         env:

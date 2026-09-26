@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/extension"
+	"github.com/QuantumNous/new-api/pkg/lifecycle"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,7 +15,7 @@ import (
 func TestImageTasksRequireAuthentication(t *testing.T) {
 	engine := gin.New()
 	reg := extension.NewRegistry()
-	require.NoError(t, Register(reg))
+	require.NoError(t, Register(reg, lifecycle.NewGroup()))
 	require.NoError(t, reg.Freeze())
 	require.NoError(t, reg.ApplyRoutes(engine, extension.PriorityBeforePlugin))
 	for _, tc := range []struct{ method, path string }{

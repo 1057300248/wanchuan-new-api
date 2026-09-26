@@ -7,10 +7,10 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/lifecycle"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/gin-gonic/gin"
@@ -18,21 +18,21 @@ import (
 )
 
 type AsyncImageHandler struct {
-	relay http.Handler
-	store AsyncImageStore
-	slots chan struct{}
-	wait  sync.WaitGroup
+	relay   http.Handler
+	store   AsyncImageStore
+	slots   chan struct{}
+	workers *lifecycle.Group
 }
 
-func NewAsyncImageHandler(relay http.Handler) *AsyncImageHandler {
+func NewAsyncImageHandler(relay http.Handler, workers *lifecycle.Group) *AsyncImageHandler {
 	if !common.RedisEnabled || common.RDB == nil {
-		return newAsyncImageHandler(relay, nil)
+		return newAsyncImageHandler(relay, nil, workers)
 	}
-	return newAsyncImageHandler(relay, common.RDB)
+	return newAsyncImageHandler(relay, common.RDB, workers)
 }
 
-func newAsyncImageHandler(relay http.Handler, client redis.UniversalClient) *AsyncImageHandler {
-	return &AsyncImageHandler{relay: relay, store: AsyncImageStore{Client: client}, slots: make(chan struct{}, 8)}
+func newAsyncImageHandler(relay http.Handler, client redis.UniversalClient, workers *lifecycle.Group) *AsyncImageHandler {
+	return &AsyncImageHandler{relay: relay, store: AsyncImageStore{Client: client}, slots: make(chan struct{}, 8), workers: workers}
 }
 
 func (h *AsyncImageHandler) Submit(c *gin.Context) {
@@ -106,15 +106,33 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 	upstream.TransferEncoding = nil
 	upstream.Form, upstream.PostForm, upstream.MultipartForm = nil, nil, nil
 	accepted := *task
-	h.wait.Add(1)
-	go h.run(upstream, cancel, userID, task)
+	// Admission is counted before returning 202. Graceful drain leaves the
+	// accepted request alive; only the runtime's forced deadline cancels it.
+	if !h.workers.Go("async-image", func(_, work context.Context) {
+		stop := context.AfterFunc(work, cancel)
+		defer stop()
+		h.run(upstream, cancel, userID, task)
+	}) {
+		cancel()
+		_ = upstream.Body.Close()
+		<-h.slots
+		// Draining may race Redis admission. Release the user's active slot
+		// without ever invoking the relay or charging for a rejected request.
+		task.Status, task.HTTPStatus = "failed", http.StatusServiceUnavailable
+		task.Result = []byte(`{"error":{"message":"Server is shutting down","code":"async_image_draining"}}`)
+		if err := h.store.Finish(userID, task); err != nil {
+			common.SysError("Failed to release rejected async image task: " + task.ID)
+		}
+		c.Header("Retry-After", "1")
+		c.Data(http.StatusServiceUnavailable, "application/json", task.Result)
+		return
+	}
 	c.Header("Location", "/v1/images/tasks/"+task.ID)
 	c.Header("Retry-After", "2")
 	c.JSON(http.StatusAccepted, accepted)
 }
 
 func (h *AsyncImageHandler) run(request *http.Request, cancel context.CancelFunc, userID int, task *AsyncImageTask) {
-	defer h.wait.Done()
 	defer func() {
 		<-h.slots
 		cancel()

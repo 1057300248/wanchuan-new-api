@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/lifecycle"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -35,7 +37,7 @@ func TestAsyncImageAdmissionOwnershipAndCompletion(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":[{"b64_json":"aGVsbG8="}]}`))
 		close(done)
 	})
-	handler := newAsyncImageHandler(worker, client)
+	handler := newAsyncImageHandler(worker, client, lifecycle.NewGroup())
 	requestCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	submit := httptest.NewRecorder()
@@ -72,7 +74,10 @@ func TestAsyncImageAdmissionOwnershipAndCompletion(t *testing.T) {
 	}
 	close(release)
 	<-done
-	handler.wait.Wait()
+	handler.workers.BeginDrain()
+	wait, stop := context.WithTimeout(context.Background(), time.Second)
+	defer stop()
+	require.NoError(t, handler.workers.Wait(wait))
 	poll := httptest.NewRecorder()
 	pc, _ := gin.CreateTestContext(poll)
 	pc.Request = httptest.NewRequest("GET", "/", nil)
@@ -85,7 +90,7 @@ func TestAsyncImageAdmissionOwnershipAndCompletion(t *testing.T) {
 }
 
 func TestAsyncImageRejectsInvalidRequestAndMissingAuthentication(t *testing.T) {
-	handler := newAsyncImageHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("invalid request reached relay") }), nil)
+	handler := newAsyncImageHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("invalid request reached relay") }), nil, lifecycle.NewGroup())
 	for _, tc := range []struct {
 		name, body        string
 		user, token, want int
@@ -126,11 +131,10 @@ func TestAsyncImageWorkerPersistsFailureAndEnforcesResultLimit(t *testing.T) {
 			h := newAsyncImageHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tc.status)
 				_, _ = w.Write([]byte(tc.body))
-			}), client)
+			}), client, lifecycle.NewGroup())
 			job, err := h.store.Create(context.Background(), 1)
 			require.NoError(t, err)
 			h.slots <- struct{}{}
-			h.wait.Add(1)
 			request := httptest.NewRequest("POST", "/v1/images/generations", strings.NewReader("{}"))
 			h.run(request, func() {}, 1, job)
 			read, err := h.store.Get(context.Background(), 1, job.ID)

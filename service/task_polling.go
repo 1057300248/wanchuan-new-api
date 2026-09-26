@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -240,6 +241,9 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 	}
 	ch, err := model.CacheGetChannel(channelId)
 	if err != nil {
+		if errors.Is(err, model.ErrChannelCacheStale) {
+			return err // Retry after refresh; this says nothing about the upstream task.
+		}
 		common.SysLog(fmt.Sprintf("CacheGetChannel: %v", err))
 		tasks := make([]*model.Task, 0, len(taskIds))
 		for _, upstreamID := range taskIds {
@@ -412,6 +416,9 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	adaptor := GetTaskAdaptorFunc(platform)
 	cacheGetChannel, err := model.CacheGetChannel(channelId)
 	if err != nil {
+		if errors.Is(err, model.ErrChannelCacheStale) {
+			return err // Keep the task and its reservation until polling can resume.
+		}
 		tasks := make([]*model.Task, 0, len(taskIds))
 		for _, upstreamID := range taskIds {
 			if t, ok := taskM[upstreamID]; ok {
