@@ -3,6 +3,7 @@ package controller
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -89,6 +90,10 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 		}
 		midjourneyChannel, err := model.CacheGetChannel(channelId)
 		if err != nil {
+			if errors.Is(err, model.ErrChannelCacheStale) {
+				logger.LogWarn(ctx, "Midjourney polling deferred: channel cache is stale")
+				continue
+			}
 			logger.LogError(ctx, fmt.Sprintf("CacheGetChannel: %v", err))
 			err := model.MjBulkUpdate(taskIds, map[string]any{
 				"fail_reason": fmt.Sprintf("获取渠道信息失败，请联系管理员，渠道ID：%d", channelId),

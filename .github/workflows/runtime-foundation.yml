@@ -313,6 +313,14 @@ jobs:
           go test -race ./service -run "^TestTaskPollingDefersStaleChannelCache$/$TEST_DATABASE_DIALECT$" -count=1 -timeout=5m -json | tee "$OUT/task-cache.jsonl"
           prefix="TestTaskPollingDefersStaleChannelCache/$TEST_DATABASE_DIALECT"
           python3 ops/ci/check_go_test_report.py "$OUT/task-cache.jsonl" "$prefix/batch=false/wallet" "$prefix/batch=false/subscription" "$prefix/batch=true/wallet" "$prefix/batch=true/subscription"
+      - name: Midjourney polling also defers stale cache failures
+        if: success() || failure()
+        env:
+          TEST_TASK_DB_DIALECT: ${{ matrix.dialect }}
+        run: |
+          set -euo pipefail
+          go test -race ./controller -run '^TestMidjourneyPollingDefersStaleChannelCache$' -count=1 -timeout=3m -json | tee "$OUT/midjourney-cache.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/midjourney-cache.jsonl" TestMidjourneyPollingDefersStaleChannelCache
       - name: Real performance flush and independent SQL audit logs
         if: success() || failure()
         env:
