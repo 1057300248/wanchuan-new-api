@@ -20,6 +20,7 @@ env:
   GOWORK: 'off'
   GOTOOLCHAIN: local
   GOFLAGS: '-mod=readonly'
+  CGO_ENABLED: '1'
   SQL_DSN: ''
   LOG_SQL_DSN: ''
   REDIS_CONN_STRING: ''
