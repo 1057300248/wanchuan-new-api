@@ -98,6 +98,7 @@ func TestResponsesRequestToChatCompletionsRequestMultimodalInput(t *testing.T) {
 				"content": []map[string]any{
 					{"type": "input_text", "text": "look"},
 					{"type": "input_image", "image_url": "https://example.test/a.png", "detail": "low"},
+					{"type": "input_image", "image_url": map[string]any{"url": "https://example.test/b.png", "detail": "high"}},
 					{"type": "input_file", "file_id": "file_1", "filename": "a.txt"},
 					{"type": "input_audio", "input_audio": map[string]any{"data": "abc", "format": "wav"}},
 					{"type": "input_video", "video_url": map[string]any{"url": "https://example.test/v.mp4"}},
@@ -110,17 +111,28 @@ func TestResponsesRequestToChatCompletionsRequestMultimodalInput(t *testing.T) {
 	require.Len(t, got.Messages, 1)
 	assert.Equal(t, "user", got.Messages[0].Role)
 	parts := got.Messages[0].ParseContent()
-	require.Len(t, parts, 5)
+	require.Len(t, parts, 6)
 	assert.Equal(t, dto.ContentTypeText, parts[0].Type)
 	assert.Equal(t, "look", parts[0].Text)
 	assert.Equal(t, dto.ContentTypeImageURL, parts[1].Type)
 	assert.Equal(t, "https://example.test/a.png", parts[1].GetImageMedia().Url)
-	assert.Equal(t, dto.ContentTypeFile, parts[2].Type)
-	assert.Equal(t, "file_1", parts[2].GetFile().FileId)
-	assert.Equal(t, dto.ContentTypeInputAudio, parts[3].Type)
-	assert.Equal(t, "wav", parts[3].GetInputAudio().Format)
-	assert.Equal(t, dto.ContentTypeVideoUrl, parts[4].Type)
-	assert.Equal(t, "https://example.test/v.mp4", parts[4].GetVideoUrl().Url)
+	assert.Equal(t, dto.ContentTypeImageURL, parts[2].Type)
+	assert.Equal(t, "https://example.test/b.png", parts[2].GetImageMedia().Url)
+	assert.Equal(t, dto.ContentTypeFile, parts[3].Type)
+	assert.Equal(t, "file_1", parts[3].GetFile().FileId)
+	assert.Equal(t, dto.ContentTypeInputAudio, parts[4].Type)
+	assert.Equal(t, "wav", parts[4].GetInputAudio().Format)
+	assert.Equal(t, dto.ContentTypeVideoUrl, parts[5].Type)
+	assert.Equal(t, "https://example.test/v.mp4", parts[5].GetVideoUrl().Url)
+
+	// The Responses API string form must leave as the Chat Completions object
+	// form: strict upstreams reject a bare image_url string inside content.
+	encoded, err := kitutil.Marshal(got)
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.test/a.png", gjson.GetBytes(encoded, "messages.0.content.1.image_url.url").String())
+	assert.Equal(t, "low", gjson.GetBytes(encoded, "messages.0.content.1.image_url.detail").String())
+	assert.Equal(t, "https://example.test/b.png", gjson.GetBytes(encoded, "messages.0.content.2.image_url.url").String())
+	assert.Equal(t, "high", gjson.GetBytes(encoded, "messages.0.content.2.image_url.detail").String())
 }
 
 func TestResponsesRequestToChatCompletionsRequestAssistantTextAndFunctionCallCoexist(t *testing.T) {
