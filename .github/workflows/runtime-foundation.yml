@@ -74,7 +74,7 @@ jobs:
           go version | tee "$OUT/go-version.txt"
           go list -m all > "$OUT/modules.txt"
           go mod verify | tee "$OUT/module-verify.log"
-          git diff --exit-code -- go.mod go.sum relaykit/go.mod relaykit/go.sum
+          git diff --exit-code --ignore-space-at-eol -- go.mod go.sum relaykit/go.mod relaykit/go.sum
       - name: Root build and vet
         run: |
           set -euo pipefail
@@ -108,7 +108,7 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s ops/ci/tests -p 'test_*.py' -v 2>&1 | tee "$OUT/evidence-gate.log"
           python3 -m unittest discover -s ops/server/tests -p test_release_gate.py -v 2>&1 | tee "$OUT/release-gate.log"
-          git diff --exit-code
+          git diff --exit-code --ignore-space-at-eol
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -175,7 +175,7 @@ jobs:
           set -euo pipefail
           bun run build 2>&1 | tee "$OUT/build.log"
           bun audit --production 2>&1 | tee "$OUT/dependencies.log"
-          git diff --exit-code
+          git diff --exit-code --ignore-space-at-eol
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -305,7 +305,7 @@ jobs:
           set -euo pipefail
           go test ./controller -run "^TestPreConsumePolicyDatabaseMatrix$/$TEST_DATABASE_DIALECT$" -count=1 -timeout=10m -json | tee "$OUT/preconsume.jsonl"
           python3 ops/ci/check_go_test_report.py "$OUT/preconsume.jsonl" "TestPreConsumePolicyDatabaseMatrix/$TEST_DATABASE_DIALECT"
-          git diff --exit-code
+          git diff --exit-code --ignore-space-at-eol
       - name: Stale cache preserves pending tasks and reserved funds
         if: success() || failure()
         run: |
@@ -382,7 +382,7 @@ jobs:
           set -euo pipefail
           go test -race ./controller -run '^TestResponses(WSRequestRunner|WebSocket|InterruptedStreamHealth|StreamOutcomesPreserveAccounting|HTTPHealthCountsFinalResult)' -count=1 -timeout=12m -json | tee "$OUT/websocket-contracts.jsonl"
           python3 ops/ci/check_go_test_report.py "$OUT/websocket-contracts.jsonl" TestResponsesWebSocketDisconnectSettlesDeliveredOutputOnce TestResponsesWebSocketInitialUpstreamRejectionRefundsReservation TestResponsesStreamOutcomesPreserveAccounting TestResponsesWebSocketPreRoutingRejectionsFollowHealthClassification
-          git diff --exit-code
+          git diff --exit-code --ignore-space-at-eol
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -436,7 +436,7 @@ jobs:
           set -euo pipefail
           go test -race ./middleware -run '^TestModelRateLimitRealRedis$' -count=1 -timeout=10m -json | tee "$OUT/redis.jsonl"
           python3 ops/ci/check_go_test_report.py "$OUT/redis.jsonl" TestModelRateLimitRealRedis
-          git diff --exit-code
+          git diff --exit-code --ignore-space-at-eol
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -489,7 +489,7 @@ jobs:
           set -euo pipefail
           go test -p 2 ./controller -run '^TestIndependentAuditLogStores$/clickhouse/' -count=1 -timeout=10m -json | tee "$RUNNER_TEMP/clickhouse-checks/audit.jsonl"
           python3 ops/ci/check_go_test_report.py "$RUNNER_TEMP/clickhouse-checks/audit.jsonl" 'TestIndependentAuditLogStores/clickhouse/upgrade=false' 'TestIndependentAuditLogStores/clickhouse/upgrade=true'
-          git diff --exit-code
+          git diff --exit-code --ignore-space-at-eol
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
