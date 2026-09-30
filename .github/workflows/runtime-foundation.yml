@@ -35,7 +35,7 @@ env:
 jobs:
   backend:
     if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924' && '["self-hosted","linux","x64","us-vps-ci"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 55
     env:
       REPORT_LABEL: backend
@@ -119,7 +119,7 @@ jobs:
 
   frontend:
     if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924' && '["self-hosted","linux","x64","us-vps-ci"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 45
     env:
       REPORT_LABEL: frontend
@@ -186,7 +186,7 @@ jobs:
 
   databases:
     if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924' && '["self-hosted","linux","x64","us-vps-ci"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -393,7 +393,7 @@ jobs:
 
   redis:
     if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924' && '["self-hosted","linux","x64","us-vps-ci"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 30
     services:
       redis:
@@ -447,7 +447,7 @@ jobs:
 
   clickhouse:
     if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924' && '["self-hosted","linux","x64","us-vps-ci"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 25
     services:
       clickhouse:
@@ -501,7 +501,7 @@ jobs:
   acceptance:
     if: always() && github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
     needs: [backend, frontend, databases, redis, clickhouse]
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924' && '["self-hosted","linux","x64","us-vps-ci"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 2
     steps:
       - name: Require all exact-SHA checks, including every database engine
