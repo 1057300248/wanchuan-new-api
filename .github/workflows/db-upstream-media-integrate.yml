@@ -7,6 +7,7 @@ on:
       - .github/workflows/db-upstream-media-integrate.yml
       - ops/upgrade/merge_20261001.py
       - ops/upgrade/media_20261001.patch.b64
+      - ops/upgrade/finish_20261001.py
 
 permissions:
   contents: write
@@ -65,6 +66,7 @@ jobs:
           pathlib.Path('ops/upgrade/media_20261001.patch.b64').write_text(encoded + '\n')
           print('Applied reviewed media patch:', digest)
           PY
+          python3 ops/upgrade/finish_20261001.py
           git add -A
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
@@ -77,7 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           go version | tee "$RUNNER_TEMP/merge-evidence/go-version.txt"
-          git diff --name-only HEAD -- '*.go' | xargs -r gofmt -w
+          git diff --name-only --diff-filter=ACMR HEAD -- '*.go' | xargs -r gofmt -w
           go mod tidy
           python3 - <<'PY'
           import re, subprocess
@@ -125,6 +127,20 @@ jobs:
           bun run format
           bun run typecheck 2>&1 | tee "$RUNNER_TEMP/merge-evidence/typecheck.log"
           bun run format:check 2>&1 | tee "$RUNNER_TEMP/merge-evidence/format.log"
+          bun run lint:ci 2>&1 | tee "$RUNNER_TEMP/merge-evidence/lint.log"
+      - name: Complete frontend regressions and production build
+        if: success() || failure()
+        working-directory: web
+        shell: bash
+        run: |
+          set -uo pipefail
+          status=0
+          for shard in 1 2 3 4; do
+            bun run test --shard="$shard/4" --maxWorkers=2 --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/merge-evidence/vitest-$shard.json" > "$RUNNER_TEMP/merge-evidence/vitest-$shard.log" 2>&1 || status=1
+            tail -n 15 "$RUNNER_TEMP/merge-evidence/vitest-$shard.log"
+          done
+          bun run build 2>&1 | tee "$RUNNER_TEMP/merge-evidence/frontend-build.log" || status=1
+          exit "$status"
       - name: Publish only the isolated candidate branch with fast-forward protection
         env:
           GH_TOKEN: ${{ github.token }}
@@ -137,7 +153,7 @@ jobs:
           test "$(cat .git/MERGE_HEAD)" = '56758edf95ec162033a6b73b553ac789404f87c9'
           git add -A
           git diff --cached --check
-          git commit -m 'merge: integrate upstream 56758edf and fix media on the upgraded database foundation' -m 'Preserve BIGINT split-wallet balances, extension migration order, database driver versions and custom security regressions. Normalize final Cline wire content and preserve image sources. AI-assisted integration; no production deployment.'
+          git commit -m 'merge: integrate upstream 56758edf and fix media on the upgraded database foundation' -m 'Preserve BIGINT split-wallet balances, extension migration order and database driver versions. Fix final Cline wire content, scoped route composition and credential regressions. AI-assisted integration; no production deployment.'
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:$GITHUB_REF"
           git log -1 --format='%H%n%T%n%P%n%s' | tee "$RUNNER_TEMP/merge-evidence/published-revision.txt"
