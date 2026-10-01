@@ -76,25 +76,27 @@ beforeEach(() => {
     last_used_at: null,
     last_used_ip: '',
   }
-  vi.spyOn(api, 'get').mockImplementation(async (url, config: ApiRequestConfig = {}) => {
-    if (url === '/api/audit/self') {
-      return { data: { success: true, data: { items: [], total: 0 } } }
-    }
-    if (url === '/api/verify/methods') {
-      return {
-        data: {
-          success: true,
-          data: {
-            scope: config?.params?.scope,
-            methods: [{ method: 'password', available: true }],
-            oauth_providers: [],
-            password_encryption_enabled: false,
-          },
-        },
+  vi.spyOn(api, 'get').mockImplementation(
+    async (url, config: ApiRequestConfig = {}) => {
+      if (url === '/api/audit/self') {
+        return { data: { success: true, data: { items: [], total: 0 } } }
       }
+      if (url === '/api/verify/methods') {
+        return {
+          data: {
+            success: true,
+            data: {
+              scope: config?.params?.scope,
+              methods: [{ method: 'password', available: true }],
+              oauth_providers: [],
+              password_encryption_enabled: false,
+            },
+          },
+        }
+      }
+      return { data: { success: true, data: status } }
     }
-    return { data: { success: true, data: status } }
-  })
+  )
   vi.spyOn(api, 'post').mockImplementation(async (url, data) => {
     if (url === '/api/verify') {
       return passwordProof((data as { scope: string }).scope)
@@ -399,3 +401,4 @@ describe('system access token management', () => {
     expect(trigger).toHaveFocus()
   })
 })
+
