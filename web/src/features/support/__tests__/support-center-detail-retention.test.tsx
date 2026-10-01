@@ -243,4 +243,3 @@ test('admin keeps the selected conversation when a status filter empties the lis
     client.clear()
   }
 })
-

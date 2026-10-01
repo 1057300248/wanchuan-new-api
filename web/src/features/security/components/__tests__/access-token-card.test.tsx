@@ -401,4 +401,3 @@ describe('system access token management', () => {
     expect(trigger).toHaveFocus()
   })
 })
-

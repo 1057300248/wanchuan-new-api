@@ -282,4 +282,3 @@ it('refreshes history when the last running task finishes', async () => {
   expect(screen.getByText('history-runner')).toBeVisible()
   client.clear()
 })
-
