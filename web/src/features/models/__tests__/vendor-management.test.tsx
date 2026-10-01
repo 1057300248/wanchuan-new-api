@@ -22,8 +22,7 @@ import userEvent from '@testing-library/user-event'
 import { AxiosError } from 'axios'
 import { describe, expect, it, vi } from 'vitest'
 
-import { api } from '@/lib/api'
-import type { ApiRequestConfig } from '@/lib/api'
+import { api, type ApiRequestConfig } from '@/lib/api'
 
 import { VendorMutateDialog } from '../components/dialogs/vendor-mutate-dialog'
 import { VendorOperationDialog } from '../components/dialogs/vendor-operation-dialog'
@@ -333,3 +332,4 @@ describe('vendor management', () => {
     ).not.toBeInTheDocument()
   })
 })
+
