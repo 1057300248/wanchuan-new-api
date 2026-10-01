@@ -49,6 +49,8 @@ func setupReferralRouteTest(t *testing.T) (*gin.Engine, *gorm.DB) {
 		&model.BalanceLedger{},
 		&model.ReferralCommission{},
 		&model.Log{},
+		&model.AuditLog{},
+		&model.UserAccessToken{},
 	))
 
 	t.Cleanup(func() {
@@ -89,10 +91,10 @@ func seedReferralRouteUser(t *testing.T, db *gorm.DB, id int, token string, affQ
 		AffCode: fmt.Sprintf("route-aff-%d", id), Role: common.RoleCommonUser, Status: status,
 		Group: "default", AffQuota: affQuota, AffHistoryQuota: affQuota,
 	}
-	if token != "" {
-		user.AccessToken = &token
-	}
 	require.NoError(t, db.Create(&user).Error)
+	if token != "" {
+		seedRouteScopedToken(t, db, user.Id, token, "wallet:read", "wallet:write")
+	}
 	return user
 }
 
@@ -128,8 +130,8 @@ func countReferralRouteLedgerRows(t *testing.T, db *gorm.DB, userId int) int64 {
 func TestReferralRoutesRequireLiveAuthentication(t *testing.T) {
 	engine, db := setupReferralRouteTest(t)
 	confirmReferralRouteCompliance(t)
-	activeToken := strings.Repeat("a", 32)
-	disabledToken := strings.Repeat("b", 32)
+	activeToken := model.AccessTokenPrefix + strings.Repeat("a", 32)
+	disabledToken := model.AccessTokenPrefix + strings.Repeat("b", 32)
 	seedReferralRouteUser(t, db, 701, activeToken, 1_000_000, common.UserStatusEnabled)
 	seedReferralRouteUser(t, db, 702, disabledToken, 1_000_000, common.UserStatusDisabled)
 
@@ -146,8 +148,11 @@ func TestReferralRoutesRequireLiveAuthentication(t *testing.T) {
 		strings.Repeat("f", 32), keyHeader)
 	assert.Equal(t, http.StatusUnauthorized, response.Code)
 
-	// 已撤销凭据：清空 access_token 后原 token 立即失效
-	require.NoError(t, db.Model(&model.User{}).Where("id = ?", 701).Update("access_token", nil).Error)
+	// Positive control proves the credential was usable before revocation.
+	response = performReferralRouteRequest(engine, http.MethodGet, "/api/user/referral/rewards", "", activeToken)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	// Deleting a scoped PAT immediately revokes the previously valid credential.
+	require.NoError(t, db.Where("token_hash = ?", model.AccessTokenFingerprint(activeToken)).Delete(&model.UserAccessToken{}).Error)
 	response = performReferralRouteRequest(engine, http.MethodPost, "/api/user/aff_transfer", `{"quota":500000}`, activeToken, keyHeader)
 	assert.Equal(t, http.StatusUnauthorized, response.Code)
 
@@ -161,8 +166,8 @@ func TestReferralRoutesRequireLiveAuthentication(t *testing.T) {
 // 返佣列表必须只看认证用户本人：伪造 user_id 查询参数不得越权读取他人记录。
 func TestReferralRewardsRouteScopesToAuthenticatedUser(t *testing.T) {
 	engine, db := setupReferralRouteTest(t)
-	tokenA := strings.Repeat("c", 32)
-	tokenB := strings.Repeat("d", 32)
+	tokenA := model.AccessTokenPrefix + strings.Repeat("c", 32)
+	tokenB := model.AccessTokenPrefix + strings.Repeat("d", 32)
 	userA := seedReferralRouteUser(t, db, 703, tokenA, 0, common.UserStatusEnabled)
 	userB := seedReferralRouteUser(t, db, 704, tokenB, 0, common.UserStatusEnabled)
 	seedReferralRouteUser(t, db, 705, "", 0, common.UserStatusEnabled)
@@ -195,7 +200,7 @@ func TestReferralRewardsRouteScopesToAuthenticatedUser(t *testing.T) {
 func TestReferralTransferRouteValidatesInput(t *testing.T) {
 	engine, db := setupReferralRouteTest(t)
 	confirmReferralRouteCompliance(t)
-	token := strings.Repeat("e", 32)
+	token := model.AccessTokenPrefix + strings.Repeat("e", 32)
 	seedReferralRouteUser(t, db, 706, token, 1_000_000, common.UserStatusEnabled)
 
 	// 缺少 Idempotency-Key
@@ -237,7 +242,7 @@ func TestReferralTransferRouteValidatesInput(t *testing.T) {
 func TestReferralTransferRouteReplaysSameKeyOnce(t *testing.T) {
 	engine, db := setupReferralRouteTest(t)
 	confirmReferralRouteCompliance(t)
-	token := strings.Repeat("g", 32)
+	token := model.AccessTokenPrefix + strings.Repeat("g", 32)
 	seedReferralRouteUser(t, db, 708, token, 1_000_000, common.UserStatusEnabled)
 
 	keyHeader := routeHeader{key: "Idempotency-Key", value: "route-replay-key"}

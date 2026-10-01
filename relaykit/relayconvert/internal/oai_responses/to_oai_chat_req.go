@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/convdiag"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
+	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 const (
@@ -170,12 +173,12 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Mess
 			return nil, fmt.Errorf("invalid input array: %w", err)
 		}
 		// Chat Completions requires the tool messages answering one assistant tool_calls
-		// batch to stay contiguous, so media hoisted out of function_call_output items is
+		// batch to stay contiguous, so media hoisted out of tool output items is
 		// held back and emitted as a single user message once the batch ends.
 		var pendingMedia []any
 		for _, item := range items {
 			itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
-			if len(pendingMedia) > 0 && itemType != responsesInputTypeFunctionCallOutput {
+			if len(pendingMedia) > 0 && itemType != responsesInputTypeFunctionCallOutput && itemType != responsesInputTypeCustomToolOutput {
 				messages = append(messages, dto.Message{Role: "user", Content: pendingMedia})
 				pendingMedia = nil
 			}
@@ -196,7 +199,7 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Mess
 }
 
 // responsesInputItemToChatMessages appends the Chat messages for one Responses input item.
-// The second result carries media content parts hoisted out of a function_call_output item,
+// The second result carries media content parts hoisted out of a tool output item,
 // already in Chat shape; the caller decides where that user message lands.
 func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message) ([]dto.Message, []any, error) {
 	itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
@@ -213,9 +216,12 @@ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Messag
 			return nil, nil, err
 		}
 		return appendToolCallToLastAssistant(messages, toolCall), nil, nil
-	case responsesInputTypeFunctionCallOutput:
+	case responsesInputTypeFunctionCallOutput, responsesInputTypeCustomToolOutput:
 		callID := strings.TrimSpace(kitutil.Interface2String(item["call_id"]))
-		content, media := responsesToolOutputToChat(item["output"])
+		content, media, err := responsesToolOutputToChat(item["output"])
+		if err != nil {
+			return nil, nil, err
+		}
 		return append(messages, dto.Message{Role: "tool", ToolCallId: callID, Content: content}), media, nil
 	}
 
@@ -274,10 +280,14 @@ func responsesContentPartsToChatContent(parts []any) (any, error) {
 				"text": text,
 			})
 		case "input_image":
+			imageURL, err := responsesImagePartToChatImageURL(part)
+			if err != nil {
+				return nil, err
+			}
 			onlyText = false
 			chatParts = append(chatParts, map[string]any{
 				"type":      dto.ContentTypeImageURL,
-				"image_url": responsesImagePartToChatImageURL(part),
+				"image_url": imageURL,
 			})
 		case "input_file":
 			onlyText = false
@@ -324,18 +334,26 @@ func responsesFunctionCallItemToChatToolCall(item map[string]any) (dto.ToolCallR
 	}, nil
 }
 
+// responsesCustomToolCallItemToChatToolCall encodes a custom tool call the same
+// way its definition reaches Chat Completions: a function call whose arguments
+// carry the raw input under the single "input" key.
 func responsesCustomToolCallItemToChatToolCall(item map[string]any) (dto.ToolCallRequest, error) {
-	raw, err := kitutil.Marshal(item)
+	name := strings.TrimSpace(kitutil.Interface2String(item["name"]))
+	if name == "" {
+		return dto.ToolCallRequest{}, errors.New("custom_tool_call item is missing name")
+	}
+	arguments, err := kitutil.Marshal(map[string]string{
+		convmeta.CustomToolInputArgument: responsesArgumentsString(item["input"]),
+	})
 	if err != nil {
 		return dto.ToolCallRequest{}, err
 	}
 	return dto.ToolCallRequest{
-		ID:     responsesCallID(item),
-		Type:   dto.CustomType,
-		Custom: raw,
+		ID:   responsesCallID(item),
+		Type: "function",
 		Function: dto.FunctionRequest{
-			Name:      strings.TrimSpace(kitutil.Interface2String(item["name"])),
-			Arguments: responsesArgumentsString(item["input"]),
+			Name:      name,
+			Arguments: string(arguments),
 		},
 	}, nil
 }
@@ -464,28 +482,33 @@ func RequestTextToChatResponseFormat(raw json.RawMessage) (*dto.ResponseFormat, 
 // strict upstreams reject the bare string with "Invalid input" against
 // messages.N.content. A string URL is therefore wrapped, and an already
 // object-shaped image_url passes through unchanged.
-func responsesImagePartToChatImageURL(part map[string]any) any {
-	if imageURL, ok := part["image_url"]; ok {
-		url, isString := imageURL.(string)
-		if !isString {
-			return imageURL
-		}
-		wrapped := map[string]any{"url": url}
-		if detail, exists := part["detail"]; exists {
-			wrapped["detail"] = detail
-		}
-		return wrapped
-	}
+func responsesImagePartToChatImageURL(part map[string]any) (map[string]any, error) {
 	imageURL := map[string]any{}
-	for _, key := range []string{"url", "file_id", "detail"} {
-		if value, ok := part[key]; ok {
+	switch value := part["image_url"].(type) {
+	case string:
+		imageURL["url"] = value
+	case map[string]any:
+		for key, value := range value {
 			imageURL[key] = value
 		}
+	case nil:
+		if value, exists := part["url"]; exists {
+			imageURL["url"] = value
+		}
 	}
-	if len(imageURL) == 0 {
-		return part
+	address, ok := imageURL["url"].(string)
+	if !ok || strings.TrimSpace(address) == "" {
+		return nil, types.WithOpenAIError(types.OpenAIError{
+			Message: "Responses image requires a nonempty image_url; image file_id references cannot be converted to Chat Completions",
+			Type:    "invalid_request_error", Code: "unsupported_image_reference", Param: "input_image.image_url",
+		}, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
-	return imageURL
+	if detail, exists := part["detail"]; exists {
+		if _, nested := imageURL["detail"]; !nested {
+			imageURL["detail"] = detail
+		}
+	}
+	return imageURL, nil
 }
 
 func responsesFilePartToChatFile(part map[string]any) any {
@@ -580,10 +603,10 @@ func responseToolOutputToChatContent(value any) any {
 // message and returns the media parts in Chat shape for the caller to hoist into a user message;
 // stringifying them instead would hand base64 image data to the upstream text tokenizer. Any
 // other payload shape (string, object, plain JSON array) keeps the historical stringified form.
-func responsesToolOutputToChat(value any) (any, []any) {
+func responsesToolOutputToChat(value any) (any, []any, error) {
 	rawParts, ok := value.([]any)
 	if !ok || len(rawParts) == 0 {
-		return responseToolOutputToChatContent(value), nil
+		return responseToolOutputToChatContent(value), nil, nil
 	}
 
 	texts := make([]string, 0, len(rawParts))
@@ -592,7 +615,7 @@ func responsesToolOutputToChat(value any) (any, []any) {
 	for _, rawPart := range rawParts {
 		part, ok := rawPart.(map[string]any)
 		if !ok {
-			return responseToolOutputToChatContent(value), nil
+			return responseToolOutputToChatContent(value), nil, nil
 		}
 		partType := strings.TrimSpace(kitutil.Interface2String(part["type"]))
 		switch partType {
@@ -607,23 +630,23 @@ func responsesToolOutputToChat(value any) (any, []any) {
 				labels = append(labels, label)
 			}
 		default:
-			return responseToolOutputToChatContent(value), nil
+			return responseToolOutputToChatContent(value), nil, nil
 		}
 	}
 	if len(mediaParts) == 0 {
-		return strings.Join(texts, "\n"), nil
+		return strings.Join(texts, "\n"), nil, nil
 	}
 
 	converted, err := responsesContentPartsToChatContent(mediaParts)
 	if err != nil {
-		return responseToolOutputToChatContent(value), nil
+		return nil, nil, err
 	}
 	media, _ := converted.([]any)
 	if len(texts) == 0 {
 		// Upstreams reject empty tool content; the media itself rides on the hoisted user message.
-		return strings.Join(labels, " "), media
+		return strings.Join(labels, " "), media, nil
 	}
-	return strings.Join(texts, "\n"), media
+	return strings.Join(texts, "\n"), media, nil
 }
 
 func responsesRawFloat(raw json.RawMessage) (*float64, error) {

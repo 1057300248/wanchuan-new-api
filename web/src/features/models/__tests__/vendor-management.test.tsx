@@ -332,4 +332,3 @@ describe('vendor management', () => {
     ).not.toBeInTheDocument()
   })
 })
-

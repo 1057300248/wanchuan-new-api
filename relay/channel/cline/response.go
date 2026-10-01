@@ -15,12 +15,15 @@ import (
 )
 
 type clineErrorDetail struct {
-	Message string
-	Type    string
-	Code    string
+	Message    string
+	Type       string
+	Code       string
+	Param      string
+	StatusCode int
 }
 
 func newClineEnvelopeError(detail clineErrorDetail) *types.NewAPIError {
+	detail, contentError := classifyClineContentError(detail)
 	if strings.TrimSpace(detail.Type) == "" {
 		detail.Type = "api_error"
 	}
@@ -31,11 +34,20 @@ func newClineEnvelopeError(detail clineErrorDetail) *types.NewAPIError {
 	if detail.Code != "" {
 		code = detail.Code
 	}
-	return types.WithOpenAIError(types.OpenAIError{
+	var options []types.NewAPIErrorOptions
+	if contentError {
+		options = append(options, types.ErrOptionWithSkipRetry())
+	}
+	apiErr := types.WithOpenAIError(types.OpenAIError{
 		Message: detail.Message,
 		Type:    detail.Type,
 		Code:    code,
-	}, http.StatusBadGateway)
+		Param:   detail.Param,
+	}, http.StatusBadGateway, options...)
+	if contentError {
+		withClineContentDiagnostics(apiErr, detail)
+	}
+	return apiErr
 }
 
 func clineErrorDetailFromValue(value gjson.Result) clineErrorDetail {
@@ -46,6 +58,7 @@ func clineErrorDetailFromValue(value gjson.Result) clineErrorDetail {
 		detail := clineErrorDetail{
 			Message: strings.TrimSpace(value.Get("message").Str),
 			Type:    strings.TrimSpace(value.Get("type").Str),
+			Param:   strings.TrimSpace(value.Get("param").Str),
 		}
 		code := value.Get("code")
 		if code.Type == gjson.String {

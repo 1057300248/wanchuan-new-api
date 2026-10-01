@@ -88,12 +88,16 @@ async function renderEditor() {
       />
     </QueryClientProvider>
   )
+  // The real page has pricing metadata loaded long before the user drags over
+  // a model name, so settle the pricing query before interacting.
   await waitFor(() => expect(queryClient.isFetching()).toBe(0))
   return view
 }
 
-// A drag-select ends with a click; dispatch only that final event so the
-// browser selection is still active when the row opens the editor.
+// A drag-select ends with mousedown/mouseup inside the row and the browser
+// then fires `click` on the row. Only that final `click` is dispatched here so
+// the text selection created by the drag is still active when the row opens
+// the editor.
 it('keeps the drag-selected model name highlighted when the row click opens the editor', async () => {
   await renderEditor()
   const row = await screen.findByRole('row', { name: /gpt-4\.1-mini/ })

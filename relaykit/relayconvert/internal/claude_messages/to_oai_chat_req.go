@@ -187,7 +187,10 @@ func ClaudeMessagesRequestToOpenAIChat(ctx context.Context, claudeRequest dto.Cl
 					}
 					mediaMessages = append(mediaMessages, message)
 				case "image":
-					imageData := fmt.Sprintf("data:%s;base64,%s", mediaMsg.Source.MediaType, mediaMsg.Source.Data)
+					imageData, err := claudeImageToChatURL(mediaMsg.Source)
+					if err != nil {
+						return nil, err
+					}
 					mediaMessage := dto.MediaContent{
 						Type:     "image_url",
 						ImageUrl: &dto.MessageImageUrl{Url: imageData},
@@ -216,7 +219,10 @@ func ClaudeMessagesRequestToOpenAIChat(ctx context.Context, claudeRequest dto.Cl
 					if mediaMsg.IsStringContent() {
 						oaiToolMessage.SetStringContent(mediaMsg.GetStringContent())
 					} else {
-						content, media := claudeToolResultToChat(mediaMsg.ParseMediaContent())
+						content, media, err := claudeToolResultToChat(mediaMsg.ParseMediaContent())
+						if err != nil {
+							return nil, err
+						}
 						oaiToolMessage.SetStringContent(content)
 						// A Chat tool message only carries text. Images from the tool result
 						// join the user message this Claude message becomes, which lands right
@@ -251,7 +257,7 @@ func ClaudeMessagesRequestToOpenAIChat(ctx context.Context, claudeRequest dto.Cl
 // blocks come back in Chat shape for the caller to place on the following user message;
 // stringifying them instead would hand base64 image data to the upstream text tokenizer.
 // Arrays holding any other block type keep the historical stringified form so nothing is lost.
-func claudeToolResultToChat(blocks []dto.ClaudeMediaMessage) (string, []dto.MediaContent) {
+func claudeToolResultToChat(blocks []dto.ClaudeMediaMessage) (string, []dto.MediaContent, error) {
 	texts := make([]string, 0, len(blocks))
 	media := make([]dto.MediaContent, 0, len(blocks))
 	for _, block := range blocks {
@@ -260,24 +266,24 @@ func claudeToolResultToChat(blocks []dto.ClaudeMediaMessage) (string, []dto.Medi
 			if text := block.GetText(); text != "" {
 				texts = append(texts, text)
 			}
-		case block.Type == "image" && block.Source != nil:
-			url := block.Source.Url
-			if url == "" {
-				url = fmt.Sprintf("data:%s;base64,%s", block.Source.MediaType, kitutil.Interface2String(block.Source.Data))
+		case block.Type == "image":
+			url, err := claudeImageToChatURL(block.Source)
+			if err != nil {
+				return "", nil, err
 			}
 			media = append(media, dto.MediaContent{Type: "image_url", ImageUrl: &dto.MessageImageUrl{Url: url}})
 		default:
-			return requestToJSONString(blocks), nil
+			return requestToJSONString(blocks), nil, nil
 		}
 	}
 	switch {
 	case len(texts) == 0 && len(media) == 0:
-		return requestToJSONString(blocks), nil
+		return requestToJSONString(blocks), nil, nil
 	case len(texts) == 0:
 		// Upstreams reject empty tool content; the images ride on the following user message.
-		return "[image]", media
+		return "[image]", media, nil
 	default:
-		return strings.Join(texts, "\n"), media
+		return strings.Join(texts, "\n"), media, nil
 	}
 }
 

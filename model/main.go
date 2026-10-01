@@ -234,6 +234,11 @@ func InitDB() (err error) {
 		common.SysLog(fmt.Sprintf("SQL pool log=%t max_open=%d max_idle=%d lifetime=%s idle_time=%s", false, pool.MaxOpen, pool.MaxIdle, pool.Lifetime, pool.IdleTime))
 
 		if !common.IsMasterNode {
+			// Only the master node migrates. A node that cannot read the deadline
+			// keeps rejecting legacy access tokens instead of refusing to start.
+			if err := EnsureLegacyAccessTokenRetireAt(common.GetTimestamp()); err != nil {
+				common.SysError("initialize legacy access token deadline: " + err.Error())
+			}
 			return nil
 		}
 		if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
@@ -400,6 +405,9 @@ func migrateDB() error {
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err
 	}
+	if err := EnsureLegacyAccessTokenRetireAt(common.GetTimestamp()); err != nil {
+		return fmt.Errorf("initialize legacy access token deadline: %w", err)
+	}
 	if err := InitializeExternalIdentityClaims(); err != nil {
 		return err
 	}
@@ -461,6 +469,7 @@ func mainAutoMigrateModels(registry *extension.Registry) []any {
 		&SystemTaskLock{},
 		&CasbinRule{},
 		&AuthzRole{},
+		&UserAccessToken{},
 	}
 	if registry == nil {
 		return coreModels

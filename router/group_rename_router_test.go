@@ -61,20 +61,25 @@ func TestGroupRenameRouteRequiresRootAuth(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&model.Option{}, &model.User{}, &model.Token{}, &model.Channel{},
 		&model.Ability{}, &model.SubscriptionPlan{}, &model.UserSubscription{},
-		&model.Log{}, &model.AuditLog{},
+		&model.Log{}, &model.AuditLog{}, &model.UserAccessToken{},
 	))
 
-	commonToken := "route-common-token"
-	adminToken := "route-admin-token"
-	rootToken := "route-root-token"
+	commonToken := model.AccessTokenPrefix + "route-common-token"
+	adminToken := model.AccessTokenPrefix + "route-admin-token"
+	rootToken := model.AccessTokenPrefix + "route-root-token"
 	users := []model.User{
-		{Username: "route-common", Password: "hash", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "old", AffCode: "route-common-aff", AccessToken: &commonToken},
-		{Username: "route-admin", Password: "hash", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "old", AffCode: "route-admin-aff", AccessToken: &adminToken},
-		{Username: "route-root", Password: "hash", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Group: "old", AffCode: "route-root-aff", AccessToken: &rootToken},
+		{Username: "route-common", Password: "hash", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "old", AffCode: "route-common-aff"},
+		{Username: "route-admin", Password: "hash", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "old", AffCode: "route-admin-aff"},
+		{Username: "route-root", Password: "hash", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Group: "old", AffCode: "route-root-aff"},
 	}
 	for i := range users {
 		require.NoError(t, db.Create(&users[i]).Error)
 	}
+	seedRouteScopedToken(t, db, users[0].Id, commonToken, "profile:read")
+	seedRouteScopedToken(t, db, users[1].Id, adminToken, "user:read")
+	seedRouteScopedToken(t, db, users[2].Id, rootToken, "option:write")
+	rootReadToken := model.AccessTokenPrefix + "route-root-read-token"
+	seedRouteScopedToken(t, db, users[2].Id, rootReadToken, "option:read")
 	require.NoError(t, db.Create(&model.Option{Key: "GroupRatio", Value: `{"old":1}`}).Error)
 
 	gin.SetMode(gin.TestMode)
@@ -96,6 +101,10 @@ func TestGroupRenameRouteRequiresRootAuth(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, request("").Code, "unauthenticated caller must be rejected")
 	require.Equal(t, http.StatusForbidden, request(commonToken).Code, "normal user must not rename groups")
 	require.Equal(t, http.StatusForbidden, request(adminToken).Code, "admin must not rename groups")
+
+	readOnly := request(rootReadToken)
+	require.Equal(t, http.StatusForbidden, readOnly.Code)
+	assert.Contains(t, readOnly.Body.String(), "ACCESS_TOKEN_SCOPE_DENIED", "root role must not bypass the token grant")
 
 	rootRecorder := request(rootToken)
 	require.Equal(t, http.StatusOK, rootRecorder.Code, "root must be allowed to rename groups: %s", rootRecorder.Body.String())

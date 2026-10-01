@@ -1,6 +1,7 @@
 package cline
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -132,7 +133,15 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 	if !supportsClineRelay(info) {
 		return nil, unsupportedRelayError(info)
 	}
-	return channel.DoApiRequest(a, c, info, requestBody)
+	body, err := normalizeClineRequestBody(requestBody)
+	if err != nil {
+		return nil, err
+	}
+	response, err := channel.DoApiRequest(a, c, info, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	return classifyClineHTTPError(response)
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (any, *types.NewAPIError) {
@@ -264,7 +273,7 @@ func isClineEmptyTextPart(part any) bool {
 			return true
 		}
 		textValue, ok := text.(string)
-		return !ok || textValue == ""
+		return ok && textValue == ""
 	case dto.MediaContent:
 		return value.Type == "text" && value.Text == ""
 	default:

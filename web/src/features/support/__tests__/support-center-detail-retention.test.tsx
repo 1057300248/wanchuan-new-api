@@ -59,51 +59,53 @@ test('the selected conversation stays visible after reading the last unread tick
     user_unread: false,
   }
 
-  vi.spyOn(api, 'get').mockImplementation(async (url, config: ApiRequestConfig = {}) => {
-    if (url === '/api/support/tickets') {
-      const items = [unreadTicket, readTicket].filter(
-        (item) => !config?.params?.unread || item.user_unread
-      )
-      return {
-        data: {
-          success: true,
-          message: '',
+  vi.spyOn(api, 'get').mockImplementation(
+    async (url, config: ApiRequestConfig = {}) => {
+      if (url === '/api/support/tickets') {
+        const items = [unreadTicket, readTicket].filter(
+          (item) => !config?.params?.unread || item.user_unread
+        )
+        return {
           data: {
-            items: structuredClone(items),
-            total: items.length,
-            page: 1,
-            page_size: 20,
-            status_counts: {
-              processing: 0,
-              awaiting_user: items.length,
-              resolved: 0,
+            success: true,
+            message: '',
+            data: {
+              items: structuredClone(items),
+              total: items.length,
+              page: 1,
+              page_size: 20,
+              status_counts: {
+                processing: 0,
+                awaiting_user: items.length,
+                resolved: 0,
+              },
             },
           },
-        },
+        }
       }
-    }
-    if (url === '/api/support/tickets/7') {
-      return {
-        data: {
-          success: true,
-          message: '',
+      if (url === '/api/support/tickets/7') {
+        return {
           data: {
-            ticket: structuredClone(unreadTicket),
-            messages: [
-              {
-                id: 1,
-                ticket_id: 7,
-                author_role: 'admin',
-                content: 'The support answer must stay readable',
-                created_at: 1,
-              },
-            ],
+            success: true,
+            message: '',
+            data: {
+              ticket: structuredClone(unreadTicket),
+              messages: [
+                {
+                  id: 1,
+                  ticket_id: 7,
+                  author_role: 'admin',
+                  content: 'The support answer must stay readable',
+                  created_at: 1,
+                },
+              ],
+            },
           },
-        },
+        }
       }
+      throw new Error(`Unexpected support GET: ${url}`)
     }
-    throw new Error(`Unexpected support GET: ${url}`)
-  })
+  )
   vi.spyOn(api, 'post').mockImplementation(async (url) => {
     if (url !== '/api/support/tickets/7/read') {
       throw new Error(`Unexpected support POST: ${url}`)
@@ -164,50 +166,52 @@ test('admin keeps the selected conversation when a status filter empties the lis
     updated_at: 2,
   }
 
-  vi.spyOn(api, 'get').mockImplementation(async (url, config: ApiRequestConfig = {}) => {
-    if (url === '/api/admin/support/tickets') {
-      const wantsResolved = config?.params?.status === 'resolved'
-      const items = wantsResolved ? [] : [ticket]
-      return {
-        data: {
-          success: true,
-          message: '',
+  vi.spyOn(api, 'get').mockImplementation(
+    async (url, config: ApiRequestConfig = {}) => {
+      if (url === '/api/admin/support/tickets') {
+        const wantsResolved = config?.params?.status === 'resolved'
+        const items = wantsResolved ? [] : [ticket]
+        return {
           data: {
-            items: structuredClone(items),
-            total: items.length,
-            page: 1,
-            page_size: 20,
-            status_counts: {
-              processing: 0,
-              awaiting_user: items.length,
-              resolved: 0,
+            success: true,
+            message: '',
+            data: {
+              items: structuredClone(items),
+              total: items.length,
+              page: 1,
+              page_size: 20,
+              status_counts: {
+                processing: 0,
+                awaiting_user: items.length,
+                resolved: 0,
+              },
             },
           },
-        },
+        }
       }
-    }
-    if (url === '/api/admin/support/tickets/9') {
-      return {
-        data: {
-          success: true,
-          message: '',
+      if (url === '/api/admin/support/tickets/9') {
+        return {
           data: {
-            ticket: structuredClone(ticket),
-            messages: [
-              {
-                id: 1,
-                ticket_id: 9,
-                author_role: 'user',
-                content: 'Admin detail must stay visible',
-                created_at: 2,
-              },
-            ],
+            success: true,
+            message: '',
+            data: {
+              ticket: structuredClone(ticket),
+              messages: [
+                {
+                  id: 1,
+                  ticket_id: 9,
+                  author_role: 'user',
+                  content: 'Admin detail must stay visible',
+                  created_at: 2,
+                },
+              ],
+            },
           },
-        },
+        }
       }
+      throw new Error(`Unexpected admin GET: ${url}`)
     }
-    throw new Error(`Unexpected admin GET: ${url}`)
-  })
+  )
 
   const rendered = render(
     <QueryClientProvider client={client}>
