@@ -67,3 +67,9 @@ jobs:
       - name: PostgreSQL migration, CRUD, payment and BIGINT checks
         run: |
           set -euo pipefail
+          go test ./model -run '^(TestDatabaseCompatibilityReal|TestMoneyColumnsAre64BitOnConfiguredDatabases|TestSupportTicketSchemaConfiguredDatabases)$' -count=1 -v
+          go test ./pkg/paymentcore -list '^TestPaymentOrderBindingDatabaseCompatibilityReal$' | grep -Fx 'TestPaymentOrderBindingDatabaseCompatibilityReal'
+          go test ./pkg/paymentcore -run '^TestPaymentOrderBindingDatabaseCompatibilityReal$' -count=1 -v
+      - name: Split-wallet pre-consume policy on PostgreSQL
+        run: go test ./controller -run '^TestPreConsumePolicyDatabaseMatrix$/postgres' -count=1 -v
+

@@ -508,3 +508,14 @@ jobs:
         env:
           BACKEND: ${{ needs.backend.result }}
           FRONTEND: ${{ needs.frontend.result }}
+          DATABASES: ${{ needs.databases.result }}
+          REDIS: ${{ needs.redis.result }}
+          CLICKHOUSE: ${{ needs.clickhouse.result }}
+        run: |
+          set -euo pipefail
+          printf 'sha=%s backend=%s frontend=%s databases=%s redis=%s clickhouse=%s\n' "$GITHUB_SHA" "$BACKEND" "$FRONTEND" "$DATABASES" "$REDIS" "$CLICKHOUSE" >> "$GITHUB_STEP_SUMMARY"
+          test "$BACKEND" = success
+          test "$FRONTEND" = success
+          test "$DATABASES" = success
+          test "$REDIS" = success
+          test "$CLICKHOUSE" = success
