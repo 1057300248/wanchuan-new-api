@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: kiro-tenant-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
@@ -58,7 +62,8 @@ jobs:
           remote=$(git ls-remote origin "refs/heads/$branch" | cut -f1)
           test "$remote" = "$EXPECTED_SHA"
           git add relay/channel/authenticated_tenant.go relay/channel/authenticated_tenant_test.go relay/channel/api_request.go
-          git diff --exit-code
+          # Existing upstream CRLF endings are left untouched and never staged.
+          git diff --ignore-space-at-eol --exit-code
           if git diff --cached --quiet; then exit 0; fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
