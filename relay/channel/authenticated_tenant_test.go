@@ -27,7 +27,7 @@ func tenantTestRelayInfo() *relaycommon.RelayInfo {
 	return &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
 		ApiKey: "test-channel-secret-not-a-real-credential",
 		HeadersOverride: map[string]any{
-			"*": "",
+			"*":                "",
 			"X-Kiro2CC-Tenant": authenticatedTenantPlaceholder,
 		},
 	}}
