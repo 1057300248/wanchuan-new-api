@@ -4,7 +4,9 @@ set -euo pipefail
 report() {
   local label=$1 package=$2 pattern=$3
   shift 3
-  go test -race -p 2 "$package" -run "$pattern" -count=1 -timeout=12m -json > "$OUT/$label.jsonl" 2>&1
+  # Module-download diagnostics are stderr, not Go test events. Keep both
+  # streams intact and retain the command's exit status before checking JSON.
+  go test -race -p 2 "$package" -run "$pattern" -count=1 -timeout=12m -json > "$OUT/$label.jsonl" 2> "$OUT/$label.stderr.log"
   python3 ops/ci/check_go_test_report.py "$OUT/$label.jsonl" "$@"
 }
 case "$KIND" in
