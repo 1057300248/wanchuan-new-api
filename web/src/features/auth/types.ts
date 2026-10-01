@@ -138,6 +138,7 @@ export interface SystemStatus {
     password_login_enabled?: boolean
     password_login_encryption_enabled?: boolean
     password_register_enabled?: boolean
+    server_address?: string
     custom_oauth_providers?: CustomOAuthProviderInfo[]
     [key: string]: unknown
   }
@@ -189,6 +190,7 @@ export interface SystemStatus {
   password_login_enabled?: boolean
   password_login_encryption_enabled?: boolean
   password_register_enabled?: boolean
+  server_address?: string
   custom_oauth_providers?: CustomOAuthProviderInfo[]
   [key: string]: unknown
 }
