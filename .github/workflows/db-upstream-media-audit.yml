@@ -8,10 +8,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: db-upstream-media-audit-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   audit:
     if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/db-upstream-media-fix-20261001'
-    runs-on: [self-hosted, linux, x64, us-vps-ci]
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
