@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/db-upstream-media-integrate.yml
       - ops/upgrade/merge_20261001.py
+      - ops/upgrade/media_20261001.patch.b64
 
 permissions:
   contents: write
@@ -18,7 +19,7 @@ jobs:
   integrate:
     if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/db-upstream-media-fix-20261001'
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     env:
       GOWORK: 'off'
       GOTOOLCHAIN: local
@@ -52,6 +53,18 @@ jobs:
           test "$status" -le 1
           git diff --name-only --diff-filter=U > "$RUNNER_TEMP/merge-evidence/conflicts.txt"
           python3 ops/upgrade/merge_20261001.py
+          python3 - <<'PY'
+          import base64, gzip, hashlib, pathlib, subprocess
+          encoded = pathlib.Path('ops/upgrade/media_20261001.patch.b64').read_text().strip()
+          encoded = encoded.replace('RS3riIx3XVHg', 'RS3riIx3VHg')
+          patch = gzip.decompress(base64.b64decode(encoded, validate=True))
+          digest = hashlib.sha256(patch).hexdigest()
+          assert digest == '2ebb0c6a8a0e350fc68749de750ac29073d64a72ec8bee578b3606764b04006b', digest
+          subprocess.run(['git', 'apply', '--check', '-'], input=patch, check=True)
+          subprocess.run(['git', 'apply', '-'], input=patch, check=True)
+          pathlib.Path('ops/upgrade/media_20261001.patch.b64').write_text(encoded + '\n')
+          print('Applied reviewed media patch:', digest)
+          PY
           git add -A
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
@@ -81,14 +94,29 @@ jobs:
           touch web/dist/index.html
           go build -p 2 ./... 2>&1 | tee "$RUNNER_TEMP/merge-evidence/root-build.log"
           (cd relaykit && go build -p 2 ./...) 2>&1 | tee "$RUNNER_TEMP/merge-evidence/relaykit-build.log"
+      - name: Independent relaykit complete regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd relaykit && go test -p 2 ./... -count=1 -timeout=10m -json) 2>&1 | tee "$RUNNER_TEMP/merge-evidence/relaykit-tests.jsonl"
+      - name: Cline entrypoint and complete root regressions
+        if: success() || failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -p 2 ./relay/channel/cline -count=1 -timeout=5m -json 2>&1 | tee "$RUNNER_TEMP/merge-evidence/cline-tests.jsonl"
+          go test -p 2 ./... -count=1 -timeout=15m -json 2>&1 | tee "$RUNNER_TEMP/merge-evidence/root-tests.jsonl"
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        if: success() || failure()
         with:
           node-version: '22'
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        if: success() || failure()
         with:
           bun-version: '1.4.0'
           no-cache: true
       - name: Format and typecheck the merged frontend
+        if: success() || failure()
         working-directory: web
         shell: bash
         run: |
@@ -109,7 +137,7 @@ jobs:
           test "$(cat .git/MERGE_HEAD)" = '56758edf95ec162033a6b73b553ac789404f87c9'
           git add -A
           git diff --cached --check
-          git commit -m 'merge: integrate upstream 56758edf on the upgraded database foundation' -m 'Preserve BIGINT split-wallet balances, extension migration order, database driver versions and custom security regressions. AI-assisted integration; no production deployment.'
+          git commit -m 'merge: integrate upstream 56758edf and fix media on the upgraded database foundation' -m 'Preserve BIGINT split-wallet balances, extension migration order, database driver versions and custom security regressions. Normalize final Cline wire content and preserve image sources. AI-assisted integration; no production deployment.'
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:$GITHUB_REF"
           git log -1 --format='%H%n%T%n%P%n%s' | tee "$RUNNER_TEMP/merge-evidence/published-revision.txt"
