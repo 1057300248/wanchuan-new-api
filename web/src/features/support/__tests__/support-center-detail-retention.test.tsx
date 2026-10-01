@@ -22,7 +22,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import { SupportCenter } from '@/features/support'
-import { api } from '@/lib/api'
+import { api, type ApiRequestConfig } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
 afterEach(() => {
@@ -59,7 +59,7 @@ test('the selected conversation stays visible after reading the last unread tick
     user_unread: false,
   }
 
-  vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
+  vi.spyOn(api, 'get').mockImplementation(async (url, config: ApiRequestConfig = {}) => {
     if (url === '/api/support/tickets') {
       const items = [unreadTicket, readTicket].filter(
         (item) => !config?.params?.unread || item.user_unread
@@ -164,7 +164,7 @@ test('admin keeps the selected conversation when a status filter empties the lis
     updated_at: 2,
   }
 
-  vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
+  vi.spyOn(api, 'get').mockImplementation(async (url, config: ApiRequestConfig = {}) => {
     if (url === '/api/admin/support/tickets') {
       const wantsResolved = config?.params?.status === 'resolved'
       const items = wantsResolved ? [] : [ticket]
