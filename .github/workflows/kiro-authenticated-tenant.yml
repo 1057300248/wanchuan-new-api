@@ -1,0 +1,53 @@
+name: Kiro Authenticated Tenant
+
+on:
+  push:
+    branches: ['codex/kiro-authenticated-tenant-20261001']
+  pull_request:
+    paths:
+      - 'relay/channel/authenticated_tenant*.go'
+      - 'relay/channel/api_request.go'
+      - '.github/workflows/kiro-authenticated-tenant.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: kiro-tenant-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Formatting
+        run: |
+          test -z "$(gofmt -l relay/channel/authenticated_tenant.go relay/channel/authenticated_tenant_test.go relay/channel/api_request.go)"
+          git diff --check
+      - name: Channel regression tests
+        run: go test -mod=readonly ./relay/channel -count=1 2>&1 | tee tenant-tests.log
+      - name: Authentication regression tests
+        run: go test -mod=readonly ./middleware -count=1 2>&1 | tee tenant-auth-tests.log
+      - name: Vet modified package
+        run: go vet -mod=readonly ./relay/channel 2>&1 | tee tenant-vet.log
+      - name: Unmodified dependency manifests
+        run: git diff --exit-code -- go.mod go.sum relaykit/go.mod relaykit/go.sum
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tenant-validation-${{ github.run_id }}
+          path: tenant-*.log
+          retention-days: 7

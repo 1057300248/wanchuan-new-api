@@ -151,6 +151,9 @@ func shouldSkipPassthroughHeader(name string) bool {
 }
 
 func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey string) (string, bool, error) {
+	if value, handled, err := resolveAuthenticatedTenant(template, c, apiKey, false); handled {
+		return value, err == nil, err
+	}
 	trimmed := strings.TrimSpace(template)
 	if strings.HasPrefix(trimmed, clientHeaderPlaceholderPrefix) {
 		afterPrefix := trimmed[len(clientHeaderPlaceholderPrefix):]
@@ -185,6 +188,7 @@ func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey str
 
 // processHeaderOverride applies channel header overrides, with placeholder substitution.
 // Supported placeholders:
+//   - {authenticated_tenant}: opaque scope from verified user/token identity
 //   - {api_key}: resolved to the channel API key
 //   - {client_header:<name>}: resolved to the incoming request header value
 //
@@ -280,6 +284,13 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
 			continue
 		}
 
+		if value, handled, err := resolveAuthenticatedTenant(str, c, info.ApiKey, info.IsChannelTest); handled {
+			if err != nil {
+				return nil, types.NewError(err, types.ErrorCodeChannelHeaderOverrideInvalid)
+			}
+			headerOverride[key] = value
+			continue
+		}
 		value, include, err := applyHeaderOverridePlaceholders(str, c, info.ApiKey)
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeChannelHeaderOverrideInvalid)
