@@ -27,6 +27,8 @@ env:
   SQL_DSN: ''
   LOG_SQL_DSN: ''
   REDIS_CONN_STRING: ''
+  TEST_MYSQL_DSN: ''
+  TEST_POSTGRES_DSN: ''
 
 jobs:
   assemble:
