@@ -92,6 +92,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			service.RecordRequestPolicyTermination(c, newAPIError)
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
+			if service.RelayRequestCancellation(c) != nil {
+				return
+			}
 			if common.GetContextKeyBool(c, constant.ContextKeyResponsesStreamErrorHandled) ||
 				common.GetContextKeyBool(c, constant.ContextKeyStreamErrorHandled) {
 				return
@@ -112,6 +115,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}()
 
+	if newAPIError = service.RelayRequestCancellation(c); newAPIError != nil {
+		return
+	}
 	request, err := helper.GetAndValidateRequest(c, relayFormat)
 	if err != nil {
 		// Map "request body too large" to 413 so clients can handle it correctly
@@ -161,6 +167,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.LastError = nil
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+		// Cancellation may arrive after the previous retry decision. Check again
+		// before selecting an account or clearing the previous stream outcome.
+		if stopped := service.RelayRequestCancellation(c); stopped != nil {
+			newAPIError = stopped
+			break
+		}
 		relayInfo.StreamStatus = nil
 		relayInfo.PerformanceBusinessRejection = false
 		relayInfo.PerformanceOutputTokens = 0

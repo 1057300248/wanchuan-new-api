@@ -56,6 +56,9 @@ func normalizeClineWireContent(body []byte) ([]byte, error) {
 	if !raw.IsArray() {
 		return nil, clineContentError("messages", "expected a message array")
 	}
+	if clinePlainTextWire(raw) {
+		return body, nil
+	}
 	var messages []map[string]json.RawMessage
 	if err := common.Unmarshal([]byte(raw.Raw), &messages); err != nil || len(messages) == 0 {
 		return nil, clineContentError("messages", "expected a nonempty array of message objects")

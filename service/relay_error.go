@@ -23,6 +23,14 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if err == nil {
 		return PolicyDecision{Action: "stop", Reason: "request_completed", Source: "system"}
 	}
+	// Request lifetime is a hard stop, including errors with channel precedence.
+	// Never consume another account's quota for an abandoned downstream request.
+	if stopped := RelayRequestCancellation(c); stopped != nil {
+		return PolicyDecision{Action: "stop", Reason: string(stopped.GetErrorCode()), Source: "client"}
+	}
+	if err.GetErrorType() == types.ErrorTypeNewAPIError && err.GetErrorCode() == ClientGoneErrorCode {
+		return PolicyDecision{Action: "stop", Reason: "client_gone", Source: "client"}
+	}
 	// Once an SSE failure was written, another upstream attempt would splice a
 	// second response into the existing stream and can charge the request twice.
 	// Keep this guard in the shared decision entry point, ahead of channel-error
@@ -41,11 +49,11 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if GetChannelConstraints(c).SuppressesRetry() {
 		return PolicyDecision{Action: "stop", Reason: "pinned_channel", Source: "channel_constraint"}
 	}
-	if types.IsChannelError(err) {
-		return PolicyDecision{Action: "retry", Reason: "channel_error", Source: "system"}
-	}
 	if types.IsSkipRetryError(err) {
 		return PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}
+	}
+	if types.IsChannelError(err) {
+		return PolicyDecision{Action: "retry", Reason: "channel_error", Source: "system"}
 	}
 	if retryTimes <= 0 {
 		return PolicyDecision{Action: "stop", Reason: "attempt_budget_exhausted", Source: "global"}
@@ -74,8 +82,13 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	if err == nil {
 		return
 	}
-	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.MaskSensitiveErrorWithStatusCode())))
-	if ShouldDisableChannel(err) && channelError.AutoBan {
+	requestStopped := RelayRequestCancellation(c) != nil || err.GetErrorType() == types.ErrorTypeNewAPIError && err.GetErrorCode() == ClientGoneErrorCode
+	if requestStopped {
+		logger.LogInfo(c, fmt.Sprintf("relay request stopped (channel #%d): %s", channelError.ChannelId, common.LocalLogPreview(err.MaskSensitiveErrorWithStatusCode())))
+	} else {
+		logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.MaskSensitiveErrorWithStatusCode())))
+	}
+	if !requestStopped && ShouldDisableChannel(err) && channelError.AutoBan {
 		reason := err.MaskSensitiveErrorWithStatusCode()
 		gopool.Go(func() {
 			DisableChannel(channelError, reason)

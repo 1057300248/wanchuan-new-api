@@ -133,6 +133,9 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 	if !supportsClineRelay(info) {
 		return nil, unsupportedRelayError(info)
 	}
+	if stopped := service.RelayRequestCancellation(c); stopped != nil {
+		return nil, stopped
+	}
 	body, err := normalizeClineRequestBody(requestBody)
 	if err != nil {
 		return nil, err
