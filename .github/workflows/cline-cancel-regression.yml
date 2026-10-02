@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/cline-cancel-regression.yml
       - ops/upgrade/cline_cancel_20261002.patch.b64
+      - ops/upgrade/cline_cancel_inflight_20261002.patch.b64
   workflow_dispatch:
 
 permissions:
@@ -13,7 +14,7 @@ permissions:
 
 concurrency:
   group: cline-cancel-regression-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 defaults:
   run:
@@ -47,7 +48,7 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Apply checksum-verified patch to the exact isolated source
+      - name: Apply checksum-verified patches to the exact isolated source
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
@@ -60,9 +61,6 @@ jobs:
           printf '%s\n' "$GITHUB_SHA" > "$out/recipe-revision.txt"
           python3 - <<'PY'
           import base64, gzip, hashlib, pathlib, subprocess, os
-          patch = gzip.decompress(base64.b64decode(pathlib.Path('ops/upgrade/cline_cancel_20261002.patch.b64').read_text().strip(), validate=True))
-          digest = hashlib.sha256(patch).hexdigest()
-          assert digest == '1ff7b35227ab696deee26acda28e05a10d8befd49e841e02e651ebc37c655c3d', digest
           expected = {
             'controller/relay.go', 'controller/relay_cancellation_test.go',
             'pkg/perf_metrics/client_gone_test.go', 'pkg/perf_metrics/outcome.go',
@@ -73,17 +71,25 @@ jobs:
             'service/relay_cancellation.go', 'service/relay_cancellation_test.go',
             'service/relay_error.go', 'service/request_policy.go',
           }
-          actual = {line.split(' b/', 1)[1] for line in patch.decode().splitlines() if line.startswith('diff --git ')}
-          assert actual == expected, actual ^ expected
-          if pathlib.Path('service/relay_cancellation.go').exists():
-              subprocess.run(['git', 'apply', '--reverse', '--check', '-'], input=patch, check=True)
-              print('Exact patch is already present; verifying without rewriting it.')
-          else:
-              subprocess.run(['git', 'apply', '--check', '-'], input=patch, check=True)
-              subprocess.run(['git', 'apply', '-'], input=patch, check=True)
+          specs = [
+            ('cline_cancel_20261002', '1ff7b35227ab696deee26acda28e05a10d8befd49e841e02e651ebc37c655c3d', 'service/relay_cancellation.go', 'func RelayRequestCancellation('),
+            ('cline_cancel_inflight_20261002', '0d44aca9fcdcee18a1dcf19c76235a5dee45f97463e016558244a58015e19430', 'relay/channel/cline/cancellation_entrypoint_test.go', 'func TestClineCancellationInterruptsInFlightUpstream('),
+          ]
           out = pathlib.Path(os.environ['RUNNER_TEMP']) / ('cline-cancel-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
-          (out / 'source.patch').write_bytes(patch)
-          (out / 'patch.sha256').write_text(digest + '\n')
+          for name, checksum, marker_path, marker in specs:
+              patch = gzip.decompress(base64.b64decode(pathlib.Path('ops/upgrade/' + name + '.patch.b64').read_text().strip(), validate=True))
+              digest = hashlib.sha256(patch).hexdigest()
+              assert digest == checksum, (name, digest)
+              actual = {line.split(' b/', 1)[1] for line in patch.decode().splitlines() if line.startswith('diff --git ')}
+              assert actual <= expected, actual - expected
+              p = pathlib.Path(marker_path)
+              if p.exists() and marker in p.read_text():
+                  print('Verifying existing source without replaying', name)
+              else:
+                  subprocess.run(['git', 'apply', '--check', '-'], input=patch, check=True)
+                  subprocess.run(['git', 'apply', '-'], input=patch, check=True)
+              (out / (name + '.patch')).write_bytes(patch)
+              (out / (name + '.sha256')).write_text(digest + '\n')
           (out / 'changed-files.txt').write_text('\n'.join(sorted(expected)) + '\n')
           subprocess.run(['git', 'add', '--', *sorted(expected)], check=True)
           PY
@@ -109,7 +115,7 @@ jobs:
         run: |
           set -euo pipefail
           go test -race -p 2 ./service ./controller ./relay/channel/cline ./relay/channel/openai ./relay/helper ./pkg/perf_metrics -run 'Test(RelayCancellation|RelayRetriesStillWork|RelayCancelledBefore|Cline|DownstreamWriteFailure|StreamFailurePartialUsage|StreamFailureWithoutUsage)' -count=1 -timeout=12m -json > "$OUT/incident-regressions.jsonl" 2> "$OUT/incident-regressions.stderr.log"
-          python3 ops/ci/check_go_test_report.py "$OUT/incident-regressions.jsonl" TestRelayCancellationPrecedesChannelErrorsAndRetryBudget TestRelayCancellationDoesNotDisableHealthyPool TestRelayRetriesStillWorkForLiveRequestUpstreamFailures TestRelayCancelledBeforeDispatchDoesNotSelectOrWrite TestClineResponsesDoneThenCancellationNeverFallsBack TestClineResponsesDeliveryFailureAndLateCleanup TestClineCancelledRequestDoesNotReadBodyOrDial TestClinePlainTextWireRemainsByteIdentical TestClineMediaAcrossEntryProtocolsAndStreamModes TestClineFinalWireValidationRunsAfterParameterOverrides TestDownstreamWriteFailureIsNotUpstreamHealthFailure TestStreamFailurePartialUsageSettlesOnceAndNeverRefunds TestStreamFailureWithoutUsageRefundsReservationOnce
+          python3 ops/ci/check_go_test_report.py "$OUT/incident-regressions.jsonl" TestRelayCancellationPrecedesChannelErrorsAndRetryBudget TestRelayCancellationDoesNotDisableHealthyPool TestRelayRetriesStillWorkForLiveRequestUpstreamFailures TestRelayCancelledBeforeDispatchDoesNotSelectOrWrite TestClineResponsesDoneThenCancellationNeverFallsBack TestClineResponsesDeliveryFailureAndLateCleanup TestClineCancelledRequestDoesNotReadBodyOrDial TestClineCancellationInterruptsInFlightUpstream TestClinePlainTextWireRemainsByteIdentical TestClineMediaAcrossEntryProtocolsAndStreamModes TestClineFinalWireValidationRunsAfterParameterOverrides TestDownstreamWriteFailureIsNotUpstreamHealthFailure TestStreamFailurePartialUsageSettlesOnceAndNeverRefunds TestStreamFailureWithoutUsageRefundsReservationOnce
       - name: Complete root regressions without exclusions
         if: success() || failure()
         run: |
@@ -150,7 +156,7 @@ jobs:
           test "$(git write-tree)" = "$(cat "$OUT/tested-tree.txt")"
           git diff --cached --check
           if ! git diff --cached --quiet; then
-            git commit -m 'fix(relay): stop abandoned Cline retries and preserve observed stream usage' -m 'AI-assisted incident fix on the upgraded database candidate. Preserve canonical text wire payloads, never retry or disable a pool after downstream cancellation, and keep observed usage for existing once-only settlement. No production deployment.'
+            git commit -m 'fix(relay): stop abandoned Cline retries and preserve observed stream usage' -m 'AI-assisted incident fix on the upgraded database candidate. Propagate parent cancellation into HTTP requests, preserve canonical text wire payloads, never retry or disable a pool after downstream cancellation, and keep observed usage for existing once-only settlement. No production deployment.'
             auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
             git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:$GITHUB_REF"
           fi
