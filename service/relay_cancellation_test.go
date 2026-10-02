@@ -38,8 +38,10 @@ func TestRelayCancellationPrecedesChannelErrorsAndRetryBudget(t *testing.T) {
 			assert.ErrorIs(t, stopped, ctx.Err())
 			if deadline {
 				assert.Equal(t, http.StatusRequestTimeout, stopped.StatusCode)
+				assert.True(t, types.IsRecordErrorLog(stopped), "request deadlines are not silently hidden")
 			} else {
 				assert.Equal(t, 499, stopped.StatusCode)
+				assert.False(t, types.IsRecordErrorLog(stopped))
 			}
 		}
 		// A completed result is not converted into failure merely because the

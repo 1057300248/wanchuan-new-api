@@ -22,7 +22,15 @@ func RelayRequestCancellation(c *gin.Context) *types.NewAPIError {
 	err := c.Request.Context().Err()
 	code, status := types.ErrorCode("request_deadline_exceeded"), http.StatusRequestTimeout
 	if err == context.Canceled {
-		code, status = ClientGoneErrorCode, StatusClientClosedRequest
+		return NewRelayClientGoneError(err)
 	}
 	return types.NewErrorWithStatusCode(err, code, status, types.ErrOptionWithSkipRetry())
+}
+
+// NewRelayClientGoneError classifies a downstream cancellation or delivery
+// failure. It remains observable through request/termination logs, but is not
+// an upstream channel error-table entry and must not consume retry budget.
+func NewRelayClientGoneError(err error) *types.NewAPIError {
+	return types.NewErrorWithStatusCode(err, ClientGoneErrorCode, StatusClientClosedRequest,
+		types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 }

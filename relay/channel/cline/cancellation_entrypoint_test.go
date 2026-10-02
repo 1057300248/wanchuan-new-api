@@ -91,6 +91,7 @@ func TestClineResponsesDoneThenCancellationNeverFallsBack(t *testing.T) {
 	assert.Equal(t, service.ClientGoneErrorCode, apiErr.GetErrorCode())
 	assert.Equal(t, 499, apiErr.StatusCode)
 	assert.True(t, types.IsSkipRetryError(apiErr))
+	assert.False(t, types.IsRecordErrorLog(apiErr), "normal cancellation is not a channel-error row")
 	assert.True(t, common.GetContextKeyBool(env.context, constant.ContextKeyResponsesStreamErrorHandled))
 	usage, ok := rawUsage.(*dto.Usage)
 	require.True(t, ok)
@@ -199,6 +200,7 @@ func TestClineCancellationInterruptsInFlightUpstream(t *testing.T) {
 		assert.Equal(t, service.ClientGoneErrorCode, apiErr.GetErrorCode())
 		assert.Equal(t, 499, apiErr.StatusCode)
 		assert.True(t, types.IsSkipRetryError(apiErr))
+		assert.False(t, types.IsRecordErrorLog(apiErr), "normal cancellation is not a channel-error row")
 		assert.False(t, service.ShouldRetryRelayError(env.context, apiErr, 3))
 	case <-time.After(5 * time.Second):
 		t.Fatal("in-flight upstream did not stop when its downstream cancelled")
@@ -209,4 +211,32 @@ func TestClineCancellationInterruptsInFlightUpstream(t *testing.T) {
 		t.Fatal("upstream request did not observe downstream cancellation")
 	}
 	assert.Equal(t, int32(1), poolCalls.Load())
+}
+
+type cancelAtReadBody struct {
+	cancel context.CancelFunc
+	closed bool
+}
+
+func (b *cancelAtReadBody) Read([]byte) (int, error) { b.cancel(); return 0, context.Canceled }
+func (b *cancelAtReadBody) Close() error             { b.closed = true; return nil }
+
+func TestClineCancellationDuringResponsePeekIsNot500(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		env := newClineTestEnv(t, types.RelayFormatOpenAIResponses, relayconstant.RelayModeResponses, stream, "deepseek/deepseek-v4.1-flash", "http://127.0.0.1:1/api/v1")
+		ctx, cancel := context.WithCancel(env.context.Request.Context())
+		env.context.Request = env.context.Request.WithContext(ctx)
+		body := &cancelAtReadBody{cancel: cancel}
+		response := &http.Response{StatusCode: 200, Header: make(http.Header), Body: body}
+		usage, apiErr := env.receive(t, response)
+		require.Nil(t, usage)
+		require.NotNil(t, apiErr)
+		assert.Equal(t, 499, apiErr.StatusCode)
+		assert.ErrorIs(t, apiErr, context.Canceled)
+		assert.Equal(t, service.ClientGoneErrorCode, apiErr.GetErrorCode())
+		assert.True(t, types.IsSkipRetryError(apiErr))
+		assert.False(t, types.IsRecordErrorLog(apiErr))
+		assert.True(t, body.closed)
+		cancel()
+	}
 }

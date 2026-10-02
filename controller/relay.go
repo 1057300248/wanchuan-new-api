@@ -90,7 +90,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer func() {
 		if newAPIError != nil {
 			service.RecordRequestPolicyTermination(c, newAPIError)
-			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
+			if newAPIError.GetErrorType() == types.ErrorTypeNewAPIError && newAPIError.GetErrorCode() == service.ClientGoneErrorCode {
+				logger.LogInfo(c, "relay client terminated: client_gone")
+			} else {
+				logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
+			}
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			if service.RelayRequestCancellation(c) != nil {
 				return

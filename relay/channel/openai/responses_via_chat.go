@@ -118,7 +118,7 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			return false
 		}
 		if err := helper.ResponseChunkData(c, dto.ResponsesStreamResponse{Type: event.Type}, string(data)); err != nil {
-			streamErr = types.NewErrorWithStatusCode(err, service.ClientGoneErrorCode, service.StatusClientClosedRequest, types.ErrOptionWithSkipRetry())
+			streamErr = service.NewRelayClientGoneError(err)
 			return false
 		}
 		if event.Type == "response.completed" && info.StreamStatus != nil {

@@ -95,7 +95,8 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		})
 	}
 
-	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
+	localClientGone := err.GetErrorType() == types.ErrorTypeNewAPIError && err.GetErrorCode() == ClientGoneErrorCode
+	if constant.ErrorLogEnabled && !localClientGone && types.IsRecordErrorLog(err) {
 		userId := c.GetInt("id")
 		tokenName := c.GetString("token_name")
 		modelName := c.GetString("original_model")

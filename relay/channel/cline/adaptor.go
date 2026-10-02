@@ -144,7 +144,11 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 	if err != nil {
 		return nil, err
 	}
-	return classifyClineHTTPError(response)
+	result, responseErr := classifyClineHTTPError(response)
+	if apiErr, ok := responseErr.(*types.NewAPIError); ok {
+		return result, normalizeClineReadCancellation(c, apiErr)
+	}
+	return result, responseErr
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (any, *types.NewAPIError) {
@@ -154,10 +158,10 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	if resp != nil && resp.Body != nil {
 		if info.IsStream {
 			if apiErr := prepareClineStreamResponse(resp, info); apiErr != nil {
-				return nil, apiErr
+				return nil, normalizeClineReadCancellation(c, apiErr)
 			}
 		} else if apiErr := prepareClineJSONResponse(resp); apiErr != nil {
-			return nil, apiErr
+			return nil, normalizeClineReadCancellation(c, apiErr)
 		}
 	}
 	if info.RelayFormat == types.RelayFormatOpenAIResponses {
@@ -282,4 +286,16 @@ func isClineEmptyTextPart(part any) bool {
 	default:
 		return false
 	}
+}
+
+// normalizeClineReadCancellation only reclassifies a failed response-body read
+// when the incoming request really ended. A genuine upstream 400/429/503 or
+// semantic error keeps its original classification and diagnostics.
+func normalizeClineReadCancellation(c *gin.Context, apiErr *types.NewAPIError) *types.NewAPIError {
+	if apiErr != nil && apiErr.GetErrorCode() == types.ErrorCodeReadResponseBodyFailed {
+		if stopped := service.RelayRequestCancellation(c); stopped != nil {
+			return stopped
+		}
+	}
+	return apiErr
 }

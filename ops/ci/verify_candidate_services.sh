@@ -76,4 +76,4 @@ database)
 *) echo 'Unsupported service kind' >&2; exit 1 ;;
 esac
 git diff --exit-code --ignore-space-at-eol
-printf 'All required %s contracts passed on %s\n' "$LABEL" "$GITHUB_SHA"
+printf 'All required %s contracts passed on %s\n' "$LABEL" "$(git rev-parse HEAD)"
