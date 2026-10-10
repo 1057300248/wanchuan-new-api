@@ -55,7 +55,7 @@
     "i18next": "^26.3.4",
     "i18next-browser-languagedetector": "^8.2.1",
     "input-otp": "^1.4.2",
-    "katex": "^0.17.0",
+    "katex": "0.18.2",
     "lucide-react": "^1.23.0",
     "marked": "^18.0.5",
     "motion": "^12.42.2",
@@ -120,10 +120,12 @@
     "hono": "4.12.22",
     "ip-address": "10.2.0",
     "js-cookie": "3.0.7",
+    "katex": "0.18.2",
     "mermaid": "11.16.1",
     "minimist": "1.2.8",
     "postcss": "8.5.28",
     "qs": "6.15.2",
+    "seroval": "1.6.3",
     "uuid": "14.0.0"
   }
 }
