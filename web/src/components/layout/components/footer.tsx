@@ -25,6 +25,8 @@ import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { cn } from '@/lib/utils'
 
+import { HeaderLogo } from './header-logo'
+
 interface FooterLink {
   text: string
   href: string
@@ -279,10 +281,10 @@ export function Footer(props: FooterProps) {
           {/* Brand column */}
           <div className='shrink-0'>
             <a href='/' className='group flex items-center gap-2.5'>
-              <img
+              <HeaderLogo
                 src={displayLogo}
                 alt={displayName}
-                className='size-7 rounded-lg object-contain'
+                className='size-7'
               />
               <span className='text-sm font-semibold tracking-tight'>
                 {displayName}

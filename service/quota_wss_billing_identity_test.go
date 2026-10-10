@@ -202,7 +202,7 @@ func TestPostWssConsumeQuotaUsesBillingModelIdentity(t *testing.T) {
 	}
 
 	require.Nil(t, PreConsumeBilling(ctx, 0, relayInfo))
-	PostWssConsumeQuota(ctx, relayInfo, wssOriginModel, wssBillingIdentityUsage(), "")
+	PostWssConsumeQuota(ctx, relayInfo, wssOriginModel, wssBillingIdentityUsage(), nil)
 
 	assertUserBalances(t, userID, 200-wssExpectedQuota, 0, 0)
 	assert.True(t, WalletBonusEligible(relayInfo))

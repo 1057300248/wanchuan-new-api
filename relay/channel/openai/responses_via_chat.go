@@ -64,6 +64,15 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	return usage, nil
 }
 
+// Preserve an untyped nil when a converter stops without an error.
+func stopStream(sr *helper.StreamResult, streamErr *types.NewAPIError) {
+	if streamErr == nil {
+		sr.Stop(nil)
+		return
+	}
+	sr.Stop(streamErr)
+}
+
 func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (usage *dto.Usage, apiErr *types.NewAPIError) {
 	if resp == nil || resp.Body == nil {
 		return nil, types.NewOpenAIError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
@@ -127,6 +136,16 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		return true
 	}
 	failResponsesStream := func(err error) bool {
+		if streamErr == nil {
+			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusBadGateway)
+		}
+		if info.StreamStatus != nil {
+			if upstreamError := info.StreamStatus.APIError(); upstreamError != nil {
+				streamErr = upstreamError
+			}
+			info.StreamStatus.SetAPIError(streamErr)
+			info.StreamStatus.MarkFailed(string(streamErr.GetErrorCode()), streamErr.ToOpenAIError().Type, streamErr.StatusCode)
+		}
 		failureResults, handled := state.FailResponsesStream("server_error", err.Error(), "")
 		if !handled {
 			return false
@@ -153,11 +172,11 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		var errorResp dto.OpenAITextResponse
 		if err := common.UnmarshalJsonStr(data, &errorResp); err == nil {
 			if oaiError := errorResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
+				streamErr = types.WithOpenAIError(*oaiError, http.StatusBadGateway)
 				if failResponsesStream(fmt.Errorf("%s", oaiError.Message)) {
-					sr.Stop(nil)
+					sr.Stop(streamErr)
 					return
 				}
-				streamErr = types.WithOpenAIError(*oaiError, resp.StatusCode)
 				sr.Stop(streamErr)
 				return
 			}
@@ -165,9 +184,9 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 
 		var chunk dto.ChatCompletionsStreamResponse
 		if err := common.UnmarshalJsonStr(data, &chunk); err != nil {
-			logger.LogError(c, "failed to unmarshal chat stream response: "+err.Error())
+			logger.LogError(c, common.LogText("failed to unmarshal chat stream response: %s", err.Error()))
 			if failResponsesStream(err) {
-				sr.Stop(nil)
+				sr.Stop(streamErr)
 				return
 			}
 			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
@@ -179,7 +198,7 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		results, err := service.ConvertStreamResponseChunk(c, info, state, &chunk)
 		if err != nil {
 			if failResponsesStream(err) {
-				sr.Stop(nil)
+				sr.Stop(streamErr)
 				return
 			}
 			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)

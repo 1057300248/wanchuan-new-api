@@ -87,7 +87,7 @@ func cleanupExpiredMetrics(retentionDays int) {
 	}
 	cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour).Unix()
 	if err := model.DeletePerfMetricsBefore(cutoff); err != nil {
-		common.SysError("failed to cleanup expired perf metrics: " + err.Error())
+		common.SysError(common.LogText("failed to cleanup expired perf metrics: %s", err.Error()))
 	}
 }
 

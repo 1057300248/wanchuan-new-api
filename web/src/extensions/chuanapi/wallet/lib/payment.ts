@@ -24,6 +24,8 @@ import {
 } from '../constants'
 import type { PaymentMethod, PresetAmount, TopupInfo } from '../types'
 
+export { getPaymentErrorTranslation } from '@/lib/server-error-message'
+
 // ============================================================================
 // Payment Processing Functions
 // ============================================================================

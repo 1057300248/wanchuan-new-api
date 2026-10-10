@@ -13,6 +13,35 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func TestResponsesReasoningHistoryDoesNotCreateUserMessages(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequest(context.Background(), &dto.OpenAIResponsesRequest{
+		Model: "test-model",
+		Input: json.RawMessage(`[
+			{"role":"user","content":"check both files"},
+			{"type":"reasoning","id":"rs_1","encrypted_content":"opaque","summary":[]},
+			{"type":"function_call","call_id":"a","name":"read_file","arguments":"{}"},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"checking"}]},
+			{"type":"function_call","call_id":"b","name":"read_file","arguments":"{}"},
+			{"type":"function_call_output","call_id":"a","output":"first"},
+			{"type":"function_call_output","call_id":"b","output":"second"},
+			{"type":"reasoning","summary":[]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]},
+			{"role":"user","content":"continue"}
+		]`),
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 6)
+	assert.Equal(t, dto.Message{Role: "user", Content: "check both files"}, got.Messages[0])
+	assert.Equal(t, "assistant", got.Messages[1].Role)
+	require.Len(t, got.Messages[1].ParseToolCalls(), 2)
+	assert.Equal(t, "a", got.Messages[1].ParseToolCalls()[0].ID)
+	assert.Equal(t, "b", got.Messages[1].ParseToolCalls()[1].ID)
+	assert.Equal(t, dto.Message{Role: "tool", ToolCallId: "a", Content: "first"}, got.Messages[2])
+	assert.Equal(t, dto.Message{Role: "tool", ToolCallId: "b", Content: "second"}, got.Messages[3])
+	assert.Equal(t, dto.Message{Role: "assistant", Content: "done"}, got.Messages[4])
+	assert.Equal(t, dto.Message{Role: "user", Content: "continue"}, got.Messages[5])
+}
+
 func TestResponsesRequestToChatCompletionsRequestInstructionsAndScalarInput(t *testing.T) {
 	stream := true
 	temperature := 0.0

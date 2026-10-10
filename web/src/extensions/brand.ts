@@ -26,6 +26,8 @@ For commercial licensing, please contact support@quantumnous.com
 export type BrandExtension = {
   id: string
   logoUrl?: string
+  logoClassName?: string
+  faviconUrl?: string
 }
 
 let brandExtension: BrandExtension | null = null
@@ -39,4 +41,12 @@ export function setBrandExtension(extension: BrandExtension) {
 
 export function extensionBrandLogo(fallback = '/logo.png') {
   return brandExtension?.logoUrl ?? fallback
+}
+
+export function extensionBrandLogoClassName() {
+  return brandExtension?.logoClassName
+}
+
+export function extensionBrandFavicon(fallback: string) {
+  return brandExtension?.faviconUrl ?? fallback
 }

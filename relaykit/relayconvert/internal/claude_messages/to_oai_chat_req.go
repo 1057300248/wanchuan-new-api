@@ -7,8 +7,10 @@ import (
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/convdiag"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
+	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 const (
@@ -160,7 +162,7 @@ func ClaudeMessagesRequestToOpenAIChat(ctx context.Context, claudeRequest dto.Cl
 	}
 	toolNames := make(map[string]string)
 	var unnamedToolResults []unnamedToolResult
-	for _, claudeMessage := range claudeRequest.Messages {
+	for messageIndex, claudeMessage := range claudeRequest.Messages {
 		openAIMessage := dto.Message{
 			Role: claudeMessage.Role,
 		}
@@ -174,7 +176,7 @@ func ClaudeMessagesRequestToOpenAIChat(ctx context.Context, claudeRequest dto.Cl
 			var toolCalls []dto.ToolCallRequest
 			mediaMessages := make([]dto.MediaContent, 0, len(content))
 
-			for _, mediaMsg := range content {
+			for blockIndex, mediaMsg := range content {
 				if _, exists := toolNames[mediaMsg.Id]; !exists {
 					toolNames[mediaMsg.Id] = mediaMsg.Name
 				}
@@ -187,15 +189,40 @@ func ClaudeMessagesRequestToOpenAIChat(ctx context.Context, claudeRequest dto.Cl
 					}
 					mediaMessages = append(mediaMessages, message)
 				case "image":
-					imageData, err := claudeImageToChatURL(mediaMsg.Source)
+					url, err := claudeImageToChatURL(mediaMsg.Source)
 					if err != nil {
 						return nil, err
 					}
-					mediaMessage := dto.MediaContent{
+					mediaMessages = append(mediaMessages, dto.MediaContent{
 						Type:     "image_url",
-						ImageUrl: &dto.MessageImageUrl{Url: imageData},
+						ImageUrl: &dto.MessageImageUrl{Url: url},
+					})
+				case "document":
+					if mediaMsg.Source != nil && mediaMsg.Source.Type == "text" {
+						// A plain-text document keeps its content as a Chat text part.
+						mediaMessages = append(mediaMessages, dto.MediaContent{Type: "text", Text: kitutil.Interface2String(mediaMsg.Source.Data)})
+						continue
 					}
-					mediaMessages = append(mediaMessages, mediaMessage)
+					if mediaMsg.Source == nil || mediaMsg.Source.Type != "base64" || mediaMsg.Source.MediaType != "application/pdf" {
+						sourceType, mediaType := "", ""
+						if mediaMsg.Source != nil {
+							sourceType, mediaType = mediaMsg.Source.Type, mediaMsg.Source.MediaType
+						}
+						convdiag.Add(ctx, types.ConversionDiagnostic{
+							Code:     "unsupported_media_source",
+							Path:     fmt.Sprintf("messages[%d].content[%d].source", messageIndex, blockIndex),
+							Message:  fmt.Sprintf("OpenAI Chat Completions carries only base64 PDF and plain-text documents, not a %q source of type %q; the document was omitted", sourceType, mediaType),
+							Severity: types.ConversionDiagnosticError,
+						})
+						continue
+					}
+					mediaMessages = append(mediaMessages, dto.MediaContent{
+						Type: dto.ContentTypeFile,
+						File: &dto.MessageFile{
+							FileName: "document.pdf",
+							FileData: "data:application/pdf;base64," + kitutil.Interface2String(mediaMsg.Source.Data),
+						},
+					})
 				case "tool_use":
 					toolCall := dto.ToolCallRequest{
 						ID:   mediaMsg.Id,

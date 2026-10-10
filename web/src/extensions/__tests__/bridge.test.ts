@@ -18,7 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { describe, expect, test } from 'vitest'
 
-import { extensionBrandLogo, setBrandExtension } from '../brand'
+import {
+  extensionBrandFavicon,
+  extensionBrandLogo,
+  extensionBrandLogoClassName,
+  setBrandExtension,
+} from '../brand'
 import {
   extensionFlags,
   isExtensionFeatureEnabled,
@@ -33,9 +38,20 @@ import {
 describe('frontend brand extension bridge', () => {
   test('falls back to the default logo until an extension registers one, then rejects reconfiguration', () => {
     expect(extensionBrandLogo()).toBe('/logo.png')
+    expect(extensionBrandFavicon('/custom-icon.png')).toBe('/custom-icon.png')
+    expect(extensionBrandLogoClassName()).toBeUndefined()
 
-    setBrandExtension({ id: 'test/brand', logoUrl: '/brand/test-mark.png' })
+    setBrandExtension({
+      id: 'test/brand',
+      logoUrl: '/brand/test-mark.png',
+      faviconUrl: '/brand/test-icon.png',
+      logoClassName: 'dark:invert',
+    })
     expect(extensionBrandLogo()).toBe('/brand/test-mark.png')
+    expect(extensionBrandFavicon('/custom-icon.png')).toBe(
+      '/brand/test-icon.png'
+    )
+    expect(extensionBrandLogoClassName()).toBe('dark:invert')
 
     expect(() =>
       setBrandExtension({ id: 'other/brand', logoUrl: '/brand/other.png' })

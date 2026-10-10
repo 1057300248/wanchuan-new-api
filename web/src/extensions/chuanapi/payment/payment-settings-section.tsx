@@ -68,6 +68,7 @@ import { safeNumberFieldProps } from '@/features/system-settings/utils/numeric-f
 import { handleServerError } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
 
+import { getPaymentErrorTranslation } from '../wallet/lib/payment'
 import { PaymentMethodsVisualEditor } from './payment-methods-visual-editor'
 import { saveWaffoPancakeConfig } from './waffo-pancake-api'
 import {
@@ -781,7 +782,9 @@ export function PaymentSettingsSection({
         return
       }
 
-      const reason = typeof body?.data === 'string' ? body.data : undefined
+      const reason =
+        getPaymentErrorTranslation(body) ??
+        (typeof body?.data === 'string' ? body.data : undefined)
       handleServerError(body, undefined, {
         title: reason
           ? `${t('Waffo Pancake save failed')}: ${reason}`

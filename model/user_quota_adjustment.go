@@ -2,7 +2,6 @@ package model
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -82,7 +81,7 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int, entry Led
 	delta := int64(adjustment.After) - int64(adjustment.Before)
 	if delta != 0 && !adjustment.Replayed {
 		if err := cacheIncrUserQuota(userID, delta); err != nil {
-			common.SysError(fmt.Sprintf("failed to sync manual quota adjustment for user %d: %s", userID, err))
+			common.SysError(common.LogText("failed to sync manual quota adjustment for user %d: %s", userID, err))
 		}
 	}
 	return &adjustment, nil

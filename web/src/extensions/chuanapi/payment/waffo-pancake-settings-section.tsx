@@ -36,6 +36,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { removeTrailingSlash } from '@/features/system-settings/integrations/utils'
 import { handleServerError } from '@/lib/handle-server-error'
 
+import { getPaymentErrorTranslation } from '../wallet/lib/payment'
 import {
   type CatalogStore,
   type PairOrphanError,
@@ -167,7 +168,9 @@ export function WaffoPancakeSettingsSection({
         ) {
           stores = (body.data as { stores: CatalogStore[] }).stores ?? []
         } else {
-          const reason = typeof body?.data === 'string' ? body.data : undefined
+          const reason =
+            getPaymentErrorTranslation(body) ??
+            (typeof body?.data === 'string' ? body.data : undefined)
           handleServerError(body, undefined, {
             title: reason
               ? `${t('Credentials verification failed')}: ${reason}`
@@ -331,6 +334,7 @@ export function WaffoPancakeSettingsSection({
       }
       const reason =
         errData?.error ??
+        getPaymentErrorTranslation(body) ??
         (typeof body?.data === 'string' ? body.data : undefined)
       handleServerError(body, undefined, {
         title: reason

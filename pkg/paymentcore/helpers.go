@@ -4,12 +4,12 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -21,7 +21,7 @@ import (
 // by every concrete payment provider.
 func RequireCompliance(c *gin.Context) bool {
 	if !operation_setting.IsPaymentComplianceConfirmed() {
-		common.ApiErrorI18n(c, i18n.MsgPaymentComplianceRequired)
+		common.ApiErrorT(c, "Payment, redemption, subscription, and invitation reward features are disabled. The administrator must confirm compliance terms before enabling them.")
 		return false
 	}
 	return true
@@ -67,10 +67,10 @@ func MaxTopUpAmount() int64 {
 func ValidateCreditedQuota(quota decimal.Decimal) (int, error) {
 	value, err := common.WalletQuotaFromDecimalStrict(quota)
 	if err != nil {
-		return 0, errors.New("充值额度超出系统可表示范围")
+		return 0, common.NewMessage("Top-up quota exceeds the range the system can represent")
 	}
 	if value <= 0 {
-		return 0, errors.New("充值额度必须大于 0")
+		return 0, common.NewMessage("Top-up quota must be greater than 0")
 	}
 	return value, nil
 }
@@ -82,9 +82,9 @@ func ValidateTopUpQuota(amount int64) (int, error) {
 	}
 	maxAmount := MaxTopUpAmount()
 	if maxAmount > 0 && amount > maxAmount {
-		return 0, fmt.Errorf("单笔充值数量不能大于 %d", maxAmount)
+		return 0, common.NewMessage("Top-up amount cannot exceed {{max}}", map[string]any{"max": maxAmount})
 	}
-	return 0, errors.New("充值数量无效")
+	return 0, common.NewMessage("Invalid top-up amount")
 }
 
 func RejectInvalidCreditedQuota(c *gin.Context, userID int, quota decimal.Decimal) bool {
@@ -93,7 +93,7 @@ func RejectInvalidCreditedQuota(c *gin.Context, userID int, quota decimal.Decima
 		err = model.ValidateTopUpQuotaCapacity(userID, creditedQuota)
 	}
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
+		WriteError(c, err)
 		return true
 	}
 	return false
@@ -105,7 +105,7 @@ func RejectInvalidTopUpQuota(c *gin.Context, userID int, amount int64) bool {
 		err = model.ValidateTopUpQuotaCapacity(userID, creditedQuota)
 	}
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
+		WriteError(c, err)
 		return true
 	}
 	return false
@@ -116,6 +116,16 @@ func RejectInvalidTopUpQuota(c *gin.Context, userID int, amount int64) bool {
 func PayloadSummary(payload []byte) string {
 	digest := sha256.Sum256(payload)
 	return fmt.Sprintf("bytes=%d sha256=%x", len(payload), digest[:8])
+}
+
+// WriteError preserves the provider response contract and adds translation data.
+func WriteError(c *gin.Context, err error) {
+	body := gin.H{"message": "error", "data": err.Error()}
+	var message *common.Message
+	if errors.As(err, &message) {
+		maps.Copy(body, message.Fields())
+	}
+	c.JSON(http.StatusOK, body)
 }
 
 var orderLocks sync.Map

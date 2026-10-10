@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -19,6 +18,11 @@ type PaymentComplianceRequest struct {
 	Confirmed bool `json:"confirmed"`
 }
 
+// Keep payment response shapes while carrying structured translation fields.
+func paymentError(c *gin.Context, err error) {
+	paymentcore.WriteError(c, err)
+}
+
 func requirePaymentCompliance(c *gin.Context) bool {
 	return paymentcore.RequireCompliance(c)
 }
@@ -34,11 +38,11 @@ func ConfirmPaymentCompliance(c *gin.Context) {
 
 	var req PaymentComplianceRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
-		common.ApiErrorMsg(c, "参数错误")
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 	if !req.Confirmed {
-		common.ApiErrorMsg(c, "请确认合规声明")
+		common.ApiErrorT(c, "Please confirm the compliance statement")
 		return
 	}
 
@@ -61,7 +65,7 @@ func ConfirmPaymentCompliance(c *gin.Context) {
 		}
 	}
 
-	logger.LogInfo(c.Request.Context(), fmt.Sprintf(
+	logger.LogInfo(c.Request.Context(), common.LogText(
 		"payment compliance confirmed user_id=%d ip=%s terms_version=%s confirmed_at=%d",
 		userId,
 		clientIP,

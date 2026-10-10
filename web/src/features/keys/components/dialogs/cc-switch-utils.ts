@@ -38,9 +38,9 @@ function buildCCSwitchURL(
   app: CCSwitchApp,
   name: string,
   models: Record<string, string>,
-  apiKey: string
+  apiKey: string,
+  serverAddress = getServerAddress()
 ): string {
-  const serverAddress = getServerAddress()
   const endpoint = app === 'codex' ? `${serverAddress}/v1` : serverAddress
   const params = new URLSearchParams()
   params.set('resource', 'provider')
@@ -73,7 +73,8 @@ export function buildValidatedCCSwitchURL(
   name: string,
   models: Record<string, string>,
   apiKey: string,
-  availableModels: string[]
+  availableModels: string[],
+  serverAddress?: string
 ): string | null {
   if (!models.model || availableModels.length === 0) return null
   const available = new Set(availableModels)
@@ -81,5 +82,5 @@ export function buildValidatedCCSwitchURL(
     if (modelName && !available.has(modelName)) return null
   }
   const key = apiKey.startsWith('sk-') ? apiKey : `sk-${apiKey}`
-  return buildCCSwitchURL(app, name, models, key)
+  return buildCCSwitchURL(app, name, models, key, serverAddress)
 }

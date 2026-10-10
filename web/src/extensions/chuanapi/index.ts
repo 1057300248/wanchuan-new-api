@@ -23,7 +23,7 @@ import type { HelpExtension } from '../help'
 import type { I18nExtension } from '../i18n'
 import type { PaymentSettingsExtension } from '../payment-settings'
 import type { WalletExtension } from '../wallet'
-import { CHUANAPI_BRAND_LOGO } from './brand'
+import { CHUANAPI_BRAND_FAVICON, CHUANAPI_BRAND_LOGO } from './brand'
 import { loadChuanapiI18nOverride } from './i18n'
 import {
   LazyHelpApiReference,
@@ -41,6 +41,8 @@ export { loadChuanapiI18nOverride } from './i18n'
 export const chuanapiBrandExtension: BrandExtension = {
   id: 'chuanapi/brand',
   logoUrl: CHUANAPI_BRAND_LOGO,
+  logoClassName: 'dark:invert',
+  faviconUrl: CHUANAPI_BRAND_FAVICON,
 }
 
 export const chuanapiHelpExtension: HelpExtension = {

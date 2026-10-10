@@ -233,7 +233,7 @@ func TransferAffQuota(c *gin.Context) {
 		return
 	}
 	if result != nil && !result.Replayed {
-		model.RecordLog(c.GetInt("id"), model.LogTypeSystem, "邀请奖励划转到余额: "+logger.FormatQuota(int(amount)))
+		model.RecordLog(c.GetInt("id"), model.LogTypeSystem, common.NewMessage("Referral rewards transferred to balance: {{quota}}", map[string]any{"quota": logger.FormatQuota(int(amount))}))
 	}
 	common.ApiSuccessI18n(c, i18n.MsgUserTransferSuccess, nil)
 }

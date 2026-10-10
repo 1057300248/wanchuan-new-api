@@ -23,9 +23,11 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
-import { extensionBrandLogo, extensionPublicHomeUrl } from '@/extensions'
+import { extensionPublicHomeUrl } from '@/extensions'
 import { useStatus } from '@/hooks/use-status'
 import { cn } from '@/lib/utils'
+
+import { HeaderLogo } from './header-logo'
 
 type SystemBrandProps = {
   defaultName?: string
@@ -64,11 +66,7 @@ export function SystemBrand(props: SystemBrandProps) {
         )}
       >
         <div className='flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-md'>
-          <img
-            src={extensionBrandLogo()}
-            alt={t('Logo')}
-            className='size-full object-contain p-0.5 invert dark:invert-0'
-          />
+          <HeaderLogo alt={t('Logo')} className='size-full' />
         </div>
         <span className='max-w-[12rem] truncate'>{name}</span>
       </a>
@@ -84,11 +82,7 @@ export function SystemBrand(props: SystemBrandProps) {
           render={<div />}
         >
           <div className='flex aspect-square size-8 items-center justify-center overflow-hidden rounded-lg'>
-            <img
-              src={extensionBrandLogo()}
-              alt={t('Logo')}
-              className='size-full object-contain p-1 invert dark:invert-0'
-            />
+            <HeaderLogo alt={t('Logo')} className='size-full' />
           </div>
           <div className='grid flex-1 text-start text-sm leading-tight group-data-[collapsible=icon]:hidden'>
             <span className='truncate font-semibold'>{name}</span>

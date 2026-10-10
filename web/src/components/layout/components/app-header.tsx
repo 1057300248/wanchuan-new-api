@@ -121,7 +121,7 @@ export function AppHeader({
   const links = dynamicLinks.length > 0 ? dynamicLinks : navLinks
 
   // Notifications hook
-  const notifications = useNotifications()
+  const notifications = useNotifications({ autoOpen: showNotifications })
 
   // Mobile navigation drawer; opening it always yields to the console sidebar
   // so the two overlays can never cover each other.
@@ -186,6 +186,7 @@ export function AppHeader({
                 notice={notifications.notice}
                 announcements={notifications.announcements}
                 loading={notifications.loading}
+                onCloseToday={notifications.closeToday}
               />
             )}
             <LanguageSwitcher />

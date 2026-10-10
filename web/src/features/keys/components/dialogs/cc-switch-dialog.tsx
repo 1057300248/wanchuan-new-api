@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -66,6 +66,7 @@ interface Props {
   onOpenChange: (open: boolean) => void
   tokenKey: string
   token: ApiKey | null
+  serverAddress?: string
 }
 
 export function CCSwitchDialog(props: Props) {
@@ -73,6 +74,24 @@ export function CCSwitchDialog(props: Props) {
   const [app, setApp] = useState<AppType>('claude')
   const [name, setName] = useState<string>(APP_CONFIGS.claude.defaultName)
   const [models, setModels] = useState<Record<string, string>>({})
+  const [preparedUrl, setPreparedUrl] = useState('')
+  const validation = useRef({ active: true })
+  useEffect(() => {
+    setPreparedUrl('')
+    const attempt = { active: true }
+    validation.current = attempt
+    return () => {
+      attempt.active = false
+    }
+  }, [
+    props.open,
+    props.token?.id,
+    props.tokenKey,
+    props.serverAddress,
+    app,
+    name,
+    models,
+  ])
 
   const {
     data: modelsData,
@@ -117,13 +136,21 @@ export function CCSwitchDialog(props: Props) {
   }
 
   const handleSubmit = async () => {
+    if (preparedUrl) {
+      window.open(preparedUrl, '_blank', 'noopener,noreferrer')
+      setPreparedUrl('')
+      props.onOpenChange(false)
+      return
+    }
     if (!models.model) {
       toast.warning(t('Please select a primary model'))
       return
     }
     if (!props.token || !props.tokenKey) return
 
+    const attempt = validation.current
     const latest = await refetch()
+    if (!attempt.active) return
     const availableModels = latest.data?.data ?? []
     if (latest.isError || availableModels.length === 0) {
       toast.warning(noModelsMessage)
@@ -134,15 +161,15 @@ export function CCSwitchDialog(props: Props) {
       name,
       models,
       props.tokenKey,
-      availableModels
+      availableModels,
+      props.serverAddress
     )
     if (!url) {
       toast.warning(t('The selected model is no longer available'))
       setModels({})
       return
     }
-    window.open(url, '_blank')
-    props.onOpenChange(false)
+    setPreparedUrl(url)
   }
 
   const openDisabled =
@@ -166,7 +193,7 @@ export function CCSwitchDialog(props: Props) {
             {t('Cancel')}
           </Button>
           <Button onClick={handleSubmit} disabled={openDisabled}>
-            {t('Open CC Switch')}
+            {preparedUrl ? t('Open CC Switch') : t('Continue')}
           </Button>
         </>
       }

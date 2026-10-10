@@ -3,7 +3,6 @@ package model
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
@@ -135,7 +134,7 @@ func reserveTokenQuotaDB(id int, quota int) (bool, error) {
 // tokens skip the balance check but still update remain/used accounting.
 func TryReserveTokenQuota(id int, key string, quota int, unlimited bool) (bool, error) {
 	if quota < 0 {
-		return false, errors.New("quota 不能为负数！")
+		return false, errors.New("quota cannot be negative")
 	}
 	if quota == 0 {
 		return true, nil
@@ -155,7 +154,7 @@ func TryReserveTokenQuota(id int, key string, quota int, unlimited bool) (bool, 
 	}
 	if err != nil || result == cacheQuotaMiss {
 		if err != nil {
-			common.SysLog("token quota cache reserve unavailable, falling back to database: " + err.Error())
+			common.SysLog(common.LogText("token quota cache reserve unavailable, falling back to database: %s", err.Error()))
 		}
 		return reserveTokenQuotaDB(id, quota)
 	}
@@ -165,7 +164,7 @@ func TryReserveTokenQuota(id int, key string, quota int, unlimited bool) (bool, 
 	if err = persistTokenQuotaDelta(id, -quota); err != nil {
 		compensated, compensateErr := cacheApplyTokenQuotaDelta(id, key, int64(quota))
 		if compensateErr != nil || compensated != cacheQuotaOK {
-			common.SysError(fmt.Sprintf("failed to compensate reserved token quota: result=%d error=%v", compensated, compensateErr))
+			common.SysError(common.LogText("failed to compensate reserved token quota: result=%d error=%v", compensated, compensateErr))
 		}
 		return false, err
 	}

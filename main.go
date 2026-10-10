@@ -79,12 +79,12 @@ func runApplication() error {
 		return fmt.Errorf("failed to initialize resources: %w", err)
 	}
 
-	common.SysLog("New API " + common.Version + " started")
+	common.SysLog(common.LogText("New API %s started", common.Version))
 	if os.Getenv("GIN_MODE") != "debug" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	if common.DebugEnabled {
-		common.SysLog("running in debug mode")
+		common.SysLog(common.LogText("running in debug mode"))
 	}
 
 	kitutil.Debug.Store(common.DebugEnabled)
@@ -94,8 +94,8 @@ func runApplication() error {
 		common.MemoryCacheEnabled = true
 	}
 	if common.MemoryCacheEnabled {
-		common.SysLog("memory cache enabled")
-		common.SysLog(fmt.Sprintf("sync frequency: %d seconds", common.SyncFrequency))
+		common.SysLog(common.LogText("memory cache enabled"))
+		common.SysLog(common.LogText("sync frequency: %d seconds", common.SyncFrequency))
 
 		if err := model.RefreshChannelCache(context.Background()); err != nil {
 			return fmt.Errorf("initial channel cache load failed: %w", err)
@@ -147,7 +147,7 @@ func runApplication() error {
 		return fmt.Errorf("failed to configure trusted proxies: %w", err)
 	}
 	server.Use(gin.CustomRecovery(func(c *gin.Context, err any) {
-		common.SysLog(fmt.Sprintf("panic detected: %v", err))
+		common.SysLog(common.LogText("panic detected: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
 				"message": fmt.Sprintf("Panic detected, error: %v. Please submit a issue here: https://github.com/Calcium-Ion/new-api", err),
@@ -278,7 +278,7 @@ func InitResources(workers *lifecycle.Group) error {
 	err := godotenv.Load(".env")
 	if err != nil {
 		if common.DebugEnabled {
-			common.SysLog("No .env file found, using default environment variables. If needed, please create a .env file and set the relevant variables.")
+			common.SysLog(common.LogText("No .env file found, using default environment variables. If needed, please create a .env file and set the relevant variables."))
 		}
 	}
 
@@ -291,8 +291,6 @@ func InitResources(workers *lifecycle.Group) error {
 	ratio_setting.InitRatioSettings()
 
 	service.InitHttpClient()
-
-	service.InitTokenEncoders()
 
 	if err := chuanapi.RegisterRuntimeServices(); err != nil {
 		common.FatalLog("failed to register chuanapi runtime services: " + err.Error())
@@ -336,16 +334,16 @@ func InitResources(workers *lifecycle.Group) error {
 	// Initialize SQL Database
 	err = model.InitDB()
 	if err != nil {
-		common.FatalLog("failed to initialize database: " + err.Error())
+		common.FatalLog(common.LogText("failed to initialize database: %s", err.Error()))
 		return err
 	}
 	if err = authz.Init(model.DB); err != nil {
-		common.FatalLog("failed to initialize authorization: " + err.Error())
+		common.FatalLog(common.LogText("failed to initialize authorization: %s", err.Error()))
 		return err
 	}
 	if common.PasswordLoginEncryptionEnabled {
 		if err = model.InitPasswordEncryption(); err != nil {
-			common.FatalLog("failed to initialize password encryption: " + err.Error())
+			common.FatalLog(common.LogText("failed to initialize password encryption: %s", err.Error()))
 			return err
 		}
 	}
@@ -355,7 +353,7 @@ func InitResources(workers *lifecycle.Group) error {
 	// Initialize options, should after model.InitDB()
 	if common.IsMasterNode {
 		if err := model.MigrateRetiredFrontendOptions(); err != nil {
-			common.SysError("failed to migrate retired frontend options: " + err.Error())
+			common.SysError(common.LogText("failed to migrate retired frontend options: %s", err.Error()))
 		}
 	}
 	model.InitOptionMap()
@@ -378,10 +376,10 @@ func InitResources(workers *lifecycle.Group) error {
 	// Initialize i18n
 	err = i18n.Init()
 	if err != nil {
-		common.SysError("failed to initialize i18n: " + err.Error())
+		common.SysError(common.LogText("failed to initialize i18n: %s", err.Error()))
 		// Don't return error, i18n is not critical
 	} else {
-		common.SysLog("i18n initialized with languages: " + strings.Join(i18n.SupportedLanguages(), ", "))
+		common.SysLog(common.LogText("i18n initialized with languages: %s", strings.Join(i18n.SupportedLanguages(), ", ")))
 	}
 	// Register user language loader for lazy loading
 	i18n.SetUserLangLoader(model.GetUserLanguage)
@@ -389,7 +387,7 @@ func InitResources(workers *lifecycle.Group) error {
 	// Load custom OAuth providers from database
 	err = oauth.LoadCustomProviders()
 	if err != nil {
-		common.SysError("failed to load custom OAuth providers: " + err.Error())
+		common.SysError(common.LogText("failed to load custom OAuth providers: %s", err.Error()))
 		// Don't return error, custom OAuth is not critical
 	}
 

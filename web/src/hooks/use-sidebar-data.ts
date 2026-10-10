@@ -28,7 +28,6 @@ import {
   LayoutDashboard,
   LifeBuoy,
   ListTodo,
-  MessageSquare,
   PlugZap,
   Radio,
   ServerCog,
@@ -70,8 +69,8 @@ export function useSidebarData(): SidebarData {
             icon: ImageIcon,
           },
           {
-            title: t('Chat'),
-            icon: MessageSquare,
+            title: t('Third-party'),
+            icon: PlugZap,
             type: 'chat-presets',
           },
         ],

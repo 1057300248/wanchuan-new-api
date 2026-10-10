@@ -40,42 +40,6 @@ vi.mock('@/lib/api', () => ({
   getNotice: async () => ({ success: true, data: '' }),
 }))
 
-vi.mock('@/stores/notification-store', async () => {
-  const { create } = await import('zustand')
-
-  return {
-    useNotificationStore: create<{
-      lastReadNotice: string
-      readAnnouncementKeys: string[]
-      closedUntilDate: string | null
-      markNoticeRead: (noticeContent: string) => void
-      markAnnouncementsRead: (keys: string[]) => void
-      setClosedUntilDate: (date: string | null) => void
-      isAnnouncementRead: (key: string) => boolean
-      isNoticeClosed: () => boolean
-    }>((set, get) => ({
-      lastReadNotice: '',
-      readAnnouncementKeys: [],
-      closedUntilDate: null,
-      markNoticeRead: (noticeContent) => {
-        set({ lastReadNotice: noticeContent.trim() })
-      },
-      markAnnouncementsRead: (keys) => {
-        set((state) => ({
-          readAnnouncementKeys: [
-            ...new Set([...state.readAnnouncementKeys, ...keys]),
-          ],
-        }))
-      },
-      setClosedUntilDate: (closedUntilDate) => {
-        set({ closedUntilDate })
-      },
-      isAnnouncementRead: (key) => get().readAnnouncementKeys.includes(key),
-      isNoticeClosed: () => false,
-    })),
-  }
-})
-
 const { useNotifications } = await import('../use-notifications')
 const { useNotificationStore } = await import('@/stores/notification-store')
 

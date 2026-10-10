@@ -1,6 +1,7 @@
 package service
 
 import (
+	"github.com/QuantumNous/new-api/tokenkit"
 	"net/http/httptest"
 	"testing"
 	"unicode/utf8"
@@ -49,7 +50,7 @@ func TestStreamingEstimateMatchesBatchAcrossModels(t *testing.T) {
 
 	for _, model := range models {
 		for name, text := range texts {
-			want := EstimateTokenByModel(model, text)
+			want := tokenkit.Estimate(model, text)
 			whole := NewStreamingEstimateByModel(model)
 			whole.WriteString(text)
 			require.Equal(t, want, whole.Tokens(), "model %s case %s whole", model, name)
@@ -70,7 +71,7 @@ func TestStreamingEstimateMatchesBatchAcrossModels(t *testing.T) {
 func TestStreamingEstimateLatinNumberBoundaryAcrossChunks(t *testing.T) {
 	model := "gpt-4o"
 	full := "abc123xyz 456def"
-	want := EstimateTokenByModel(model, full)
+	want := tokenkit.Estimate(model, full)
 
 	splits := [][]string{
 		{"a", "bc", "123", "xyz", " ", "456", "def"},
@@ -93,7 +94,7 @@ func TestStreamingEstimateByteSplitUTF8(t *testing.T) {
 	require.True(t, utf8.ValidString(text))
 
 	for _, model := range models {
-		want := EstimateTokenByModel(model, text)
+		want := tokenkit.Estimate(model, text)
 		raw := []byte(text)
 		for split := 1; split < len(raw); split++ {
 			estimator := NewStreamingEstimateByModel(model)
@@ -120,13 +121,13 @@ func TestStreamingEstimateIncompleteTrailingBytesBuffered(t *testing.T) {
 	estimator.WriteString(string(raw[:3]))
 	require.NotNil(t, estimator)
 	estimator.WriteString(string(raw[3:]))
-	require.Equal(t, EstimateTokenByModel(model, string(raw)), estimator.Tokens())
+	require.Equal(t, tokenkit.Estimate(model, string(raw)), estimator.Tokens())
 
 	stringsEstimator := NewStreamingEstimateByModel(model)
 	for _, part := range []string{"ab", emoji[:2], emoji[2:], "cd"} {
 		stringsEstimator.WriteString(part)
 	}
-	require.Equal(t, EstimateTokenByModel(model, string(raw)), stringsEstimator.Tokens())
+	require.Equal(t, tokenkit.Estimate(model, string(raw)), stringsEstimator.Tokens())
 }
 
 func TestStreamingEstimateFinalizesInvalidTrailingBytesLikeBatch(t *testing.T) {
@@ -135,8 +136,8 @@ func TestStreamingEstimateFinalizesInvalidTrailingBytesLikeBatch(t *testing.T) {
 	estimator := NewStreamingEstimateByModel(model)
 	estimator.WriteString(text)
 
-	require.Equal(t, EstimateTokenByModel(model, text), estimator.Tokens())
-	require.Equal(t, EstimateTokenByModel(model, text), estimator.Tokens())
+	require.Equal(t, tokenkit.Estimate(model, text), estimator.Tokens())
+	require.Equal(t, tokenkit.Estimate(model, text), estimator.Tokens())
 	require.Zero(t, NewStreamingEstimateByModel(model).Tokens())
 }
 

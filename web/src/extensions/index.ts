@@ -27,7 +27,11 @@ export type {
 } from './navigation'
 export { extensionHelpPages } from './help'
 export type { HelpExtension } from './help'
-export { extensionBrandLogo } from './brand'
+export {
+  extensionBrandLogo,
+  extensionBrandLogoClassName,
+  extensionBrandFavicon,
+} from './brand'
 export type { BrandExtension } from './brand'
 export { extensionFlags, isExtensionFeatureEnabled } from './flags'
 export type { ExtensionFeatureFlag, ExtensionFlags } from './flags'

@@ -11,6 +11,7 @@ package service
 
 import (
 	"encoding/json"
+	"github.com/QuantumNous/new-api/common"
 	"testing"
 	"time"
 
@@ -169,7 +170,7 @@ func TestRecalculateTaskQuotaUsesEffectiveBillingIdentity(t *testing.T) {
 		}
 		require.NoError(t, model.DB.Create(task).Error)
 
-		RecalculateTaskQuota(t.Context(), task, 150, "token重算")
+		RecalculateTaskQuota(t.Context(), task, 150, common.NewMessage("Token recalculation"))
 		// bonus 优先：赠金 30 全额扣减，paid 补 20。
 		assertUserBalances(t, userID, 0, 80, 0)
 		assert.Equal(t, 150, task.Quota)
@@ -186,7 +187,7 @@ func TestRecalculateTaskQuotaUsesEffectiveBillingIdentity(t *testing.T) {
 		}
 		require.NoError(t, model.DB.Create(task).Error)
 
-		RecalculateTaskQuota(t.Context(), task, 150, "token重算")
+		RecalculateTaskQuota(t.Context(), task, 150, common.NewMessage("Token recalculation"))
 		// 旧身份不可用赠金：50 全部由 paid 承担。
 		assertUserBalances(t, userID, 30, 50, 0)
 		assert.Equal(t, 150, task.Quota)

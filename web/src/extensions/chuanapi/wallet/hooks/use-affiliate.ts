@@ -21,7 +21,10 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { toast } from 'sonner'
 
 import { handleServerError } from '@/lib/handle-server-error'
-import { requireServerSuccess } from '@/lib/server-error-message'
+import {
+  getServerMessage,
+  requireServerSuccess,
+} from '@/lib/server-error-message'
 
 import { getAffiliateCode, transferAffiliateQuota } from '../api'
 import { generateAffiliateLink } from '../lib'
@@ -88,7 +91,9 @@ export function useAffiliate() {
       const response = await transferAffiliateQuota({ quota }, idempotencyKey)
       if (response.success) {
         pendingTransferRef.current = null
-        toast.success(response.message || i18next.t('Transfer successful'))
+        toast.success(
+          getServerMessage(response) || i18next.t('Transfer successful')
+        )
         return true
       }
       handleServerError(response, i18next.t('Transfer failed'))

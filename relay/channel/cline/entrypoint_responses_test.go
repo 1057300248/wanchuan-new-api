@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -246,6 +247,53 @@ func TestClineResponsesSSEThroughAdaptor(t *testing.T) {
 	assert.Equal(t, int64(7), gjson.Get(completed, "response.usage.total_tokens").Int())
 }
 
+func TestClineResponsesRoleThenErrorHasNoBillableUsage(t *testing.T) {
+	stream := "data: " + `{"id":"chat-1","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}` + "\n\n" +
+		"data: " + `{"error":{"type":"invalid_request_error","message":"user message must have content","param":"messages.29.content"}}` + "\n\n"
+	upstream, received := newClineUpstream(t, func(w http.ResponseWriter, r *http.Request, body []byte) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(stream))
+	})
+	env := newClineTestEnv(t, types.RelayFormatOpenAIResponses, relayconstant.RelayModeResponses, true, "test-model", upstream.URL)
+	env.info.SetEstimatePromptTokens(30308)
+	request := newResponsesStreamRequest(env.info.OriginModelName)
+	converted, err := env.adaptor.ConvertOpenAIResponsesRequest(env.context, env.info, *request)
+	require.NoError(t, err)
+	usage, apiErr := env.receive(t, env.send(t, converted))
+	require.NotNil(t, apiErr)
+	assert.Nil(t, usage, "role-only prelude and failure must not estimate or settle prompt tokens")
+	assert.True(t, types.IsSkipRetryError(apiErr))
+	assert.False(t, service.ShouldRetryRelayError(env.context, apiErr, 2))
+	assert.True(t, common.GetContextKeyBool(env.context, constant.ContextKeyResponsesStreamErrorHandled))
+	assert.True(t, env.info.StreamStatus.ResponseFailed())
+	assert.Equal(t, 1, countEvents(streamEventTypes(env.recorder.Body.String()), "response.failed"))
+	assert.NotContains(t, env.recorder.Body.String(), "response.completed")
+	assert.Len(t, received, 1)
+}
+
+func TestClineResponsesFailurePreservesObservedUsage(t *testing.T) {
+	stream := "data: " + `{"choices":[{"index":0,"delta":{"content":"partial"}}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}` + "\n\n" +
+		"data: " + `{"error":{"type":"server_error","message":"upstream generation failed"}}` + "\n\n"
+	upstream, _ := newClineUpstream(t, func(w http.ResponseWriter, r *http.Request, body []byte) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(stream))
+	})
+	env := newClineTestEnv(t, types.RelayFormatOpenAIResponses, relayconstant.RelayModeResponses, true, "test-model", upstream.URL)
+	env.info.SetEstimatePromptTokens(30308)
+	converted, err := env.adaptor.ConvertOpenAIResponsesRequest(env.context, env.info, *newResponsesStreamRequest("test-model"))
+	require.NoError(t, err)
+	rawUsage, apiErr := env.receive(t, env.send(t, converted))
+	require.NotNil(t, apiErr)
+	usage, ok := rawUsage.(*dto.Usage)
+	require.True(t, ok)
+	require.NotNil(t, usage)
+	assert.Equal(t, 10, usage.PromptTokens)
+	assert.Equal(t, 2, usage.CompletionTokens)
+	assert.Equal(t, 12, usage.TotalTokens)
+	assert.False(t, service.ShouldRetryRelayError(env.context, apiErr, 2))
+	assert.NotContains(t, env.recorder.Body.String(), "response.completed")
+}
+
 func TestClineResponsesLeadingStreamErrorReturnsBeforeOutput(t *testing.T) {
 	upstream, _ := newClineUpstream(t, func(w http.ResponseWriter, r *http.Request, body []byte) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -278,7 +326,8 @@ func TestClineResponsesMidStreamErrorEmitsFailedTerminalAndKeepsDiagnosticsInter
 	require.NoError(t, err)
 	resp := env.send(t, converted)
 	_, apiErr := env.receive(t, resp)
-	require.Nil(t, apiErr)
+	require.NotNil(t, apiErr)
+	assert.True(t, types.IsSkipRetryError(apiErr))
 
 	body := env.recorder.Body.String()
 	events := streamEventTypes(body)
@@ -309,7 +358,7 @@ func TestClineResponsesMidStreamErrorKeepsDiagnosticsForChannelTest(t *testing.T
 	require.NoError(t, err)
 	resp := env.send(t, converted)
 	_, apiErr := env.receive(t, resp)
-	require.Nil(t, apiErr)
+	require.NotNil(t, apiErr)
 
 	body := env.recorder.Body.String()
 	assert.Contains(t, body, "response.failed")

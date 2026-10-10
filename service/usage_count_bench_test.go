@@ -1,6 +1,7 @@
 package service
 
 import (
+	"github.com/QuantumNous/new-api/tokenkit"
 	"strings"
 	"testing"
 )
@@ -39,7 +40,7 @@ func BenchmarkChatViaResponsesFallbackUsage(b *testing.B) {
 				var builder strings.Builder
 				builder.Grow(len(text))
 				builder.WriteString(text)
-				_ = EstimateTokenByModel(model, builder.String())
+				_ = tokenkit.Estimate(model, builder.String())
 			}
 		})
 		b.Run("new_streaming_"+name+"_large", func(b *testing.B) {
