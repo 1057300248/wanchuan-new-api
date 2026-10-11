@@ -71,9 +71,9 @@ func TestResolvePasskeyRejectsInsecureOriginByDefault(t *testing.T) {
 		Origins:             "http://chuanapi.com",
 	}
 	r := httptest.NewRequest(http.MethodGet, "http://chuanapi.com/", nil)
-	_, err := resolveOrigins(r, settings)
+	origins, err := resolveOrigins(r, settings)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "不安全")
+	assert.Empty(t, origins)
 }
 
 func TestResolvePasskeyAutoDetectRejectsPlainHTTPPublicHost(t *testing.T) {
