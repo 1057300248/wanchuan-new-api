@@ -16,5 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-export const CHUANAPI_BRAND_LOGO = '/brand/wanchuan-mark-v4.png'
-export const CHUANAPI_BRAND_FAVICON = '/brand/wanchuan-icon-v4.png'
+// Refresh responses cached before the same-origin brand route was deployed.
+export const CHUANAPI_BRAND_LOGO =
+  '/brand/wanchuan-mark-v4.png?revision=20261011'
+export const CHUANAPI_BRAND_FAVICON =
+  '/brand/wanchuan-icon-v4.png?revision=20261011'
