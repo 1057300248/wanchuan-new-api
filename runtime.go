@@ -89,7 +89,7 @@ func (app *applicationRuntime) Shutdown(server *http.Server) bool {
 	joined := requestsErr == nil && !errors.Is(workersErr, context.DeadlineExceeded) && !errors.Is(workersErr, context.Canceled)
 	select {
 	case <-socketsClosed:
-	default:
+	case <-ctx.Done():
 		joined = false
 	}
 	cancel()
@@ -105,7 +105,7 @@ func (app *applicationRuntime) Shutdown(server *http.Server) bool {
 		joined = requestsErr == nil && !errors.Is(workersErr, context.DeadlineExceeded) && !errors.Is(workersErr, context.Canceled)
 		select {
 		case <-socketsClosed:
-		default:
+		case <-forced.Done():
 			joined = false
 		}
 		stop()
