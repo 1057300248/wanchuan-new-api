@@ -7386,6 +7386,21 @@
     "Import to {{client}}": "Importer dans {{client}}",
     "Server address": "Adresse du serveur",
     "Registration bonus {{quota}}": "Bonus d’inscription {{quota}}",
-    "Referral rewards transferred to balance: {{quota}}": "Récompenses de parrainage transférées au solde : {{quota}}"
+    "Referral rewards transferred to balance: {{quota}}": "Récompenses de parrainage transférées au solde : {{quota}}",
+    "Allow users to export logs": "Autoriser les utilisateurs à exporter les journaux",
+    "Another log export is running. Try again after it finishes.": "Une autre exportation de journaux est en cours. Réessayez quand elle sera terminée.",
+    "Choose a time range of up to {{days}} days. The other filters on this page also apply.": "Choisissez une plage d'au plus {{days}} jours. Les autres filtres de la page s'appliquent aussi.",
+    "Export": "Exporter",
+    "Export logs": "Exporter les journaux",
+    "Exported {{count}} logs": "{{count}} entrées exportées",
+    "Failed to export logs": "Échec de l'exportation des journaux",
+    "Log export is disabled": "L'exportation des journaux est désactivée",
+    "Log recording": "Enregistrement des journaux",
+    "Log search and export": "Recherche et exportation des journaux",
+    "Longest log time range (days)": "Plage maximale des journaux (jours)",
+    "The longest log time range must be at least 1 day": "La plage maximale des journaux doit être d'au moins 1 jour",
+    "The longest time range a user can view at once in the logs and on the dashboard, and the longest range any export can cover.": "La plus longue période qu'un utilisateur peut consulter en une fois dans les journaux et le tableau de bord, et la plus longue période couverte par un export.",
+    "The time range cannot exceed {{days}} days": "La plage de temps ne peut pas dépasser {{days}} jours",
+    "Users can download their own logs from the usage log page. Administrators can always export.": "Les utilisateurs peuvent télécharger leurs propres journaux depuis la page des journaux d'utilisation. Les administrateurs peuvent toujours exporter."
   }
 }

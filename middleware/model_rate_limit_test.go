@@ -231,3 +231,39 @@ func TestModelRateLimitRealRedis(t *testing.T) {
 	require.NoError(t, client.Ping(ctx).Err())
 	checkModelRedisReservationContract(t, client)
 }
+
+// The memory limiter answers like the Redis limiter: an OpenAI error body
+// naming the limit that was reached, not an empty 429.
+func TestModelMemoryRateLimitRejectionsReturnOpenAIError(t *testing.T) {
+	for _, tc := range []struct {
+		name                     string
+		totalLimit, successLimit int
+		messageKey               string
+	}{
+		{name: "total", totalLimit: 1, messageKey: "model_total_request_limit_exceeded"},
+		{name: "success", successLimit: 1, messageKey: "model_success_request_limit_exceeded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			userID := 7200000 + int(modelRateLimitTestUsers.Add(1))
+			router := gin.New()
+			router.GET("/", func(c *gin.Context) {
+				c.Set("id", userID)
+				c.Set(common.RequestIdKey, "req-limited")
+			}, memoryRateLimitHandler(60, tc.totalLimit, tc.successLimit), func(c *gin.Context) {
+				c.Status(http.StatusOK)
+			})
+			require.Equal(t, http.StatusOK, performRateLimitRequest(router, "/", "127.0.0.1:1000").Code)
+
+			resp := performRateLimitRequest(router, "/", "127.0.0.1:1000")
+			assert.Equal(t, http.StatusTooManyRequests, resp.Code)
+			message := tc.messageKey
+			want, err := common.Marshal(gin.H{"error": gin.H{
+				"message": common.MessageWithRequestId(message, "req-limited"),
+				"type":    "new_api_error",
+				"code":    "",
+			}})
+			require.NoError(t, err)
+			assert.JSONEq(t, string(want), resp.Body.String())
+		})
+	}
+}

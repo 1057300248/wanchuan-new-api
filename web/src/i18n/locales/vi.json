@@ -7386,6 +7386,21 @@
     "Import to {{client}}": "Nhập vào {{client}}",
     "Server address": "Địa chỉ máy chủ",
     "Registration bonus {{quota}}": "Thưởng đăng ký {{quota}}",
-    "Referral rewards transferred to balance: {{quota}}": "Đã chuyển thưởng giới thiệu vào số dư: {{quota}}"
+    "Referral rewards transferred to balance: {{quota}}": "Đã chuyển thưởng giới thiệu vào số dư: {{quota}}",
+    "Allow users to export logs": "Cho phép người dùng xuất nhật ký",
+    "Another log export is running. Try again after it finishes.": "Đang có một lượt xuất nhật ký khác. Hãy thử lại sau khi lượt đó hoàn tất.",
+    "Choose a time range of up to {{days}} days. The other filters on this page also apply.": "Chọn khoảng thời gian tối đa {{days}} ngày. Các bộ lọc khác trên trang này cũng được áp dụng.",
+    "Export": "Xuất",
+    "Export logs": "Xuất nhật ký",
+    "Exported {{count}} logs": "Đã xuất {{count}} bản ghi nhật ký",
+    "Failed to export logs": "Không xuất được nhật ký",
+    "Log export is disabled": "Tính năng xuất nhật ký đã bị tắt",
+    "Log recording": "Ghi nhật ký",
+    "Log search and export": "Tìm kiếm và xuất nhật ký",
+    "Longest log time range (days)": "Khoảng thời gian nhật ký tối đa (ngày)",
+    "The longest log time range must be at least 1 day": "Khoảng thời gian nhật ký tối đa phải ít nhất 1 ngày",
+    "The longest time range a user can view at once in the logs and on the dashboard, and the longest range any export can cover.": "Khoảng thời gian dài nhất người dùng có thể xem trong một lần ở nhật ký và bảng điều khiển, cũng là giới hạn cho mọi lượt xuất.",
+    "The time range cannot exceed {{days}} days": "Khoảng thời gian không được vượt quá {{days}} ngày",
+    "Users can download their own logs from the usage log page. Administrators can always export.": "Người dùng có thể tải nhật ký của mình từ trang nhật ký sử dụng. Quản trị viên luôn có thể xuất."
   }
 }

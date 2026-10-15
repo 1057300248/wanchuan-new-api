@@ -525,6 +525,13 @@ func responsesImagePartToChatImageURL(part map[string]any) (map[string]any, erro
 			imageURL["detail"] = detail
 		}
 	}
+	// Responses-only values such as "original" are rejected by strict Chat
+	// upstreams. Preserve the supported Chat detail values and omit the rest.
+	switch imageURL["detail"] {
+	case "auto", "low", "high":
+	default:
+		delete(imageURL, "detail")
+	}
 	return imageURL, nil
 }
 

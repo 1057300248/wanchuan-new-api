@@ -7386,6 +7386,21 @@
     "Import to {{client}}": "{{client}} にインポート",
     "Server address": "サーバーアドレス",
     "Registration bonus {{quota}}": "登録ボーナス {{quota}}",
-    "Referral rewards transferred to balance: {{quota}}": "紹介報酬を残高に振替：{{quota}}"
+    "Referral rewards transferred to balance: {{quota}}": "紹介報酬を残高に振替：{{quota}}",
+    "Allow users to export logs": "ユーザーにログのエクスポートを許可",
+    "Another log export is running. Try again after it finishes.": "別のログのエクスポートが実行中です。完了してからもう一度お試しください。",
+    "Choose a time range of up to {{days}} days. The other filters on this page also apply.": "最長 {{days}} 日の期間を選んでください。このページのほかのフィルターもそのまま適用されます。",
+    "Export": "エクスポート",
+    "Export logs": "ログをエクスポート",
+    "Exported {{count}} logs": "{{count}} 件のログをエクスポートしました",
+    "Failed to export logs": "ログのエクスポートに失敗しました",
+    "Log export is disabled": "ログのエクスポートは無効になっています",
+    "Log recording": "ログの記録",
+    "Log search and export": "ログの検索とエクスポート",
+    "Longest log time range (days)": "ログの最長期間（日）",
+    "The longest log time range must be at least 1 day": "ログの最長期間は 1 日以上にしてください",
+    "The longest time range a user can view at once in the logs and on the dashboard, and the longest range any export can cover.": "ユーザーがログとダッシュボードで一度に表示できる最長の期間です。どのエクスポートもこの期間を超えられません。",
+    "The time range cannot exceed {{days}} days": "期間は {{days}} 日を超えることはできません",
+    "Users can download their own logs from the usage log page. Administrators can always export.": "ユーザーは利用履歴ページから自分のログをダウンロードできます。管理者はいつでもエクスポートできます。"
   }
 }

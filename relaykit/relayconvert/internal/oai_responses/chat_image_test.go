@@ -16,7 +16,7 @@ func TestResponsesImageURLNormalizationPreservesDetailAndInput(t *testing.T) {
 	part := map[string]any{"type": "input_image", "image_url": original, "detail": "original"}
 	got, err := responsesImagePartToChatImageURL(part)
 	require.NoError(t, err)
-	assert.Equal(t, "original", got["detail"])
+	assert.NotContains(t, got, "detail", "Responses-only detail must not break strict Chat upstreams")
 	assert.NotContains(t, original, "detail", "normalization must not mutate a reused request")
 	original["detail"] = "low"
 	got, err = responsesImagePartToChatImageURL(part)

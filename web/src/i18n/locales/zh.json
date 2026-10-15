@@ -7386,6 +7386,21 @@
     "Import to {{client}}": "导入 {{client}}",
     "Server address": "服务器地址",
     "Registration bonus {{quota}}": "新用户注册赠金 {{quota}}",
-    "Referral rewards transferred to balance: {{quota}}": "邀请奖励划转到余额：{{quota}}"
+    "Referral rewards transferred to balance: {{quota}}": "邀请奖励划转到余额：{{quota}}",
+    "Allow users to export logs": "允许用户导出日志",
+    "Another log export is running. Try again after it finishes.": "已有一个日志导出正在进行，请等它完成后再试。",
+    "Choose a time range of up to {{days}} days. The other filters on this page also apply.": "选择要导出的时间范围，最长 {{days}} 天。页面上的其他筛选条件同样生效。",
+    "Export": "导出",
+    "Export logs": "导出日志",
+    "Exported {{count}} logs": "已导出 {{count}} 条日志",
+    "Failed to export logs": "导出日志失败",
+    "Log export is disabled": "日志导出已关闭",
+    "Log recording": "日志记录",
+    "Log search and export": "日志查询与导出",
+    "Longest log time range (days)": "日志最长时间范围（天）",
+    "The longest log time range must be at least 1 day": "日志最长时间范围至少为 1 天",
+    "The longest time range a user can view at once in the logs and on the dashboard, and the longest range any export can cover.": "用户在日志和数据看板中一次最多能查看的时间范围，也是每次导出的最长时间范围。",
+    "The time range cannot exceed {{days}} days": "时间跨度不能超过 {{days}} 天",
+    "Users can download their own logs from the usage log page. Administrators can always export.": "用户可以在使用日志页面下载自己的日志。管理员始终可以导出。"
   }
 }
