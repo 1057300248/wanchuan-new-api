@@ -21,6 +21,7 @@ import { createElement } from 'react'
 import type { BrandExtension } from '../brand'
 import type { HelpExtension } from '../help'
 import type { I18nExtension } from '../i18n'
+import type { MonitorExtension } from '../monitor'
 import type { PaymentSettingsExtension } from '../payment-settings'
 import type { WalletExtension } from '../wallet'
 import { CHUANAPI_BRAND_FAVICON, CHUANAPI_BRAND_LOGO } from './brand'
@@ -31,9 +32,14 @@ import {
   LazyHelpIndex,
   LazyPaymentSettingsRenderer,
   LazyWallet,
+  LazyMonitor,
 } from './lazy-pages'
 
-export { CHUANAPI_PUBLIC_HOME, chuanapiNavigationExtension } from './navigation'
+export {
+  CHUANAPI_PUBLIC_HOME,
+  chuanapiNavigationExtension,
+  chuanapiMonitorNavigationExtension,
+} from './navigation'
 export { SHOW_LEGACY_AFFILIATE_QUOTA } from './flags'
 export { CHUANAPI_BRAND_LOGO } from './brand'
 export { loadChuanapiI18nOverride } from './i18n'
@@ -60,6 +66,11 @@ export const chuanapiI18nExtension: I18nExtension = {
 export const chuanapiWalletExtension: WalletExtension = {
   id: 'chuanapi/wallet',
   page: LazyWallet,
+}
+
+export const chuanapiMonitorExtension: MonitorExtension = {
+  id: 'chuanapi/monitor',
+  page: LazyMonitor,
 }
 
 export const chuanapiPaymentSettingsExtension: PaymentSettingsExtension = {

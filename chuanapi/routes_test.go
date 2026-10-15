@@ -51,6 +51,10 @@ func TestLlmsRouteSetPreservesLegacyRouteTableAndHandlers(t *testing.T) {
 		http.MethodHead + " /public-api/pricing",
 		http.MethodGet + " /public-api/status",
 		http.MethodGet + " /api/chuanapi/public-config",
+		http.MethodGet + " /api/model-monitor",
+		http.MethodGet + " /api/model-monitor/results/:id",
+		http.MethodGet + " /api/model-monitor/artworks/:id",
+		http.MethodGet + " /api/model-monitor/thumbnails/:id",
 		http.MethodGet + " /api/user/auth/session",
 	} {
 		assert.Contains(t, handlers, key)

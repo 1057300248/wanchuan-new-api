@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { t } from 'i18next'
+
 import type { NavigationExtension } from '../navigation'
 
 export const CHUANAPI_PUBLIC_HOME = 'https://chuanapi.com/'
@@ -30,6 +32,20 @@ const LEGACY_QUICKSTART_URLS = new Set([
   'https://chuanapi.com/#quickstart',
   'https://chuanapi.com#quickstart',
 ])
+
+export const chuanapiMonitorNavigationExtension: NavigationExtension = {
+  id: 'chuanapi/monitor-navigation',
+  apply(links) {
+    if (links.some((link) => link.href === '/model-monitor')) return [...links]
+    const result = [...links]
+    const docsIndex = result.findIndex((link) => link.href === '/help')
+    result.splice(docsIndex < 0 ? result.length : docsIndex, 0, {
+      title: t('monitor.title'),
+      href: '/model-monitor',
+    })
+    return result
+  },
+}
 
 export const chuanapiNavigationExtension: NavigationExtension = {
   id: 'chuanapi/navigation',

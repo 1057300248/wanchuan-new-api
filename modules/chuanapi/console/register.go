@@ -2,8 +2,10 @@ package console
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/QuantumNous/new-api/extension"
+	"github.com/QuantumNous/new-api/modules/chuanapi/console/monitor"
 	"github.com/gin-gonic/gin"
 )
 
@@ -59,5 +61,6 @@ func registerPublicRoutes(scopes extension.RouteScopes) error {
 	scopes.PublicAPI.HEAD("/status", GetPublicConfig)
 	scopes.PublicAPI.GET("/pricing", GetPublicPricing)
 	scopes.PublicAPI.HEAD("/pricing", GetPublicPricing)
+	monitor.New(os.Getenv("MODEL_MONITOR_ENABLED") != "false").Register(scopes.API.Group("/model-monitor"))
 	return nil
 }

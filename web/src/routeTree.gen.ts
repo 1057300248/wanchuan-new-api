@@ -30,6 +30,7 @@ import { Route as AuthenticatedChat2linkRouteImport } from './routes/_authentica
 import { Route as AuthenticatedSystemSettingsRouteRouteImport } from './routes/_authenticated/system-settings/route'
 import { Route as AboutIndexRouteImport } from './routes/about/index'
 import { Route as HelpIndexRouteImport } from './routes/help/index'
+import { Route as ModelMonitorIndexRouteImport } from './routes/model-monitor/index'
 import { Route as OauthProviderRouteImport } from './routes/oauth/$provider'
 import { Route as PricingIndexRouteImport } from './routes/pricing/index'
 import { Route as RankingsIndexRouteImport } from './routes/rankings/index'
@@ -180,6 +181,11 @@ const AboutIndexRoute = AboutIndexRouteImport.update({
 const HelpIndexRoute = HelpIndexRouteImport.update({
   id: '/help/',
   path: '/help/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ModelMonitorIndexRoute = ModelMonitorIndexRouteImport.update({
+  id: '/model-monitor/',
+  path: '/model-monitor/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OauthProviderRoute = OauthProviderRouteImport.update({
@@ -474,6 +480,7 @@ export interface FileRoutesByFullPath {
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
   '/help/': typeof HelpIndexRoute
+  '/model-monitor/': typeof ModelMonitorIndexRoute
   '/pricing/': typeof PricingIndexRoute
   '/rankings/': typeof RankingsIndexRoute
   '/setup/': typeof SetupIndexRoute
@@ -541,6 +548,7 @@ export interface FileRoutesByTo {
   '/oauth/$provider': typeof OauthProviderRoute
   '/about': typeof AboutIndexRoute
   '/help': typeof HelpIndexRoute
+  '/model-monitor': typeof ModelMonitorIndexRoute
   '/pricing': typeof PricingIndexRoute
   '/rankings': typeof RankingsIndexRoute
   '/setup': typeof SetupIndexRoute
@@ -612,6 +620,7 @@ export interface FileRoutesById {
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
   '/help/': typeof HelpIndexRoute
+  '/model-monitor/': typeof ModelMonitorIndexRoute
   '/pricing/': typeof PricingIndexRoute
   '/rankings/': typeof RankingsIndexRoute
   '/setup/': typeof SetupIndexRoute
@@ -682,6 +691,7 @@ export interface FileRouteTypes {
     | '/oauth/$provider'
     | '/about/'
     | '/help/'
+    | '/model-monitor/'
     | '/pricing/'
     | '/rankings/'
     | '/setup/'
@@ -749,6 +759,7 @@ export interface FileRouteTypes {
     | '/oauth/$provider'
     | '/about'
     | '/help'
+    | '/model-monitor'
     | '/pricing'
     | '/rankings'
     | '/setup'
@@ -819,6 +830,7 @@ export interface FileRouteTypes {
     | '/oauth/$provider'
     | '/about/'
     | '/help/'
+    | '/model-monitor/'
     | '/pricing/'
     | '/rankings/'
     | '/setup/'
@@ -881,6 +893,7 @@ export interface RootRouteChildren {
   OauthProviderRoute: typeof OauthProviderRoute
   AboutIndexRoute: typeof AboutIndexRoute
   HelpIndexRoute: typeof HelpIndexRoute
+  ModelMonitorIndexRoute: typeof ModelMonitorIndexRoute
   PricingIndexRoute: typeof PricingIndexRoute
   RankingsIndexRoute: typeof RankingsIndexRoute
   SetupIndexRoute: typeof SetupIndexRoute
@@ -1036,6 +1049,13 @@ declare module '@tanstack/react-router' {
       path: '/help'
       fullPath: '/help/'
       preLoaderRoute: typeof HelpIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/model-monitor/': {
+      id: '/model-monitor/'
+      path: '/model-monitor'
+      fullPath: '/model-monitor/'
+      preLoaderRoute: typeof ModelMonitorIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/oauth/$provider': {
@@ -1534,6 +1554,7 @@ const rootRouteChildren: RootRouteChildren = {
   OauthProviderRoute: OauthProviderRoute,
   AboutIndexRoute: AboutIndexRoute,
   HelpIndexRoute: HelpIndexRoute,
+  ModelMonitorIndexRoute: ModelMonitorIndexRoute,
   PricingIndexRoute: PricingIndexRoute,
   RankingsIndexRoute: RankingsIndexRoute,
   SetupIndexRoute: SetupIndexRoute,
