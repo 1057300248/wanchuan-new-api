@@ -106,6 +106,20 @@ describe('affiliate rewards card', () => {
     ).toBeInTheDocument()
   })
 
+  test('keeps records in a bounded, keyboard-focusable scroll area without hiding the pager', async () => {
+    const keyboard = userEvent.setup()
+    renderCard({ recordsTotal: 6 })
+    const records = screen.getByRole('region', { name: 'Commission Records' })
+    expect(records).toHaveClass('overflow-auto', 'max-h-24')
+    expect(records).toHaveAttribute('tabindex', '0')
+    screen.getByRole('button', { name: 'Copy referral link' }).focus()
+    await keyboard.tab()
+    expect(records).toHaveFocus()
+    expect(records).not.toContainElement(
+      screen.getByRole('button', { name: 'Go to next page' })
+    )
+  })
+
   test('copies the invitation link with the shared copy button', async () => {
     const user = userEvent.setup()
     renderCard()

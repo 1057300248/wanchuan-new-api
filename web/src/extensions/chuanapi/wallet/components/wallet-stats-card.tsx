@@ -106,7 +106,7 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
           key={item.key}
           data-wallet-stat={item.key}
           className={cn(
-            'min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4',
+            'min-w-0 px-2.5 py-2.5 sm:px-4 sm:py-3',
             index % 2 === 1 && 'border-l',
             index >= 2 && 'border-t lg:border-t-0',
             index > 0 && 'lg:border-l'
@@ -120,22 +120,23 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
             </>
           ) : (
             <>
-              <div className='flex items-center gap-1.5 sm:gap-2.5'>
-                <IconBadge tone={item.tone} size='stat'>
-                  <item.icon />
-                </IconBadge>
-                <div className='text-muted-foreground truncate text-[11px] font-medium tracking-wider uppercase sm:text-xs'>
-                  {item.label}
+              <div className='flex flex-wrap items-center justify-between gap-2'>
+                <div className='flex items-center gap-1.5'>
+                  <IconBadge tone={item.tone} size='stat'>
+                    <item.icon />
+                  </IconBadge>
+                  <div className='text-muted-foreground text-xs font-medium'>
+                    {item.label}
+                  </div>
+                </div>
+                <div
+                  data-wallet-stat-value
+                  className='text-foreground min-w-0 font-mono text-sm font-bold tracking-tight break-all tabular-nums sm:text-lg'
+                >
+                  {item.value}
                 </div>
               </div>
-
-              <div
-                data-wallet-stat-value
-                className='text-foreground mt-1.5 font-mono text-sm font-bold tracking-tight break-all tabular-nums sm:mt-2.5 sm:text-2xl'
-              >
-                {item.value}
-              </div>
-              <div className='text-muted-foreground/60 mt-1 hidden text-xs md:block'>
+              <div className='text-muted-foreground mt-1 hidden text-xs md:block'>
                 {item.description}
               </div>
             </>

@@ -124,6 +124,9 @@ func UpdateUserBindColumnForSessionWithTx(tx *gorm.DB, identity AuthSessionIdent
 	if column == "github_id" {
 		return UpdateGitHubBindingWithTx(tx, identity.UserID, value)
 	}
+	if column == "linux_do_id" {
+		return UpdateLinuxDOBindingWithTx(tx, identity.UserID, value)
+	}
 	var count int64
 	if err := tx.Model(&User{}).Where(column+" = ? AND id <> ?", value, identity.UserID).Count(&count).Error; err != nil {
 		return err

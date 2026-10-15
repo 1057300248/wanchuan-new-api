@@ -300,7 +300,7 @@ export function Wallet(_props: WalletProps) {
       <SectionPageLayout>
         <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
         <SectionPageLayout.Content>
-          <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
+          <div className='mx-auto flex w-full max-w-[1600px] flex-col gap-3'>
             {walletError ? (
               <ErrorState
                 className='min-h-[160px] rounded-lg border'
@@ -314,51 +314,59 @@ export function Wallet(_props: WalletProps) {
                 summaryLoading={walletLoading}
               />
             )}
-            <RechargeFormCard
-              topupInfo={topupInfo}
-              presetAmounts={presetAmounts}
-              selectedPreset={selectedPreset}
-              onSelectPreset={handleSelectPreset}
-              topupAmount={topupAmount}
-              onTopupAmountChange={handleTopupAmountChange}
-              paymentAmount={paymentAmount}
-              calculating={calculating}
-              onPaymentMethodSelect={handlePaymentMethodSelect}
-              paymentLoading={paymentLoading}
-              redemptionCode={redemptionCode}
-              onRedemptionCodeChange={setRedemptionCode}
-              onRedeem={handleRedeem}
-              redeeming={redeeming}
-              topupLink={topupInfo?.topup_link}
-              loading={topupLoading}
-              priceRatio={(status?.price as number) || 1}
-              usdExchangeRate={effectiveUsdExchangeRate}
-              creemProducts={topupInfo?.creem_products}
-              enableCreemTopup={topupInfo?.enable_creem_topup}
-              onCreemProductSelect={handleCreemProductSelect}
-              enableWaffoTopup={topupInfo?.enable_waffo_topup}
-              waffoPayMethods={topupInfo?.waffo_pay_methods}
-              waffoMinTopup={topupInfo?.waffo_min_topup}
-              onWaffoMethodSelect={handleWaffoMethodSelect}
-              enableWaffoPancakeTopup={topupInfo?.enable_waffo_pancake_topup}
-            />
-            <AffiliateRewardsCard
-              user={user}
-              affiliateLink={affiliateLink}
-              onTransfer={() => setTransferDialogOpen(true)}
-              complianceConfirmed={
-                topupInfo?.payment_compliance_confirmed !== false
-              }
-              referralRate={summary?.rules.referral_bonus_rate ?? 0}
-              records={referralRecords}
-              recordsTotal={referralRecordsTotal}
-              recordsLoading={referralRecordsLoading}
-              recordsError={referralRecordsError}
-              onRecordsRetry={() => void refetchReferralRecords()}
-              recordsPage={recordsPage}
-              onRecordsPageChange={setRecordsPage}
-              loading={affiliateLoading}
-            />
+            <div className='grid items-stretch gap-4 lg:grid-cols-2'>
+              <section aria-label={t('Add Funds')} className='min-w-0'>
+                <RechargeFormCard
+                  topupInfo={topupInfo}
+                  presetAmounts={presetAmounts}
+                  selectedPreset={selectedPreset}
+                  onSelectPreset={handleSelectPreset}
+                  topupAmount={topupAmount}
+                  onTopupAmountChange={handleTopupAmountChange}
+                  paymentAmount={paymentAmount}
+                  calculating={calculating}
+                  onPaymentMethodSelect={handlePaymentMethodSelect}
+                  paymentLoading={paymentLoading}
+                  redemptionCode={redemptionCode}
+                  onRedemptionCodeChange={setRedemptionCode}
+                  onRedeem={handleRedeem}
+                  redeeming={redeeming}
+                  topupLink={topupInfo?.topup_link}
+                  loading={topupLoading}
+                  priceRatio={(status?.price as number) || 1}
+                  usdExchangeRate={effectiveUsdExchangeRate}
+                  creemProducts={topupInfo?.creem_products}
+                  enableCreemTopup={topupInfo?.enable_creem_topup}
+                  onCreemProductSelect={handleCreemProductSelect}
+                  enableWaffoTopup={topupInfo?.enable_waffo_topup}
+                  waffoPayMethods={topupInfo?.waffo_pay_methods}
+                  waffoMinTopup={topupInfo?.waffo_min_topup}
+                  onWaffoMethodSelect={handleWaffoMethodSelect}
+                  enableWaffoPancakeTopup={
+                    topupInfo?.enable_waffo_pancake_topup
+                  }
+                />
+              </section>
+              <section aria-label={t('Invitation Rewards')} className='min-w-0'>
+                <AffiliateRewardsCard
+                  user={user}
+                  affiliateLink={affiliateLink}
+                  onTransfer={() => setTransferDialogOpen(true)}
+                  complianceConfirmed={
+                    topupInfo?.payment_compliance_confirmed !== false
+                  }
+                  referralRate={summary?.rules.referral_bonus_rate ?? 0}
+                  records={referralRecords}
+                  recordsTotal={referralRecordsTotal}
+                  recordsLoading={referralRecordsLoading}
+                  recordsError={referralRecordsError}
+                  onRecordsRetry={() => void refetchReferralRecords()}
+                  recordsPage={recordsPage}
+                  onRecordsPageChange={setRecordsPage}
+                  loading={affiliateLoading}
+                />
+              </section>
+            </div>
             <LedgerTable />
           </div>
         </SectionPageLayout.Content>

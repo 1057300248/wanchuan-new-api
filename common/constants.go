@@ -132,18 +132,18 @@ var QuotaForNewUser = 0
 // ---------------------------------------------------------------------------
 // TokenMix P1：注册赠金与推荐返利配置
 //
-// SignupBonusEnabled 关闭时新注册用户不发放任何注册赠金（含邀请码被邀请人
-// 赠额），历史记录仍可查询。QuotaForSignupBonus 以 quota units 计，默认 0
-// （安全默认：不发放），生产由主代理按需设置。
-//
+// LinuxDOSignupBonusUSD is granted only when a verified LinuxDO login creates
+// a new account. Legacy global signup settings are retained for stored-option
+// compatibility and no longer control registration grants.
+const LinuxDOSignupBonusUSD = 5
+
+var SignupBonusEnabled = false
+var QuotaForSignupBonus = 0
+
 // AffiliateRewardEnabled 关闭时不产生新的邀请奖励。
 // AffiliateRewardRate 为成功在线余额充值金额的奖励比例（默认 5%），每位受邀
 // 用户仅前三次成功充值产生奖励。奖励先进入待使用收益 aff_quota，用户手动
 // 划转后才成为可消费的 reward 余额。
-// ---------------------------------------------------------------------------
-var SignupBonusEnabled = false
-var QuotaForSignupBonus = 0
-
 var AffiliateRewardEnabled = false
 var AffiliateRewardRate = 0.05
 

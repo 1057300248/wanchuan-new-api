@@ -60,9 +60,6 @@ const BILLING_SECTIONS = [
     build: (settings: BillingSettings) => (
       <QuotaSettingsSection
         defaultValues={{
-          QuotaForNewUser: settings.QuotaForNewUser,
-          SignupBonusEnabled: settings.SignupBonusEnabled ?? false,
-          QuotaForSignupBonus: settings.QuotaForSignupBonus ?? 0,
           AffiliateRewardEnabled: settings.AffiliateRewardEnabled ?? false,
           AffiliateRewardRate: settings.AffiliateRewardRate ?? 0.05,
           TopUpLink: settings.TopUpLink,

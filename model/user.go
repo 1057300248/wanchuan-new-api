@@ -223,6 +223,9 @@ func UpdateUserBindColumn(userId int, column string, value string) error {
 	if column == "github_id" {
 		return DB.Transaction(func(tx *gorm.DB) error { return UpdateGitHubBindingWithTx(tx, userId, value) })
 	}
+	if column == "linux_do_id" {
+		return DB.Transaction(func(tx *gorm.DB) error { return UpdateLinuxDOBindingWithTx(tx, userId, value) })
+	}
 	return DB.Model(&User{}).Where("id = ?", userId).Update(column, value).Error
 }
 
@@ -662,9 +665,8 @@ func (user *User) Insert(inviterId int) error {
 				return err
 			}
 			user.InviterId = resolveInviterForInsert(tx, user.Id, inviterId)
-			initialQuota := signupBonusQuota()
-			// 先以零余额创建用户，再由同一事务内账本入账，避免初始字段与
-			// CreditQuotaTx 各加一次造成注册赠额翻倍。
+			// Ordinary registration starts with no balance; only the verified
+			// LinuxDO creation path may credit a signup bonus.
 			user.QuotaPaid = 0
 			user.QuotaBonus = 0
 			user.QuotaReward = 0
@@ -680,15 +682,6 @@ func (user *User) Insert(inviterId int) error {
 
 			if err := tx.Create(user).Error; err != nil {
 				return err
-			}
-			// 注册赠金写入账本（同一事务、幂等键 = user id；P1-1 进入 bonus 账户）
-			if initialQuota > 0 {
-				result, err := recordSignupBonusTx(tx, user, initialQuota)
-				if err != nil {
-					return err
-				}
-				user.QuotaBonus = result.TotalAfter
-				user.Quota = result.TotalAfter
 			}
 			return nil
 		})
@@ -716,7 +709,7 @@ func (user *User) finishInsert(inviterId int) {
 		}
 	}
 
-	if bonusQuota := signupBonusQuota(); bonusQuota > 0 {
+	if bonusQuota := user.QuotaBonus; bonusQuota > 0 {
 		RecordLog(user.Id, LogTypeSystem, common.NewMessage("Registration bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(bonusQuota)}))
 	}
 	if inviterId != 0 {
@@ -737,7 +730,6 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 			return err
 		}
 		user.InviterId = resolveInviterForInsert(tx, user.Id, inviterId)
-		initialQuota := signupBonusQuota()
 		user.QuotaPaid = 0
 		user.QuotaBonus = 0
 		user.QuotaReward = 0
@@ -752,15 +744,6 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 
 		if err := tx.Create(user).Error; err != nil {
 			return err
-		}
-		// 注册赠金写入账本（同一事务、幂等键 = user id；P1-1 进入 bonus 账户）
-		if initialQuota > 0 {
-			result, err := recordSignupBonusTx(tx, user, initialQuota)
-			if err != nil {
-				return err
-			}
-			user.QuotaBonus = result.TotalAfter
-			user.Quota = result.TotalAfter
 		}
 		return nil
 	})
@@ -786,25 +769,47 @@ func resolveInviterForInsert(tx *gorm.DB, userId, inviterId int) int {
 	return inviter.Id
 }
 
-// signupBonusQuota 返回注册赠金额度（quota units）。功能开关关闭时返回 0，
-// 不发放任何注册奖励。安全默认：SignupBonusEnabled=false、额度 0。
-func signupBonusQuota() int {
-	if !common.SignupBonusEnabled {
-		return 0
+// InsertLinuxDOWithTx creates an account for a verified built-in LinuxDO identity.
+// The caller must roll back the transaction on any error. Identity, user, bonus
+// and ledger commit together; the provider subject, rather than the new user ID,
+// is the reward identity so retries and re-registration cannot grant it twice.
+func (user *User) InsertLinuxDOWithTx(tx *gorm.DB, inviterId int, subject string) error {
+	id, err := strconv.ParseInt(subject, 10, 64)
+	if tx == nil || user.Id != 0 || err != nil || id <= 0 || strconv.FormatInt(id, 10) != subject {
+		return ErrLedgerInvalidEntry
 	}
-	return common.QuotaForSignupBonus
-}
-
-// recordSignupBonusTx 在同一事务内为新用户注册赠金写入账本（bonus 账户）。
-func recordSignupBonusTx(tx *gorm.DB, user *User, amount int) (*LedgerResult, error) {
-	return CreditQuotaTx(tx, LedgerEntry{
+	amount, clamp := common.QuotaRoundChecked(common.LinuxDOSignupBonusUSD * common.QuotaPerUnit)
+	if amount <= 0 || clamp != nil {
+		return ErrLedgerInvalidEntry
+	}
+	var existing int64
+	if err := tx.Unscoped().Model(&User{}).Where("linux_do_id = ?", subject).Count(&existing).Error; err != nil {
+		return err
+	}
+	if existing != 0 {
+		return ErrAccountBindingChanged
+	}
+	user.LinuxDOId = subject
+	if err := user.InsertWithTx(tx, inviterId); err != nil {
+		return err
+	}
+	if err := UpdateLinuxDOBindingWithTx(tx, user.Id, subject); err != nil {
+		return err
+	}
+	result, err := CreditQuotaTx(tx, LedgerEntry{
 		UserId:        user.Id,
 		Account:       AccountBonus,
 		Delta:         amount,
 		Reason:        LedgerReasonSignupBonus,
-		ReferenceType: "user",
-		ReferenceId:   strconv.Itoa(user.Id),
+		ReferenceType: "linuxdo_signup",
+		ReferenceId:   subject,
 	})
+	if err != nil {
+		return err
+	}
+	user.QuotaBonus = result.TotalAfter
+	user.Quota = result.TotalAfter
+	return nil
 }
 
 // FinalizeOAuthUserCreation performs post-transaction tasks for OAuth user creation.
@@ -823,7 +828,7 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 		}
 	}
 
-	if bonusQuota := signupBonusQuota(); bonusQuota > 0 {
+	if bonusQuota := user.QuotaBonus; bonusQuota > 0 {
 		RecordLog(user.Id, LogTypeSystem, common.NewMessage("Registration bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(bonusQuota)}))
 	}
 	if inviterId != 0 {
@@ -988,7 +993,7 @@ func (user *User) ClearBinding(bindingType string) error {
 		if err := tx.Model(&User{}).Where("id = ?", user.Id).Update(column, "").Error; err != nil {
 			return err
 		}
-		if bindingType == ExternalIdentityProviderTelegram || bindingType == ExternalIdentityProviderGitHub {
+		if bindingType == ExternalIdentityProviderTelegram || bindingType == ExternalIdentityProviderGitHub || bindingType == ExternalIdentityProviderLinuxDO {
 			return ReleaseExternalIdentityWithTx(tx, bindingType, user.Id)
 		}
 		return nil

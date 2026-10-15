@@ -19,14 +19,16 @@ import (
 type WalletRuleSummary struct {
 	SignupBonusEnabled   bool    `json:"signup_bonus_enabled"`
 	SignupBonusQuota     int     `json:"signup_bonus_quota"`
+	SignupBonusProvider  string  `json:"signup_bonus_provider"`
 	ReferralBonusEnabled bool    `json:"referral_bonus_enabled"`
 	ReferralBonusRate    float64 `json:"referral_bonus_rate"`
 }
 
 func walletRuleSummary() WalletRuleSummary {
 	return WalletRuleSummary{
-		SignupBonusEnabled:   common.SignupBonusEnabled,
-		SignupBonusQuota:     common.QuotaForSignupBonus,
+		SignupBonusEnabled:   true,
+		SignupBonusQuota:     common.QuotaRound(common.LinuxDOSignupBonusUSD * common.QuotaPerUnit),
+		SignupBonusProvider:  "linuxdo",
 		ReferralBonusEnabled: common.AffiliateRewardEnabled,
 		ReferralBonusRate:    common.AffiliateRewardRate,
 	}

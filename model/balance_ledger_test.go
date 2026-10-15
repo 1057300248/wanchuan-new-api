@@ -413,7 +413,7 @@ func TestIdempotencySignatureCoversOverrideTransferAndDebitOrder(t *testing.T) {
 	require.ErrorIs(t, err, ErrLedgerIdempotencyConflict)
 }
 
-func TestInsertWithTxNewUserGiftCreditsExactlyOnce(t *testing.T) {
+func TestInsertLinuxDOWithTxCreditsFiveDollarsOnce(t *testing.T) {
 	setupLedgerTestState(t)
 	previousEnabled := common.SignupBonusEnabled
 	previousQuota := common.QuotaForSignupBonus
@@ -426,16 +426,16 @@ func TestInsertWithTxNewUserGiftCreditsExactlyOnce(t *testing.T) {
 
 	user := &User{Username: "ledger-new-user", Password: "Cedar-river-782!quiet", Status: common.UserStatusEnabled}
 	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
-		return user.InsertWithTx(tx, 0)
+		return user.InsertLinuxDOWithTx(tx, 0, "88001")
 	}))
 
 	// P1-1：注册赠金进入 bonus 账户，reason 为 signup_bonus，不进入 paid。
 	created := getUserBalances(t, user.Id)
 	assert.Zero(t, created.QuotaPaid)
-	assert.Equal(t, 1234, created.QuotaBonus)
-	assert.Equal(t, 1234, created.Quota)
+	assert.Equal(t, 2500000, created.QuotaBonus)
+	assert.Equal(t, 2500000, created.Quota)
 	assertQuotaInvariant(t, created)
-	assert.Equal(t, int64(1), countLedgerRows(t, fmt.Sprintf("credit:user:%d", user.Id)))
+	assert.Equal(t, int64(1), countLedgerRows(t, "credit:linuxdo_signup:88001"))
 	var rows []BalanceLedger
 	require.NoError(t, DB.Where("user_id = ?", user.Id).Find(&rows).Error)
 	require.Len(t, rows, 1)
@@ -443,11 +443,11 @@ func TestInsertWithTxNewUserGiftCreditsExactlyOnce(t *testing.T) {
 	assert.Equal(t, string(AccountBonus), rows[0].Account)
 }
 
-func TestInsertSignupBonusDisabledGrantsNothing(t *testing.T) {
+func TestInsertIgnoresLegacyGlobalSignupBonus(t *testing.T) {
 	setupLedgerTestState(t)
 	previousEnabled := common.SignupBonusEnabled
 	previousQuota := common.QuotaForSignupBonus
-	common.SignupBonusEnabled = false
+	common.SignupBonusEnabled = true
 	common.QuotaForSignupBonus = 1234
 	t.Cleanup(func() {
 		common.SignupBonusEnabled = previousEnabled
@@ -457,7 +457,7 @@ func TestInsertSignupBonusDisabledGrantsNothing(t *testing.T) {
 	user := &User{Username: "ledger-new-user-disabled", Password: "Cedar-river-782!quiet", Status: common.UserStatusEnabled}
 	require.NoError(t, user.Insert(0))
 
-	// 功能开关关闭：不发放任何注册赠金。
+	// Ordinary signup never receives a grant, even with legacy options enabled.
 	created := getUserBalances(t, user.Id)
 	assert.Zero(t, created.QuotaPaid)
 	assert.Zero(t, created.QuotaBonus)
@@ -484,7 +484,7 @@ func TestInsertWithTxOAuthRollbackLeavesNoUserAndNoLedger(t *testing.T) {
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		user := &User{Username: "oauth-rollback-user", Password: "password", Status: common.UserStatusEnabled}
-		if err := user.InsertWithTx(tx, 0); err != nil {
+		if err := user.InsertLinuxDOWithTx(tx, 0, "88002"); err != nil {
 			return err
 		}
 		// 模拟 OAuth 绑定等后续步骤失败 → 整体回滚

@@ -108,7 +108,7 @@ export function ReferralCommissionRecords(
   }
 
   if (props.error) {
-    return <ErrorState className='min-h-[160px]' onRetry={props.onRetry} />
+    return <ErrorState className='min-h-24 p-3' onRetry={props.onRetry} />
   }
 
   const pager = (
@@ -128,7 +128,7 @@ export function ReferralCommissionRecords(
     return (
       <div className='space-y-2'>
         <EmptyState
-          className='min-h-[160px]'
+          className='min-h-24 p-3'
           title={t(
             'No commission records yet. Invite friends to recharge and they will appear here.'
           )}
@@ -140,9 +140,18 @@ export function ReferralCommissionRecords(
 
   return (
     <div className='space-y-2'>
-      <div className='overflow-x-auto'>
+      <div
+        className='max-h-24 overflow-auto 2xl:max-h-36'
+        role='region'
+        aria-label={t('Commission Records')}
+        tabIndex={0}
+      >
         <StaticDataTable
-          columns={columns}
+          columns={columns.map((column) => ({
+            ...column,
+            className: cn('h-8 text-xs', column.className),
+            cellClassName: 'py-2 text-xs',
+          }))}
           data={props.records}
           getRowKey={(row) => row.id}
         />

@@ -56,7 +56,7 @@ it.each([
             discount: {},
           }}
           presetAmounts={[{ value: 100, discount: 0.8 }, { value: 20 }]}
-          selectedPreset={null}
+          selectedPreset={100}
           topupAmount={1}
           paymentAmount={priceRatio}
           priceRatio={priceRatio}
@@ -77,6 +77,14 @@ it.each([
     )
     expect(screen.getByRole('button', { name: /^20 / })).toHaveTextContent(
       `支付 ${full}`
+    )
+    expect(screen.getByRole('button', { name: /^100 / })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByRole('button', { name: /^20 / })).toHaveAttribute(
+      'aria-pressed',
+      'false'
     )
     expect(screen.getByPlaceholderText('最低 1')).toBeVisible()
     await act(() => i18n.changeLanguage('en'))

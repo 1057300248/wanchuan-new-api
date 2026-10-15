@@ -280,6 +280,7 @@ export interface CompleteOrderRequest {
 export interface WalletRules {
   signup_bonus_enabled: boolean
   signup_bonus_quota: number
+  signup_bonus_provider?: string
   referral_bonus_enabled: boolean
   referral_bonus_rate: number
 }

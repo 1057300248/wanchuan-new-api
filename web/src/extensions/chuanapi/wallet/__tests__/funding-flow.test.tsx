@@ -244,6 +244,12 @@ describe('wallet funding flow', () => {
     const amountInput = await screen.findByLabelText('Custom Amount')
     await waitFor(() => expect(amountInput).toHaveDisplayValue('10'))
 
+    expect(screen.getByRole('region', { name: 'Add Funds' })).toContainElement(
+      amountInput
+    )
+    expect(
+      screen.getByRole('region', { name: 'Invitation Rewards' })
+    ).toContainElement(screen.getByLabelText('Invitation Link'))
     expect(screen.getByLabelText('Have a Code?')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Redeem' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Epay' })).toBeEnabled()
@@ -253,6 +259,22 @@ describe('wallet funding flow', () => {
     await waitFor(() =>
       expect(calculateAmount).toHaveBeenCalledWith({ amount: 10 })
     )
+  })
+
+  test('keeps recharge before rewards in a responsive two-column workspace', async () => {
+    vi.mocked(getTopupInfo).mockResolvedValue({
+      success: true,
+      data: onlineTopupInfo,
+    })
+    renderWallet()
+    await screen.findByLabelText('Custom Amount')
+    const recharge = screen.getByRole('region', { name: 'Add Funds' })
+    const rewards = screen.getByRole('region', { name: 'Invitation Rewards' })
+    expect(recharge.parentElement).toHaveClass('grid', 'lg:grid-cols-2')
+    expect(recharge.parentElement).toBe(rewards.parentElement)
+    expect(recharge.nextElementSibling).toBe(rewards)
+    expect(recharge).toHaveClass('min-w-0')
+    expect(rewards).toHaveClass('min-w-0')
   })
 
   test('opens the payment confirm dialog and submits the selected method with the entered amount', async () => {

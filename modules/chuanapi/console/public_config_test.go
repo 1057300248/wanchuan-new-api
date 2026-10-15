@@ -60,7 +60,8 @@ func TestGetPublicConfigExposesOnlyPublicProductFields(t *testing.T) {
 		"quota_per_unit":         float64(123456),
 		"quota_display_type":     operation_setting.GetQuotaDisplayType(),
 		"signup_bonus_enabled":   true,
-		"signup_bonus_quota":     float64(789),
+		"signup_bonus_quota":     float64(617280),
+		"signup_bonus_provider":  "linuxdo",
 		"referral_bonus_enabled": true,
 		"referral_bonus_rate":    0.2,
 	}, payload.Data)

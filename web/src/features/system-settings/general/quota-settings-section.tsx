@@ -23,6 +23,7 @@ import type { Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import * as z from 'zod'
 
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   Form,
   FormControl,
@@ -34,7 +35,6 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
-import { formatQuota } from '@/lib/format'
 
 import { FormDirtyIndicator } from '../components/form-dirty-indicator'
 import { FormNavigationGuard } from '../components/form-navigation-guard'
@@ -51,9 +51,6 @@ import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 
 const quotaSchema = z.object({
-  QuotaForNewUser: z.coerce.number().min(0),
-  SignupBonusEnabled: z.boolean(),
-  QuotaForSignupBonus: z.coerce.number().min(0),
   AffiliateRewardEnabled: z.boolean(),
   AffiliateRewardRate: z.coerce.number().min(0).max(1),
   TopUpLink: z.string(),
@@ -75,10 +72,6 @@ const quotaSchema = z.object({
 
 type QuotaFormValues = z.infer<typeof quotaSchema>
 type QuotaInputValue = number | ''
-
-function formatQuotaInputValue(value: QuotaInputValue): string {
-  return formatQuota(value === '' ? 0 : value)
-}
 
 type QuotaSettingsSectionProps = {
   defaultValues: QuotaFormValues
@@ -126,34 +119,15 @@ export function QuotaSettingsSection({
           />
           <FormDirtyIndicator isDirty={isDirty} />
           <SettingsFormGrid>
-            <FormField
-              control={form.control}
-              name='QuotaForNewUser'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('New User Quota')}</FormLabel>
-                  <FormControl>
-                    <Input
-                      type='number'
-                      value={field.value ?? ''}
-                      onChange={handleNumberChange(field.onChange)}
-                      name={field.name}
-                      onBlur={field.onBlur}
-                      ref={field.ref}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    {t(
-                      'Initial quota given to new users ({{formattedQuota}})',
-                      {
-                        formattedQuota: formatQuotaInputValue(field.value),
-                      }
-                    )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            <SettingsFormGridItem span='full'>
+              <Alert>
+                <AlertDescription>
+                  {t(
+                    'Only new accounts created through LinuxDO receive a one-time $5 signup bonus. Repeat logins and linking existing accounts do not qualify.'
+                  )}
+                </AlertDescription>
+              </Alert>
+            </SettingsFormGridItem>
 
             <FormField
               control={form.control}
@@ -206,56 +180,6 @@ export function QuotaSettingsSection({
                   <FormDescription>
                     {t(
                       'Reserve the estimated input cost multiplied by this value, without estimating output tokens. Defaults to 1; positive decimals such as 0.5 and 1.5 are supported. Final charges use actual usage. Per-request and task prices are unaffected.'
-                    )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name='SignupBonusEnabled'
-              render={({ field }) => (
-                <SettingsSwitchItem>
-                  <SettingsSwitchContent>
-                    <FormLabel>{t('Signup Bonus')}</FormLabel>
-                    <FormDescription>
-                      {t(
-                        'Grant a bonus account balance to newly registered users'
-                      )}
-                    </FormDescription>
-                  </SettingsSwitchContent>
-                  <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                    />
-                  </FormControl>
-                </SettingsSwitchItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name='QuotaForSignupBonus'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Signup Bonus Quota')}</FormLabel>
-                  <FormControl>
-                    <Input
-                      type='number'
-                      value={field.value ?? ''}
-                      onChange={handleNumberChange(field.onChange)}
-                      name={field.name}
-                      onBlur={field.onBlur}
-                      ref={field.ref}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    {t(
-                      'Bonus quota for new users ({{formattedQuota}}), credited to the bonus account',
-                      { formattedQuota: formatQuotaInputValue(field.value) }
                     )}
                   </FormDescription>
                   <FormMessage />
