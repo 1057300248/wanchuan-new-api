@@ -78,6 +78,21 @@ beforeEach(async () => {
 })
 
 describe('Model performance dashboard', () => {
+  test('shows administrator page text and finds a group by its custom name', async () => {
+    const data = fixture()
+    data.title = 'Custom monitor'
+    data.description = 'Our reference results'
+    data.targets[0].name = 'Premium group'
+    vi.spyOn(api, 'get').mockResolvedValue({ data: { success: true, data } })
+    renderDashboard()
+    expect(
+      await screen.findByRole('heading', { name: 'Custom monitor' })
+    ).toBeVisible()
+    expect(screen.getByText('Our reference results')).toBeVisible()
+    await userEvent.type(screen.getByRole('textbox'), 'Premium')
+    expect(screen.getByText('Premium group')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'example-model' })).toBeVisible()
+  })
   test('shows loading and prevents duplicate manual refreshes until the response arrives', async () => {
     let resolve!: (value: {
       data: { success: boolean; data: MonitorSnapshot }

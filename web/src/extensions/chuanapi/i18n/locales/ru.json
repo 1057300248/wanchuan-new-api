@@ -78,6 +78,23 @@
     "monitor.reason": "Справочное решение",
     "monitor.expectedAnswer": "Ожидаемый ответ: {{answer}}",
     "monitor.noDetails": "Нет содержимого",
-    "monitor.needsVerification": "Нужна проверка"
+    "monitor.needsVerification": "Нужна проверка",
+    "monitor.settings.title": "Настройки мониторинга моделей",
+    "monitor.settings.enabled": "Включить страницу мониторинга",
+    "monitor.settings.enabledHelp": "Изменения применяются после сохранения. При отключении посетители не могут получать результаты и изображения.",
+    "monitor.settings.pageTitle": "Заголовок страницы",
+    "monitor.settings.description": "Описание страницы",
+    "monitor.settings.defaultText": "Оставьте пустым для переведённого текста по умолчанию.",
+    "monitor.settings.groups": "Отображаемые названия групп",
+    "monitor.settings.groupsHelp": "Названия действуют только на этой странице и закреплены за соответствующей группой. Пустое поле возвращает стандартное название.",
+    "monitor.settings.groupPlaceholder": "Своё название группы",
+    "monitor.settings.unlisted": "Ранее сохранённая группа",
+    "monitor.settings.targetsFailed": "Не удалось загрузить текущие группы",
+    "monitor.settings.namesPreserved": "Настройки страницы и сохранённые названия по-прежнему доступны для редактирования.",
+    "monitor.settings.environmentDisabled": "Мониторинг отключён на сервере. Включите его перед публикацией результатов.",
+    "monitor.settings.loadFailed": "Не удалось загрузить настройки",
+    "monitor.settings.saved": "Настройки мониторинга сохранены",
+    "monitor.settings.saveFailed": "Не удалось сохранить настройки",
+    "monitor.settings.invalid": "Проверьте ввод: заголовок до 120 символов, описание до 500, название группы до 80."
   }
 }

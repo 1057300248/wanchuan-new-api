@@ -24,6 +24,7 @@ func monitorFixture(t *testing.T, handler http.HandlerFunc) (*Service, *gin.Engi
 	upstream := httptest.NewServer(handler)
 	t.Cleanup(upstream.Close)
 	service := New(true)
+	service.config = func() (Config, error) { return Config{Enabled: true}, nil }
 	service.origin = upstream.URL
 	service.now = func() time.Time { return time.Unix(1800000000, 0) }
 	gin.SetMode(gin.TestMode)
@@ -61,7 +62,8 @@ func TestSnapshotCachesPublicFieldsWithoutForwardingIdentity(t *testing.T) {
 		var body envelope[Snapshot]
 		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
 		require.Len(t, body.Data.Targets, 1)
-		assert.Equal(t, "route-1", body.Data.Results[0].TargetID)
+		assert.Equal(t, body.Data.Targets[0].ID, body.Data.Results[0].TargetID)
+		assert.NotEqual(t, "group-1", body.Data.Targets[0].ID)
 		assert.Equal(t, "model-1", body.Data.Targets[0].Model)
 		assert.False(t, body.Data.Stale)
 		assert.NotContains(t, response.Body.String(), "bblabu")

@@ -36,6 +36,7 @@ type cachedResponse struct {
 // redirects and upstream response headers are never forwarded.
 type Service struct {
 	enabled    bool
+	config     func() (Config, error)
 	client     *http.Client
 	origin     string
 	now        func() time.Time
@@ -51,6 +52,7 @@ func New(enabled bool) *Service {
 	transport.MaxConnsPerHost = 4
 	return &Service{
 		enabled:  enabled,
+		config:   readConfig,
 		origin:   upstreamOrigin,
 		now:      time.Now,
 		cache:    make(map[string]cachedResponse),

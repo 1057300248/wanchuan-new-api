@@ -78,6 +78,23 @@
     "monitor.reason": "参考推导",
     "monitor.expectedAnswer": "参考答案：{{answer}}",
     "monitor.noDetails": "暂无内容",
-    "monitor.needsVerification": "需复核"
+    "monitor.needsVerification": "需复核",
+    "monitor.settings.title": "模型监测设置",
+    "monitor.settings.enabled": "启用监测页面",
+    "monitor.settings.enabledHelp": "保存后生效。关闭时访客无法读取监测结果和图片。",
+    "monitor.settings.pageTitle": "页面标题",
+    "monitor.settings.description": "页面说明",
+    "monitor.settings.defaultText": "留空使用对应语言的默认文案。",
+    "monitor.settings.groups": "分组展示名称",
+    "monitor.settings.groupsHelp": "名称仅用于此监测页面，并与对应参考分组绑定；留空恢复默认名称。",
+    "monitor.settings.groupPlaceholder": "自定义分组名称",
+    "monitor.settings.unlisted": "此前保存的分组",
+    "monitor.settings.targetsFailed": "无法加载当前分组",
+    "monitor.settings.namesPreserved": "仍可编辑页面配置和已保存的分组名称。",
+    "monitor.settings.environmentDisabled": "服务器已停用监测，需在服务器启用后才能展示结果。",
+    "monitor.settings.loadFailed": "无法加载监测设置",
+    "monitor.settings.saved": "监测设置已保存",
+    "monitor.settings.saveFailed": "监测设置保存失败",
+    "monitor.settings.invalid": "请检查输入：标题最多120字，说明最多500字，分组名称最多80字。"
   }
 }

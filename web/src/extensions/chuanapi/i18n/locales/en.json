@@ -78,6 +78,23 @@
     "monitor.reason": "Reference reasoning",
     "monitor.expectedAnswer": "Expected answer: {{answer}}",
     "monitor.noDetails": "No content yet",
-    "monitor.needsVerification": "Needs verification"
+    "monitor.needsVerification": "Needs verification",
+    "monitor.settings.title": "Model monitor settings",
+    "monitor.settings.enabled": "Enable monitoring page",
+    "monitor.settings.enabledHelp": "Changes take effect after saving. When disabled, visitors cannot read monitoring results or images.",
+    "monitor.settings.pageTitle": "Page title",
+    "monitor.settings.description": "Page description",
+    "monitor.settings.defaultText": "Leave blank to use the translated default.",
+    "monitor.settings.groups": "Group display names",
+    "monitor.settings.groupsHelp": "Names apply only to this monitoring page and stay with the same reference group. Leave blank to restore the default.",
+    "monitor.settings.groupPlaceholder": "Custom group name",
+    "monitor.settings.unlisted": "Previously saved group",
+    "monitor.settings.targetsFailed": "Unable to load the current groups",
+    "monitor.settings.namesPreserved": "You can still edit the page and saved group names.",
+    "monitor.settings.environmentDisabled": "The server has disabled monitoring. Enable it on the server before publishing results.",
+    "monitor.settings.loadFailed": "Unable to load monitor settings",
+    "monitor.settings.saved": "Monitor settings saved",
+    "monitor.settings.saveFailed": "Unable to save monitor settings",
+    "monitor.settings.invalid": "Check the input: title up to 120 characters, description 500, group name 80."
   }
 }

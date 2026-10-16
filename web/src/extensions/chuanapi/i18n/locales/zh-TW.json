@@ -78,6 +78,23 @@
     "monitor.reason": "參考推導",
     "monitor.expectedAnswer": "參考答案：{{answer}}",
     "monitor.noDetails": "暫無內容",
-    "monitor.needsVerification": "需複核"
+    "monitor.needsVerification": "需複核",
+    "monitor.settings.title": "模型監測設定",
+    "monitor.settings.enabled": "啟用監測頁面",
+    "monitor.settings.enabledHelp": "儲存後生效。關閉時訪客無法讀取監測結果和圖片。",
+    "monitor.settings.pageTitle": "頁面標題",
+    "monitor.settings.description": "頁面說明",
+    "monitor.settings.defaultText": "留空使用對應語言的預設文案。",
+    "monitor.settings.groups": "分組顯示名稱",
+    "monitor.settings.groupsHelp": "名稱僅用於此監測頁面，並與對應參考分組綁定；留空恢復預設名稱。",
+    "monitor.settings.groupPlaceholder": "自訂分組名稱",
+    "monitor.settings.unlisted": "先前儲存的分組",
+    "monitor.settings.targetsFailed": "無法載入目前分組",
+    "monitor.settings.namesPreserved": "仍可編輯頁面設定和已儲存的分組名稱。",
+    "monitor.settings.environmentDisabled": "伺服器已停用監測，需在伺服器啟用後才能顯示結果。",
+    "monitor.settings.loadFailed": "無法載入監測設定",
+    "monitor.settings.saved": "監測設定已儲存",
+    "monitor.settings.saveFailed": "監測設定儲存失敗",
+    "monitor.settings.invalid": "請檢查輸入：標題最多120字，說明最多500字，分組名稱最多80字。"
   }
 }

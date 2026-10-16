@@ -78,6 +78,23 @@
     "monitor.reason": "Lập luận tham khảo",
     "monitor.expectedAnswer": "Đáp án: {{answer}}",
     "monitor.noDetails": "Chưa có nội dung",
-    "monitor.needsVerification": "Cần xác minh"
+    "monitor.needsVerification": "Cần xác minh",
+    "monitor.settings.title": "Cài đặt giám sát mô hình",
+    "monitor.settings.enabled": "Bật trang giám sát",
+    "monitor.settings.enabledHelp": "Thay đổi có hiệu lực sau khi lưu. Khi tắt, khách không thể đọc kết quả hoặc hình ảnh.",
+    "monitor.settings.pageTitle": "Tiêu đề trang",
+    "monitor.settings.description": "Mô tả trang",
+    "monitor.settings.defaultText": "Để trống để dùng nội dung mặc định theo ngôn ngữ.",
+    "monitor.settings.groups": "Tên hiển thị của nhóm",
+    "monitor.settings.groupsHelp": "Tên chỉ áp dụng cho trang này và luôn gắn với cùng nhóm tham chiếu. Để trống để khôi phục tên mặc định.",
+    "monitor.settings.groupPlaceholder": "Tên nhóm tùy chỉnh",
+    "monitor.settings.unlisted": "Nhóm đã lưu trước đó",
+    "monitor.settings.targetsFailed": "Không thể tải các nhóm hiện tại",
+    "monitor.settings.namesPreserved": "Bạn vẫn có thể chỉnh sửa trang và tên nhóm đã lưu.",
+    "monitor.settings.environmentDisabled": "Máy chủ đã tắt giám sát. Hãy bật trên máy chủ trước khi hiển thị kết quả.",
+    "monitor.settings.loadFailed": "Không thể tải cài đặt giám sát",
+    "monitor.settings.saved": "Đã lưu cài đặt giám sát",
+    "monitor.settings.saveFailed": "Không thể lưu cài đặt giám sát",
+    "monitor.settings.invalid": "Kiểm tra đầu vào: tiêu đề tối đa 120 ký tự, mô tả 500, tên nhóm 80."
   }
 }

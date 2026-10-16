@@ -78,6 +78,23 @@
     "monitor.reason": "Raisonnement de référence",
     "monitor.expectedAnswer": "Réponse attendue : {{answer}}",
     "monitor.noDetails": "Aucun contenu",
-    "monitor.needsVerification": "À vérifier"
+    "monitor.needsVerification": "À vérifier",
+    "monitor.settings.title": "Paramètres du suivi des modèles",
+    "monitor.settings.enabled": "Activer la page de suivi",
+    "monitor.settings.enabledHelp": "Les changements prennent effet après enregistrement. La désactivation bloque les résultats et images pour les visiteurs.",
+    "monitor.settings.pageTitle": "Titre de la page",
+    "monitor.settings.description": "Description de la page",
+    "monitor.settings.defaultText": "Laissez vide pour utiliser le texte traduit par défaut.",
+    "monitor.settings.groups": "Noms affichés des groupes",
+    "monitor.settings.groupsHelp": "Ces noms concernent uniquement cette page et restent liés au même groupe de référence. Laissez vide pour rétablir le nom par défaut.",
+    "monitor.settings.groupPlaceholder": "Nom personnalisé du groupe",
+    "monitor.settings.unlisted": "Groupe précédemment enregistré",
+    "monitor.settings.targetsFailed": "Impossible de charger les groupes actuels",
+    "monitor.settings.namesPreserved": "Vous pouvez toujours modifier la page et les noms enregistrés.",
+    "monitor.settings.environmentDisabled": "Le suivi est désactivé sur le serveur. Activez-le avant de publier les résultats.",
+    "monitor.settings.loadFailed": "Impossible de charger les paramètres",
+    "monitor.settings.saved": "Paramètres enregistrés",
+    "monitor.settings.saveFailed": "Impossible d’enregistrer les paramètres",
+    "monitor.settings.invalid": "Vérifiez la saisie : titre limité à 120 caractères, description à 500 et nom de groupe à 80."
   }
 }

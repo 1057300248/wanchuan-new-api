@@ -46,6 +46,11 @@ const LazyWalletPage = lazy(() =>
 const LazyMonitorPage = lazy(() =>
   import('./monitor').then(({ MonitorPage }) => ({ default: MonitorPage }))
 )
+const LazyMonitorSettingsPage = lazy(() =>
+  import('./monitor/settings').then(({ MonitorSettings }) => ({
+    default: MonitorSettings,
+  }))
+)
 const LazyPaymentSettingsPage = lazy(() =>
   import('./payment').then(({ chuanapiPaymentSettingsExtension }) => ({
     default: ({ settings }: { settings: unknown }) => (
@@ -75,6 +80,8 @@ export const LazyWallet: WalletPage = (props) =>
   withLoading(<LazyWalletPage {...props} />)
 
 export const LazyMonitor = () => withLoading(<LazyMonitorPage />)
+export const LazyMonitorSettings = () =>
+  withLoading(<LazyMonitorSettingsPage />)
 
 export function LazyPaymentSettingsRenderer({
   settings,

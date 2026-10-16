@@ -52,7 +52,8 @@ export function TargetCard(props: {
     <Card className='min-w-0 self-start'>
       <CardHeader>
         <CardDescription>
-          {t('monitor.route', { number: props.target.number })}
+          {props.target.name ||
+            t('monitor.route', { number: props.target.number })}
         </CardDescription>
         <CardTitle>
           <h2 className='text-xl break-all'>{props.target.model}</h2>

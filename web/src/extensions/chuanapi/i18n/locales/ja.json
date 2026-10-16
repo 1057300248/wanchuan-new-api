@@ -78,6 +78,23 @@
     "monitor.reason": "参考解説",
     "monitor.expectedAnswer": "正解：{{answer}}",
     "monitor.noDetails": "内容はまだありません",
-    "monitor.needsVerification": "要確認"
+    "monitor.needsVerification": "要確認",
+    "monitor.settings.title": "モデル監視設定",
+    "monitor.settings.enabled": "監視ページを有効にする",
+    "monitor.settings.enabledHelp": "保存後に反映されます。無効時は閲覧者が結果や画像を取得できません。",
+    "monitor.settings.pageTitle": "ページタイトル",
+    "monitor.settings.description": "ページ説明",
+    "monitor.settings.defaultText": "空欄の場合は各言語の既定文を使用します。",
+    "monitor.settings.groups": "グループ表示名",
+    "monitor.settings.groupsHelp": "このページ専用の名前です。同じ参照グループに紐づきます。空欄で既定名に戻ります。",
+    "monitor.settings.groupPlaceholder": "カスタムグループ名",
+    "monitor.settings.unlisted": "保存済みグループ",
+    "monitor.settings.targetsFailed": "現在のグループを読み込めません",
+    "monitor.settings.namesPreserved": "ページ設定と保存済みグループ名は引き続き編集できます。",
+    "monitor.settings.environmentDisabled": "サーバーで監視が無効です。結果の公開にはサーバーで有効化してください。",
+    "monitor.settings.loadFailed": "監視設定を読み込めません",
+    "monitor.settings.saved": "監視設定を保存しました",
+    "monitor.settings.saveFailed": "監視設定を保存できません",
+    "monitor.settings.invalid": "入力を確認してください。タイトル120文字、説明500文字、グループ名80文字までです。"
   }
 }

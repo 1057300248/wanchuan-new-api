@@ -59,7 +59,9 @@ export function MonitorDashboard() {
       600
   const targets =
     snapshot?.targets.filter((target) =>
-      target.model.toLowerCase().includes(search.trim().toLowerCase())
+      `${target.model} ${target.name ?? ''}`
+        .toLowerCase()
+        .includes(search.trim().toLowerCase())
     ) ?? []
   const results = [...(snapshot?.results ?? [])].sort(
     (a, b) =>
@@ -78,10 +80,10 @@ export function MonitorDashboard() {
             {t('monitor.reference')}
           </Badge>
           <h1 className='text-3xl font-semibold tracking-tight'>
-            {t('monitor.title')}
+            {snapshot?.title || t('monitor.title')}
           </h1>
           <p className='text-muted-foreground text-sm'>
-            {t('monitor.subtitle')}
+            {snapshot?.description || t('monitor.subtitle')}
           </p>
         </div>
         <Button

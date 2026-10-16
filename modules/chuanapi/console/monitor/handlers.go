@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -19,8 +20,16 @@ func (s *Service) Register(group *gin.RouterGroup) {
 }
 
 func (s *Service) snapshot(ctx context.Context) (Snapshot, error) {
-	data := Snapshot{Enabled: s.enabled, Targets: []Target{}, Results: []Result{}}
-	if !s.enabled {
+	config, err := s.config()
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return s.snapshotWithConfig(ctx, config)
+}
+
+func (s *Service) snapshotWithConfig(ctx context.Context, config Config) (Snapshot, error) {
+	data := Snapshot{Enabled: s.enabled && config.Enabled, Title: config.Title, Description: config.Description, Targets: []Target{}, Results: []Result{}}
+	if !data.Enabled {
 		return data, nil
 	}
 	response, stale, err := s.fetch(ctx, "", "", 30*time.Second)
@@ -44,9 +53,12 @@ func (s *Service) snapshot(ctx context.Context) (Snapshot, error) {
 	}
 	ids := make(map[string]string)
 	for index, target := range payload.Data.Targets {
-		id := fmt.Sprintf("route-%d", index+1)
+		// Stable opaque identities keep administrator labels on the same source
+		// group when the upstream list is reordered or a new group is inserted.
+		digest := sha256.Sum256([]byte(target.ID))
+		id := fmt.Sprintf("route-%x", digest[:16])
 		ids[target.ID] = id
-		data.Targets = append(data.Targets, Target{ID: id, Number: index + 1, Model: publicText(target.Model)})
+		data.Targets = append(data.Targets, Target{ID: id, Number: index + 1, Model: publicText(target.Model), Name: config.Groups[id]})
 	}
 	for _, result := range payload.Data.Results {
 		id, ok := ids[result.TargetID]

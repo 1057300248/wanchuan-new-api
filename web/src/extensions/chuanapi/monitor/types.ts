@@ -16,7 +16,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-export type MonitorTarget = { id: string; number: number; model: string }
+export type MonitorTarget = {
+  id: string
+  number: number
+  model: string
+  name?: string
+}
+export type MonitorConfig = {
+  enabled: boolean
+  title: string
+  description: string
+  groups: Record<string, string>
+}
+export type MonitorSettingsData = {
+  config: MonitorConfig
+  environment_enabled: boolean
+}
 export type MonitorResult = {
   id: string
   target_id: string
@@ -32,6 +47,8 @@ export type MonitorResult = {
 }
 export type MonitorSnapshot = {
   enabled: boolean
+  title?: string
+  description?: string
   running: boolean
   observed_at: number
   fetched_at: number

@@ -6,6 +6,7 @@ type Target struct {
 	ID     string `json:"id"`
 	Model  string `json:"model"`
 	Number int    `json:"number"`
+	Name   string `json:"name,omitempty"`
 }
 
 type Result struct {
@@ -23,13 +24,15 @@ type Result struct {
 }
 
 type Snapshot struct {
-	Enabled    bool     `json:"enabled"`
-	Running    bool     `json:"running"`
-	ObservedAt int64    `json:"observed_at"`
-	FetchedAt  int64    `json:"fetched_at"`
-	Stale      bool     `json:"stale"`
-	Targets    []Target `json:"targets"`
-	Results    []Result `json:"results"`
+	Enabled     bool     `json:"enabled"`
+	Title       string   `json:"title,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Running     bool     `json:"running"`
+	ObservedAt  int64    `json:"observed_at"`
+	FetchedAt   int64    `json:"fetched_at"`
+	Stale       bool     `json:"stale"`
+	Targets     []Target `json:"targets"`
+	Results     []Result `json:"results"`
 }
 
 type Detail struct {

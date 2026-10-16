@@ -18,7 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { FunctionComponent } from 'react'
 
-export type MonitorExtension = { id: string; page: FunctionComponent }
+export type MonitorExtension = {
+  id: string
+  page: FunctionComponent
+  settingsPage: FunctionComponent
+}
 
 let monitorExtension: MonitorExtension | null = null
 
