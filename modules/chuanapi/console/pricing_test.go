@@ -94,14 +94,29 @@ func TestGetPublicPricingProjectsAnonymousPublicGroupsOnly(t *testing.T) {
 	require.True(t, payload.Success)
 	require.Len(t, payload.Data, 1, "only public-group models may appear in the anonymous catalogue")
 	assert.Equal(t, "public-model", payload.Data[0].ModelName)
-	assert.Equal(t, []string{"default"}, payload.Data[0].EnableGroup)
-	assert.Equal(t, map[string]float64{"default": 1}, payload.GroupRatio)
-	assert.Equal(t, map[string]string{"default": "Default"}, payload.UsableGroup)
-	assert.Equal(t, []string{"default"}, payload.AutoGroups)
+	assert.Equal(t, []string{"rate-1"}, payload.Data[0].EnableGroup)
+	assert.Equal(t, map[string]float64{"rate-1": 1}, payload.GroupRatio)
+	assert.Equal(t, map[string]string{"rate-1": "价格档位 ×1"}, payload.UsableGroup)
+	assert.Equal(t, []string{"rate-1"}, payload.AutoGroups)
 	assert.Equal(t, pricingVersion, payload.PricingVersion)
 	assert.NotContains(t, anonymous.Body.String(), "private")
 
 	forged := performPublicPricingRequest(t, func(c *gin.Context) { c.Set("id", 4242) })
 	assert.Equal(t, anonymous.Body.String(), forged.Body.String(),
 		"an identity in the context must not personalize the anonymous catalogue")
+}
+
+func TestPublicPricingRowsHideRoutingAndNotesWithoutMutatingSource(t *testing.T) {
+	rows := []model.Pricing{{ModelName: "public-model", Description: "private-supplier", Tags: "internal-note", OwnerBy: "private-owner", EnableGroup: []string{"supplier-a", "supplier-b"}, BillingMode: "tiered_expr", BillingExpr: `tier("standard", p * 2 + c * 6)`}}
+	public := publicPricingRows(rows, map[string]string{"supplier-a": "rate-1", "supplier-b": "rate-1"})
+	require.Len(t, public, 1)
+	payload, err := common.Marshal(public)
+	require.NoError(t, err)
+	for _, internal := range []string{"supplier-a", "supplier-b", "private-supplier", "private-owner", "internal-note"} {
+		assert.NotContains(t, string(payload), internal)
+	}
+	assert.Equal(t, []string{"rate-1"}, public[0]["enable_groups"])
+	assert.Equal(t, rows[0].BillingExpr, public[0]["billing_expr"])
+	assert.Equal(t, []string{"supplier-a", "supplier-b"}, rows[0].EnableGroup)
+	assert.Empty(t, publicPricingRows(rows, map[string]string{}))
 }
