@@ -119,6 +119,7 @@ http://:8081 {
 			path /playground /playground/*
 			path /image /image/*
 			path /help /help/*
+			path /model-monitor /model-monitor/*
 			path /support /support/*
 			path /llms.txt /llms-full.txt
 			path /subscriptions /subscriptions/* /redemption-codes /redemption-codes/* /chat /chat/* /chat2link /chat2link/* /errors /errors/* /user-agreement /privacy-policy
