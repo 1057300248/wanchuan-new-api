@@ -87,6 +87,8 @@
     "monitor.settings.defaultText": "Laissez vide pour utiliser le texte traduit par défaut.",
     "monitor.settings.groups": "Noms affichés des groupes",
     "monitor.settings.groupsHelp": "Ces noms concernent uniquement cette page et restent liés au même groupe de référence. Laissez vide pour rétablir le nom par défaut.",
+    "monitor.settings.showGroup": "Afficher {{group}}",
+    "monitor.settings.showGroupHelp": "Désactivez pour masquer ce groupe, ses résultats, détails et images. Vous pouvez le réactiver à tout moment.",
     "monitor.settings.groupPlaceholder": "Nom personnalisé du groupe",
     "monitor.settings.unlisted": "Groupe précédemment enregistré",
     "monitor.settings.targetsFailed": "Impossible de charger les groupes actuels",

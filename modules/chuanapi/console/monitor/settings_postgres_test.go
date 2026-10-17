@@ -70,7 +70,7 @@ func TestMonitorSettingsPostgresPersistenceAndAuthorization(t *testing.T) {
 		engine.ServeHTTP(response, req)
 		return response
 	}
-	config := Config{Enabled: true, Title: "页面标题", Description: "Public reference", Groups: map[string]string{"route-" + strings.Repeat("a", 32): "自定义分组"}}
+	config := Config{Enabled: true, Title: "页面标题", Description: "Public reference", Groups: map[string]string{"route-" + strings.Repeat("a", 32): "自定义分组"}, HiddenGroups: map[string]bool{"route-" + strings.Repeat("a", 32): true}}
 	body, err := common.Marshal(config)
 	require.NoError(t, err)
 	for _, path := range []string{"/api/option/model-monitor", "/api/option/model-monitor/targets"} {
@@ -125,12 +125,25 @@ func TestMonitorSettingsPostgresPersistenceAndAuthorization(t *testing.T) {
 	loaded, err = readConfig()
 	require.NoError(t, err)
 	assert.Equal(t, config, loaded)
-	for _, invalid := range []string{`{}`, `{"enabled":true,"title":"x","description":"x","groups":{"route-1":"bad id"}}`, strings.Repeat("x", (64<<10)+1)} {
+	for _, invalid := range []string{`{}`, `{"enabled":true,"title":"","description":"","groups":{},"hidden_groups":{"route-7":true}}`, `{"enabled":true,"title":"x","description":"x","groups":{"route-1":"bad id"}}`, strings.Repeat("x", (64<<10)+1)} {
 		assert.Equal(t, http.StatusBadRequest, request(http.MethodPut, "/api/option/model-monitor", rootToken, []byte(invalid)).Code)
 	}
 	loaded, err = readConfig()
 	require.NoError(t, err)
 	assert.Equal(t, config, loaded)
+	// An older open admin page must not accidentally reveal hidden groups.
+	legacy := []byte(`{"enabled":true,"title":"Legacy edit","description":"","groups":{}}`)
+	require.Equal(t, http.StatusOK, request(http.MethodPut, "/api/option/model-monitor", rootToken, legacy).Code)
+	loaded, err = readConfig()
+	require.NoError(t, err)
+	assert.Equal(t, config.HiddenGroups, loaded.HiddenGroups)
+	assert.Equal(t, "Legacy edit", loaded.Title)
+	visible := []byte(`{"enabled":true,"title":"Visible again","description":"","groups":{},"hidden_groups":{}}`)
+	require.Equal(t, http.StatusOK, request(http.MethodPut, "/api/option/model-monitor", rootToken, visible).Code)
+	model.InitOptionMap()
+	loaded, err = readConfig()
+	require.NoError(t, err)
+	assert.Empty(t, loaded.HiddenGroups)
 	var writers sync.WaitGroup
 	for _, title := range []string{"first", "second"} {
 		writers.Go(func() {

@@ -20,17 +20,18 @@ var settingsWriteMu sync.Mutex
 var targetIDPattern = regexp.MustCompile(`^route-[a-f0-9]{32}$`)
 
 type Config struct {
-	Enabled     bool              `json:"enabled"`
-	Title       string            `json:"title"`
-	Description string            `json:"description"`
-	Groups      map[string]string `json:"groups"`
+	Enabled      bool              `json:"enabled"`
+	Title        string            `json:"title"`
+	Description  string            `json:"description"`
+	Groups       map[string]string `json:"groups"`
+	HiddenGroups map[string]bool   `json:"hidden_groups"`
 }
 
 func readConfig() (Config, error) {
 	common.OptionMapRWMutex.RLock()
 	raw := common.OptionMap[settingsOption]
 	common.OptionMapRWMutex.RUnlock()
-	config := Config{Enabled: true, Groups: map[string]string{}}
+	config := Config{Enabled: true, Groups: map[string]string{}, HiddenGroups: map[string]bool{}}
 	if raw == "" {
 		return config, nil
 	}
@@ -46,7 +47,7 @@ func readConfig() (Config, error) {
 func (config *Config) normalize() error {
 	config.Title = strings.TrimSpace(config.Title)
 	config.Description = strings.TrimSpace(config.Description)
-	if utf8.RuneCountInString(config.Title) > 120 || utf8.RuneCountInString(config.Description) > 500 || len(config.Groups) > 128 {
+	if utf8.RuneCountInString(config.Title) > 120 || utf8.RuneCountInString(config.Description) > 500 || len(config.Groups) > 128 || len(config.HiddenGroups) > 128 {
 		return errors.New("monitor.settings.invalid")
 	}
 	for id, name := range config.Groups {
@@ -59,6 +60,17 @@ func (config *Config) normalize() error {
 		} else {
 			config.Groups[id] = name
 		}
+	}
+	for id, hidden := range config.HiddenGroups {
+		if !targetIDPattern.MatchString(id) {
+			return errors.New("monitor.settings.invalid")
+		}
+		if !hidden {
+			delete(config.HiddenGroups, id)
+		}
+	}
+	if config.HiddenGroups == nil {
+		config.HiddenGroups = map[string]bool{}
 	}
 	if config.Groups == nil {
 		config.Groups = map[string]string{}
@@ -87,28 +99,38 @@ func (s *Service) saveSettings(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
 	var request struct {
-		Enabled     *bool             `json:"enabled"`
-		Title       *string           `json:"title"`
-		Description *string           `json:"description"`
-		Groups      map[string]string `json:"groups"`
+		Enabled      *bool             `json:"enabled"`
+		Title        *string           `json:"title"`
+		Description  *string           `json:"description"`
+		Groups       map[string]string `json:"groups"`
+		HiddenGroups map[string]bool   `json:"hidden_groups"`
 	}
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil || request.Enabled == nil || request.Title == nil || request.Description == nil || request.Groups == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "monitor.settings.invalid"})
 		return
 	}
-	config := Config{Enabled: *request.Enabled, Title: *request.Title, Description: *request.Description, Groups: request.Groups}
+	config := Config{Enabled: *request.Enabled, Title: *request.Title, Description: *request.Description, Groups: request.Groups, HiddenGroups: request.HiddenGroups}
 	if err := config.normalize(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 		return
+	}
+	settingsWriteMu.Lock()
+	defer settingsWriteMu.Unlock()
+	// Older clients omit visibility settings; preserve the current hidden groups.
+	if request.HiddenGroups == nil {
+		current, err := s.config()
+		if err != nil {
+			unavailable(c)
+			return
+		}
+		config.HiddenGroups = current.HiddenGroups
 	}
 	encoded, err := common.Marshal(config)
 	if err != nil {
 		unavailable(c)
 		return
 	}
-	settingsWriteMu.Lock()
 	err = model.UpdateOptionsBulk(map[string]string{settingsOption: string(encoded)})
-	settingsWriteMu.Unlock()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "monitor.settings.saveFailed"})
 		return

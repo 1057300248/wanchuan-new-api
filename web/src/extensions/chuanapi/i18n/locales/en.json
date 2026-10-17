@@ -87,6 +87,8 @@
     "monitor.settings.defaultText": "Leave blank to use the translated default.",
     "monitor.settings.groups": "Group display names",
     "monitor.settings.groupsHelp": "Names apply only to this monitoring page and stay with the same reference group. Leave blank to restore the default.",
+    "monitor.settings.showGroup": "Show {{group}}",
+    "monitor.settings.showGroupHelp": "Turn off to hide this group and its results, details and images. You can turn it back on at any time.",
     "monitor.settings.groupPlaceholder": "Custom group name",
     "monitor.settings.unlisted": "Previously saved group",
     "monitor.settings.targetsFailed": "Unable to load the current groups",

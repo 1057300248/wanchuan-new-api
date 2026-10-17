@@ -35,6 +35,7 @@ const saved: MonitorConfig = {
   title: '',
   description: '',
   groups: { [groupID]: 'Premium' },
+  hidden_groups: {},
 }
 
 function renderSettings(config = saved, targetsFail = false) {
@@ -95,6 +96,7 @@ describe('Model monitor settings', () => {
         title: 'Our monitor',
         description: '',
         groups: { [groupID]: 'VIP group' },
+        hidden_groups: { [groupID]: false },
       })
     )
     await waitFor(() =>
@@ -102,7 +104,73 @@ describe('Model monitor settings', () => {
         screen.getByRole('button', { name: 'Save Changes' })
       ).toBeDisabled()
     )
-    expect(screen.getByRole('switch')).not.toBeChecked()
+    expect(
+      screen.getByRole('switch', { name: 'Enable monitoring page' })
+    ).not.toBeChecked()
+  })
+
+  test('hides one group without clearing its name or disabling the page', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(api, 'put').mockResolvedValue({
+      data: {
+        success: true,
+        data: { ...saved, hidden_groups: { [groupID]: true } },
+      },
+    })
+    renderSettings()
+    const toggle = await screen.findByRole('switch', {
+      name: 'Show Reference route 1',
+    })
+    expect(toggle).toBeChecked()
+    toggle.focus()
+    await user.keyboard(' ')
+    expect(toggle).not.toBeChecked()
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith('/api/option/model-monitor', {
+        ...saved,
+        hidden_groups: { [groupID]: true },
+      })
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Save Changes' })
+      ).toBeDisabled()
+    )
+    expect(
+      screen.getByLabelText('Reference route 1 example-model')
+    ).toHaveValue('Premium')
+    expect(
+      screen.getByRole('switch', { name: 'Enable monitoring page' })
+    ).toBeChecked()
+    expect(toggle).not.toBeChecked()
+  })
+
+  test('can restore a hidden unnamed group when the current catalog is unavailable', async () => {
+    const user = userEvent.setup()
+    const hidden = { ...saved, groups: {}, hidden_groups: { [groupID]: true } }
+    vi.spyOn(api, 'put').mockResolvedValue({
+      data: { success: true, data: { ...hidden, hidden_groups: {} } },
+    })
+    renderSettings(hidden, true)
+    const toggle = await screen.findByRole('switch', {
+      name: 'Show Previously saved group',
+    })
+    expect(toggle).not.toBeChecked()
+    await user.click(toggle)
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith('/api/option/model-monitor', {
+        ...hidden,
+        groups: { [groupID]: '' },
+        hidden_groups: { [groupID]: false },
+      })
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Save Changes' })
+      ).toBeDisabled()
+    )
   })
 
   test('keeps saved group names editable when the current upstream catalog is unavailable', async () => {
