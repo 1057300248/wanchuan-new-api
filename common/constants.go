@@ -135,7 +135,7 @@ var QuotaForNewUser = 0
 // LinuxDOSignupBonusUSD is granted only when a verified LinuxDO login creates
 // a new account. Legacy global signup settings are retained for stored-option
 // compatibility and no longer control registration grants.
-const LinuxDOSignupBonusUSD = 5
+const LinuxDOSignupBonusUSD = 3
 
 var SignupBonusEnabled = false
 var QuotaForSignupBonus = 0

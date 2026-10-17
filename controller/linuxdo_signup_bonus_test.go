@@ -78,8 +78,8 @@ func assertLinuxDOSignupGrant(t *testing.T, userID int) {
 	t.Helper()
 	var user model.User
 	require.NoError(t, model.DB.First(&user, userID).Error)
-	assert.Equal(t, 2500000, user.Quota)
-	assert.Equal(t, 2500000, user.QuotaBonus)
+	assert.Equal(t, 1500000, user.Quota)
+	assert.Equal(t, 1500000, user.QuotaBonus)
 	assert.Zero(t, user.QuotaPaid)
 	assert.Zero(t, user.QuotaReward)
 	var rows []model.BalanceLedger
@@ -88,9 +88,9 @@ func assertLinuxDOSignupGrant(t *testing.T, userID int) {
 	assert.Equal(t, userID, rows[0].UserId)
 	assert.Equal(t, "bonus", rows[0].Account)
 	assert.Equal(t, "signup_bonus", rows[0].Reason)
-	assert.Equal(t, 2500000, rows[0].Delta)
+	assert.Equal(t, 1500000, rows[0].Delta)
 	assert.Zero(t, rows[0].BalanceBefore)
-	assert.Equal(t, 2500000, rows[0].BalanceAfter)
+	assert.Equal(t, 1500000, rows[0].BalanceAfter)
 	assert.Equal(t, "credit:linuxdo_signup:77101", rows[0].IdempotencyKey)
 	var operations int64
 	require.NoError(t, model.DB.Model(&model.BalanceLedgerOperation{}).Count(&operations).Error)
@@ -268,6 +268,36 @@ func TestLinuxDOSignupLegacyUserNeverReceivesBackfill(t *testing.T) {
 	var count int64
 	require.NoError(t, model.DB.Model(&model.BalanceLedgerOperation{}).Count(&count).Error)
 	assert.Zero(t, count)
+}
+
+func TestLinuxDOSignupExistingFiveDollarGrantIsPreserved(t *testing.T) {
+	user, _ := setupLinuxDOSignupTest(t)
+	require.NoError(t, model.DB.Model(user).Update("linux_do_id", "77101").Error)
+	_, err := model.CreditQuota(model.LedgerEntry{
+		UserId:        user.Id,
+		Account:       model.AccountBonus,
+		Delta:         2500000,
+		Reason:        model.LedgerReasonSignupBonus,
+		ReferenceType: "linuxdo_signup",
+		ReferenceId:   "77101",
+	})
+	require.NoError(t, err)
+	var before []model.BalanceLedger
+	require.NoError(t, model.DB.Find(&before).Error)
+	require.Len(t, before, 1)
+	response := linuxDOSignupCallback(linuxDOSignupState(t, "login", "", service.AuthIdentity{}), service.AuthIdentity{})
+	var body struct {
+		Success bool `json:"success"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
+	require.True(t, body.Success)
+	var stored model.User
+	require.NoError(t, model.DB.First(&stored, user.Id).Error)
+	assert.Equal(t, 2500000, stored.Quota)
+	assert.Equal(t, 2500000, stored.QuotaBonus)
+	var after []model.BalanceLedger
+	require.NoError(t, model.DB.Find(&after).Error)
+	assert.Equal(t, before, after)
 }
 
 func TestLinuxDOSignupConcurrentOldAccountBindingKeepsOneOwner(t *testing.T) {

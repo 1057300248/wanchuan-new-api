@@ -145,11 +145,11 @@ test.each(['', '-1'])(
   }
 )
 
-test('shows the LinuxDO-only five-dollar policy without obsolete global signup controls', async () => {
+test('shows the LinuxDO-only three-dollar policy without obsolete global signup controls', async () => {
   await renderSettings()
   expect(
     screen.getByText(
-      'Only new accounts created through LinuxDO receive a one-time $5 signup bonus. Repeat logins and linking existing accounts do not qualify.'
+      'Only new accounts created through LinuxDO receive a one-time $3 signup bonus. Repeat logins and linking existing accounts do not qualify.'
     )
   ).toBeVisible()
   expect(

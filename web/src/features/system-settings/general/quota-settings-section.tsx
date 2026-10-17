@@ -123,7 +123,7 @@ export function QuotaSettingsSection({
               <Alert>
                 <AlertDescription>
                   {t(
-                    'Only new accounts created through LinuxDO receive a one-time $5 signup bonus. Repeat logins and linking existing accounts do not qualify.'
+                    'Only new accounts created through LinuxDO receive a one-time $3 signup bonus. Repeat logins and linking existing accounts do not qualify.'
                   )}
                 </AlertDescription>
               </Alert>
