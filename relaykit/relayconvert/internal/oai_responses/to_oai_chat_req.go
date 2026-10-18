@@ -33,6 +33,10 @@ const (
 )
 
 func ResponsesRequestToChatCompletionsRequest(ctx context.Context, req *dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
+	return ResponsesRequestToChatCompletionsRequestWithOptions(ctx, req, nil)
+}
+
+func ResponsesRequestToChatCompletionsRequestWithOptions(ctx context.Context, req *dto.OpenAIResponsesRequest, options *convmeta.Options) (*dto.GeneralOpenAIRequest, error) {
 	if req == nil {
 		return nil, errors.New("request is nil")
 	}
@@ -43,7 +47,8 @@ func ResponsesRequestToChatCompletionsRequest(ctx context.Context, req *dto.Open
 		return nil, err
 	}
 
-	messages, err := responsesRequestMessagesToChat(ctx, req)
+	replayReasoning := options != nil && options.ReplayResponsesReasoning
+	messages, err := responsesRequestMessagesToChat(ctx, req, replayReasoning)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +149,7 @@ func ValidateRequestChatUnsupportedFields(req *dto.OpenAIResponsesRequest) error
 	return validateResponsesRequestChatUnsupportedFields(req)
 }
 
-func responsesRequestMessagesToChat(ctx context.Context, req *dto.OpenAIResponsesRequest) ([]dto.Message, error) {
+func responsesRequestMessagesToChat(ctx context.Context, req *dto.OpenAIResponsesRequest, replayReasoning bool) ([]dto.Message, error) {
 	messages := make([]dto.Message, 0)
 	if rawJSONPresent(req.Instructions) {
 		instructions, err := responsesJSONString(req.Instructions)
@@ -177,13 +182,50 @@ func responsesRequestMessagesToChat(ctx context.Context, req *dto.OpenAIResponse
 		// batch to stay contiguous, so media hoisted out of tool output items is
 		// held back and emitted as a single user message once the batch ends.
 		var pendingMedia []any
-		for _, item := range items {
+		pendingCalls := make(map[string]struct{})
+		for i, item := range items {
 			itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
+			if replayReasoning {
+				path := fmt.Sprintf("input.%d", i)
+				switch itemType {
+				case "reasoning":
+					text, err := responsesReasoningHistoryText(ctx, item, path)
+					if err != nil {
+						return nil, err
+					}
+					if text == "" {
+						continue
+					}
+					if len(pendingCalls) > 0 && len(messages) > 0 && messages[len(messages)-1].Role == "tool" {
+						return nil, responsesHistoryError(path, "reasoning between parallel tool results cannot be represented by Chat Completions")
+					}
+					if len(pendingMedia) > 0 {
+						messages = append(messages, dto.Message{Role: "user", Content: pendingMedia})
+						pendingMedia = nil
+					}
+					if len(messages) == 0 || messages[len(messages)-1].Role != "assistant" {
+						messages = append(messages, dto.Message{Role: "assistant"})
+					}
+					last := &messages[len(messages)-1]
+					var reasoning strings.Builder
+					appendSeparatedText(&reasoning, last.GetReasoningContent())
+					appendSeparatedText(&reasoning, text)
+					last.ReasoningContent = kitutil.GetPointer(reasoning.String())
+					continue
+				case responsesInputTypeFunctionCall, responsesInputTypeCustomToolCall:
+					pendingCalls[responsesCallID(item)] = struct{}{}
+				case responsesInputTypeFunctionCallOutput, responsesInputTypeCustomToolOutput:
+					delete(pendingCalls, strings.TrimSpace(kitutil.Interface2String(item["call_id"])))
+				case "", "message":
+				default:
+					return nil, responsesHistoryError(path+".type", "input item cannot be represented by Chat Completions")
+				}
+			}
 			if len(pendingMedia) > 0 && itemType != responsesInputTypeFunctionCallOutput && itemType != responsesInputTypeCustomToolOutput {
 				messages = append(messages, dto.Message{Role: "user", Content: pendingMedia})
 				pendingMedia = nil
 			}
-			nextMessages, media, err := responsesInputItemToChatMessages(ctx, item, messages)
+			nextMessages, media, err := responsesInputItemToChatMessages(ctx, item, messages, replayReasoning)
 			if err != nil {
 				return nil, err
 			}
@@ -202,7 +244,7 @@ func responsesRequestMessagesToChat(ctx context.Context, req *dto.OpenAIResponse
 // responsesInputItemToChatMessages appends the Chat messages for one Responses input item.
 // The second result carries media content parts hoisted out of a tool output item,
 // already in Chat shape; the caller decides where that user message lands.
-func responsesInputItemToChatMessages(ctx context.Context, item map[string]any, messages []dto.Message) ([]dto.Message, []any, error) {
+func responsesInputItemToChatMessages(ctx context.Context, item map[string]any, messages []dto.Message, replayReasoning bool) ([]dto.Message, []any, error) {
 	itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
 	switch itemType {
 	case "reasoning":
@@ -237,7 +279,92 @@ func responsesInputItemToChatMessages(ctx context.Context, item map[string]any, 
 	if err != nil {
 		return nil, nil, err
 	}
+	if replayReasoning && role == "assistant" {
+		switch content.(type) {
+		case string, []any:
+		default:
+			return nil, nil, responsesHistoryError("input.content", "expected assistant text or content parts")
+		}
+	}
+	if replayReasoning && role == "assistant" && len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
+		// Responses splits one assistant turn into reasoning, commentary and
+		// call items. Keep them on the same Chat message, including parallel
+		// calls separated by commentary; never merge across a tool/user turn.
+		last := &messages[len(messages)-1]
+		if last.Content == nil || last.Content == "" {
+			last.Content = content
+		} else if oldText, ok := last.Content.(string); ok {
+			if newText, ok := content.(string); ok {
+				var text strings.Builder
+				appendSeparatedText(&text, oldText)
+				appendSeparatedText(&text, newText)
+				last.Content = text.String()
+			} else {
+				last.Content = append([]any{map[string]any{"type": "text", "text": oldText}}, content.([]any)...)
+			}
+		} else {
+			parts := last.Content.([]any)
+			if text, ok := content.(string); ok {
+				last.Content = append(parts, map[string]any{"type": "text", "text": text})
+			} else {
+				last.Content = append(parts, content.([]any)...)
+			}
+		}
+		return messages, nil, nil
+	}
 	return append(messages, dto.Message{Role: role, Content: content}), nil, nil
+}
+
+// responsesReasoningHistoryText reads only explicit plaintext fields. A
+// reasoning summary is not a replacement for provider-specific encrypted state.
+func responsesReasoningHistoryText(ctx context.Context, item map[string]any, path string) (string, error) {
+	if encrypted := item["encrypted_content"]; encrypted != nil && encrypted != "" {
+		return "", responsesHistoryError(path+".encrypted_content", "encrypted reasoning cannot be replayed through Chat Completions; use a native Responses channel")
+	}
+	for _, field := range []string{"content", "summary"} {
+		raw := item[field]
+		if raw == nil {
+			continue
+		}
+		parts, ok := raw.([]any)
+		if !ok {
+			return "", responsesHistoryError(path+"."+field, "expected reasoning text parts")
+		}
+		partType := "reasoning_text"
+		if field == "summary" {
+			partType = "summary_text"
+		}
+		var text strings.Builder
+		for j, rawPart := range parts {
+			part, ok := rawPart.(map[string]any)
+			if !ok || part["type"] != partType {
+				return "", responsesHistoryError(fmt.Sprintf("%s.%s.%d", path, field, j), "unsupported reasoning text part")
+			}
+			value, ok := part["text"].(string)
+			if !ok {
+				return "", responsesHistoryError(fmt.Sprintf("%s.%s.%d.text", path, field, j), "expected text")
+			}
+			appendSeparatedText(&text, value)
+		}
+		if text.Len() > 0 {
+			if field == "summary" {
+				convdiag.Add(ctx, types.ConversionDiagnostic{
+					Code: "reasoning_summary_replayed", Path: path + ".summary",
+					Message:  "Reasoning summary replayed as reasoning_content; native summaries may omit reasoning state",
+					Severity: types.ConversionDiagnosticWarning,
+				})
+			}
+			return text.String(), nil
+		}
+	}
+	return "", nil
+}
+
+func responsesHistoryError(path, reason string) *types.NewAPIError {
+	return types.WithOpenAIError(types.OpenAIError{
+		Message: "Responses history conversion: " + reason,
+		Type:    "invalid_request_error", Code: "responses_history_unsupported", Param: path,
+	}, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 }
 
 func responsesInputContentToChatContent(ctx context.Context, content any) (any, error) {

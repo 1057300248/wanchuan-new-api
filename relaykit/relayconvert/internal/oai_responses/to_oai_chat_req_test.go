@@ -6,12 +6,123 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/convdiag"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func TestResponsesReasoningReplayPlaintextAndSummary(t *testing.T) {
+	for _, tc := range []struct {
+		name, item, want string
+		summary          bool
+	}{
+		{"plaintext takes precedence", `{"content":[{"type":"reasoning_text","text":"full reasoning"}],"summary":[{"type":"summary_text","text":"summary"}]}`, "full reasoning", false},
+		{"legacy summary", `{"content":null,"summary":[{"type":"summary_text","text":"first"},{"type":"summary_text","text":"second"}]}`, "first\n\nsecond", true},
+		{"empty placeholder", `{"encrypted_content":"","summary":[]}`, "", false},
+		{"null placeholder", `{"encrypted_content":null,"content":null,"summary":null}`, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var item map[string]any
+			require.NoError(t, kitutil.Unmarshal([]byte(tc.item), &item))
+			item["type"] = "reasoning"
+			input := mustRawMessage(t, []any{map[string]any{"role": "user", "content": "hello"}, item, map[string]any{"role": "assistant", "content": "answer"}})
+			ctx, diagnostics := convdiag.WithCollector(context.Background())
+			got, err := ResponsesRequestToChatCompletionsRequestWithOptions(ctx, &dto.OpenAIResponsesRequest{Model: "test", Input: input}, &convmeta.Options{ReplayResponsesReasoning: true})
+			require.NoError(t, err)
+			require.Len(t, got.Messages, 2)
+			assert.Equal(t, "assistant", got.Messages[1].Role)
+			assert.Equal(t, "answer", got.Messages[1].Content)
+			assert.Equal(t, tc.want, got.Messages[1].GetReasoningContent())
+			if tc.summary {
+				require.Len(t, diagnostics.Diagnostics(), 1)
+				assert.Equal(t, "reasoning_summary_replayed", diagnostics.Diagnostics()[0].Code)
+				assert.NotContains(t, diagnostics.Diagnostics()[0].Message, tc.want)
+			} else {
+				assert.Empty(t, diagnostics.Diagnostics())
+			}
+		})
+	}
+}
+
+func TestResponsesReasoningReplayRejectsMalformedParts(t *testing.T) {
+	for _, item := range []string{
+		`{"type":"reasoning","content":"private-value"}`,
+		`{"type":"reasoning","content":[null]}`,
+		`{"type":"reasoning","content":[{"type":"output_text","text":"private-value"}]}`,
+		`{"type":"reasoning","summary":[{"type":"summary_text","text":123}]}`,
+		`{"type":"reasoning","encrypted_content":{"private-value":true}}`,
+		`{"role":"assistant","content":{"text":"private-value"}}`,
+	} {
+		t.Run(item, func(t *testing.T) {
+			_, err := ResponsesRequestToChatCompletionsRequestWithOptions(context.Background(), &dto.OpenAIResponsesRequest{Model: "test", Input: []byte("[" + item + "]")}, &convmeta.Options{ReplayResponsesReasoning: true})
+			var apiErr *types.NewAPIError
+			require.ErrorAs(t, err, &apiErr)
+			assert.Equal(t, 400, apiErr.StatusCode)
+			assert.True(t, types.IsSkipRetryError(apiErr))
+			assert.NotContains(t, err.Error(), "private-value")
+		})
+	}
+}
+
+func TestResponsesReasoningReplayKeepsAssistantPartsAndToolBatch(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(context.Background(), &dto.OpenAIResponsesRequest{
+		Model: "test",
+		Input: []byte(`[
+			{"role":"user","content":"inspect"},
+			{"type":"reasoning","content":[{"type":"reasoning_text","text":"plan"}]},
+			{"role":"assistant","content":"first"},
+			{"type":"function_call","call_id":"a","name":"read","arguments":"{}"},
+			{"role":"assistant","content":[{"type":"output_text","text":"second"},{"type":"refusal","refusal":"unavailable"}]},
+			{"role":"assistant","content":"third"},
+			{"role":"assistant","content":[{"type":"refusal","refusal":"still unavailable"}]},
+			{"type":"function_call","call_id":"b","name":"read","arguments":"{}"},
+			{"type":"function_call_output","call_id":"a","output":[{"type":"input_image","image_url":"https://example.com/a.png"}]},
+			{"type":"reasoning","summary":[]},
+			{"type":"function_call_output","call_id":"b","output":"second result"},
+			{"type":"reasoning","content":[{"type":"reasoning_text","text":"new plan"}]},
+			{"role":"assistant","content":"done"},
+			{"role":"user","content":"next"}
+		]`),
+	}, &convmeta.Options{ReplayResponsesReasoning: true})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 7)
+	assert.Equal(t, "plan", got.Messages[1].GetReasoningContent())
+	assert.Len(t, got.Messages[1].ParseToolCalls(), 2)
+	encoded, err := kitutil.Marshal(got)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"type":"text","text":"first"},{"type":"text","text":"second"},{"type":"refusal","refusal":"unavailable"},{"type":"text","text":"third"},{"type":"refusal","refusal":"still unavailable"}]`, gjson.GetBytes(encoded, "messages.1.content").Raw)
+	assert.Equal(t, "a", got.Messages[2].ToolCallId)
+	assert.Equal(t, "b", got.Messages[3].ToolCallId)
+	assert.Equal(t, "user", got.Messages[4].Role)
+	assert.Equal(t, "https://example.com/a.png", gjson.GetBytes(encoded, "messages.4.content.0.image_url.url").String())
+	assert.Equal(t, "new plan", got.Messages[5].GetReasoningContent())
+	assert.Equal(t, "done", got.Messages[5].Content)
+	assert.Empty(t, got.Messages[6].GetReasoningContent())
+}
+
+func TestResponsesReasoningReplayRejectsReasoningBetweenParallelResults(t *testing.T) {
+	_, err := ResponsesRequestToChatCompletionsRequestWithOptions(context.Background(), &dto.OpenAIResponsesRequest{
+		Model: "test",
+		Input: []byte(`[
+			{"role":"user","content":"inspect"},
+			{"type":"function_call","call_id":"a","name":"read","arguments":"{}"},
+			{"type":"function_call","call_id":"b","name":"read","arguments":"{}"},
+			{"type":"function_call_output","call_id":"a","output":"first"},
+			{"type":"reasoning","content":[{"type":"reasoning_text","text":"private partial result analysis"}]},
+			{"type":"function_call_output","call_id":"b","output":"second"}
+		]`),
+	}, &convmeta.Options{ReplayResponsesReasoning: true})
+	var apiErr *types.NewAPIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, 400, apiErr.StatusCode)
+	assert.True(t, types.IsSkipRetryError(apiErr))
+	assert.NotContains(t, err.Error(), "private partial result analysis")
+}
 
 func TestResponsesReasoningHistoryDoesNotCreateUserMessages(t *testing.T) {
 	got, err := ResponsesRequestToChatCompletionsRequest(context.Background(), &dto.OpenAIResponsesRequest{
