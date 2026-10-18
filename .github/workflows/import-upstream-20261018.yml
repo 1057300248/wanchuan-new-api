@@ -22,11 +22,11 @@ jobs:
           fetch-depth: 0
       - name: Preserve the exact official upstream commits in an isolated reference
         env:
-          UPSTREAM_SHA: 55bb6b903c63fcddbf71740d7267b653fe1dbd47
+          UPSTREAM_SHA: 058c8231b68c51ee02abee15befcd720fee9f4a2
         run: |
           set -euo pipefail
           git fetch --no-tags https://github.com/QuantumNous/new-api.git "$UPSTREAM_SHA"
           test "$(git rev-parse FETCH_HEAD)" = "$UPSTREAM_SHA"
           git merge-base --is-ancestor 633b4c5b190dc1af99a2814391354d86948e7943 "$UPSTREAM_SHA"
-          git push origin "$UPSTREAM_SHA:refs/heads/upstream/new-api-55bb6b90"
+          git push origin "$UPSTREAM_SHA:refs/heads/upstream/new-api-058c8231"
           printf 'Imported pinned upstream %s without changing the customization branch.\n' "$UPSTREAM_SHA" >> "$GITHUB_STEP_SUMMARY"
