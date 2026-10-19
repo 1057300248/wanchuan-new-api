@@ -1,4 +1,4 @@
-name: Channel owner and image development snapshot
+name: Public owner and image resolution validation
 
 on:
   push:
@@ -8,36 +8,227 @@ on:
       - .github/workflows/channel-owner-image-development.yml
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: channel-owner-image-development-snapshot
+  group: channel-owner-image-development
   cancel-in-progress: true
 
 jobs:
-  source:
+  validate:
     if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/channel-owned-by-image-resolution-20261019'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 40
+    env:
+      GOWORK: 'off'
+      GOMAXPROCS: '2'
+      TEST_MYSQL_DSN: root:compat@tcp(127.0.0.1:3306)/newapi_owner_feature?charset=utf8mb4&parseTime=True&loc=Local
+      TEST_POSTGRES_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_owner_feature?sslmode=disable
+    services:
+      postgres:
+        image: postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+        env:
+          POSTGRES_PASSWORD: compat
+          POSTGRES_DB: newapi_owner_feature
+        ports: ['5432:5432']
+        options: --health-cmd="pg_isready -U postgres -d newapi_owner_feature" --health-interval=5s --health-timeout=5s --health-retries=20
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: compat
+          MYSQL_DATABASE: newapi_owner_feature
+        ports: ['3306:3306']
+        options: --health-cmd="mysqladmin ping -h localhost -pcompat" --health-interval=5s --health-timeout=5s --health-retries=30
     steps:
-      - name: Read the verified candidate
+      - name: Checkout exact development input
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          ref: 0f30aadcf89bdddb25ce03d84eb4c316c9fe01c8
-          persist-credentials: false
-      - name: Archive tracked source only
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Verify and apply bounded patch
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = '0f30aadcf89bdddb25ce03d84eb4c316c9fe01c8'
-          mkdir -p "$RUNNER_TEMP/feature-source"
-          git archive --format=tar HEAD | gzip -n > "$RUNNER_TEMP/feature-source/source-0f30aadc.tar.gz"
-          cd "$RUNNER_TEMP/feature-source"
-          sha256sum source-0f30aadc.tar.gz > SHA256SUMS
-      - name: Retain private development input for one day
+          python3 - <<'PY'
+          import base64, hashlib, json, os, pathlib, subprocess, zlib
+          base = '0f30aadcf89bdddb25ce03d84eb4c316c9fe01c8'
+          encoded = ''.join(pathlib.Path(f'.github/development/channel-owner-image.part{i}.b64').read_text().strip() for i in range(1, 5))
+          digest = hashlib.sha256(encoded.encode()).hexdigest()
+          print('transport', len(encoded), digest)
+          assert digest == 'c3a4e966000e08f31cec6b42b2df9dae02ba71071e8352fa6cab3000d09ca065', 'transport checksum mismatch'
+          data = json.loads(zlib.decompress(base64.b64decode(encoded, validate=True)))
+          assert data['baseline'] == base
+          allowed = set('''controller/model.go
+          controller/model_list_test.go
+          model/channel.go
+          model/model_meta.go
+          model/model_public_owner_test.go
+          relay/helper/openai_image_request_test.go
+          relaykit/dto/channel_settings.go
+          web/src/features/channels/components/__tests__/channel-configuration.test.tsx
+          web/src/features/channels/components/drawers/channel-mutate-drawer.tsx
+          web/src/features/channels/lib/__tests__/public-model-owner.test.ts
+          web/src/features/channels/lib/channel-form.ts
+          web/src/features/channels/types.ts
+          web/src/features/image-generation/__tests__/resolution-presets.test.tsx
+          web/src/features/image-generation/components/GenerationForm.tsx
+          web/src/features/image-generation/components/HistoryPanel.tsx
+          web/src/features/image-generation/components/ImageResolutionPresets.tsx
+          web/src/features/image-generation/components/ImageResolutionPreview.tsx
+          web/src/features/image-generation/lib/model-capabilities.ts
+          web/src/i18n/locales/en.json
+          web/src/i18n/locales/fr.json
+          web/src/i18n/locales/ja.json
+          web/src/i18n/locales/ru.json
+          web/src/i18n/locales/vi.json
+          web/src/i18n/locales/zh-TW.json
+          web/src/i18n/locales/zh.json'''.splitlines())
+          assert set(data['paths']) == allowed
+          subprocess.run(['git', 'diff', '--exit-code', base, 'HEAD', '--', *sorted(allowed)], check=True)
+          temp = pathlib.Path(os.environ['RUNNER_TEMP']) / 'owner-image-evidence'
+          temp.mkdir()
+          (temp / 'input.json').write_text(json.dumps(data, ensure_ascii=False))
+          patch = temp / 'input.patch'
+          patch.write_text(data['patch'])
+          paths = {line.split('\t', 2)[2] for line in subprocess.check_output(['git', 'apply', '--numstat', str(patch)], text=True).splitlines()}
+          assert paths <= allowed
+          subprocess.run(['git', 'apply', '--check', str(patch)], check=True)
+          subprocess.run(['git', 'apply', str(patch)], check=True)
+          (temp / 'paths.json').write_text(json.dumps(sorted(allowed)))
+          original = {lang: json.loads(subprocess.check_output(['git', 'show', f'{base}:web/src/i18n/locales/{lang}.json'], text=True)) for lang in data['translations']}
+          (temp / 'original-locales.json').write_text(json.dumps(original, ensure_ascii=False))
+          print('Applied exact feature patch; production and main are unchanged')
+          PY
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+            tokenkit/go.sum
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.0'
+      - name: Generate translations and format candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p web/dist
+          touch web/dist/index.html
+          cd web
+          bun install --frozen-lockfile
+          cat > scripts/add-missing-keys.mjs <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const payload = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'owner-image-evidence/input.json'), 'utf8'));
+          for (const [locale, additions] of Object.entries(payload.translations)) {
+            const file = path.join('src/i18n/locales', `${locale}.json`);
+            const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+            for (const [key, value] of Object.entries(additions)) {
+              if (Object.hasOwn(data.translation, key)) throw new Error(`Existing translation: ${locale}/${key}`);
+              data.translation[key] = value;
+            }
+            data.translation = Object.fromEntries(Object.entries(data.translation).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+            fs.writeFileSync(file, JSON.stringify(data, null, 2) + '\n');
+          }
+          JS
+          node scripts/add-missing-keys.mjs
+          bun run i18n:sync
+          rm scripts/add-missing-keys.mjs
+          bun run format
+          cd ..
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          temp = pathlib.Path(os.environ['RUNNER_TEMP']) / 'owner-image-evidence'
+          paths = json.loads((temp / 'paths.json').read_text())
+          subprocess.run(['gofmt', '-w', *[p for p in paths if p.endswith('.go')]], check=True)
+          subprocess.run(['git', 'add', '-N', '--', *paths], check=True)
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines())
+          assert changed <= set(paths), f'Unexpected formatter changes: {changed - set(paths)}'
+          old = json.loads((temp / 'original-locales.json').read_text())
+          for lang, before in old.items():
+            after = json.loads(pathlib.Path(f'web/src/i18n/locales/{lang}.json').read_text())
+            assert all(after['translation'].get(k) == v for k,v in before['translation'].items()), f'Existing locale changed: {lang}'
+            assert len(after['translation']) == len(before['translation']) + 11
+          subprocess.run(['git', 'diff', '--check'], check=True)
+          (temp / 'candidate.patch').write_bytes(subprocess.check_output(['git', 'diff', '--binary']))
+          PY
+      - name: Verify backend, frontend and real database contracts
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess, sys, time
+          root = pathlib.Path.cwd()
+          temp = pathlib.Path(os.environ['RUNNER_TEMP']) / 'owner-image-evidence'
+          paths = json.loads((temp / 'paths.json').read_text())
+          hashes = {p: hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() for p in paths}
+          checks = [
+            ('backend-owner-databases', '.', 'go test -p 2 ./model -run "Test(ChannelPublicOwnerValidation|PublicModelOwnerDatabaseMatrix|GetPreferredModelOwnerChannelTypes|ChannelValidateSettings)" -count=1 -timeout=10m -json'),
+            ('backend-model-list', '.', 'go test -p 2 ./controller -run "Test(ListModels|BuildOpenAIModel|GetModelListGroups|ChannelOwnerName)" -count=1 -timeout=10m -json'),
+            ('backend-image-size', '.', 'go test -p 2 ./relay/helper -run "Test(GetAndValidOpenAIImageRequest|HighResolutionImageRequestSizes)" -count=1 -timeout=10m -json'),
+            ('relaykit-independent', 'relaykit', 'go vet ./... && go build ./... && go test -p 2 ./... -count=1 -timeout=10m'),
+            ('root-vet-build', '.', 'go vet ./controller ./model ./relay/helper && go build -p 2 ./...'),
+            ('frontend-focused', 'web', 'bun run test --maxWorkers=2 src/features/channels/components/__tests__/channel-configuration.test.tsx src/features/channels/lib/__tests__/public-model-owner.test.ts src/features/image-generation'),
+            ('frontend-typecheck', 'web', 'bun run typecheck'),
+            ('frontend-lint', 'web', 'bun run lint:ci'),
+            ('frontend-format', 'web', 'bun run format:check'),
+            ('frontend-copyright', 'web', 'bun run copyright:check'),
+            ('frontend-audit', 'web', 'bun audit --production'),
+            ('frontend-build', 'web', 'bun run build'),
+          ]
+          results = []
+          for name, cwd, command in checks:
+            start = time.monotonic()
+            with (temp / f'{name}.log').open('w') as log:
+              result = subprocess.run(['bash', '-o', 'pipefail', '-c', command], cwd=root/cwd, stdout=log, stderr=subprocess.STDOUT)
+            entry = {'check': name, 'command': command, 'exit_code': result.returncode, 'seconds': round(time.monotonic()-start, 2)}
+            if name.startswith('backend-'):
+              events=[]
+              for line in (temp / f'{name}.log').read_text().splitlines():
+                try: events.append(json.loads(line))
+                except ValueError: pass
+              entry['passed_tests_including_subtests'] = sum(e.get('Action') == 'pass' and bool(e.get('Test')) for e in events)
+              entry['skipped_tests'] = sum(e.get('Action') == 'skip' and bool(e.get('Test')) for e in events)
+              if name == 'backend-owner-databases' and entry['skipped_tests']: entry['exit_code'] = 1
+            results.append(entry)
+            (temp / 'results.json').write_text(json.dumps(results, indent=2))
+            print(json.dumps(entry), flush=True)
+            if entry['exit_code']:
+              print('\n'.join((temp / f'{name}.log').read_text().splitlines()[-90:]), flush=True)
+          assert hashes == {p: hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() for p in paths}, 'Source changed during tests'
+          (temp / 'source-hashes.json').write_text(json.dumps(hashes, indent=2))
+          sys.exit(any(r['exit_code'] for r in results))
+          PY
+      - name: Publish only tested feature files with branch lease
+        shell: bash
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          set -euo pipefail
+          branch=codex/channel-owned-by-image-resolution-20261019
+          git fetch origin "$branch"
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          temp = pathlib.Path(os.environ['RUNNER_TEMP']) / 'owner-image-evidence'
+          paths = json.loads((temp / 'paths.json').read_text())
+          subprocess.run(['git', 'add', '--', *paths], check=True)
+          changed = set(subprocess.check_output(['git', 'diff', '--cached', '--name-only'], text=True).splitlines())
+          assert changed == set(paths), changed
+          PY
+          git commit -m 'feat: customize public model owners and add verified image resolution controls'
+          git push origin "HEAD:refs/heads/$branch"
+          git rev-parse HEAD | tee "$RUNNER_TEMP/owner-image-evidence/published-commit.txt"
+      - name: Retain private validation evidence
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: channel-owner-image-source-0f30aadc
-          path: ${{ runner.temp }}/feature-source/
-          if-no-files-found: error
-          retention-days: 1
+          name: owner-image-validation-${{ github.run_id }}
+          path: ${{ runner.temp }}/owner-image-evidence/
+          if-no-files-found: warn
+          retention-days: 7
