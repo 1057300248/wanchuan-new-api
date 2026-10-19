@@ -1,0 +1,43 @@
+name: Channel owner and image development snapshot
+
+on:
+  push:
+    branches:
+      - codex/channel-owned-by-image-resolution-20261019
+    paths:
+      - .github/workflows/channel-owner-image-development.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: channel-owner-image-development-snapshot
+  cancel-in-progress: true
+
+jobs:
+  source:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/channel-owned-by-image-resolution-20261019'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Read the verified candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: 0f30aadcf89bdddb25ce03d84eb4c316c9fe01c8
+          persist-credentials: false
+      - name: Archive tracked source only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '0f30aadcf89bdddb25ce03d84eb4c316c9fe01c8'
+          mkdir -p "$RUNNER_TEMP/feature-source"
+          git archive --format=tar HEAD | gzip -n > "$RUNNER_TEMP/feature-source/source-0f30aadc.tar.gz"
+          cd "$RUNNER_TEMP/feature-source"
+          sha256sum source-0f30aadc.tar.gz > SHA256SUMS
+      - name: Retain private development input for one day
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: channel-owner-image-source-0f30aadc
+          path: ${{ runner.temp }}/feature-source/
+          if-no-files-found: error
+          retention-days: 1
