@@ -139,15 +139,20 @@ func channelOwnerName(channelType int) string {
 }
 
 func getPreferredModelOwners(modelNames []string, groups []string) map[string]string {
-	channelTypes, err := model.GetPreferredModelOwnerChannelTypes(modelNames, groups)
+	preferredOwners, err := model.GetPreferredModelOwners(modelNames, groups)
 	if err != nil {
-		common.SysLog(common.LogText("GetPreferredModelOwnerChannelTypes error: %v", err))
+		common.SysLog(common.LogText("GetPreferredModelOwners error: %v", err))
 		return map[string]string{}
 	}
 
 	ownerByChannelType := make(map[int]string)
-	owners := make(map[string]string, len(channelTypes))
-	for modelName, channelType := range channelTypes {
+	owners := make(map[string]string, len(preferredOwners))
+	for modelName, preferred := range preferredOwners {
+		if preferred.ModelOwnedBy != "" {
+			owners[modelName] = preferred.ModelOwnedBy
+			continue
+		}
+		channelType := preferred.ChannelType
 		owner, ok := ownerByChannelType[channelType]
 		if !ok {
 			owner = channelOwnerName(channelType)

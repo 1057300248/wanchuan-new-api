@@ -2602,6 +2602,43 @@ export function ChannelMutateDrawer({
           />
         </div>
 
+        <FormField
+          control={form.control}
+          name='model_owned_by'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('Public model owner (owned_by)')}</FormLabel>
+              <FormControl>
+                <Input
+                  {...field}
+                  value={field.value ?? ''}
+                  disabled={sensitiveLocked}
+                />
+              </FormControl>
+              <FormDescription>
+                {t(
+                  'Published in /v1/models. Leave empty to keep the provider label. This does not select a routing channel.'
+                )}
+              </FormDescription>
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                disabled={sensitiveLocked || !form.watch('name').trim()}
+                onClick={() =>
+                  form.setValue('model_owned_by', form.getValues('name'), {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  })
+                }
+              >
+                {t('Use channel name as public label')}
+              </Button>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
         {!isEditing && (
           <FormField
             control={form.control}

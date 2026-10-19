@@ -100,7 +100,18 @@ export function getModelCapability(model: string): ImageModelCapability {
   }
   if (name.includes('gpt-image-2')) {
     return {
-      sizes: ['auto', '1024x1024', '1536x864', '864x1536'],
+      sizes: [
+        'auto',
+        '1024x1024',
+        '1536x864',
+        '864x1536',
+        '2048x2048',
+        '2560x1440',
+        '1440x2560',
+        '3840x2160',
+        '2160x3840',
+        '2880x2880',
+      ],
       qualities: [...GPT_IMAGE_QUALITY],
       styles: [],
       maxN: 4,
