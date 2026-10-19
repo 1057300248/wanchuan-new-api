@@ -94,10 +94,23 @@ jobs:
           assert paths <= allowed
           subprocess.run(['git', 'apply', '--check', str(patch)], check=True)
           subprocess.run(['git', 'apply', str(patch)], check=True)
+          def replace(path, old, new, count=1):
+              assert path in allowed
+              file = pathlib.Path(path)
+              content = file.read_text()
+              assert content.count(old) == count, (path, old, content.count(old))
+              file.write_text(content.replace(old, new))
+          replace('model/model_public_owner_test.go', 'DB.AutoMigrate(&Channel{}, &Ability{})', 'DB.AutoMigrate(&Option{}, &Channel{}, &Ability{})', 2)
+          replace('model/model_public_owner_test.go', 'require.NoError(t, db.Exec("DELETE FROM channels").Error)', 'require.NoError(t, db.Exec("DELETE FROM channels").Error)\n\t\t\t\trequire.NoError(t, db.Exec("DELETE FROM options").Error)')
+          replace('web/src/features/channels/lib/channel-form.ts', 'Array.from(value.trim()).length', '[...value.trim()].length')
+          replace('web/src/features/channels/components/__tests__/channel-configuration.test.tsx', "screen.getByRole('textbox', { name: 'Name' })", "screen.getByRole('textbox', { name: /^Name\\s*\\*$/ })")
+          replace('web/src/features/channels/components/__tests__/channel-configuration.test.tsx', "expect(JSON.parse((put.mock.calls[0]?.[1] as { setting: string }).setting)).not.toHaveProperty('model_owned_by')", "const payload = put.mock.calls[0]?.[1] as { setting: string }\n  expect(JSON.parse(payload.setting)).not.toHaveProperty('model_owned_by')")
+          replace('web/src/features/channels/lib/__tests__/public-model-owner.test.ts', "if (!result.success) expect(result.error.issues.some((issue) => issue.path[0] === 'model_owned_by')).toBe(true)", "if (!result.success) {\n    expect(result.error.issues.some((issue) => issue.path[0] === 'model_owned_by')).toBe(true)\n  }")
+          replace('web/src/features/image-generation/components/ImageResolutionPresets.tsx', 'return Math.abs(b.width! / b.height! - ratio) < Math.abs(a.width! / a.height! - ratio) ? size : best', 'const aRatio = a.width && a.height ? a.width / a.height : 1\n                const bRatio = b.width && b.height ? b.width / b.height : 1\n                return Math.abs(bRatio - ratio) < Math.abs(aRatio - ratio) ? size : best')
           (temp / 'paths.json').write_text(json.dumps(sorted(allowed)))
           original = {lang: json.loads(subprocess.check_output(['git', 'show', f'{base}:web/src/i18n/locales/{lang}.json'], text=True)) for lang in data['translations']}
           (temp / 'original-locales.json').write_text(json.dumps(original, ensure_ascii=False))
-          print('Applied exact feature patch; production and main are unchanged')
+          print('Applied bounded feature patch and fixture/lint corrections; production and main are unchanged')
           PY
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
