@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/tokenkit"
+	"github.com/tidwall/gjson"
 )
 
 // ResponsesUsageAccumulator owns the accounting facts for one Responses stream.
@@ -16,32 +17,41 @@ import (
 // Finish's usage through the normal text billing path, including interrupted
 // streams. Observe and Finish must be called by the same stream owner.
 type ResponsesUsageAccumulator struct {
-	info           *relaycommon.RelayInfo
-	usage          *dto.Usage
-	outputText     strings.Builder
-	imageCounter   relaycommon.ImageGenerationCallCounter
-	imageCommitted bool
-	started        bool
-	finished       bool
+	info       *relaycommon.RelayInfo
+	usage      *dto.Usage
+	outputText strings.Builder
+	tools      *relaycommon.ResponsesToolUsageObserver
+	started    bool
+	finished   bool
+	failed     bool
+	cancelled  bool
+	hasOutput  bool
 }
 
 func NewResponsesUsageAccumulator(info *relaycommon.RelayInfo) *ResponsesUsageAccumulator {
-	return &ResponsesUsageAccumulator{info: info, usage: &dto.Usage{}}
+	return &ResponsesUsageAccumulator{info: info, usage: &dto.Usage{}, tools: relaycommon.NewResponsesToolUsageObserver(info)}
 }
 
 // Observe feeds one decoded stream event. raw is the same event's wire bytes;
 // the vendor tool-usage reader runs on it once, at the terminal event.
-func (a *ResponsesUsageAccumulator) Observe(event *dto.ResponsesStreamResponse, raw []byte) {
+func (a *ResponsesUsageAccumulator) Observe(event *dto.ResponsesStreamResponse, raw []byte) relaycommon.ResponseOutcome {
 	if a == nil || event == nil || a.finished {
-		return
+		return relaycommon.ResponseOutcomeUnknown
 	}
 	if event.Response != nil {
 		a.info.ObserveResponseModel(event.Response.Model)
 	}
 	a.started = true
-	ObserveResponsesOutcome(a.info, event)
+	outcome := ObserveResponsesOutcome(a.info, event)
+	a.failed = a.failed || outcome == relaycommon.ResponseOutcomeFailed
+	a.cancelled = a.cancelled || outcome == relaycommon.ResponseOutcomeCancelled
+	a.hasOutput = a.hasOutput || responsesEventHasOutput(event, raw, outcome)
+	a.tools.Observe(event, raw)
+	if event.Type == "error" && event.Response != nil {
+		a.tools.ObserveResponse(event.Response, raw)
+	}
 	switch event.Type {
-	case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
+	case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled", "response.error", "error":
 		if event.Response != nil {
 			ApplyResponsesUsage(a.usage, event.Response.Usage)
 			if a.outputText.Len() == 0 {
@@ -49,40 +59,13 @@ func (a *ResponsesUsageAccumulator) Observe(event *dto.ResponsesStreamResponse, 
 				a.outputText.WriteString(relayconvert.ExtractOutputTextFromResponses(event.Response))
 			}
 		}
-		// Vendor counts are cumulative on the terminal event and replace the
-		// web_search_call items counted from output_item.done.
-		a.info.ApplyVendorToolUsage(raw)
-		if a.imageCommitted {
-			return
-		}
-		// Images that completed before any terminal, failed ones included,
-		// were delivered and stay billable; Observe still skips unfinished
-		// image items.
-		if event.Response != nil {
-			for i := range event.Response.Output {
-				a.imageCounter.Observe(&event.Response.Output[i], &i)
-			}
-		}
-		a.imageCounter.Commit(a.info)
-		a.imageCommitted = true
 	case "response.output_text.delta", "response.function_call_arguments.delta",
 		"response.reasoning_summary_text.delta", "response.reasoning_text.delta", "response.refusal.delta":
 		// Every delta kind here is generated output that upstream bills as
 		// output tokens, so all of them feed the missing-usage estimate.
 		a.outputText.WriteString(event.Delta)
-	case dto.ResponsesOutputTypeItemDone:
-		if event.Item == nil {
-			return
-		}
-		switch event.Item.Type {
-		case dto.BuildInCallWebSearchCall, dto.BuildInCallFileSearchCall, dto.BuildInCallFunctionCall:
-			a.info.CountBillableToolCall(event.Item.Type, event.Item.Name)
-		case dto.ResponsesOutputTypeImageGenerationCall:
-			if !a.imageCommitted {
-				a.imageCounter.Observe(event.Item, event.OutputIndex)
-			}
-		}
 	}
+	return outcome
 }
 
 func (a *ResponsesUsageAccumulator) Finish() *dto.Usage {
@@ -92,9 +75,13 @@ func (a *ResponsesUsageAccumulator) Finish() *dto.Usage {
 	a.finished = true
 	// A final image item can already have reached the client before the stream
 	// disconnects, so completed tool usage is retained even without a terminal.
-	if !a.imageCommitted {
-		a.imageCounter.Commit(a.info)
-		a.imageCommitted = true
+	a.tools.Finish()
+	// nil is reserved for an explicit provider failure with no billable work.
+	// A zero-valued Usage still enters fixed-per-request billing; successful
+	// missing usage and transport-only interruptions retain their old estimates.
+	if (a.failed || a.cancelled) && !dto.HasOpenAIUsageTokens(a.usage) && !a.hasOutput && !a.tools.HasCalls() {
+		a.usage = nil
+		return nil
 	}
 	if a.usage.CompletionTokens == 0 {
 		if output := a.outputText.String(); output != "" {
@@ -104,13 +91,19 @@ func (a *ResponsesUsageAccumulator) Finish() *dto.Usage {
 	// Upstream bills the prompt as soon as it starts generating, so a stream
 	// that produced any event but no usage still owes its input tokens unless
 	// upstream reported an explicit failure.
-	billsPrompt := a.usage.CompletionTokens != 0 || (a.started && !a.info.StreamStatus.ResponseFailed())
+	billsPrompt := a.usage.CompletionTokens != 0 || (a.started && !a.failed)
 	if a.usage.PromptTokens == 0 && billsPrompt {
 		a.usage.PromptTokens = a.info.GetEstimatePromptTokens()
 	}
 	a.usage.TotalTokens = a.usage.PromptTokens + a.usage.CompletionTokens
 	if a.usage.BillingUsage != nil {
 		a.usage.BillingUsage = dto.CloneBillingUsageWithEstimatedCompletion(a.usage.BillingUsage, a.usage.CompletionTokens)
+		if original := a.usage.BillingUsage.OpenAIUsage; original != nil && original.InputTokens == 0 && original.PromptTokens == 0 && a.usage.PromptTokens > 0 {
+			original.InputTokens = a.usage.PromptTokens
+			original.PromptTokens = a.usage.PromptTokens
+			original.TotalTokens = max(original.TotalTokens, a.usage.PromptTokens+a.usage.CompletionTokens)
+			a.usage.BillingUsage.Estimated = true
+		}
 	}
 	return a.usage
 }
@@ -118,16 +111,30 @@ func (a *ResponsesUsageAccumulator) Finish() *dto.Usage {
 // ObserveResponsesOutcome records the protocol outcome of one Responses event
 // on the stream status for health classification. Only codes and types are
 // kept; messages never leave the event.
-func ObserveResponsesOutcome(info *relaycommon.RelayInfo, event *dto.ResponsesStreamResponse) {
-	if info == nil || info.StreamStatus == nil || event == nil {
-		return
+func ObserveResponsesOutcome(info *relaycommon.RelayInfo, event *dto.ResponsesStreamResponse) relaycommon.ResponseOutcome {
+	if event == nil {
+		return relaycommon.ResponseOutcomeUnknown
 	}
 	var responseStatus string
 	if event.Response != nil {
 		_ = common.Unmarshal(event.Response.Status, &responseStatus)
 	}
+	var outcome relaycommon.ResponseOutcome
 	switch {
-	case event.Type == "error" || event.Type == "response.failed" || event.Type == "response.error" || responseStatus == "failed":
+	case event.Type == "error" || event.Type == "response.failed" || event.Type == "response.error" || responseStatus == "failed" || responseStatus == "error":
+		outcome = relaycommon.ResponseOutcomeFailed
+	case event.Type == "response.incomplete" || responseStatus == "incomplete":
+		outcome = relaycommon.ResponseOutcomeIncomplete
+	case event.Type == "response.cancelled" || event.Type == "response.canceled" || responseStatus == "cancelled" || responseStatus == "canceled":
+		outcome = relaycommon.ResponseOutcomeCancelled
+	case event.Type == "response.completed" || event.Type == "response.done" || responseStatus == "completed":
+		outcome = relaycommon.ResponseOutcomeCompleted
+	}
+	if info == nil || info.StreamStatus == nil {
+		return outcome
+	}
+	switch outcome {
+	case relaycommon.ResponseOutcomeFailed:
 		code, errorType := event.Code, ""
 		if event.Response != nil {
 			if oaiErr := event.Response.GetOpenAIError(); oaiErr != nil {
@@ -138,17 +145,95 @@ func ObserveResponsesOutcome(info *relaycommon.RelayInfo, event *dto.ResponsesSt
 			}
 		}
 		info.StreamStatus.MarkFailed(code, errorType, 0)
-	case event.Type == "response.incomplete" || responseStatus == "incomplete":
+	case relaycommon.ResponseOutcomeIncomplete:
 		reason := ""
 		if event.Response != nil && event.Response.IncompleteDetails != nil {
 			reason = event.Response.IncompleteDetails.Reason
 		}
 		info.StreamStatus.MarkIncomplete(reason)
-	case event.Type == "response.cancelled" || event.Type == "response.canceled" || responseStatus == "cancelled":
+	case relaycommon.ResponseOutcomeCancelled:
 		info.StreamStatus.MarkCancelled()
-	case event.Type == "response.completed" || event.Type == "response.done" || responseStatus == "completed":
+	case relaycommon.ResponseOutcomeCompleted:
 		info.StreamStatus.MarkCompleted()
 	}
+	return outcome
+}
+
+// Whole output items can arrive without deltas or token usage. Inspect the
+// wire payload as well as the DTO: compatible providers may include refusal or
+// encrypted reasoning fields that the typed content model does not retain.
+// This only preserves the existing billing path; it does not invent token use.
+func responsesEventHasOutput(event *dto.ResponsesStreamResponse, raw []byte, outcome relaycommon.ResponseOutcome) bool {
+	if len(raw) == 0 {
+		raw, _ = common.Marshal(event)
+	}
+	root := gjson.ParseBytes(raw)
+	var outputField string
+	switch event.Type {
+	case "response.output_text.delta", "response.function_call_arguments.delta", "response.custom_tool_call_input.delta",
+		"response.mcp_call_arguments.delta", "response.code_interpreter_call_code.delta", "response.audio.delta", "response.audio_transcript.delta",
+		"response.reasoning_summary_text.delta", "response.reasoning_text.delta", "response.refusal.delta":
+		outputField = "delta"
+	case "response.output_text.done", "response.reasoning_summary_text.done", "response.reasoning_text.done":
+		outputField = "text"
+	case "response.function_call_arguments.done", "response.mcp_call_arguments.done":
+		outputField = "arguments"
+	case "response.custom_tool_call_input.done":
+		outputField = "input"
+	case "response.code_interpreter_call_code.done":
+		outputField = "code"
+	case "response.refusal.done":
+		outputField = "refusal"
+	}
+	if outputField != "" && root.Get(outputField).Str != "" {
+		return true
+	}
+	var items []gjson.Result
+	if event.Response != nil {
+		if root.Get("response").Exists() {
+			items = root.Get("response.output").Array()
+		} else {
+			// Non-streaming HTTP supplies the response itself, not an event
+			// envelope. Its echoed input is never generated output.
+			items = root.Get("output").Array()
+		}
+	}
+	switch event.Type {
+	case dto.ResponsesOutputTypeItemAdded, dto.ResponsesOutputTypeItemDone:
+		items = append(items, root.Get("item"))
+	case "response.content_part.added", "response.content_part.done", "response.reasoning_summary_part.added", "response.reasoning_summary_part.done":
+		items = append(items, root.Get("part"))
+	}
+	for _, item := range items {
+		status := item.Get("status").Str
+		completed := status == "completed" || status == "" && (outcome != relaycommon.ResponseOutcomeUnknown || event.Type == dto.ResponsesOutputTypeItemDone)
+		if completed && strings.HasSuffix(item.Get("type").Str, "_call") &&
+			(item.Get("id").Str != "" || item.Get("name").Str != "" || item.Get("call_id").Str != "") {
+			// Selecting a completed tool is generated work even when it takes
+			// no arguments and has no configured per-call surcharge.
+			return true
+		}
+		for _, field := range []string{"text", "refusal", "arguments", "input", "code", "output", "outputs", "result", "results", "tools", "encrypted_content"} {
+			value := item.Get(field)
+			if value.Type == gjson.String && value.Str != "" || value.IsObject() || value.IsArray() && len(value.Array()) > 0 {
+				return true
+			}
+		}
+		for _, field := range []string{"action", "queries", "operation"} {
+			value := item.Get(field)
+			if value.Type == gjson.String && value.Str != "" || value.IsObject() && len(value.Map()) > 0 || value.IsArray() && len(value.Array()) > 0 {
+				return true
+			}
+		}
+		for _, field := range []string{"content", "summary"} {
+			for _, part := range item.Get(field).Array() {
+				if part.Get("text").Str != "" || part.Get("refusal").Str != "" {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func ApplyResponsesUsage(dst *dto.Usage, src *dto.Usage) {

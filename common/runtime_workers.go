@@ -8,14 +8,19 @@ import (
 )
 
 func RunSystemMonitor(schedule, work context.Context) {
+	usage := newContainerUsage()
+	var detector overloadDetector
 	lifecycle.Periodic(schedule, work, func() time.Duration {
-		if !GetPerformanceMonitorConfig().Enabled {
-			return 30 * time.Second
-		}
-		return 5 * time.Second
+		return systemMonitorInterval
 	}, true, func(context.Context) {
-		if GetPerformanceMonitorConfig().Enabled {
-			updateSystemStatus()
+		config := GetPerformanceMonitorConfig()
+		if !config.Enabled {
+			detector = overloadDetector{}
+			latestSystemStatus.Store(SystemStatus{SampledAt: time.Now()})
+			return
 		}
+		status := collectSystemStatus(usage)
+		detector.mark(&status, config)
+		latestSystemStatus.Store(status)
 	})
 }

@@ -38,6 +38,9 @@ export function Profile() {
 
   const checkinEnabled = status?.checkin_enabled === true
   const canConfigureSidebar = permissions?.sidebar_settings !== false
+  // Older cached status payloads lack these fields; the site default is on.
+  const quotaRemindEnabled = status?.quota_remind_enabled !== false
+  const quotaRemindThreshold = status?.quota_remind_threshold ?? 0
 
   return (
     <Main>
@@ -54,6 +57,8 @@ export function Profile() {
                   profile={profile}
                   loading={loading}
                   onProfileUpdate={refreshProfile}
+                  quotaRemindEnabled={quotaRemindEnabled}
+                  quotaRemindThreshold={quotaRemindThreshold}
                 />
                 <LanguagePreferencesCard
                   profile={profile}

@@ -76,13 +76,11 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int, entry Led
 		return nil, err
 	}
 
-	// Apply only the committed difference, preserving outstanding reservations.
-	// Both balances are bounded above, so their difference fits in int64.
-	delta := int64(adjustment.After) - int64(adjustment.Before)
-	if delta != 0 && !adjustment.Replayed {
-		if err := cacheIncrUserQuota(userID, delta); err != nil {
-			common.SysError(common.LogText("failed to sync manual quota adjustment for user %d: %s", userID, err))
-		}
+	// Wallet reservations and adjustments are already committed in the ledger.
+	// A concurrent cache miss may have loaded the new balance, so applying the
+	// same difference to Redis would credit or debit it twice.
+	if !adjustment.Replayed {
+		RefreshUserQuotaCache(userID, adjustment.After)
 	}
 	return &adjustment, nil
 }

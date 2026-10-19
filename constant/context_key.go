@@ -12,6 +12,9 @@ const (
 	// The Responses handler owns the SSE error response, even when the client
 	// disconnected or a write failed. Do not retry or append a JSON HTTP error.
 	ContextKeyResponsesStreamErrorHandled ContextKey = "responses_stream_error_handled"
+	// A failed native non-stream response has confirmed output or usage to
+	// settle. Other adaptors may return an empty Usage alongside an error.
+	ContextKeyResponsesPartialUsage ContextKey = "responses_partial_usage"
 	// ContextKeyStreamErrorHandled marks a non-Responses SSE failure that has
 	// already emitted an in-band protocol error. The outer relay must still
 	// record the request as failed, but must not append a JSON HTTP error or retry
@@ -47,6 +50,11 @@ const (
 	ContextKeyChannelIsMultiKey        ContextKey = "channel_is_multi_key"
 	ContextKeyChannelMultiKeyIndex     ContextKey = "channel_multi_key_index"
 	ContextKeyChannelKey               ContextKey = "channel_key"
+
+	// ContextKeyUpstreamRequestOrigin is the scheme and host of the last upstream
+	// request, which differs from the base URL for absolute Advanced Custom routes
+	// and for adaptors that build official endpoints themselves.
+	ContextKeyUpstreamRequestOrigin ContextKey = "upstream_request_origin"
 
 	ContextKeyAutoGroup           ContextKey = "auto_group"
 	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"

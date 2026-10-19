@@ -41,53 +41,53 @@ const pricing = [
   { model_name: 'gpt-4o', supported_endpoint_types: ['chat'] },
 ]
 
-describe('getAvailableImageModels intersects pricing, group, and token limits', () => {
+describe('getAvailableImageModels intersects image capabilities with the server token scope', () => {
   test.each(['', ' , '])(
     'an enabled empty allowlist %j permits no models',
     (model_limits) => {
       expect(
         getAvailableImageModels({
           pricingModels: pricing,
-          groupModels: ['dall-e-3', 'gpt-image-2'],
+          tokenModels: [],
           token: makeToken({ model_limits_enabled: true, model_limits }),
         })
       ).toEqual([])
     }
   )
 
-  test('keeps only image endpoint models present in the key group', () => {
+  test('keeps only image endpoint models present in the server token scope', () => {
     const models = getAvailableImageModels({
       pricingModels: pricing,
-      groupModels: ['dall-e-3', 'gpt-4o'],
+      tokenModels: ['dall-e-3', 'gpt-4o'],
       token: makeToken(),
     })
     expect(models).toEqual(['dall-e-3'])
   })
 
-  test('applies comma-separated token model_limits when enabled', () => {
+  test('preserves server-authorized models without duplicating whitelist rules', () => {
     const models = getAvailableImageModels({
       pricingModels: pricing,
-      groupModels: ['dall-e-3', 'gpt-image-2'],
+      tokenModels: ['gpt-image-2'],
       token: makeToken({
         model_limits_enabled: true,
-        model_limits: 'gpt-image-2',
+        model_limits: 'image-provider-alias',
       }),
     })
     expect(models).toEqual(['gpt-image-2'])
   })
 
-  test('returns empty when the token is missing or the group has no overlap', () => {
+  test('returns empty when the token is missing or the token has no image capability overlap', () => {
     expect(
       getAvailableImageModels({
         pricingModels: pricing,
-        groupModels: ['dall-e-3'],
+        tokenModels: ['dall-e-3'],
         token: null,
       })
     ).toEqual([])
     expect(
       getAvailableImageModels({
         pricingModels: pricing,
-        groupModels: ['gpt-4o'],
+        tokenModels: ['gpt-4o'],
         token: makeToken(),
       })
     ).toEqual([])

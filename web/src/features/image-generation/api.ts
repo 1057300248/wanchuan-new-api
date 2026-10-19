@@ -23,6 +23,7 @@ import type { ApiKey } from '@/features/keys/types'
 import { getPricing } from '@/features/pricing/api'
 import { api } from '@/lib/api'
 import { apiResourceUrl } from '@/lib/api-url'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import {
   getManagedObjectUrlMimeType,
@@ -48,6 +49,7 @@ export function toImageKeyOption(key: ApiKey): ImageApiKeyOption {
     id: key.id,
     name: key.name,
     group: key.group ?? '',
+    auto_groups: key.auto_groups,
     model_limits_enabled: key.model_limits_enabled,
     model_limits: key.model_limits ?? '',
     status: key.status,
@@ -90,13 +92,14 @@ export async function loadImagePageBootstrap(): Promise<{
   return { keys, pricingModels: pricingRes.data ?? [] }
 }
 
-export async function loadGroupModels(group: string): Promise<string[]> {
-  const res = await api.get('/api/user/models', {
-    params: { group },
+export async function loadImageTokenModels(id: number): Promise<string[]> {
+  const res = await api.get(`/api/token/${id}/models`, {
     skipErrorHandler: true,
   })
-  const data = res.data
-  if (!data?.success || !Array.isArray(data.data)) return []
+  const data = requireServerSuccess(res.data)
+  if (!Array.isArray(data?.data)) {
+    throw new Error(t('Failed to load models'))
+  }
   return (data.data as unknown[]).filter(
     (item): item is string => typeof item === 'string'
   )

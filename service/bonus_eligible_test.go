@@ -427,12 +427,12 @@ func TestTaskAdjustFundingSettleAndRefundPrecise(t *testing.T) {
 	}
 
 	// 差额结算退款（退 600）：bonus 退 420 / paid 退 180
-	_, err := taskAdjustFunding(task, -600)
+	_, err := taskAdjustFunding(task, -600, nil)
 	require.NoError(t, err)
 	assertUserBalances(t, userID, 420, 180, 0)
 
 	// 差额结算补扣（补 200）：按任务记录顺序 bonus 优先
-	_, err = taskAdjustFunding(task, 200)
+	_, err = taskAdjustFunding(task, 200, nil)
 	require.NoError(t, err)
 	assertUserBalances(t, userID, 220, 180, 0)
 }

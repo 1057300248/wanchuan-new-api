@@ -106,6 +106,9 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+	if info != nil {
+		info.VendorToolUsage = xaiResponsesToolUsage
+	}
 	if request.Model == "" && info != nil {
 		request.Model = info.UpstreamModelName
 	}

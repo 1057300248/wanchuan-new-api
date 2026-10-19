@@ -1,6 +1,7 @@
 package relayconvert
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -517,7 +518,37 @@ func TestConvertStreamResponseStatefulDirectConverters(t *testing.T) {
 	assert.Equal(t, ConverterOpenAIResponsesToOpenAIChat, responsesResults[0].Converter)
 	assert.Equal(t, []ResponseStep{{Converter: ConverterOpenAIResponsesToOpenAIChat, From: types.RelayFormatOpenAIResponses, To: types.RelayFormatOpenAI}}, responsesResults[0].Steps)
 	require.IsType(t, dto.ChatCompletionsStreamResponse{}, responsesResults[len(responsesResults)-1].Value)
-	assert.Empty(t, responsesState.UsageText())
+	assert.Equal(t, "hello", responsesState.UsageText())
+	assert.True(t, responsesState.HasUsageText())
+}
+
+// Capturing usage text is the safe default for direct and composed consumers.
+// A caller with its own incremental estimator may opt out without losing the
+// distinction between a role prelude and generated output on a failed stream.
+func TestResponsesStreamUsageCaptureContract(t *testing.T) {
+	for _, format := range []types.RelayFormat{types.RelayFormatOpenAI, types.RelayFormatGemini} {
+		for _, disable := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/disable_%t", format, disable), func(t *testing.T) {
+				state, err := NewResponseStreamState(types.RelayFormatOpenAIResponses, format, ResponseStreamOptions{
+					ID: "resp_usage", Model: "gpt-test", DisableUsageText: disable,
+				})
+				require.NoError(t, err)
+				_, err = ConvertStreamResponseChunk(nil, nil, state, &dto.ResponsesStreamResponse{
+					Type: "response.created", Response: &dto.OpenAIResponsesResponse{ID: "resp_usage", Model: "gpt-test"},
+				})
+				require.NoError(t, err)
+				assert.False(t, state.HasUsageText(), "a role-only prelude is not generated text")
+				_, err = ConvertStreamResponseChunk(nil, nil, state, &dto.ResponsesStreamResponse{Type: "response.output_text.delta", Delta: "hello"})
+				require.NoError(t, err)
+				assert.True(t, state.HasUsageText())
+				if disable {
+					assert.Empty(t, state.UsageText())
+				} else {
+					assert.Equal(t, "hello", state.UsageText())
+				}
+			})
+		}
+	}
 }
 
 func TestConvertStreamResponseStatefulDirectResponsesToClaude(t *testing.T) {

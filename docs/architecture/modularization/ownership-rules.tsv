@@ -1,9 +1,13 @@
 match_type	pattern	ownership	module	disposition	note
 exact	main.go	COMPOSITION_ROOT	backend-composition	RETAIN	Only production host entrypoint allowed to import chuanapi composition adapter
+exact	runtime.go	COMPOSITION_ROOT	backend-runtime	RETAIN	Host lifecycle, request drain and background worker composition
+exact	web-assets.go	COMPOSITION_ROOT	frontend-embed	RETAIN	Full gateway frontend embed composition
+exact	web-assets-api-only.go	COMPOSITION_ROOT	frontend-embed	RETAIN	API-only gateway build composition
 prefix	modules/chuanapi/wallet/	CHUANAPI_MODULE	wallet	RETAIN	Wallet runtime, commercial policy, admin surface and migration contribution
 prefix	modules/chuanapi/affiliate/	CHUANAPI_MODULE	affiliate	RETAIN	Affiliate reward policy and schema contribution
 prefix	modules/chuanapi/payment/	CHUANAPI_MODULE	payment-waffo	RETAIN	ChuanAPI Waffo and Waffo-Pancake provider implementation
 prefix	modules/chuanapi/console/	CHUANAPI_MODULE	console	RETAIN	ChuanAPI public console/help backend routes
+prefix	modules/chuanapi/support/	CHUANAPI_MODULE	support	RETAIN	ChuanAPI support module registration
 prefix	modules/imagegen/	GENERIC_MODULE	imagegen	RETAIN	Generic asynchronous image generation backend module
 prefix	chuanapi/	COMPOSITION_ROOT	backend-composition	SPLIT	Current adapter; implementation details must migrate into individual modules
 exact	web/src/extensions/bootstrap.ts	COMPOSITION_ROOT	frontend-composition	RETAIN	Single frontend concrete extension wiring root loaded by main.tsx
@@ -18,6 +22,7 @@ prefix	pkg/paymentcore/	GENERIC_CORE_ENHANCEMENT	payment-core	RETAIN	Provider-ne
 prefix	pkg/billingexpr/	GENERIC_CORE_ENHANCEMENT	billing-expression	UPSTREAM_CANDIDATE	Generic pricing expression capability
 prefix	architecture/	TEST_COMPAT	architecture-tests	RETAIN	Executable dependency and ownership gates
 prefix	cmd/archmanifest/	TEST_COMPAT	architecture-tooling	RETAIN	Deterministic fork ownership manifest generator
+prefix	cmd/referral-cleanup/	OPS_DEPLOYMENT	migration-tooling	REVIEW	Explicit operator-run referral data cleanup command
 prefix	model/balance_ledger	DATA_COMPATIBILITY	wallet-data	DEFERRED_MIGRATION	Ledger schema and transaction engine still atomically update root users.quota* columns
 prefix	model/model_bonus_eligible	DATA_COMPATIBILITY	wallet-data	DEFERRED_MIGRATION	Bonus eligibility persistence and audit schema remain host model compatibility until dedicated data migration
 prefix	model/affiliate	DATA_COMPATIBILITY	affiliate-data	DEFERRED_MIGRATION	Affiliate reward/reconcile persistence remains host model compatibility until dedicated data migration
@@ -58,11 +63,17 @@ suffix	.test.tsx	TEST_COMPAT	frontend-tests	RETAIN	Frontend regression tests
 suffix	.spec.ts	TEST_COMPAT	frontend-tests	RETAIN	Frontend regression tests
 suffix	.spec.tsx	TEST_COMPAT	frontend-tests	RETAIN	Frontend regression tests
 exact	AGENTS.md	TEST_COMPAT	repository-guidance	RETAIN	Repository contribution guidance
+exact	THIRD-PARTY-LICENSES.md	TEST_COMPAT	dependency-notices	RETAIN	Dependency versions and complete upstream license notices; non-runtime review evidence
 exact	.dockerignore	OPS_DEPLOYMENT	build-config	RETAIN	Container build configuration
 exact	.env.example	OPS_DEPLOYMENT	build-config	RETAIN	Deployment configuration template
 exact	.gitattributes	OPS_DEPLOYMENT	repository-config	RETAIN	Repository configuration
 exact	.gitignore	OPS_DEPLOYMENT	repository-config	RETAIN	Repository configuration
 exact	Dockerfile	OPS_DEPLOYMENT	build-config	RETAIN	Container build configuration
+exact	Dockerfile.api	OPS_DEPLOYMENT	build-config	RETAIN	API-only container build configuration
+exact	Dockerfile.dev	OPS_DEPLOYMENT	build-config	RETAIN	Development container build configuration
+exact	makefile	OPS_DEPLOYMENT	build-config	RETAIN	Multi-module build and test entrypoints
+exact	go.mod	OPS_DEPLOYMENT	build-dependencies	REVIEW	Root Go dependency and local-module compatibility constraints
+exact	go.sum	OPS_DEPLOYMENT	build-dependencies	REVIEW	Verified root Go dependency checksums
 exact	docker-compose.yml	OPS_DEPLOYMENT	build-config	RETAIN	Container deployment configuration
 exact	VERSION	OPS_DEPLOYMENT	release-config	RETAIN	Product release metadata
 prefix	web/	PRODUCT_CORE_CUSTOMIZATION	frontend-core	RETAIN_REVIEW	Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
@@ -70,11 +81,14 @@ prefix	common/	GENERIC_CORE_ENHANCEMENT	core-common	UPSTREAM_REVIEW	Generic host
 prefix	constant/	GENERIC_CORE_ENHANCEMENT	core-constant	UPSTREAM_REVIEW	Generic host constants/context changes
 prefix	controller/	GENERIC_CORE_ENHANCEMENT	core-controller	UPSTREAM_REVIEW	Generic host HTTP behavior changes after concrete ChuanAPI handlers are extracted
 prefix	logger/	GENERIC_CORE_ENHANCEMENT	core-logging	UPSTREAM_REVIEW	Generic logging hardening
+prefix	i18n/	GENERIC_CORE_ENHANCEMENT	core-i18n	UPSTREAM_REVIEW	Backend messages and locale compatibility
 prefix	middleware/	GENERIC_CORE_ENHANCEMENT	core-middleware	UPSTREAM_REVIEW	Generic authentication/rate-limit/security hardening
 prefix	model/	GENERIC_CORE_ENHANCEMENT	core-model	UPSTREAM_REVIEW	Generic host persistence changes not classified as deferred module data compatibility
 prefix	pkg/	GENERIC_CORE_ENHANCEMENT	core-package	UPSTREAM_REVIEW	Generic reusable package changes not covered by a narrower port/module rule
 prefix	relay/	GENERIC_CORE_ENHANCEMENT	core-relay	UPSTREAM_REVIEW	Generic relay/billing/protocol behavior changes
 prefix	relaykit/	GENERIC_CORE_ENHANCEMENT	core-relaykit	UPSTREAM_REVIEW	Generic protocol conversion changes
+prefix	tokenkit/	GENERIC_CORE_ENHANCEMENT	core-tokenkit	UPSTREAM_REVIEW	Independent token estimation and streaming accounting
+exact	plugins/tasks/xai/plugin.js	GENERIC_CORE_ENHANCEMENT	core-task-plugins	UPSTREAM_REVIEW	Generic xAI task protocol and usage compatibility
 prefix	router/	GENERIC_CORE_ENHANCEMENT	core-router	UPSTREAM_REVIEW	Generic host route changes after module routes are extracted
 prefix	service/	GENERIC_CORE_ENHANCEMENT	core-service	UPSTREAM_REVIEW	Generic orchestration/accounting/task changes after module policy extraction
 prefix	setting/	GENERIC_CORE_ENHANCEMENT	core-setting	UPSTREAM_REVIEW	Generic host settings changes not classified as deferred provider data compatibility

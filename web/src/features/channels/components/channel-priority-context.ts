@@ -16,22 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createContext, useContext } from 'react'
+import { createContext, type KeyboardEvent, type PointerEvent } from 'react'
 
-export type SearchContextType = {
-  open: boolean
-  setOpen: React.Dispatch<React.SetStateAction<boolean>>
+type PriorityControls = {
+  reason: 'sort' | 'tag' | 'permission' | 'busy' | null
+  start: (event: PointerEvent<HTMLButtonElement>, id: number) => void
+  keyDown: (event: KeyboardEvent<HTMLButtonElement>, id: number) => void
 }
 
-export const SearchContext = createContext<SearchContextType | null>(null)
-
-// eslint-disable-next-line react-refresh/only-export-components
-export const useSearch = () => {
-  const searchContext = useContext(SearchContext)
-
-  if (!searchContext) {
-    throw new Error('useSearch has to be used within SearchProvider')
-  }
-
-  return searchContext
-}
+export const ChannelPriorityContext = createContext<PriorityControls | null>(
+  null
+)

@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 /// <reference types="@rsbuild/core/types" />
 
 interface ImportMetaEnv {
+  /** Release version stamped into the compiled frontend by CI. */
+  readonly VITE_REACT_APP_VERSION?: string
   /**
    * Optional API origin for deployments that host the console separately from
    * the API. Empty or absent keeps all app-owned requests on the frontend

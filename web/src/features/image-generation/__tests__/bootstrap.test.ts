@@ -55,6 +55,7 @@ function makeKey(id: number, status = 1, group = 'default'): ApiKey {
     model_limits_enabled: false,
     model_limits: '',
     allow_ips: '',
+    allow_user_quota_query: true,
   }
 }
 

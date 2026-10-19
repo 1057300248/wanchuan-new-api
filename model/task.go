@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -12,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"gorm.io/gorm"
 )
 
 type TaskStatus string
@@ -580,8 +582,19 @@ func (Task *Task) Update() error {
 	return err
 }
 
-func (t *Task) UpdateQuota() error {
-	return DB.Model(t).Update("quota", t.Quota).Error
+// UpdateBillingStateTx commits the final quota and its wallet receipt together.
+// The previous quota guards against a stale observer applying the same token or
+// subscription adjustment twice. A failed update rolls back the caller's funds.
+func (t *Task) UpdateBillingStateTx(tx *gorm.DB, previousQuota int) error {
+	result := tx.Model(&Task{}).Where("id = ? AND quota = ?", t.ID, previousQuota).
+		Select("quota", "private_data").Updates(t)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("task billing state changed for task %s", t.TaskID)
+	}
+	return nil
 }
 
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).

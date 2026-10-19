@@ -9,8 +9,6 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/console_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
@@ -36,7 +34,6 @@ type llmsFAQ struct {
 
 type llmsModel struct {
 	Name          string
-	Description   string
 	Billing       string
 	Groups        []string
 	Endpoints     []string
@@ -185,10 +182,7 @@ func buildLlmsPageData(c *gin.Context) llmsPageData {
 		}
 	}
 
-	pricing := model.FilterPricingByUsableGroups(
-		model.GetPricing(),
-		setting.GetUserUsableGroupsCopy(),
-	)
+	catalog := buildPublicCatalog()
 
 	return llmsPageData{
 		SystemName:    common.SystemName,
@@ -198,11 +192,11 @@ func buildLlmsPageData(c *gin.Context) llmsPageData {
 		Notice:        notice,
 		Announcements: announcements,
 		FAQ:           faq,
-		Models:        publicModelsFromPricing(pricing),
+		Models:        publicModelsFromPricing(catalog.Models),
 	}
 }
 
-func publicModelsFromPricing(pricing []model.Pricing) []llmsModel {
+func publicModelsFromPricing(pricing []publicCatalogModel) []llmsModel {
 	models := make([]llmsModel, 0, len(pricing))
 	for _, item := range pricing {
 		billing := "token ratios: input " + strconv.FormatFloat(item.ModelRatio, 'g', -1, 64) +
@@ -228,7 +222,6 @@ func publicModelsFromPricing(pricing []model.Pricing) []llmsModel {
 
 		models = append(models, llmsModel{
 			Name:          item.ModelName,
-			Description:   item.Description,
 			Billing:       billing,
 			Groups:        groups,
 			Endpoints:     endpoints,
@@ -352,9 +345,6 @@ func renderLlmsFull(data llmsPageData) string {
 				markdownCell(strings.Join(item.Capabilities, ", ")),
 				markdownCell(item.BonusEligible),
 			)
-			if description := plainText(item.Description); description != "" {
-				fmt.Fprintf(&builder, "\n%s: %s\n", plainText(item.Name), description)
-			}
 		}
 	}
 

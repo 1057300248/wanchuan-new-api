@@ -16,10 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { skipToken, useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 
-import { loadGroupModels, loadImagePageBootstrap } from '../api'
+import { loadImageTokenModels, loadImagePageBootstrap } from '../api'
 import { getAvailableImageModels } from '../lib/model-filter'
 
 export function useImageData() {
@@ -43,25 +43,34 @@ export function useImageData() {
   )
   const group = selectedKey?.group ?? ''
 
-  const groupModelsQuery = useQuery({
-    queryKey: ['image-generation-group-models', group],
-    queryFn: () => loadGroupModels(group),
-    enabled: selectedKey !== null,
+  const tokenModelsQuery = useQuery({
+    queryKey: [
+      'image-generation-token-models',
+      selectedKey?.id ?? null,
+      group,
+      selectedKey?.auto_groups ?? null,
+      selectedKey?.model_limits_enabled ?? false,
+      selectedKey?.model_limits ?? '',
+    ],
+    queryFn: selectedKey
+      ? () => loadImageTokenModels(selectedKey.id)
+      : skipToken,
+    staleTime: 0,
   })
 
-  const groupModels = useMemo(
-    () => groupModelsQuery.data ?? [],
-    [groupModelsQuery.data]
+  const tokenModels = useMemo(
+    () => (tokenModelsQuery.isError ? [] : (tokenModelsQuery.data ?? [])),
+    [tokenModelsQuery.data, tokenModelsQuery.isError]
   )
 
   const availableModels = useMemo(
     () =>
       getAvailableImageModels({
         pricingModels,
-        groupModels,
+        tokenModels,
         token: selectedKey,
       }),
-    [pricingModels, groupModels, selectedKey]
+    [pricingModels, tokenModels, selectedKey]
   )
 
   const effectiveApiKeyId = apiKeyId ?? selectedKey?.id ?? null
@@ -82,7 +91,7 @@ export function useImageData() {
   return {
     keys,
     pricingModels,
-    groupModels,
+    tokenModels,
     availableModels,
     selectedKey,
     apiKeyId: effectiveApiKeyId,
@@ -94,8 +103,8 @@ export function useImageData() {
     isBootstrapError: bootstrap.isError,
     bootstrapError: bootstrap.error,
     refetchBootstrap: bootstrap.refetch,
-    isLoadingGroupModels: groupModelsQuery.isLoading,
-    isGroupModelsError: groupModelsQuery.isError,
-    refetchGroupModels: groupModelsQuery.refetch,
+    isLoadingTokenModels: tokenModelsQuery.isLoading,
+    isTokenModelsError: tokenModelsQuery.isError,
+    refetchTokenModels: tokenModelsQuery.refetch,
   }
 }

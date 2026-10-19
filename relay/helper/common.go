@@ -30,14 +30,20 @@ func FlushWriter(c *gin.Context) (err error) {
 	if requestContextDone(c) {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
+	// Preserve Gin's Flush header/commit bookkeeping while observing the
+	// underlying FlushError. A header-only flush has started the response too.
+	c.Writer.WriteHeaderNow()
 
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
-		return errors.New("streaming error: flusher not found")
+	if flusher, ok := c.Writer.(interface{ FlushError() error }); ok {
+		return flusher.FlushError()
 	}
-
-	flusher.Flush()
-	return nil
+	// Gin's Flush discards FlushError from the underlying socket. Unwrap Gin
+	// once so buffered delivery failures remain observable to stream owners.
+	writer := http.ResponseWriter(c.Writer)
+	if unwrapper, ok := c.Writer.(interface{ Unwrap() http.ResponseWriter }); ok {
+		writer = unwrapper.Unwrap()
+	}
+	return http.NewResponseController(writer).Flush()
 }
 
 func requestContextDone(c *gin.Context) bool {
@@ -61,20 +67,12 @@ func SetEventStreamHeaders(c *gin.Context) {
 }
 
 func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
-	if requestContextDone(c) {
-		return nil
-	}
-
 	jsonData, err := common.Marshal(resp)
 	if err != nil {
-		common.SysError(common.LogText("error marshalling stream response: %s", err.Error()))
-	} else {
-		jsonData = privacy.SanitizeClientPayload(c, jsonData)
-		c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
-		c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
+		return fmt.Errorf("error marshalling stream response: %w", err)
 	}
-	_ = FlushWriter(c)
-	return nil
+	jsonData = privacy.SanitizeClientPayload(c, jsonData)
+	return writeEventStreamFrame(c, fmt.Sprintf("event: %s\ndata: %s\n\n", resp.Type, jsonData))
 }
 
 func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
@@ -88,21 +86,41 @@ func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
 	_ = FlushWriter(c)
 }
 
-func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) (err error) {
+func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) error {
+	data = string(privacy.SanitizeClientPayload(c, []byte(data)))
+	return writeEventStreamFrame(c, fmt.Sprintf("event: %s\ndata: %s\n\n", resp.Type, data))
+}
+
+// writeEventStreamFrame preserves the actual write and flush result. Stream
+// owners use it to stop upstream generation and avoid a false normal terminal.
+type streamWriteError struct{ cause error }
+
+func (e *streamWriteError) Error() string { return e.cause.Error() }
+func (e *streamWriteError) Unwrap() error { return e.cause }
+
+// IsStreamWriteError separates downstream delivery failures from JSON or
+// protocol conversion errors returned by the same stream formatting helpers.
+func IsStreamWriteError(err error) bool {
+	var writeErr *streamWriteError
+	return errors.As(err, &writeErr)
+}
+
+func writeEventStreamFrame(c *gin.Context, frame string) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("Responses stream write panic: %v", r)
+			err = fmt.Errorf("stream write panic: %v", r)
+		}
+		if err != nil {
+			err = &streamWriteError{cause: err}
 		}
 	}()
+	if c == nil || c.Writer == nil {
+		return errors.New("context or writer is nil")
+	}
 	if requestContextDone(c) {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 	SetEventStreamHeaders(c)
-
-	data = string(privacy.SanitizeClientPayload(c, []byte(data)))
-	// CustomEvent discards write errors. Responses handlers need the actual
-	// result so a broken client connection is not recorded as a completed stream.
-	frame := fmt.Sprintf("event: %s\ndata: %s\n\n", resp.Type, data)
 	n, err := c.Writer.WriteString(frame)
 	if err != nil {
 		return err
@@ -110,28 +128,12 @@ func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data st
 	if n != len(frame) {
 		return io.ErrShortWrite
 	}
-	// Gin exposes only Flush(), which discards net/http's FlushError result.
-	// Its Unwrap method lets us detect buffered socket failures as well. Stop
-	// unwrapping at other middleware so its own flushing semantics are retained.
-	writer := http.ResponseWriter(c.Writer)
-	if unwrapper, ok := c.Writer.(interface{ Unwrap() http.ResponseWriter }); ok {
-		writer = unwrapper.Unwrap()
-	}
-	return http.NewResponseController(writer).Flush()
+	return FlushWriter(c)
 }
 
 func StringData(c *gin.Context, str string) error {
-	if c == nil || c.Writer == nil {
-		return errors.New("context or writer is nil")
-	}
-
-	if requestContextDone(c) {
-		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
-	}
-
 	str = string(privacy.SanitizeClientPayload(c, []byte(str)))
-	c.Render(-1, common.CustomEvent{Data: "data: " + str})
-	return FlushWriter(c)
+	return writeEventStreamFrame(c, "data: "+str+"\n\n")
 }
 
 func PingData(c *gin.Context) error {
@@ -143,8 +145,13 @@ func PingData(c *gin.Context) error {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
-	if _, err := c.Writer.Write([]byte(": PING\n\n")); err != nil {
+	const ping = ": PING\n\n"
+	n, err := c.Writer.Write([]byte(ping))
+	if err != nil {
 		return fmt.Errorf("write ping data failed: %w", err)
+	}
+	if n != len(ping) {
+		return io.ErrShortWrite
 	}
 	return FlushWriter(c)
 }
@@ -191,7 +198,7 @@ func WssError(c *gin.Context, ws *websocket.Conn, apiErr *types.NewAPIError) {
 	if ws == nil || apiErr == nil {
 		return
 	}
-	openaiError := privacy.SanitizeClientOpenAIError(c, apiErr.StatusCode, apiErr.ToOpenAIError())
+	openaiError := privacy.SanitizeClientOpenAIError(c, apiErr.StatusCode, apiErr.ToOpenAIError(common.UpstreamAddresses(c)...))
 	errorObj := &dto.RealtimeEvent{
 		Type:    "error",
 		EventId: GetLocalRealtimeID(c),

@@ -45,20 +45,26 @@ beforeEach(() => {
   })
 })
 afterEach(() => {
+  vi.restoreAllMocks()
   client.clear()
   localStorage.clear()
 })
 
 function renderPage(
   endpoints: string[],
-  groupModels = [name],
+  tokenModels = [name],
   selectedKey = key
 ) {
   client.setQueryData(['image-generation-bootstrap'], {
     keys: [selectedKey],
     pricingModels: [{ model_name: name, supported_endpoint_types: endpoints }],
   })
-  client.setQueryData(['image-generation-group-models', 'default'], groupModels)
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === `/api/token/${selectedKey.id}/models`) {
+      return { data: { success: true, data: tokenModels } }
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  })
   return render(
     <QueryClientProvider client={client}>
       <ImageGenerationPage />
@@ -70,19 +76,19 @@ test.each([
   {
     label: 'missing image endpoint',
     endpoints: ['openai'],
-    groupModels: [name],
+    tokenModels: [name],
     selectedKey: key,
   },
   {
     label: 'group excludes the model',
     endpoints: ['image-generation'],
-    groupModels: [],
+    tokenModels: [],
     selectedKey: key,
   },
   {
     label: 'token restricts the model',
     endpoints: ['image-generation'],
-    groupModels: [name],
+    tokenModels: [],
     selectedKey: {
       ...key,
       model_limits_enabled: true,
@@ -91,14 +97,19 @@ test.each([
   },
 ])(
   '$label shows configuration checks without enabling generation',
-  async ({ endpoints, groupModels, selectedKey }) => {
-    renderPage(endpoints, groupModels, selectedKey)
+  async ({ endpoints, tokenModels, selectedKey }) => {
+    renderPage(endpoints, tokenModels, selectedKey)
     expect(await screen.findByText(hint)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Generate' })).toBeDisabled()
   }
 )
 
-test('refresh reloads pricing, token limits and group models after configuration is repaired', async () => {
+test('refresh reloads pricing, token limits and owned token models after configuration is repaired', async () => {
+  renderPage(['openai'], [], {
+    ...key,
+    model_limits_enabled: true,
+    model_limits: 'dall-e-3',
+  })
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/pricing') {
       return {
@@ -116,15 +127,10 @@ test('refresh reloads pricing, token limits and group models after configuration
     if (url === '/api/token/?p=1&size=100') {
       return { data: { success: true, data: { items: [key], total: 1 } } }
     }
-    if (url === '/api/user/models') {
+    if (url === '/api/token/7/models') {
       return { data: { success: true, data: [name] } }
     }
     throw new Error(`Unexpected request: ${url}`)
-  })
-  renderPage(['openai'], [], {
-    ...key,
-    model_limits_enabled: true,
-    model_limits: 'dall-e-3',
   })
   const user = userEvent.setup()
   await user.click(await screen.findByRole('button', { name: 'Refresh' }))
