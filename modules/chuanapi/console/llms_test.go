@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -15,14 +14,13 @@ import (
 
 func TestRenderLlmsFullIncludesPublicSectionsAndExcludesInternalPricingFields(t *testing.T) {
 	bonusEligible := true
-	models := publicModelsFromPricing([]model.Pricing{
+	models := publicModelsFromPricing([]publicCatalogModel{
 		{
 			ModelName:              "fixture-model",
-			Description:            "Public model description",
 			QuotaType:              0,
 			ModelRatio:             1.25,
 			CompletionRatio:        2,
-			EnableGroup:            []string{"default"},
+			EnableGroup:            []string{"rate-1"},
 			SupportedEndpointTypes: []constant.EndpointType{constant.EndpointTypeOpenAI},
 			InputModalities:        []string{"text"},
 			OutputModalities:       []string{"text"},

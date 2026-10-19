@@ -460,9 +460,18 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 }
 
 func postConsumeQuotaWithOperation(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool, operationSuffix string) (result postConsumeQuotaResult, err error) {
+	return postConsumeQuotaWithWalletCommit(relayInfo, quota, preConsumedQuota, sendEmail, operationSuffix, nil)
+}
+
+// commit persists a task's refund receipt inside the wallet/token transaction.
+// It runs for replays too, so callers can recover the already committed state.
+func postConsumeQuotaWithWalletCommit(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool, operationSuffix string, commit func(*gorm.DB, *model.LedgerResult) error) (result postConsumeQuotaResult, err error) {
 
 	// 1) Consume from wallet quota OR subscription item
 	if relayInfo != nil && relayInfo.BillingSource == BillingSourceSubscription {
+		if commit != nil {
+			return result, errors.New("wallet commit callback does not support subscriptions")
+		}
 		if relayInfo.SubscriptionId == 0 {
 			return result, errors.New("subscription id is missing")
 		}
@@ -525,10 +534,15 @@ func postConsumeQuotaWithOperation(relayInfo *relaycommon.RelayInfo, quota int, 
 				if err != nil {
 					return err
 				}
-				if ledgerResult == nil || ledgerResult.Replayed || relayInfo.IsPlayground {
-					return nil
+				if ledgerResult != nil && !ledgerResult.Replayed && !relayInfo.IsPlayground {
+					if err := model.ApplyTokenQuotaDeltaTx(tx, relayInfo.TokenId, relayInfo.TokenKey, -quota); err != nil {
+						return err
+					}
 				}
-				return model.ApplyTokenQuotaDeltaTx(tx, relayInfo.TokenId, relayInfo.TokenKey, -quota)
+				if commit != nil {
+					return commit(tx, ledgerResult)
+				}
+				return nil
 			})
 			if !errors.Is(err, model.ErrLedgerDuplicate) {
 				break
@@ -562,25 +576,18 @@ func postConsumeQuotaWithOperation(relayInfo *relaycommon.RelayInfo, quota int, 
 func checkAndSendQuotaNotify(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int) {
 	gopool.Go(func() {
 		userSetting := relayInfo.UserSetting
-		threshold := common.QuotaRemindThreshold
-		if userSetting.QuotaWarningThreshold != 0 {
-			threshold = int(userSetting.QuotaWarningThreshold)
+		// UserQuota is the balance before this request; quota plus
+		// preConsumedQuota is what the request finally cost.
+		balanceAfter := relayInfo.UserQuota - (quota + preConsumedQuota)
+		if !quotaReminderDue(userSetting, int64(relayInfo.UserQuota), int64(balanceAfter)) {
+			return
 		}
-
-		//noMoreQuota := userCache.Quota-(quota+preConsumedQuota) <= 0
-		quotaTooLow := false
-		consumeQuota := quota + preConsumedQuota
-		if relayInfo.UserQuota-consumeQuota < threshold {
-			quotaTooLow = true
-		}
-		if quotaTooLow {
-			lang := userSetting.Language
-			prompt := i18n.Translate(lang, i18n.MsgNotifyQuotaLowTitle)
-			content, values := quotaNotifyContent(lang, userSetting.NotifyType, prompt, logger.FormatQuota(relayInfo.UserQuota))
-			err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values))
-			if err != nil {
-				common.SysError(common.LogText("failed to send quota notify to user %d: %s", relayInfo.UserId, err.Error()))
-			}
+		lang := userSetting.Language
+		prompt := i18n.Translate(lang, i18n.MsgNotifyQuotaLowTitle)
+		content, values := quotaNotifyContent(lang, userSetting.NotifyType, prompt, logger.FormatQuota(balanceAfter))
+		err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values))
+		if err != nil {
+			common.SysError(common.LogText("failed to send quota notify to user %d: %s", relayInfo.UserId, err.Error()))
 		}
 	})
 }
@@ -595,14 +602,10 @@ func checkAndSendSubscriptionQuotaNotify(relayInfo *relaycommon.RelayInfo) {
 		}
 
 		userSetting := relayInfo.UserSetting
-		threshold := common.QuotaRemindThreshold
-		if userSetting.QuotaWarningThreshold != 0 {
-			threshold = int(userSetting.QuotaWarningThreshold)
-		}
-
+		usedBefore := relayInfo.SubscriptionAmountUsedAfterPreConsume - relayInfo.SubscriptionPreConsumed
 		usedAfter := relayInfo.SubscriptionAmountUsedAfterPreConsume + relayInfo.SubscriptionPostDelta
 		remaining := relayInfo.SubscriptionAmountTotal - usedAfter
-		if remaining >= int64(threshold) {
+		if !quotaReminderDue(userSetting, relayInfo.SubscriptionAmountTotal-usedBefore, remaining) {
 			return
 		}
 
@@ -613,6 +616,26 @@ func checkAndSendSubscriptionQuotaNotify(relayInfo *relaycommon.RelayInfo) {
 			common.SysError(common.LogText("failed to send subscription quota notify to user %d: %s", relayInfo.UserId, err.Error()))
 		}
 	})
+}
+
+// quotaReminderDue reports whether a charge that moved a balance (wallet or
+// subscription) from before to after earns a low-balance reminder. The site
+// and the user must both have reminders on, and the charge must cross the
+// user's threshold, or the site default when the user set none. A balance
+// already below the threshold earns nothing more until a top-up lifts it back
+// above, so a user gets one reminder per drop.
+func quotaReminderDue(userSetting dto.UserSetting, before int64, after int64) bool {
+	if !common.QuotaRemindEnabled {
+		return false
+	}
+	if userSetting.QuotaWarningEnabled != nil && !*userSetting.QuotaWarningEnabled {
+		return false
+	}
+	threshold := float64(common.QuotaRemindThreshold)
+	if userSetting.QuotaWarningThreshold != 0 {
+		threshold = userSetting.QuotaWarningThreshold
+	}
+	return float64(before) >= threshold && float64(after) < threshold
 }
 
 // quotaNotifyContent renders a low-quota notice in the user's saved language.

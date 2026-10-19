@@ -583,7 +583,6 @@ function GroupPricingTable({
       name = `group_${index}`
     }
     emitRows([
-      ...rows,
       {
         _id: createGroupPricingId(),
         originalName: null,
@@ -593,6 +592,7 @@ function GroupPricingTable({
         selectable: true,
         description: '',
       },
+      ...rows,
     ])
   }, [emitRows, rows])
 

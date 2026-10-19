@@ -58,6 +58,7 @@ type StreamStatus struct {
 	incompleteReason string
 	expectsTerminal  bool
 	apiError         *types.NewAPIError
+	clientGone       bool
 }
 
 // StreamOutcome holds classification facts only; upstream messages never
@@ -81,10 +82,27 @@ func (s *StreamStatus) SetEndReason(reason StreamEndReason, err error) {
 	if s == nil {
 		return
 	}
+	if reason == StreamEndReasonClientGone {
+		s.mu.Lock()
+		s.clientGone = true
+		s.mu.Unlock()
+	}
 	s.endOnce.Do(func() {
 		s.EndReason = reason
 		s.EndError = err
 	})
+}
+
+// ClientGone keeps the observed disconnect separate from the first diagnostic.
+// A provider or scanner error can win the end reason before a concurrent write
+// fails, but callers must still suppress any later writes to that client.
+func (s *StreamStatus) ClientGone() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.clientGone
 }
 
 func (s *StreamStatus) RecordError(msg string) {

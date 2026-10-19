@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 )
@@ -79,4 +80,22 @@ func RefundFailedRequestBilling(c *gin.Context, info *relaycommon.RelayInfo, api
 	}
 	service.ChargeViolationFeeIfNeeded(c, info, apiErr)
 	return apiErr
+}
+
+// consumePartialTextStreamQuota settles observed usage from a handled stream
+// failure before the error reaches the outer refund path. A nil usage means
+// that the failed stream produced no billable output and its reserve is refunded.
+func consumePartialTextStreamQuota(c *gin.Context, info *relaycommon.RelayInfo, rawUsage any) {
+	usage, ok := rawUsage.(*dto.Usage)
+	if !ok || usage == nil || info == nil || !info.IsStream ||
+		!common.GetContextKeyBool(c, constant.ContextKeyStreamErrorHandled) {
+		return
+	}
+	containsAudio := usage.CompletionTokenDetails.AudioTokens > 0 || usage.PromptTokensDetails.AudioTokens > 0
+	hasAudioPrice := ratio_setting.ContainsAudioRatio(info.OriginModelName) || ratio_setting.ContainsAudioCompletionRatio(info.OriginModelName)
+	if info.RelayFormat == types.RelayFormatOpenAI && containsAudio && hasAudioPrice {
+		service.PostAudioConsumeQuota(c, info, usage, nil)
+		return
+	}
+	service.PostTextConsumeQuota(c, info, usage, nil)
 }

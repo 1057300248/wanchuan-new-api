@@ -219,6 +219,9 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		}
 	})
 
+	if streamErr == nil {
+		streamErr = info.StreamStatus.APIError()
+	}
 	if streamErr != nil {
 		return nil, streamErr
 	}

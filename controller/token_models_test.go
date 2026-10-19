@@ -113,6 +113,66 @@ func requestTokenModels(t *testing.T, tokenID, userID int, app string) ([]string
 	return models, response
 }
 
+func requestTokenRoutableModels(t *testing.T, tokenID, userID int) ([]string, tokenAPIResponse) {
+	t.Helper()
+	ctx, recorder := newAuthenticatedContext(t, http.MethodGet, "/api/token/"+strconv.Itoa(tokenID)+"/models", nil, userID)
+	ctx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(tokenID)}}
+	GetTokenRoutableModels(ctx)
+	assert.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+	response := decodeAPIResponse(t, recorder)
+	var models []string
+	if response.Success {
+		require.NoError(t, common.Unmarshal(response.Data, &models))
+	}
+	assert.NotContains(t, recorder.Body.String(), `"key"`)
+	return models, response
+}
+
+func TestGetTokenRoutableModelsUsesOwnedTokenScopeWithoutCLIApp(t *testing.T) {
+	db, user := setupTokenModelsControllerTest(t)
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"image-a":1,"image-b":1,"image-blocked":1,"image-disabled":1}`))
+	seedTokenModelsAbility(t, db, "a", "image-a", constant.ChannelTypeOpenAI, true)
+	seedTokenModelsAbility(t, db, "b", "image-b", constant.ChannelTypeOpenAI, true)
+	seedTokenModelsAbility(t, db, "a", "image-blocked", constant.ChannelTypeOpenAI, true)
+	seedTokenModelsAbility(t, db, "a", "image-unpriced", constant.ChannelTypeOpenAI, true)
+	disabled := seedTokenModelsAbility(t, db, "a", "image-disabled", constant.ChannelTypeOpenAI, true)
+	require.NoError(t, db.Model(disabled).Update("status", common.ChannelStatusManuallyDisabled).Error)
+	tokenA := seedTokenModelsToken(t, db, user.Id, "image-auto-a", "auto", []string{"a"}, "image-a", "image-disabled", "image-unpriced")
+	tokenB := seedTokenModelsToken(t, db, user.Id, "image-auto-b", "auto", []string{"b"}, "image-b")
+
+	models, response := requestTokenRoutableModels(t, tokenA.Id, user.Id)
+	require.True(t, response.Success, response.Message)
+	assert.Equal(t, []string{"image-a"}, models)
+	models, response = requestTokenRoutableModels(t, tokenB.Id, user.Id)
+	require.True(t, response.Success, response.Message)
+	assert.Equal(t, []string{"image-b"}, models)
+
+	// Route and whitelist edits take effect on the next request for this token.
+	require.NoError(t, tokenA.SetAutoGroups([]string{"b"}))
+	tokenA.ModelLimits = "image-b"
+	require.NoError(t, db.Model(tokenA).Select("auto_groups", "model_limits").Updates(tokenA).Error)
+	models, response = requestTokenRoutableModels(t, tokenA.Id, user.Id)
+	require.True(t, response.Success, response.Message)
+	assert.Equal(t, []string{"image-b"}, models)
+
+	// Losing the account's group entitlement cannot fall back to other groups.
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","a":"A"}`))
+	models, response = requestTokenRoutableModels(t, tokenA.Id, user.Id)
+	require.True(t, response.Success, response.Message)
+	assert.Empty(t, models)
+
+	for _, id := range []int{tokenA.Id, tokenB.Id} {
+		models, response = requestTokenRoutableModels(t, id, user.Id+1)
+		assert.False(t, response.Success)
+		assert.Empty(t, models)
+	}
+	for _, id := range []int{0, -1, tokenB.Id + 1000} {
+		models, response = requestTokenRoutableModels(t, id, user.Id)
+		assert.False(t, response.Success)
+		assert.Empty(t, models)
+	}
+}
+
 func requestTokenModelScope(t *testing.T, userID int, group string, autoGroups []string) ([]string, tokenAPIResponse) {
 	t.Helper()
 	body := tokenModelScopeRequest{

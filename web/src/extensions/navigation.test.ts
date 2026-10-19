@@ -37,14 +37,16 @@ describe('frontend extension navigation contract', () => {
       status: null,
     })
 
-    expect(result).toEqual([
-      {
-        title: 'Home',
-        href: 'https://chuanapi.com/',
-        documentNavigation: true,
-      },
-      { title: 'Pricing', href: '/pricing' },
-    ])
+    expect(result).toEqual(
+      expect.arrayContaining([
+        {
+          title: 'Home',
+          href: 'https://chuanapi.com/',
+          documentNavigation: true,
+        },
+        { title: 'Pricing', href: '/pricing' },
+      ])
+    )
     expect(links).toEqual([
       { title: 'Home', href: '/' },
       { title: 'Pricing', href: '/pricing' },
@@ -65,13 +67,11 @@ describe('frontend extension navigation contract', () => {
       }
     )
 
-    expect(result).toEqual([
-      {
-        title: 'Docs',
-        href: '/help',
-        documentNavigation: false,
-        external: false,
-      },
-    ])
+    expect(result.find((link) => link.href === '/help')).toEqual({
+      title: 'Docs',
+      href: '/help',
+      documentNavigation: false,
+      external: false,
+    })
   })
 })

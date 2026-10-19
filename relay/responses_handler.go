@@ -75,13 +75,15 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		}
 	}
 
+	common.SetContextKey(c, constant.ContextKeyResponsesPartialUsage, false)
 	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)
 	if newAPIError != nil {
-		// Accepted streams can carry billable output before a terminal failure.
-		// Settle those facts once, as the WebSocket path does, before refund handling.
-		if streamUsage, ok := usage.(*dto.Usage); ok && streamUsage != nil && info.IsStream &&
-			info.ReceivedResponseCount > 0 && common.GetContextKeyBool(c, constant.ContextKeyResponsesStreamErrorHandled) {
-			ConsumeResponsesQuota(c, info, streamUsage)
+		// Native failures can still carry generated output or completed tools.
+		// Settle those facts once before the outer error handler refunds; empty
+		// explicit failures return nil usage and remain fully refundable.
+		if partialUsage, ok := usage.(*dto.Usage); ok && partialUsage != nil && (!info.IsStream && common.GetContextKeyBool(c, constant.ContextKeyResponsesPartialUsage) ||
+			info.IsStream && info.ReceivedResponseCount > 0 && common.GetContextKeyBool(c, constant.ContextKeyResponsesStreamErrorHandled)) {
+			ConsumeResponsesQuota(c, info, partialUsage)
 		}
 		// reset status code 重置状态码
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
@@ -142,6 +144,21 @@ func prepareResponsesPassThroughBody(c *gin.Context, info *relaycommon.RelayInfo
 // ConsumeResponsesQuota applies the same settlement dispatch to HTTP and
 // WebSocket Responses usage. Compact requests keep their separate repricing.
 func ConsumeResponsesQuota(c *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage) {
+	if usage == nil && info.StreamStatus != nil {
+		outcome := info.StreamStatus.ResponseOutcome()
+		if outcome == string(relaycommon.ResponseOutcomeFailed) || outcome == string(relaycommon.ResponseOutcomeCancelled) {
+			// The native accumulator returns nil only for explicit failures
+			// without billable work. WebSocket calls also need their reserve
+			// released here; successful nil usage retains normal estimation.
+			if err := service.SettleBilling(c, info, 0); err != nil {
+				logger.LogError(c, "failed to release empty Responses failure reservation: "+err.Error())
+				if info.Billing != nil {
+					info.Billing.Refund(c)
+				}
+			}
+			return
+		}
+	}
 	if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
 		service.PostAudioConsumeQuota(c, info, usage, nil)
 		return

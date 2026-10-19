@@ -21,17 +21,17 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
-import { loadGroupModels, loadImagePageBootstrap } from '../api'
+import { loadImagePageBootstrap, loadImageTokenModels } from '../api'
 import { useImageData } from '../hooks/use-image-data'
 import type { ImageApiKeyOption } from '../types'
 
 vi.mock('../api', () => ({
-  loadGroupModels: vi.fn(),
+  loadImageTokenModels: vi.fn(),
   loadImagePageBootstrap: vi.fn(),
 }))
 
 const bootstrapMock = vi.mocked(loadImagePageBootstrap)
-const groupModelsMock = vi.mocked(loadGroupModels)
+const tokenModelsMock = vi.mocked(loadImageTokenModels)
 
 function makeKey(id: number, group: string): ImageApiKeyOption {
   return {
@@ -50,12 +50,6 @@ const PRICING = [
   { model_name: 'gpt-4o', supported_endpoint_types: ['chat'] },
 ]
 
-const GROUP_MODELS: Record<string, string[]> = {
-  g1: ['dall-e-3', 'gpt-image-2'],
-  '': ['gpt-image-2'],
-  g2: [],
-}
-
 let bootstrapKeys: ImageApiKeyOption[] = []
 
 function createWrapper() {
@@ -72,25 +66,69 @@ function createWrapper() {
 }
 
 beforeEach(() => {
+  vi.resetAllMocks()
   bootstrapKeys = [makeKey(1, 'g1')]
   bootstrapMock.mockImplementation(async () => ({
     keys: bootstrapKeys,
     pricingModels: PRICING,
   }))
-  groupModelsMock.mockImplementation(async (group: string) => {
-    return GROUP_MODELS[group] ?? []
+  tokenModelsMock.mockImplementation(async (id: number) => {
+    const models: Record<number, string[]> = {
+      1: ['dall-e-3', 'gpt-image-2'],
+      2: ['gpt-image-2'],
+      3: [],
+      10: ['dall-e-3'],
+      11: ['gpt-image-2'],
+    }
+    return models[id] ?? []
   })
 })
 
 describe('useImageData selects keys and models as availability changes', () => {
-  test('requests group models even when the selected key has an empty group', async () => {
+  test('keeps two auto tokens with different routing chains in separate model scopes', async () => {
+    bootstrapKeys = [
+      { ...makeKey(10, 'auto'), auto_groups: ['image-first'] },
+      { ...makeKey(11, 'auto'), auto_groups: ['image-second'] },
+    ]
+    const { result } = renderHook(() => useImageData(), {
+      wrapper: createWrapper(),
+    })
+
+    await waitFor(() =>
+      expect(result.current.availableModels).toEqual(['dall-e-3'])
+    )
+    act(() => result.current.setApiKeyId(11))
+    await waitFor(() =>
+      expect(result.current.availableModels).toEqual(['gpt-image-2'])
+    )
+    expect(tokenModelsMock).toHaveBeenCalledWith(10)
+    expect(tokenModelsMock).toHaveBeenCalledWith(11)
+  })
+
+  test('clears cached models when revalidating the selected token fails', async () => {
+    const { result } = renderHook(() => useImageData(), {
+      wrapper: createWrapper(),
+    })
+    await waitFor(() => expect(result.current.model).toBe('dall-e-3'))
+    tokenModelsMock.mockRejectedValue(new Error('Token access revoked'))
+
+    await act(async () => {
+      await result.current.refetchTokenModels()
+    })
+
+    await waitFor(() => expect(result.current.isTokenModelsError).toBe(true))
+    expect(result.current.availableModels).toEqual([])
+    expect(result.current.model).toBe('')
+  })
+
+  test('requests the owned token models even when the selected key has an empty group', async () => {
     bootstrapKeys = [makeKey(2, '')]
     const { result } = renderHook(() => useImageData(), {
       wrapper: createWrapper(),
     })
 
     await waitFor(() => expect(result.current.apiKeyId).toBe(2))
-    await waitFor(() => expect(groupModelsMock).toHaveBeenCalledWith(''))
+    await waitFor(() => expect(tokenModelsMock).toHaveBeenCalledWith(2))
     await waitFor(() =>
       expect(result.current.availableModels).toEqual(['gpt-image-2'])
     )
