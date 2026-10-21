@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import i18next from 'i18next'
 import { afterEach, beforeAll, describe, expect, test } from 'vitest'
 
@@ -75,7 +75,7 @@ function renderDetails(
   const freshAt = Date.now() + 60_000
   queryClient.setQueryData(['status'], {}, { updatedAt: freshAt })
   queryClient.setQueryData(
-    ['pricing'],
+    ['pricing', 'public'],
     { data: [], vendors: [] },
     { updatedAt: freshAt }
   )
@@ -116,6 +116,7 @@ test('shows recorded upstream model observations to administrators', () => {
   expect(rowValue('Request Model')).toBe('requested-model')
   expect(rowValue('Upstream Model')).toBe('mapped-model')
   expect(screen.getByText('unexpected-model')).toBeVisible()
+  cleanup()
   queryClient.clear()
 })
 
@@ -134,6 +135,7 @@ test('does not disclose legacy or admin-only upstream model observations to user
   ).not.toBeInTheDocument()
   expect(screen.queryByText('mapped-model')).not.toBeInTheDocument()
   expect(screen.queryByText('unexpected-model')).not.toBeInTheDocument()
+  cleanup()
   queryClient.clear()
 })
 
@@ -151,6 +153,7 @@ describe('usage facts billing details', () => {
       screen.getByText('Billable image count').parentElement
     ).toHaveTextContent('2')
     expect(screen.getAllByText(/\/image/).length).toBeGreaterThan(0)
+    cleanup()
     queryClient.clear()
   })
   const queryClients: QueryClient[] = []
@@ -198,6 +201,7 @@ describe('usage facts billing details', () => {
   })
 
   afterEach(() => {
+    cleanup()
     for (const queryClient of queryClients) {
       queryClient.clear()
     }

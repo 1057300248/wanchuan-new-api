@@ -22,7 +22,14 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from '@testing-library/react'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterAll, afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -122,9 +129,12 @@ beforeEach(async () => {
     { updatedAt: Date.now() + 60_000 }
   )
 })
-afterEach(() => {
-  useAuthStore.getState().auth.reset()
+afterEach(async () => {
+  // Stop observers before changing identity or discarding their seeded caches.
+  cleanup()
+  await client.cancelQueries()
   client.clear()
+  useAuthStore.getState().auth.reset()
   useSystemConfigStore.getState().setConfig(previousConfig)
 })
 function renderPreview(other: LogOtherData, isAdmin = true, type?: number) {

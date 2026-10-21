@@ -22,7 +22,13 @@ import {
   useReactTable,
   type VisibilityState,
 } from '@tanstack/react-table'
-import { render, screen, within, waitFor } from '@testing-library/react'
+import {
+  cleanup,
+  render,
+  screen,
+  within,
+  waitFor,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 
@@ -86,18 +92,21 @@ function Fixture(props: {
   )
 }
 
+const queryClients: QueryClient[] = []
+
 function renderLogs(props: Parameters<typeof Fixture>[0] = {}) {
   useAuthStore.getState().auth.setUser({
     id: 1,
     username: 'log-viewer',
     role: props.admin === false ? ROLE.USER : ROLE.ADMIN,
   })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  client.setQueryData(['status'], {}, { updatedAt: Date.now() + 60_000 })
+  queryClients.push(client)
   return render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
+    <QueryClientProvider client={client}>
       <UsageLogsProvider>
         <Fixture {...props} />
       </UsageLogsProvider>
@@ -105,7 +114,14 @@ function renderLogs(props: Parameters<typeof Fixture>[0] = {}) {
   )
 }
 
-afterEach(() => useAuthStore.getState().auth.reset())
+afterEach(async () => {
+  cleanup()
+  for (const client of queryClients.splice(0)) {
+    await client.cancelQueries()
+    client.clear()
+  }
+  useAuthStore.getState().auth.reset()
+})
 
 it('shows model mismatch evidence when tapping the mobile model badge', async () => {
   const user = userEvent.setup()

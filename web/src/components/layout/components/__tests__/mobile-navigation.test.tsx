@@ -24,7 +24,13 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
@@ -70,6 +76,7 @@ vi.mock('@/hooks/use-system-config', () => ({
 }))
 
 const originalInnerWidth = window.innerWidth
+const queryClients: QueryClient[] = []
 
 function SidebarStateProbe() {
   const { openMobile } = useSidebar()
@@ -106,6 +113,8 @@ async function renderHeader(showTopNav = true) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
+  queryClient.setQueryData(['notice'], { success: true, data: '' })
+  queryClients.push(queryClient)
   await router.load()
   render(
     <QueryClientProvider client={queryClient}>
@@ -122,7 +131,12 @@ function setViewportWidth(width: number) {
   })
 }
 
-afterEach(() => {
+afterEach(async () => {
+  cleanup()
+  for (const client of queryClients.splice(0)) {
+    await client.cancelQueries()
+    client.clear()
+  }
   setViewportWidth(originalInnerWidth)
 })
 

@@ -36,6 +36,8 @@ import { useAuthRedirect } from '../../hooks/use-auth-redirect'
 import type { LoginResult } from '../../secure-verification/types'
 import { OtpForm } from '../components/otp-form'
 
+const queryClients: QueryClient[] = []
+
 const bundle: AuthBundle = {
   access_token: 'completed-login',
   token_type: 'Bearer',
@@ -114,6 +116,7 @@ function renderLoginVerification(
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
+  queryClients.push(queryClient)
   const view = render(
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
@@ -136,10 +139,20 @@ function pendingLoginResponse() {
 
 beforeEach(() => {
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url !== '/api/status') {
+      throw new Error('Unexpected GET in login verification test')
+    }
+    return { data: { success: true, data: {} } }
+  })
 })
 
-afterEach(() => {
+afterEach(async () => {
   cleanup()
+  for (const client of queryClients.splice(0)) {
+    await client.cancelQueries()
+    client.clear()
+  }
   vi.restoreAllMocks()
   useAuthStore.getState().auth.reset('idle')
 })
