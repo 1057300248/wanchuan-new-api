@@ -75,8 +75,15 @@ elif name == "python3":
                 self.assertEqual(0, result.returncode, result.stderr)
                 tests = [row for row in rows if row["tool"] == "go" and row["args"] != ["version"]]
                 gates = [row for row in rows if row["tool"] == "python3"]
-                self.assertEqual(20, len(tests))
+                self.assertEqual(22, len(tests))
                 self.assertEqual(len(tests), len(gates), "every suite must retain its strict evidence gate")
+                self.assertEqual({"startup", "channel-priority", "audit-ordered-index", "setup-aff-code-index",
+                                  "token-migration", "token-audit", "performance-aggregation", "performance-runtime-flush",
+                                  "setup-wallet", "task-migration", "dashboard-migration", "midjourney-migration",
+                                  "wallet", "owner", "owner-group-settings", "monitor-visibility", "sensitive-group-rename",
+                                  "converted-responses", "native-responses", "immediate-settlement",
+                                  "subscription-period", "subscription-period-migration"},
+                                 {Path(gate["args"][2]).stem for gate in gates})
                 for test, gate in zip(tests, gates):
                     label = Path(gate["args"][2]).stem
                     env = test["env"]
@@ -117,7 +124,7 @@ elif name == "python3":
                         self.assertEqual("", row["env"][key], key)
 
     def test_required_rejection_fails_job_but_keeps_independent_evidence(self):
-        for label in ("token-migration", "token-audit"):
+        for label in ("token-migration", "token-audit", "subscription-period", "subscription-period-migration"):
             with self.subTest(label=label):
                 result, rows = self.run_script("postgres", reject_label=label)
                 self.assertNotEqual(0, result.returncode)
@@ -130,6 +137,41 @@ elif name == "python3":
                 result, rows = self.run_script(dialect, creation_fails=True)
                 self.assertNotEqual(0, result.returncode)
                 self.assertFalse(any(row["tool"] == "go" and row["args"] != ["version"] for row in rows))
+
+    def test_subscription_period_required_cases_and_selectors_are_complete(self):
+        for dialect in ("sqlite", "mysql", "postgres"):
+            with self.subTest(dialect=dialect):
+                result, rows = self.run_script(dialect)
+                self.assertEqual(0, result.returncode, result.stderr)
+                tests = [row for row in rows if row["tool"] == "go" and row["args"] != ["version"]]
+                checks = [row for row in rows if row["tool"] == "python3"]
+                gates = {Path(row["args"][2]).stem: row["args"][3:] for row in checks}
+                expected_cases = (
+                    "same_period_settle", "same_period_upward", "same_period_zero", "same_period_refund",
+                    "quota_ceiling", "journal_identity", "preconsume_replay", "parallel_preconsume",
+                    "auto_reset_settle", "auto_reset_refund", "manual_reset_settle", "same_second_reset_refund",
+                    "old_positive_settle", "reserve_closed_period", "legacy_unknown", "deleted_source",
+                    "expired_source", "underflow", "parallel_settle", "parallel_refund", "reset_races_refund")
+                prefix = f"TestSubscriptionPeriodAccountingDatabaseMatrix/{dialect}"
+                self.assertEqual([prefix] + [prefix + "/" + case for case in expected_cases], gates["subscription-period"])
+                prefix = f"TestSubscriptionPeriodMigrationDatabaseMatrix/{dialect}"
+                self.assertEqual([prefix + "/fresh", prefix + "/upgrade"], gates["subscription-period-migration"])
+                for case in ("late_submit", "late_terminal_refund", "late_terminal_positive",
+                             "unknown_legacy_task", "settled_source_pending_task"):
+                    self.assertIn(f"TestTaskWalletReceiptsDatabaseMatrix/{dialect}/subscription_period_{case}", gates["wallet"])
+                for test, gate in zip(tests, checks):
+                    label = Path(gate["args"][2]).stem
+                    if label in ("subscription-period", "subscription-period-migration"):
+                        test_name = "TestSubscriptionPeriod" + ("Accounting" if label == "subscription-period" else "Migration") + "DatabaseMatrix"
+                        self.assertEqual("./model", test["args"][4])
+                        self.assertEqual(f"^{test_name}$/{dialect}$", test["args"][test["args"].index("-run") + 1])
+                if dialect == "sqlite":
+                    self.assertEqual(["TestSubscriptionPeriodTransactionRollback",
+                                      "TestSubscriptionPeriodReplayRejectsStaleConsumedObservation",
+                                      "TestSubscriptionPeriodJournalReserveSettlementValidation",
+                                      "TestSubscriptionRefundCommitsReceiptAndUsageTogether"], gates["subscription-period-replay"])
+                else:
+                    self.assertNotIn("subscription-period-replay", gates)
 
     def test_both_pinned_redis_versions_keep_all_real_contracts_and_loopback_dsns(self):
         expected = {

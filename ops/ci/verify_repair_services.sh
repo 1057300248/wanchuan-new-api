@@ -108,7 +108,18 @@ database)
   for token in limited_without_redis limited_with_redis unlimited_without_redis unlimited_with_redis limited_with_ordinary_request; do
     required+=("$prefix/batch_enabled_submission_reservation/$token")
   done
+  for contract in late_submit late_terminal_refund late_terminal_positive unknown_legacy_task settled_source_pending_task; do
+    required+=("$prefix/subscription_period_$contract")
+  done
   report wallet ./service "^TestTaskWalletReceiptsDatabaseMatrix$/$DIALECT$" "${required[@]}"
+  prefix="TestSubscriptionPeriodAccountingDatabaseMatrix/$DIALECT"
+  required=("$prefix")
+  for contract in same_period_settle same_period_upward same_period_zero same_period_refund quota_ceiling journal_identity preconsume_replay parallel_preconsume auto_reset_settle auto_reset_refund manual_reset_settle same_second_reset_refund old_positive_settle reserve_closed_period legacy_unknown deleted_source expired_source underflow parallel_settle parallel_refund reset_races_refund; do
+    required+=("$prefix/$contract")
+  done
+  report subscription-period ./model "^TestSubscriptionPeriodAccountingDatabaseMatrix$/$DIALECT$" "${required[@]}"
+  prefix="TestSubscriptionPeriodMigrationDatabaseMatrix/$DIALECT"
+  report subscription-period-migration ./model "^TestSubscriptionPeriodMigrationDatabaseMatrix$/$DIALECT$" "$prefix/fresh" "$prefix/upgrade"
   report owner ./model "^TestPublicModelOwnerDatabaseMatrix$/$DIALECT$" "TestPublicModelOwnerDatabaseMatrix/$DIALECT"
   report owner-group-settings ./model "^TestRequestPolicyDatabaseMatrix$/$DIALECT$" "TestRequestPolicyDatabaseMatrix/$DIALECT"
   prefix="TestMonitorHiddenGroupsDatabaseMatrix/$DIALECT"
@@ -136,6 +147,7 @@ database)
   report immediate-settlement ./controller '^TestImmediateTaskSettlementDatabase$' TestImmediateTaskSettlementDatabase TestImmediateTaskSettlementDatabase/accepted_settlement_failure_preserves_task_reference
 
   if [ "$DIALECT" = sqlite ]; then
+    report subscription-period-replay ./model '^(TestSubscriptionPeriodTransactionRollback|TestSubscriptionPeriodReplayRejectsStaleConsumedObservation|TestSubscriptionPeriodJournalReserveSettlementValidation|TestSubscriptionRefundCommitsReceiptAndUsageTogether)$' TestSubscriptionPeriodTransactionRollback TestSubscriptionPeriodReplayRejectsStaleConsumedObservation TestSubscriptionPeriodJournalReserveSettlementValidation TestSubscriptionRefundCommitsReceiptAndUsageTogether
     report reminder-option-validation ./model '^TestQuotaReminderThresholdOptionsRejectInvalidWithoutMutation$' TestQuotaReminderThresholdOptionsRejectInvalidWithoutMutation
     report reminder-request-validation ./controller '^(TestQuotaReminderProfileThresholdValidationPreservesLegacyFractions|TestQuotaReminderSiteOptionRejectsMalformedWireWithoutWrites)$' TestQuotaReminderProfileThresholdValidationPreservesLegacyFractions TestQuotaReminderSiteOptionRejectsMalformedWireWithoutWrites
     report frontend-embedded-assets ./common '^TestEmbeddedFrontendOnlyExposesRegularAssets$' TestEmbeddedFrontendOnlyExposesRegularAssets
