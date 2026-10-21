@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  'Public model owner must be at most 128 characters and contain no control or formatting characters',
+  'Filtering exemptions require exact group names, one per line; auto and wildcards are not allowed',
   'This password is too common. Choose a different password.',
   'Task usage metadata is unavailable. Pricing details cannot be displayed.',
   'This expression cannot be expanded into a price table. View the original expression below.',
@@ -217,10 +219,16 @@ export const STATIC_I18N_KEYS = [
   'Worker instances do not run master-only background tasks.',
   'Drawing task polling',
 
-  // Pricing constants
-  'Name',
+  // Pricing constants (legacy sort labels retained for cached views)
   'Price: Low to High',
   'Price: High to Low',
+  'Name',
+  'Input Price: Low to High',
+  'Input Price: High to Low',
+  'Output Price: Low to High',
+  'Output Price: High to Low',
+  'Per-request Price: Low to High',
+  'Per-request Price: High to Low',
   'All Models',
   'Token-based',
   'Per Request',
@@ -926,4 +934,8 @@ export const STATIC_I18N_KEYS = [
   'Verification method',
   'Admin permissions updated',
   'Provider ID',
+  // Channel priority ordering API errors.
+  'Channel priorities changed. Refresh and try again.',
+  'Invalid channel priority move',
+  'Channel priority is outside the sortable range',
 ] as const
