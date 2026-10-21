@@ -298,6 +298,9 @@ func (s *ResponsesToClaudeStreamState) startBlock(block *responsesClaudeStreamBl
 		}
 		content = dto.ClaudeMediaMessage{Type: "tool_use", Id: callID, Name: block.Name, Input: map[string]any{}}
 		s.sawToolCall = true
+		// The generated function name is output even when no argument delta
+		// follows before a failure. Count it once when this block starts.
+		s.usageText.WriteString(block.Name)
 	default:
 		return nil
 	}

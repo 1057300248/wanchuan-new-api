@@ -78,6 +78,10 @@ type ResponseStreamOptions struct {
 	Model        string
 	Created      int64
 	IncludeUsage bool
+	// DisableUsageText opts out of Responses-to-Chat usage text capture only
+	// when the caller accounts for emitted output, including failed streams.
+	// The zero value preserves fallback usage for direct and composed routes.
+	DisableUsageText bool
 	// EmitSequenceNumber opts into the current Responses SSE wire contract.
 	// It is explicit so relaykit callers that depend on the historical zero-value
 	// output are not changed merely by upgrading the module.
@@ -461,6 +465,27 @@ func (s *ResponseStreamState) UsageText() string {
 		}
 	}
 	return ""
+}
+
+// HasUsageText reports generated output available for usage estimation without
+// requiring that the caller retain it. Metadata and role-only frames are not
+// generated output. Composed routes inspect each conversion step.
+func (s *ResponseStreamState) HasUsageText() bool {
+	if s == nil {
+		return false
+	}
+	for _, state := range s.stepStates {
+		if source, ok := state.(interface{ HasUsageText() bool }); ok {
+			if source.HasUsageText() {
+				return true
+			}
+			continue
+		}
+		if source, ok := state.(interface{ UsageText() string }); ok && source.UsageText() != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Diagnostics returns every conversion-loss diagnostic observed so far. This
@@ -967,7 +992,12 @@ func finalizeOAIChatStreamResponseToOAIResponses(_ context.Context, _ convmeta.M
 }
 
 func newOAIResponsesToOAIChatStreamState(options ResponseStreamOptions) any {
-	state := oairesponses.NewResponsesToChatStreamStateWithoutUsageText(strings.TrimSpace(options.Model), options.IncludeUsage)
+	var state *oairesponses.ResponsesToChatStreamState
+	if options.DisableUsageText {
+		state = oairesponses.NewResponsesToChatStreamStateWithoutUsageText(strings.TrimSpace(options.Model), options.IncludeUsage)
+	} else {
+		state = oairesponses.NewResponsesToChatStreamState(strings.TrimSpace(options.Model), options.IncludeUsage)
+	}
 	state.ID = strings.TrimSpace(options.ID)
 	if options.Created != 0 {
 		state.Created = options.Created
