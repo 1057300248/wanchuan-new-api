@@ -413,15 +413,18 @@ func TestIdempotencySignatureCoversOverrideTransferAndDebitOrder(t *testing.T) {
 	require.ErrorIs(t, err, ErrLedgerIdempotencyConflict)
 }
 
-func TestInsertLinuxDOWithTxCreditsFiveDollarsOnce(t *testing.T) {
+func TestInsertLinuxDOWithTxCreditsThreeDollarsOnce(t *testing.T) {
 	setupLedgerTestState(t)
 	previousEnabled := common.SignupBonusEnabled
 	previousQuota := common.QuotaForSignupBonus
+	previousQuotaPerUnit := common.QuotaPerUnit
 	common.SignupBonusEnabled = true
 	common.QuotaForSignupBonus = 1234
+	common.QuotaPerUnit = 500000
 	t.Cleanup(func() {
 		common.SignupBonusEnabled = previousEnabled
 		common.QuotaForSignupBonus = previousQuota
+		common.QuotaPerUnit = previousQuotaPerUnit
 	})
 
 	user := &User{Username: "ledger-new-user", Password: "Cedar-river-782!quiet", Status: common.UserStatusEnabled}
@@ -432,8 +435,8 @@ func TestInsertLinuxDOWithTxCreditsFiveDollarsOnce(t *testing.T) {
 	// P1-1：注册赠金进入 bonus 账户，reason 为 signup_bonus，不进入 paid。
 	created := getUserBalances(t, user.Id)
 	assert.Zero(t, created.QuotaPaid)
-	assert.Equal(t, 2500000, created.QuotaBonus)
-	assert.Equal(t, 2500000, created.Quota)
+	assert.Equal(t, 1500000, created.QuotaBonus)
+	assert.Equal(t, 1500000, created.Quota)
 	assertQuotaInvariant(t, created)
 	assert.Equal(t, int64(1), countLedgerRows(t, "credit:linuxdo_signup:88001"))
 	var rows []BalanceLedger
