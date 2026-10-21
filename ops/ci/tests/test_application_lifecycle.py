@@ -1,9 +1,11 @@
 import copy
 import importlib.util
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -133,25 +135,109 @@ class ApplicationLifecycleEvidenceTests(unittest.TestCase):
                 with self.subTest(role=role, body=changed), self.assertRaises(RuntimeError):
                     lifecycle.check_role_identity(changed, username, role)
 
-    def test_http_gate_checks_actual_status_not_json_success_alone(self):
-        with tempfile.TemporaryDirectory() as directory:
-            runner = lifecycle.Lifecycle(Path(directory))
-            runner.app = "synthetic-only"
-            for status, code, expected in ((200, 0, 200), (401, 8, 401), (403, 8, 403)):
-                response = subprocess.CompletedProcess([], code, '{"success":false}', f"  HTTP/1.1 {status} status\n")
-                with patch.object(runner, "docker", return_value=response):
-                    self.assertEqual({"success": False}, runner.request("/api/user/self", expected_status=expected))
-                    self.assertFalse(runner.response_has_cookie)
-            for response in (subprocess.CompletedProcess([], 8, '{"success":true}', "  HTTP/1.1 500 error\n"),
-                             subprocess.CompletedProcess([], 0, '{"success":true}', ""),
-                             subprocess.CompletedProcess([], 0, '{"success":true}', "  HTTP/1.1 302 redirect\n  HTTP/1.1 200 OK\n")):
-                with patch.object(runner, "docker", return_value=response), self.assertRaises(RuntimeError):
-                    runner.request("/api/user/self")
-            response = subprocess.CompletedProcess([], 0, '{}', "  HTTP/1.1 200 OK\n  Set-Cookie: synthetic-not-exported\n")
-            with patch.object(runner, "docker", return_value=response):
-                runner.request("/api/setup")
-                self.assertTrue(runner.response_has_cookie)
-            self.assertEqual([], list(Path(directory).iterdir()), "raw authentication headers must not enter artifacts")
+    def test_http_transport_preserves_error_bodies_and_rejects_invalid_evidence(self):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.server.seen.append((self.command, self.path, self.headers.get("Cookie")))
+                status, body, headers = self.server.responses[self.path]
+                if self.path == "/write":
+                    request_body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                    body = json.dumps({"success": request_body == {"key": "Notice", "value": "synthetic"}
+                                       and self.headers.get("Authorization") == "Bearer synthetic-only"}).encode()
+                self.send_response(status)
+                for key, value in headers.items():
+                    self.send_header(key, value)
+                self.end_headers()
+                self.wfile.write(body)
+
+            do_POST = do_GET
+            do_PUT = do_GET
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        server.seen = []
+        server.responses = {f"/status/{status}": (status, b'{"success":false}', {}) for status in (200, 401, 403, 500)}
+        server.responses.update({
+            "/redirect": (302, b'{"success":true}', {"Location": f"http://127.0.0.1:{server.server_port}/status/200"}),
+            "/empty": (200, b"", {}), "/malformed": (200, b"not-json", {}),
+            "/array": (200, b"[]", {}), "/null": (200, b"null", {}),
+            "/oversized": (200, b"x" * (1024 * 1024 + 1), {}),
+            "/cookie": (200, b"{}", {"Set-Cookie": "synthetic-not-exported"}),
+            "/write": (200, b"{}", {}),
+        })
+        thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                runner = lifecycle.Lifecycle(Path(directory))
+                with self.assertRaisesRegex(RuntimeError, "endpoint has not been verified"):
+                    runner.request("/status/200")
+                runner.http_origin = f"http://127.0.0.1:{server.server_port}"
+                # An explicitly unusable proxy proves that ambient proxy settings
+                # cannot receive test sessions or alter our local HTTP evidence.
+                with patch.dict(lifecycle.os.environ, {"http_proxy": "http://127.0.0.1:1", "HTTP_PROXY": "http://127.0.0.1:1",
+                                                       "ALL_PROXY": "http://127.0.0.1:1", "NO_PROXY": "", "no_proxy": ""}):
+                    for status in (200, 401, 403, 500):
+                        with self.subTest(status=status):
+                            self.assertEqual({"success": False}, runner.request(f"/status/{status}", expected_status=status))
+                            self.assertFalse(runner.response_has_cookie)
+                    for status in (401, 403, 500):
+                        with self.subTest(unexpected_status=status), self.assertRaisesRegex(RuntimeError, "expected HTTP 200"):
+                            runner.request(f"/status/{status}")
+                    seen_before = list(server.seen)
+                    with self.assertRaisesRegex(RuntimeError, "expected HTTP 200"):
+                        runner.request("/redirect")
+                    self.assertEqual(seen_before + [("GET", "/redirect", None)], server.seen, "redirects must not be followed")
+                    for path in ("/empty", "/malformed", "/array", "/null", "/oversized"):
+                        with self.subTest(path=path), self.assertRaises(RuntimeError):
+                            runner.request(path)
+                    for path in ("https://outside.invalid/", "//outside.invalid/", "/line\nbreak"):
+                        with self.subTest(path=path), self.assertRaises(RuntimeError):
+                            runner.request(path)
+                    self.assertEqual({"success": True}, runner.request("/write", "PUT", {"key": "Notice", "value": "synthetic"}, "synthetic-only"))
+                    runner.request("/cookie")
+                    self.assertTrue(runner.response_has_cookie)
+                    runner.request("/status/200")
+                    self.assertEqual(("GET", "/status/200", None), server.seen[-1], "response cookies must not be replayed")
+                self.assertEqual([], list(Path(directory).iterdir()), "raw authentication headers and bodies must not enter artifacts")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+    def test_http_target_must_match_the_owned_internal_bridge_membership(self):
+        app, name, network_id, container_id = "synthetic-app", "synthetic-net", "a" * 64, "b" * 64
+        state = {"Name": "/" + app, "Id": container_id, "HostConfig": {"PortBindings": {}},
+                 "NetworkSettings": {"Networks": {name: {"NetworkID": network_id, "IPAddress": "172.28.0.3"}}}}
+        network = {"Name": name, "Id": network_id, "Internal": True, "Driver": "bridge",
+                   "IPAM": {"Config": [{"Subnet": "172.28.0.0/16"}]},
+                   "Containers": {container_id: {"Name": app, "IPv4Address": "172.28.0.3/16"}}}
+        self.assertEqual("http://172.28.0.3:3000", lifecycle.owned_container_http_origin(state, network, app, name, network_id))
+        for field, value in (("Id", "c" * 64), ("Name", "other-network"), ("Internal", False), ("Driver", "host"), ("Containers", {})):
+            with self.subTest(field=field), self.assertRaises(RuntimeError):
+                lifecycle.owned_container_http_origin(state, dict(network, **{field: value}), app, name, network_id)
+        for kind in ("name", "published", "foreign-network", "extra-network", "public-ip", "membership-ip", "outside-subnet"):
+            changed, changed_network = copy.deepcopy(state), copy.deepcopy(network)
+            if kind == "name":
+                changed["Name"] = "/not-owned"
+            elif kind == "published":
+                changed["HostConfig"]["PortBindings"] = {"3000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "3000"}]}
+            elif kind == "foreign-network":
+                changed["NetworkSettings"]["Networks"][name]["NetworkID"] = "c" * 64
+            elif kind == "extra-network":
+                changed["NetworkSettings"]["Networks"]["other"] = {}
+            elif kind == "public-ip":
+                changed["NetworkSettings"]["Networks"][name]["IPAddress"] = "8.8.8.8"
+            elif kind == "membership-ip":
+                changed_network["Containers"][container_id]["IPv4Address"] = "172.28.0.4/16"
+            else:
+                changed_network["IPAM"]["Config"] = [{"Subnet": "172.29.0.0/16"}]
+            with self.subTest(kind=kind), self.assertRaises(RuntimeError):
+                lifecycle.owned_container_http_origin(changed, changed_network, app, name, network_id)
+        with self.assertRaises(RuntimeError):
+            lifecycle.owned_container_http_origin(state, network, app, name, None)
 
     def test_database_layout_is_explicit_and_cannot_target_an_external_database(self):
         with tempfile.TemporaryDirectory() as directory:

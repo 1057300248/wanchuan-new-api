@@ -11,12 +11,16 @@ Dockerfile.api (the baseline recipe omits tokenkit/go.mod before go mod download
 
 import argparse
 import hashlib
+import http.client
+import ipaddress
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import time
+import urllib.error
+import urllib.request
 import uuid
 
 
@@ -194,6 +198,32 @@ def verify_checkout(path, sha):
     return (path / "VERSION").read_text().strip()
 
 
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        return None
+
+
+def owned_container_http_origin(state, network, app, network_name, network_id):
+    require(network_id and network.get("Id") == network_id, "runtime network identity changed")
+    require(network.get("Name") == network_name and network.get("Internal") is True and network.get("Driver") == "bridge",
+            "runtime network must be the owned internal bridge")
+    require(state.get("Name") == "/" + app and not state["HostConfig"]["PortBindings"],
+            "runtime container identity or unpublished-port contract changed")
+    attached = state["NetworkSettings"]["Networks"]
+    require(set(attached) == {network_name} and attached[network_name].get("NetworkID") == network_id,
+            "runtime attached to unexpected network")
+    member = network.get("Containers", {}).get(state["Id"], {})
+    require(member.get("Name") == app, "runtime container is not a member of the owned network")
+    address = ipaddress.ip_address(attached[network_name]["IPAddress"])
+    require(address.version == 4 and address.is_private and not address.is_loopback and not address.is_unspecified and not address.is_multicast,
+            "runtime HTTP target must be a private Docker IPv4 address")
+    require(ipaddress.ip_interface(member["IPv4Address"]).ip == address,
+            "runtime container and network disagree on the HTTP address")
+    subnets = [ipaddress.ip_network(item["Subnet"]) for item in network["IPAM"]["Config"] if ":" not in item["Subnet"]]
+    require(any(address in subnet for subnet in subnets), "runtime HTTP address is outside the owned network")
+    return f"http://{address}:3000"
+
+
 class Lifecycle:
     def __init__(self, out, log_database_layout="separate"):
         require(log_database_layout in {"separate", "shared"}, "unsupported log database layout")
@@ -202,8 +232,10 @@ class Lifecycle:
         self.log_database = "synthetic_main" if log_database_layout == "shared" else "synthetic_log"
         self.prefix = "new-api-synthetic-" + uuid.uuid4().hex[:12]
         self.network = self.prefix + "-net"
+        self.network_id = None
         self.pg = self.prefix + "-pg"
         self.app = None
+        self.http_origin = None
         self.sessions = {}
         self.containers = []
         self.images = []
@@ -265,18 +297,40 @@ AND i.indexprs IS NULL AND i.indpred IS NULL;
         return indexes
 
     def request(self, path, method="GET", payload=None, bearer=None, expected_status=200):
-        args = ["exec", self.app, "wget", "--quiet", "--server-response", "--content-on-error", "--timeout=5", "--tries=1", "--max-redirect=0", "--output-document=-", "--method=" + method]
+        require(self.http_origin is not None, "runtime HTTP endpoint has not been verified")
+        require(path.startswith("/") and not path.startswith("//") and not any(ord(char) < 32 for char in path),
+                "runtime HTTP request must use a local absolute path")
+        headers = {}
         if payload is not None:
-            args += ["--header=Content-Type: application/json", "--body-data=" + json.dumps(payload)]
+            headers["Content-Type"] = "application/json"
         if bearer:
-            args += ["--header=Authorization: Bearer " + bearer]
-        response = self.docker(*args, "http://127.0.0.1:3000" + path, check=False)
-        statuses = re.findall(r"^\s*HTTP/\S+ (\d{3})\b", response.stderr, re.MULTILINE)
-        require(response.returncode in (0, 8) and statuses == [str(expected_status)],
-                f"{method} {path} did not return expected HTTP {expected_status}")
-        # Response headers can contain a refresh cookie: never write them to evidence.
-        self.response_has_cookie = re.search(r"^\s*Set-Cookie:", response.stderr, re.MULTILINE | re.IGNORECASE) is not None
-        return json.loads(response.stdout)
+            headers["Authorization"] = "Bearer " + bearer
+        request = urllib.request.Request(self.http_origin + path, method=method, headers=headers,
+                                         data=None if payload is None else json.dumps(payload).encode())
+        # Linux Docker bridge addresses are reachable from the local daemon host
+        # without publishing ports. Never send test sessions via host proxies or
+        # follow redirects; GNU wget drops HTTP 401 bodies and exits with code 6.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirectHandler())
+        try:
+            try:
+                response = opener.open(request, timeout=5)
+            except urllib.error.HTTPError as error:
+                response = error
+            with response:
+                require(response.status == expected_status, f"{method} {path} did not return expected HTTP {expected_status}")
+                body = response.read(1024 * 1024 + 1)
+                require(len(body) <= 1024 * 1024, "runtime HTTP response exceeded the evidence size limit")
+                # Headers and response bodies may contain test sessions. Retain
+                # only the presence bit in memory, never raw authentication data.
+                self.response_has_cookie = response.headers.get("Set-Cookie") is not None
+        except (urllib.error.URLError, OSError, http.client.HTTPException):
+            raise RuntimeError(f"{method} {path} runtime HTTP transport failed") from None
+        try:
+            parsed = json.loads(body)
+        except (ValueError, UnicodeError):
+            raise RuntimeError(f"{method} {path} did not return valid JSON") from None
+        require(isinstance(parsed, dict), f"{method} {path} did not return a JSON object")
+        return parsed
 
     def start(self, image, phase, version, main_database="synthetic_main", log_database=None):
         if log_database is None:
@@ -294,6 +348,7 @@ AND i.indexprs IS NULL AND i.indpred IS NULL;
         require(state["Image"] == image, "running app image ID does not match the built source image")
         require(not state["HostConfig"]["PortBindings"], "runtime must not publish host ports")
         require(set(state["NetworkSettings"]["Networks"]) == {self.network}, "runtime attached to unexpected network")
+        self.http_origin = owned_container_http_origin(state, self.inspect("network", self.network), self.app, self.network, self.network_id)
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
             require(self.inspect("container", self.app)["State"]["Running"], f"{phase} exited during startup")
@@ -478,7 +533,7 @@ def main():
         run.docker("pull", POSTGRES_IMAGE, timeout=300, evidence="postgres-pull.log")
         pg_image = run.inspect("image", POSTGRES_IMAGE, evidence="postgres-image.json")["Id"]
         manifest["postgres_image_id"] = pg_image
-        run.docker("network", "create", "--internal", run.network)
+        run.network_id = run.docker("network", "create", "--internal", run.network).stdout.strip()
         require(run.inspect("network", run.network, evidence="network.json")["Internal"] is True, "runtime network is not internal")
         run.containers.append(run.pg)
         run.docker("run", "--detach", "--pull=never", "--name", run.pg, "--network", run.network,
