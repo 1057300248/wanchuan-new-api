@@ -106,7 +106,7 @@ func GetAllUnFinishTasks() []*Midjourney {
 	var tasks []*Midjourney
 	var err error
 	// get all tasks progress is not 100%
-	err = DB.Where("progress != ?", "100%").Find(&tasks).Error
+	err = DB.Where("progress != ? OR (status = ? AND quota > 0)", "100%", "FAILURE").Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
@@ -114,13 +114,14 @@ func GetAllUnFinishTasks() []*Midjourney {
 }
 
 // HasUnfinishedMidjourneyTasks reports whether at least one Midjourney task is
-// still in progress. It is a cheap existence check (LIMIT 1) used to decide
+// still in progress or has a failed-task refund pending. It is a cheap
+// existence check (LIMIT 1) used to decide
 // whether the midjourney_poll system task needs to run; when no task is pending
 // the scheduler skips creating a row entirely.
 func HasUnfinishedMidjourneyTasks() bool {
 	var id int
 	err := DB.Model(&Midjourney{}).
-		Where("progress != ?", "100%").
+		Where("progress != ? OR (status = ? AND quota > 0)", "100%", "FAILURE").
 		Limit(1).
 		Pluck("id", &id).Error
 	return err == nil && id != 0
@@ -224,6 +225,17 @@ func MjBulkUpdate(mjIds []string, params map[string]any) error {
 	return DB.Model(&Midjourney{}).
 		Where("mj_id in (?)", mjIds).
 		Updates(params).Error
+}
+
+// FailUnfinishedMidjourneyTasksByIDs never overwrites a terminal observation
+// published after the polling snapshot was loaded. Local IDs also isolate tasks
+// from unrelated channels that happen to reuse an upstream ID.
+func FailUnfinishedMidjourneyTasksByIDs(taskIDs []int, reason string) error {
+	updates := map[string]any{"status": "FAILURE", "progress": "100%"}
+	if reason != "" {
+		updates["fail_reason"] = reason
+	}
+	return DB.Model(&Midjourney{}).Where("id IN ? AND status NOT IN ?", taskIDs, []string{"SUCCESS", "FAILURE"}).Updates(updates).Error
 }
 
 func MjBulkUpdateByTaskIds(taskIDs []int, params map[string]any) error {

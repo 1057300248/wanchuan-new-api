@@ -753,6 +753,7 @@ func TestMidjourneyRefundRestoresEveryAccountingElementOnBillingChannel(t *testi
 
 	seedChargedAccounting(t, userID, billingChannelID, tokenID, chargedQuota, 1)
 
+	require.NoError(t, model.DB.Model(task).Update("status", "FAILURE").Error)
 	assert.True(t, RefundMidjourneyQuota(ctx, task, "Composition failed"))
 	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
 	assert.Equal(t, initialTokenQuota, getTokenRemainQuota(t, tokenID))
@@ -919,6 +920,7 @@ func TestRefundMidjourneyQuotaUsesLegacyChannelFallbackWithoutTokenAdjustment(t 
 	}
 	require.NoError(t, task.Insert())
 
+	require.NoError(t, model.DB.Model(task).Update("status", "FAILURE").Error)
 	assert.True(t, RefundMidjourneyQuota(ctx, task, "legacy failure"))
 
 	assert.Equal(t, walletAfterCharge+chargedQuota, getUserQuota(t, userID))

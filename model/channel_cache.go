@@ -36,6 +36,9 @@ var channelCacheRefreshFailures atomic.Uint64
 // a channel was deleted. Existing upstream tasks must remain pending for retry.
 var ErrChannelCacheStale = errors.New("channel cache snapshot exceeded staleness budget")
 
+// ErrChannelCacheMiss is snapshot absence, not proof of database deletion.
+var ErrChannelCacheMiss = errors.New("channel is absent from cache snapshot")
+
 // ChannelCacheHealth exposes counters, not channel IDs, keys, or DSNs.
 func ChannelCacheHealth() (lastSuccess time.Time, failures uint64) {
 	if ts := channelCacheLastRefresh.Load(); ts != 0 {
@@ -354,7 +357,7 @@ func CacheGetChannel(id int) (*Channel, error) {
 
 	c, ok := channelsIDM[id]
 	if !ok {
-		return nil, fmt.Errorf("channel #%d no longer exists", id)
+		return nil, fmt.Errorf("channel #%d is absent from cache: %w", id, ErrChannelCacheMiss)
 	}
 	return c, nil
 }
@@ -376,7 +379,7 @@ func CacheGetChannelInfo(id int) (*ChannelInfo, error) {
 
 	c, ok := channelsIDM[id]
 	if !ok {
-		return nil, fmt.Errorf("channel #%d no longer exists", id)
+		return nil, fmt.Errorf("channel #%d is absent from cache: %w", id, ErrChannelCacheMiss)
 	}
 	return &c.ChannelInfo, nil
 }

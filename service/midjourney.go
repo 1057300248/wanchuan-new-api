@@ -116,8 +116,13 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 	return task.Quota > 0, billingErr
 }
 
-// RefundMidjourneyQuota reverses every accounting element recorded for a billed legacy task.
+// RefundMidjourneyQuota reverses the committed charge of a failed legacy task.
+// The financial receipt CAS also requires FAILURE, so a stale observer cannot
+// refund a currently successful task. Usage aggregates/logs remain best-effort.
 func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason string) bool {
+	if task == nil || task.Id <= 0 {
+		return false
+	}
 	// Status observers may have loaded their snapshot before settlement. Read
 	// the committed receipt rather than trusting that stale in-memory copy.
 	if task.Id > 0 {
@@ -126,6 +131,11 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 			logger.LogWarn(ctx, common.LogText("failed to load Midjourney billing state, task %s: %s", task.MjId, err.Error()))
 			return false
 		}
+		if persisted.Status != "FAILURE" && persisted.Quota != 0 {
+			logger.LogWarn(ctx, common.LogText("Midjourney refund ignored: task %s is no longer failed", task.MjId))
+			return false
+		}
+		task.MjId = persisted.MjId
 		task.Quota = persisted.Quota
 		task.TokenId = persisted.TokenId
 		task.BillingChannelId = persisted.BillingChannelId
@@ -138,22 +148,27 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 	if task.WalletDebit != nil && len(task.WalletDebit) == 0 {
 		// A new task persisted before charging has no funds to refund.
 		task.Quota = 0
-		if err := task.UpdateBillingStateTx(model.DB.Where("wallet_debit = ? AND quota = ?", "[]", quota)); err != nil {
+		if err := task.UpdateBillingStateTx(model.DB.Where("wallet_debit = ? AND quota = ? AND status = ?", "[]", quota, "FAILURE")); err != nil {
 			logger.LogWarn(ctx, common.LogText("failed to clear uncharged Midjourney billing state, task %s: %s", task.MjId, err.Error()))
 			return false
 		}
 		return true
 	}
 
+	referenceID, refundKey := task.MjId, "midjourney:refund:"+task.MjId
+	if task.MjId == "" {
+		referenceID = strconv.Itoa(task.Id)
+		refundKey = "midjourney:refund-local:" + referenceID
+	}
 	entry := model.LedgerEntry{
 		UserId:         task.UserId,
 		Account:        model.AccountPaid,
 		Delta:          quota,
 		Reason:         model.LedgerReasonTaskRefund,
 		ReferenceType:  "mj_task",
-		ReferenceId:    task.MjId,
+		ReferenceId:    referenceID,
 		RequestId:      task.MjId,
-		IdempotencyKey: "midjourney:refund:" + task.MjId,
+		IdempotencyKey: refundKey,
 	}
 	metadata := map[string]any{"reason": reason}
 	if task.WalletDebit == nil {
@@ -209,7 +224,7 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 					return err
 				}
 			}
-			return nextTask.UpdateBillingStateTx(tx.Where("quota = ?", quota))
+			return nextTask.UpdateBillingStateTx(tx.Where("quota = ? AND status = ?", quota, "FAILURE"))
 		})
 		if !errors.Is(err, model.ErrLedgerDuplicate) {
 			break

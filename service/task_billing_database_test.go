@@ -374,6 +374,7 @@ func runMidjourneyWalletReceiptCases(t *testing.T) {
 			require.True(t, billed)
 			seedChargedAccounting(t, user.Id, channel.Id, token.Id, 300, 1)
 			receipt := append([]model.LedgerShare(nil), task.WalletDebit...)
+			require.NoError(t, model.DB.Model(task).Update("status", "FAILURE").Error)
 			restore := failReceiptUpdates(t, table)
 			assert.False(t, RefundMidjourneyQuota(t.Context(), task, "failed refund"))
 			assertUserBalances(t, user.Id, 0, 850, 0)
