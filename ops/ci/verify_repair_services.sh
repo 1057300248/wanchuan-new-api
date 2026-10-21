@@ -55,6 +55,12 @@ database)
 
   # Production startup installs an immutable registry; keep it in its own process.
   report startup ./model '^TestDatabaseCompatibilityReal$' TestDatabaseCompatibilityReal
+  prefix="TestSetupWalletDatabaseMatrix/$DIALECT"
+  required=("$prefix/fresh_root_and_replay" "$prefix/concurrent_fresh_setup_single_credit" "$prefix/rollback_balance_ledger_operations" "$prefix/rollback_balance_ledger" "$prefix/setup_record_failure_retry" "$prefix/paid_only_preconsume" "$prefix/invalid_credentials_no_account_or_grant")
+  for account in empty legacy bonus_only split; do
+    required+=("$prefix/existing_root_$account")
+  done
+  report setup-wallet ./controller "^TestSetupWalletDatabaseMatrix$/$DIALECT$" "${required[@]}"
   prefix="TestTaskSettlementMigrationDatabaseMatrix/$DIALECT"
   report task-migration ./model "^TestTaskSettlementMigrationDatabaseMatrix$/$DIALECT$" "$prefix/fresh" "$prefix/upgrade"
   prefix="TestQuotaDataCacheUsageDatabaseMatrix/$DIALECT"
