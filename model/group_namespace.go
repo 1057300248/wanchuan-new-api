@@ -108,7 +108,7 @@ func loadConfiguredGroupNamesTx(tx *gorm.DB) (map[string]struct{}, error) {
 		values[key] = groupRenameMemoryOptionValue(key)
 	}
 	var options []Option
-	if err := tx.Where("key IN ?", groupRenameOptionKeys).Find(&options).Error; err != nil {
+	if err := tx.Where(map[string]any{"key": groupRenameOptionKeys}).Find(&options).Error; err != nil {
 		return nil, err
 	}
 	for _, option := range options {
@@ -250,7 +250,7 @@ func bumpGroupConfigVersionTx(tx *gorm.DB) (int64, error) {
 		return 0, fmt.Errorf("invalid group config version %q: %w", option.Value, err)
 	}
 	next := current + 1
-	if err := tx.Model(&Option{}).Where("key = ?", groupConfigVersionOptionKey).
+	if err := tx.Model(&Option{}).Where(&Option{Key: groupConfigVersionOptionKey}).
 		Update("value", strconv.FormatInt(next, 10)).Error; err != nil {
 		return 0, err
 	}
@@ -329,7 +329,7 @@ func reloadGroupRuntimeOptions() error {
 	groupRenameRuntimeApplyMutex.Lock()
 	defer groupRenameRuntimeApplyMutex.Unlock()
 	var options []Option
-	if err := DB.Where("key IN ?", groupRenameOptionKeys).Find(&options).Error; err != nil {
+	if err := DB.Where(map[string]any{"key": groupRenameOptionKeys}).Find(&options).Error; err != nil {
 		return err
 	}
 	for _, option := range options {

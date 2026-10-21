@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -178,6 +179,7 @@ func TestSensitiveExemptionGroupRenameDatabaseMatrix(t *testing.T) {
 			t.Run("policy_save_precedes_rename", func(t *testing.T) {
 				setupSensitiveGroupRenameCase(t, "old")
 				atSave, release := make(chan struct{}), make(chan struct{})
+				releaseBarrier := sync.OnceFunc(func() { close(release) })
 				require.NoError(t, DB.Callback().Update().Before("gorm:update").Register("sensitive_exemption_pause", func(tx *gorm.DB) {
 					option, ok := tx.Statement.Model.(*Option)
 					if ok && option.Key == setting.SensitiveCheckExemptGroupsOptionKey {
@@ -186,19 +188,22 @@ func TestSensitiveExemptionGroupRenameDatabaseMatrix(t *testing.T) {
 					}
 				}))
 				t.Cleanup(func() { require.NoError(t, DB.Callback().Update().Remove("sensitive_exemption_pause")) })
-				writerResult := make(chan error, 1)
-				go func() {
-					writerResult <- UpdateRequestPolicyOptions(map[string]string{setting.SensitiveCheckExemptGroupsOptionKey: "old\nkeep"})
-				}()
-				<-atSave
-				renameStarted, renameResult := make(chan struct{}), make(chan error, 1)
-				go func() {
+				writerResult := startSensitiveGroupWrite(t, releaseBarrier, func() error {
+					return UpdateRequestPolicyOptions(map[string]string{setting.SensitiveCheckExemptGroupsOptionKey: "old\nkeep"})
+				})
+				select {
+				case <-atSave:
+				case err := <-writerResult:
+					t.Fatalf("policy save completed before the expected barrier: %v", err)
+				}
+				renameStarted := make(chan struct{})
+				renameResult := startSensitiveGroupWrite(t, releaseBarrier, func() error {
 					close(renameStarted)
 					_, err := RenameGroups([]GroupRenameMapping{{From: "old", To: "new"}})
-					renameResult <- err
-				}()
+					return err
+				})
 				<-renameStarted
-				close(release)
+				releaseBarrier()
 				writeErr, renameErr := <-writerResult, <-renameResult
 				require.NoError(t, writeErr)
 				require.NoError(t, renameErr)
@@ -209,6 +214,7 @@ func TestSensitiveExemptionGroupRenameDatabaseMatrix(t *testing.T) {
 				t.Run(fmt.Sprintf("concurrent_rename_policy_save/rollback=%t", rollback), func(t *testing.T) {
 					setupSensitiveGroupRenameCase(t, "old")
 					atCommit, release := make(chan struct{}), make(chan struct{})
+					releaseBarrier := sync.OnceFunc(func() { close(release) })
 					forcedErr := errors.New("forced rename rollback")
 					groupRenameTxFailureHook = func() error {
 						close(atCommit)
@@ -219,19 +225,22 @@ func TestSensitiveExemptionGroupRenameDatabaseMatrix(t *testing.T) {
 						return nil
 					}
 					t.Cleanup(func() { groupRenameTxFailureHook = nil })
-					renameResult := make(chan error, 1)
-					go func() {
+					renameResult := startSensitiveGroupWrite(t, releaseBarrier, func() error {
 						_, err := RenameGroups([]GroupRenameMapping{{From: "old", To: "new"}})
-						renameResult <- err
-					}()
-					<-atCommit
-					writerStarted, writerResult := make(chan struct{}), make(chan error, 1)
-					go func() {
+						return err
+					})
+					select {
+					case <-atCommit:
+					case err := <-renameResult:
+						t.Fatalf("rename completed before the expected barrier: %v", err)
+					}
+					writerStarted := make(chan struct{})
+					writerResult := startSensitiveGroupWrite(t, releaseBarrier, func() error {
 						close(writerStarted)
-						writerResult <- UpdateRequestPolicyOptions(map[string]string{setting.SensitiveCheckExemptGroupsOptionKey: "old\nkeep"})
-					}()
+						return UpdateRequestPolicyOptions(map[string]string{setting.SensitiveCheckExemptGroupsOptionKey: "old\nkeep"})
+					})
 					<-writerStarted
-					close(release)
+					releaseBarrier()
 					renameErr, writeErr := <-renameResult, <-writerResult
 					if rollback {
 						require.ErrorIs(t, renameErr, forcedErr)
@@ -246,6 +255,22 @@ func TestSensitiveExemptionGroupRenameDatabaseMatrix(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Join every worker before fixture cleanup even when a database error prevents
+// its barrier from being reached. Releasing the barrier is safe more than once.
+func startSensitiveGroupWrite(t *testing.T, releaseBarrier func(), write func() error) <-chan error {
+	t.Helper()
+	result, done := make(chan error, 1), make(chan struct{})
+	go func() {
+		defer close(done)
+		result <- write()
+	}()
+	t.Cleanup(func() {
+		releaseBarrier()
+		<-done
+	})
+	return result
 }
 
 func setupSensitiveGroupRenameCase(t *testing.T, exempt string) {
