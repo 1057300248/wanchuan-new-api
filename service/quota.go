@@ -535,7 +535,7 @@ func postConsumeQuotaWithWalletCommit(relayInfo *relaycommon.RelayInfo, quota in
 					return err
 				}
 				if ledgerResult != nil && !ledgerResult.Replayed && !relayInfo.IsPlayground {
-					if err := model.ApplyTokenQuotaDeltaTx(tx, relayInfo.TokenId, relayInfo.TokenKey, -quota); err != nil {
+					if err := model.SettleTokenQuotaDeltaTx(tx, relayInfo.TokenId, relayInfo.UserId, relayInfo.TokenKey, -quota); err != nil {
 						return err
 					}
 				}

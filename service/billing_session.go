@@ -130,7 +130,7 @@ func (s *BillingSession) settleWalletAndToken(funding transactionalSettlementFun
 			if result.Replayed || s.relayInfo.IsPlayground {
 				return nil
 			}
-			return model.ApplyTokenQuotaDeltaTx(tx, s.relayInfo.TokenId, s.relayInfo.TokenKey, -delta)
+			return model.SettleTokenQuotaDeltaTx(tx, s.relayInfo.TokenId, s.relayInfo.UserId, s.relayInfo.TokenKey, -delta)
 		})
 		if !errors.Is(err, model.ErrLedgerDuplicate) {
 			break

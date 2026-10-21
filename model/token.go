@@ -454,6 +454,30 @@ func ApplyTokenQuotaDeltaTx(tx *gorm.DB, id int, key string, delta int) error {
 	return nil
 }
 
+// SettleTokenQuotaDeltaTx accounts for an already-authorized request after the
+// upstream work has run. Revoking its token must not cancel the owner's wallet
+// settlement. Soft-deleted rows retain their counters without becoming usable;
+// physically removed rows have no counters left to update. A surviving row must
+// still match both the original owner and credential, including on deleted rows.
+// Reservations must keep using the live-token-only path instead.
+func SettleTokenQuotaDeltaTx(tx *gorm.DB, id, userID int, key string, delta int) error {
+	if tx == nil || id <= 0 || userID <= 0 || key == "" {
+		return errors.New("invalid authorized token settlement identity")
+	}
+	var token Token
+	err := lockForUpdate(tx.Unscoped()).First(&token, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if token.UserId != userID || token.Key != key {
+		return errors.New("token settlement identity mismatch")
+	}
+	return ApplyTokenQuotaDeltaTx(tx.Unscoped(), id, key, delta)
+}
+
 // CountUserTokens returns total number of tokens for the given user, used for pagination
 func CountUserTokens(userId int) (int64, error) {
 	var total int64
