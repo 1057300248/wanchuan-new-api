@@ -13,13 +13,15 @@ DSN_KEYS = ("TEST_MYSQL_DSN", "TEST_MYSQL_LOG_DSN", "TEST_POSTGRES_DSN", "TEST_P
             "TEST_PERF_MYSQL_DSN", "TEST_PERF_POSTGRES_DSN", "TEST_FIXED_MYSQL_DSN", "TEST_FIXED_MYSQL_LOG_DSN",
             "TEST_FIXED_POSTGRES_DSN", "TEST_FIXED_POSTGRES_LOG_DSN", "TEST_DATABASE_COMPAT",
             "TEST_DATABASE_DIALECT", "TEST_TASK_DB_DIALECT", "TEST_RUNTIME_REDIS",
-            "TEST_REDIS_DSN", "TEST_REDIS_ADDR", "TEST_TASK_REDIS_ADDR")
+            "TEST_REDIS_DSN", "TEST_REDIS_ADDR", "TEST_TASK_REDIS_ADDR",
+            "TEST_FINALIZATION_MODEL_MYSQL_DSN", "TEST_FINALIZATION_MODEL_POSTGRES_DSN",
+            "TEST_FINALIZATION_SERVICE_MYSQL_DSN", "TEST_FINALIZATION_SERVICE_POSTGRES_DSN")
 
 
 class RepairServiceEnvironmentTests(unittest.TestCase):
     def run_script(self, dialect, reject_label="", creation_fails=False, *, mode="database",
                    redis_version="8.8.0", redis_info="# Server\r\nredis_version:8.8.0\r\n",
-                   redis_info_fails=False):
+                   redis_info_fails=False, finalization_creation_fails=""):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             tools = root / "bin"
@@ -40,6 +42,8 @@ elif name == "go" and args == ["version"]:
     print("offline orchestration stub; no Go tests executed")
 elif name == "docker" and os.environ.get("MOCK_CREATE_FAIL") == "1" and any("repair_token_migration" in arg for arg in args):
     raise SystemExit(1)
+elif name == "docker" and os.environ.get("MOCK_FINALIZATION_CREATE_FAIL") and any("repair_finalization_" + os.environ["MOCK_FINALIZATION_CREATE_FAIL"] in arg for arg in args):
+    raise SystemExit(1)
 elif name == "docker" and args[-3:] == ["redis-cli", "INFO", "server"]:
     if os.environ.get("MOCK_REDIS_INFO_FAIL") == "1":
         raise SystemExit(1)
@@ -58,6 +62,11 @@ elif name == "python3":
                    "OUT": str(root / "evidence"), "SOURCE_SHA": "a" * 40, "DIALECT": dialect,
                    "MYSQL_ID": "b" * 64, "MYSQL_PORT": "13306", "PG_ID": "c" * 64, "PG_PORT": "15432",
                    "AUDIT_MYSQL_DSN": "untrusted-ambient-fixture", "AUDIT_POSTGRES_DSN": "untrusted-ambient-fixture",
+                   "TEST_FINALIZATION_MODEL_MYSQL_DSN": "untrusted-ambient-fixture",
+                   "TEST_FINALIZATION_MODEL_POSTGRES_DSN": "untrusted-ambient-fixture",
+                   "TEST_FINALIZATION_SERVICE_MYSQL_DSN": "untrusted-ambient-fixture",
+                   "TEST_FINALIZATION_SERVICE_POSTGRES_DSN": "untrusted-ambient-fixture",
+                   "MOCK_FINALIZATION_CREATE_FAIL": finalization_creation_fails,
                    "MOCK_TRACE": str(trace), "MOCK_REJECT_LABEL": reject_label,
                    "MOCK_CREATE_FAIL": "1" if creation_fails else "0",
                    "REDIS_ID": "d" * 64, "REDIS_PORT": "16379", "REDIS_EXPECTED_VERSION": redis_version,
@@ -75,14 +84,15 @@ elif name == "python3":
                 self.assertEqual(0, result.returncode, result.stderr)
                 tests = [row for row in rows if row["tool"] == "go" and row["args"] != ["version"]]
                 gates = [row for row in rows if row["tool"] == "python3"]
-                self.assertEqual(22, len(tests))
+                self.assertEqual(24, len(tests))
                 self.assertEqual(len(tests), len(gates), "every suite must retain its strict evidence gate")
                 self.assertEqual({"startup", "channel-priority", "audit-ordered-index", "setup-aff-code-index",
                                   "token-migration", "token-audit", "performance-aggregation", "performance-runtime-flush",
                                   "setup-wallet", "task-migration", "dashboard-migration", "midjourney-migration",
                                   "wallet", "owner", "owner-group-settings", "monitor-visibility", "sensitive-group-rename",
                                   "converted-responses", "native-responses", "immediate-settlement",
-                                  "subscription-period", "subscription-period-migration"},
+                                  "subscription-period", "subscription-period-migration",
+                                  "request-finalization-model", "request-finalization-service"},
                                  {Path(gate["args"][2]).stem for gate in gates})
                 for test, gate in zip(tests, gates):
                     label = Path(gate["args"][2]).stem
@@ -124,7 +134,8 @@ elif name == "python3":
                         self.assertEqual("", row["env"][key], key)
 
     def test_required_rejection_fails_job_but_keeps_independent_evidence(self):
-        for label in ("token-migration", "token-audit", "subscription-period", "subscription-period-migration"):
+        for label in ("token-migration", "token-audit", "subscription-period", "subscription-period-migration",
+                      "request-finalization-model", "request-finalization-service"):
             with self.subTest(label=label):
                 result, rows = self.run_script("postgres", reject_label=label)
                 self.assertNotEqual(0, result.returncode)
@@ -137,6 +148,59 @@ elif name == "python3":
                 result, rows = self.run_script(dialect, creation_fails=True)
                 self.assertNotEqual(0, result.returncode)
                 self.assertFalse(any(row["tool"] == "go" and row["args"] != ["version"] for row in rows))
+
+    def test_finalization_matrices_use_distinct_fresh_databases_and_all_leaves(self):
+        inventory = json.loads((SCRIPT.parent / "billing_finalization_required_cases.json").read_text())
+        suites = {suite["package"]: suite for suite in inventory["suites"]}
+        self.assertEqual({"model", "service"}, set(suites))
+        self.assertEqual(28, len(suites["model"]["required_leaf_suffixes"]))
+        self.assertEqual(42, len(suites["service"]["required_leaf_suffixes"]))
+        for suffix in ("legacy_final_more_less/Å", "legacy_final_more_less/ĕ"):
+            self.assertIn(suffix, suites["service"]["required_leaf_suffixes"])
+        for dialect in ("sqlite", "mysql", "postgres"):
+            with self.subTest(dialect=dialect):
+                result, rows = self.run_script(dialect)
+                self.assertEqual(0, result.returncode, result.stderr)
+                tests = [row for row in rows if row["tool"] == "go" and row["args"] != ["version"]]
+                checks = [row for row in rows if row["tool"] == "python3"]
+                self.assertEqual(52 if dialect == "sqlite" else 24, len(tests))
+                self.assertEqual(len(tests), len(checks))
+                for invocation, check in zip(tests, checks):
+                    label = Path(check["args"][2]).stem
+                    env = invocation["env"]
+                    for package, suite in suites.items():
+                        active = label == "request-finalization-" + package
+                        for engine in ("mysql", "postgres"):
+                            key = f"TEST_FINALIZATION_{package.upper()}_{engine.upper()}_DSN"
+                            if active and dialect == engine:
+                                self.assertIn("/repair_finalization_" + package + "?", env[key])
+                                self.assertNotEqual(env["TEST_DATABASE_DSN"], env[key])
+                                self.assertIn("127.0.0.1:", env[key])
+                            else:
+                                self.assertEqual("", env[key], (label, key))
+                        if active:
+                            prefix = suite["top"] + "/" + dialect
+                            expected = [prefix] + [prefix + "/" + leaf for leaf in suite["required_leaf_suffixes"]]
+                            self.assertEqual(expected, check["args"][3:])
+                            self.assertEqual("./" + package, invocation["args"][4])
+                            self.assertEqual(f"^{suite['top']}$/{dialect}$",
+                                             invocation["args"][invocation["args"].index("-run") + 1])
+                    if dialect != "sqlite":
+                        for package in suites:
+                            matching = [row for row in rows if row["tool"] == "docker" and
+                                        any("repair_finalization_" + package in arg for arg in row["args"])]
+                            self.assertEqual(1, len(matching))
+                            command = " ".join(matching[0]["args"])
+                            self.assertNotIn("IF NOT EXISTS", command)
+                            self.assertNotIn("DROP", command)
+
+    def test_finalization_database_creation_failure_stops_before_tests(self):
+        for dialect in ("mysql", "postgres"):
+            for package in ("model", "service"):
+                with self.subTest(dialect=dialect, package=package):
+                    result, rows = self.run_script(dialect, finalization_creation_fails=package)
+                    self.assertNotEqual(0, result.returncode)
+                    self.assertFalse(any(row["tool"] == "go" and row["args"] != ["version"] for row in rows))
 
     def test_subscription_period_required_cases_and_selectors_are_complete(self):
         for dialect in ("sqlite", "mysql", "postgres"):

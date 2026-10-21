@@ -1,0 +1,101 @@
+{
+  "pin": "7e1fbfbf1260e4d115729f25fd967a7b25cf0e6e",
+  "tree": "811ef8b15798a3d890728e285458ffe68fb534e4",
+  "dialects": [
+    "sqlite",
+    "mysql",
+    "postgres"
+  ],
+  "suites": [
+    {
+      "package": "model",
+      "top": "TestBillingFinalizationDatabaseMatrix",
+      "dsn_env": {
+        "mysql": "TEST_FINALIZATION_MODEL_MYSQL_DSN",
+        "postgres": "TEST_FINALIZATION_MODEL_POSTGRES_DSN"
+      },
+      "required_leaf_suffixes": [
+        "atomic_failure_stages/ledger",
+        "atomic_failure_stages/operation",
+        "atomic_failure_stages/source",
+        "atomic_failure_stages/terminal",
+        "atomic_failure_stages/token",
+        "concurrent_workers_and_first_owners",
+        "migration_preserves_pending_and_tombstones",
+        "near_miss_realtime_key_rejected/wss:+1:20",
+        "near_miss_realtime_key_rejected/wss:01:20",
+        "near_miss_realtime_key_rejected/wss:0:20",
+        "near_miss_realtime_key_rejected/wss:18446744073709551616:20",
+        "near_miss_realtime_key_rejected/wss:1:21",
+        "original_token_identity/hard_deleted",
+        "original_token_identity/no_token",
+        "original_token_identity/replacement_key",
+        "original_token_identity/replacement_owner",
+        "original_token_identity/soft_deleted",
+        "original_token_identity/unlimited",
+        "receipt_mismatch_and_legacy_replay",
+        "rollback_probe_no_permanent_owner",
+        "subscription_original_period/cumulative",
+        "subscription_original_period/missing_subscription",
+        "subscription_original_period/period_reset",
+        "subscription_original_period/receipt_changed",
+        "subscription_original_period/unknown_period",
+        "task_owner_and_evolved_quota",
+        "task_transfer_rollback_and_refund_race/insert",
+        "task_transfer_rollback_and_refund_race/owner"
+      ]
+    },
+    {
+      "package": "service",
+      "top": "TestBillingFinalizationSessionDatabaseMatrix",
+      "dsn_env": {
+        "mysql": "TEST_FINALIZATION_SERVICE_MYSQL_DSN",
+        "postgres": "TEST_FINALIZATION_SERVICE_POSTGRES_DSN"
+      },
+      "required_leaf_suffixes": [
+        "commit_boundaries/lost_ack/refund_intent",
+        "commit_boundaries/lost_ack/settlement",
+        "commit_boundaries/lost_ack/task_insert",
+        "commit_boundaries/rollback/refund_intent",
+        "commit_boundaries/rollback/settlement",
+        "commit_boundaries/rollback/task_insert",
+        "extension_capability/custom_billing_settler_insert",
+        "extension_capability/custom_non_wallet",
+        "extension_capability/custom_subscription_delta",
+        "extension_capability/custom_wallet_atomic_replay",
+        "failed_settle_reserve_refund",
+        "independent_violation_fee/contradictory_marker",
+        "independent_violation_fee/fee_before_worker",
+        "independent_violation_fee/unmarked_same_key_replay",
+        "independent_violation_fee/worker_before_fee",
+        "intent_failure_admission",
+        "legacy_final_more_less/a",
+        "legacy_final_more_less/\u00c5",
+        "legacy_final_more_less/\u0115",
+        "probe_failure",
+        "real_session_partial_less",
+        "real_session_partial_more",
+        "real_session_playground",
+        "real_session_subscription_refund",
+        "real_session_subscription_reset_refund",
+        "real_session_subscription_task_handoff",
+        "real_session_subscription_zero_delta",
+        "real_session_subscription_zero_delta_replaced_token",
+        "real_session_task_handoff",
+        "real_session_trusted",
+        "real_session_unlimited",
+        "realtime_increment_terminal/failed_final_then_refund",
+        "realtime_increment_terminal/final_settle",
+        "realtime_increment_terminal/refund_initial_hold",
+        "refund_commit_boundaries/lost_ack",
+        "refund_commit_boundaries/rollback",
+        "separate_held_amounts",
+        "source_failure_restart",
+        "zero_delta_replacement/hold_0/key",
+        "zero_delta_replacement/hold_0/owner",
+        "zero_delta_replacement/hold_100/key",
+        "zero_delta_replacement/hold_100/owner"
+      ]
+    }
+  ]
+}

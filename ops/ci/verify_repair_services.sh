@@ -33,11 +33,20 @@ database)
   export TEST_MYSQL_DSN= TEST_MYSQL_LOG_DSN= TEST_POSTGRES_DSN= TEST_POSTGRES_LOG_DSN=
   export AUDIT_MYSQL_DSN= AUDIT_POSTGRES_DSN=
   token_migration_mysql_dsn= token_migration_postgres_dsn=
+  # The finalization worker scans every pending intent. Never share its fixture
+  # database between model/service suites or inherit an ambient database DSN.
+  export TEST_FINALIZATION_MODEL_MYSQL_DSN= TEST_FINALIZATION_MODEL_POSTGRES_DSN=
+  export TEST_FINALIZATION_SERVICE_MYSQL_DSN= TEST_FINALIZATION_SERVICE_POSTGRES_DSN=
+  finalization_model_mysql_dsn= finalization_model_postgres_dsn=
+  finalization_service_mysql_dsn= finalization_service_postgres_dsn=
   case "$DIALECT" in
   mysql)
     : "${MYSQL_ID:?a real MySQL service is required}" "${MYSQL_PORT:?a real MySQL port is required}"
     docker inspect --format '{{.Config.Image}} {{.Image}}' "$MYSQL_ID" > "$OUT/database-image.txt"
     docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'SELECT VERSION(); ALTER DATABASE repair_compat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_compat_log CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_token_migration CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;' > "$OUT/database-version.txt"
+    docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'CREATE DATABASE repair_finalization_model CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_finalization_service CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
+    finalization_model_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_model?charset=utf8mb4&parseTime=true&loc=UTC"
+    finalization_service_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_service?charset=utf8mb4&parseTime=true&loc=UTC"
     export TEST_MYSQL_DSN="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_compat?charset=utf8mb4&parseTime=true&loc=UTC"
     export TEST_MYSQL_LOG_DSN="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_compat_log?charset=utf8mb4&parseTime=true&loc=UTC"
     export TEST_DATABASE_DSN="$TEST_MYSQL_DSN" TEST_LOG_DATABASE_DSN="$TEST_MYSQL_LOG_DSN"
@@ -49,6 +58,10 @@ database)
     docker exec "$PG_ID" psql -U postgres -d repair_compat -Atc 'SHOW server_version;' > "$OUT/database-version.txt"
     docker exec "$PG_ID" createdb -U postgres repair_compat_log
     docker exec "$PG_ID" createdb -U postgres repair_token_migration
+    docker exec "$PG_ID" createdb -U postgres repair_finalization_model
+    docker exec "$PG_ID" createdb -U postgres repair_finalization_service
+    finalization_model_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_model?sslmode=disable"
+    finalization_service_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_service?sslmode=disable"
     export TEST_POSTGRES_DSN="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_compat?sslmode=disable"
     export TEST_POSTGRES_LOG_DSN="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_compat_log?sslmode=disable"
     export TEST_DATABASE_DSN="$TEST_POSTGRES_DSN" TEST_LOG_DATABASE_DSN="$TEST_POSTGRES_LOG_DSN"
@@ -145,6 +158,93 @@ database)
   report native-responses ./relay "^TestNativeResponsesFailureFixedAccountingDatabaseMatrix$/$DIALECT/" "$prefix" "$prefix/http_nonstream/failed/empty" "$prefix/http_nonstream/failed/partial_usage" "$prefix/http_request/failed_partial_usage" "$prefix/zero_settlement_transaction_failure_recovers_reserve"
   export TEST_TASK_DB_DIALECT="$DIALECT"
   report immediate-settlement ./controller '^TestImmediateTaskSettlementDatabase$' TestImmediateTaskSettlementDatabase TestImmediateTaskSettlementDatabase/accepted_settlement_failure_preserves_task_reference
+
+
+  # Required leaf inventory is reviewed and mirrored by offline orchestration tests.
+  prefix="TestBillingFinalizationDatabaseMatrix/$DIALECT"
+  required=("$prefix")
+  for contract in \
+    'atomic_failure_stages/ledger' \
+    'atomic_failure_stages/operation' \
+    'atomic_failure_stages/source' \
+    'atomic_failure_stages/terminal' \
+    'atomic_failure_stages/token' \
+    'concurrent_workers_and_first_owners' \
+    'migration_preserves_pending_and_tombstones' \
+    'near_miss_realtime_key_rejected/wss:+1:20' \
+    'near_miss_realtime_key_rejected/wss:01:20' \
+    'near_miss_realtime_key_rejected/wss:0:20' \
+    'near_miss_realtime_key_rejected/wss:18446744073709551616:20' \
+    'near_miss_realtime_key_rejected/wss:1:21' \
+    'original_token_identity/hard_deleted' \
+    'original_token_identity/no_token' \
+    'original_token_identity/replacement_key' \
+    'original_token_identity/replacement_owner' \
+    'original_token_identity/soft_deleted' \
+    'original_token_identity/unlimited' \
+    'receipt_mismatch_and_legacy_replay' \
+    'rollback_probe_no_permanent_owner' \
+    'subscription_original_period/cumulative' \
+    'subscription_original_period/missing_subscription' \
+    'subscription_original_period/period_reset' \
+    'subscription_original_period/receipt_changed' \
+    'subscription_original_period/unknown_period' \
+    'task_owner_and_evolved_quota' \
+    'task_transfer_rollback_and_refund_race/insert' \
+    'task_transfer_rollback_and_refund_race/owner'; do
+    required+=("$prefix/$contract")
+  done
+  TEST_FINALIZATION_MODEL_MYSQL_DSN="$finalization_model_mysql_dsn" TEST_FINALIZATION_MODEL_POSTGRES_DSN="$finalization_model_postgres_dsn" \
+    report request-finalization-model ./model "^TestBillingFinalizationDatabaseMatrix$/$DIALECT$" "${required[@]}"
+  prefix="TestBillingFinalizationSessionDatabaseMatrix/$DIALECT"
+  required=("$prefix")
+  for contract in \
+    'commit_boundaries/lost_ack/refund_intent' \
+    'commit_boundaries/lost_ack/settlement' \
+    'commit_boundaries/lost_ack/task_insert' \
+    'commit_boundaries/rollback/refund_intent' \
+    'commit_boundaries/rollback/settlement' \
+    'commit_boundaries/rollback/task_insert' \
+    'extension_capability/custom_billing_settler_insert' \
+    'extension_capability/custom_non_wallet' \
+    'extension_capability/custom_subscription_delta' \
+    'extension_capability/custom_wallet_atomic_replay' \
+    'failed_settle_reserve_refund' \
+    'independent_violation_fee/contradictory_marker' \
+    'independent_violation_fee/fee_before_worker' \
+    'independent_violation_fee/unmarked_same_key_replay' \
+    'independent_violation_fee/worker_before_fee' \
+    'intent_failure_admission' \
+    'legacy_final_more_less/a' \
+    'legacy_final_more_less/Å' \
+    'legacy_final_more_less/ĕ' \
+    'probe_failure' \
+    'real_session_partial_less' \
+    'real_session_partial_more' \
+    'real_session_playground' \
+    'real_session_subscription_refund' \
+    'real_session_subscription_reset_refund' \
+    'real_session_subscription_task_handoff' \
+    'real_session_subscription_zero_delta' \
+    'real_session_subscription_zero_delta_replaced_token' \
+    'real_session_task_handoff' \
+    'real_session_trusted' \
+    'real_session_unlimited' \
+    'realtime_increment_terminal/failed_final_then_refund' \
+    'realtime_increment_terminal/final_settle' \
+    'realtime_increment_terminal/refund_initial_hold' \
+    'refund_commit_boundaries/lost_ack' \
+    'refund_commit_boundaries/rollback' \
+    'separate_held_amounts' \
+    'source_failure_restart' \
+    'zero_delta_replacement/hold_0/key' \
+    'zero_delta_replacement/hold_0/owner' \
+    'zero_delta_replacement/hold_100/key' \
+    'zero_delta_replacement/hold_100/owner'; do
+    required+=("$prefix/$contract")
+  done
+  TEST_FINALIZATION_SERVICE_MYSQL_DSN="$finalization_service_mysql_dsn" TEST_FINALIZATION_SERVICE_POSTGRES_DSN="$finalization_service_postgres_dsn" \
+    report request-finalization-service ./service "^TestBillingFinalizationSessionDatabaseMatrix$/$DIALECT$" "${required[@]}"
 
   if [ "$DIALECT" = sqlite ]; then
     report subscription-period-replay ./model '^(TestSubscriptionPeriodTransactionRollback|TestSubscriptionPeriodReplayRejectsStaleConsumedObservation|TestSubscriptionPeriodJournalReserveSettlementValidation|TestSubscriptionPeriodReplayAfterAbsentSnapshot|TestSubscriptionRefundCommitsReceiptAndUsageTogether)$' TestSubscriptionPeriodTransactionRollback TestSubscriptionPeriodReplayRejectsStaleConsumedObservation TestSubscriptionPeriodJournalReserveSettlementValidation TestSubscriptionPeriodReplayAfterAbsentSnapshot TestSubscriptionRefundCommitsReceiptAndUsageTogether
