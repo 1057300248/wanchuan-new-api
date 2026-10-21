@@ -64,7 +64,7 @@ func TestTaskWalletReceiptsDatabaseMatrix(t *testing.T) {
 				common.SetDatabaseTypes(oldMainType, oldLogType)
 				model.InvalidateModelBonusEligibleCache()
 			})
-			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Option{}, &model.Task{}, &model.Midjourney{}, &model.UserSubscription{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}))
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.Option{}, &model.Task{}, &model.Midjourney{}, &model.UserSubscription{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}))
 			require.NoError(t, logDB.AutoMigrate(&model.Log{}))
 			query := "SELECT version()"
 			if dialect.name == common.DatabaseTypeSQLite {
@@ -78,6 +78,7 @@ func TestTaskWalletReceiptsDatabaseMatrix(t *testing.T) {
 				require.NoError(t, db.Unscoped().Where("model_name = ?", "mj_imagine").Delete(&model.Model{}).Error)
 			})
 			runTaskWalletReceiptCases(t)
+			runDurableTaskSettlementCases(t)
 			runMidjourneyWalletReceiptCases(t)
 		})
 	}

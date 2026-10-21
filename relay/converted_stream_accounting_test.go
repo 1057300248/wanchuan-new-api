@@ -1,6 +1,7 @@
 package relay_test
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
+	"github.com/QuantumNous/new-api/pkg/walletport"
 	"github.com/QuantumNous/new-api/relay/channel/deepseek"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
@@ -76,11 +78,19 @@ func TestConvertedResponsesFailureAccountingDatabaseMatrix(t *testing.T) {
 		require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(completionRatios))
 		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(string(groupRatios)))
 	})
-	require.NoError(t, walletmodule.RegisterRuntime())
+	policy, policyErr := walletport.Default()
+	if errors.Is(policyErr, walletport.ErrNotConfigured) {
+		require.NoError(t, walletmodule.RegisterRuntime())
+	} else {
+		require.NoError(t, policyErr)
+		require.IsType(t, walletmodule.Policy{}, policy)
+	}
 	factories := moneyport.NewFactoryRegistry()
 	require.NoError(t, service.RegisterHostFundingFactories(factories))
 	require.NoError(t, walletmodule.RegisterFundingFactory(factories))
-	require.NoError(t, service.ConfigureFundingFactoryRegistry(factories))
+	if err := service.ConfigureFundingFactoryRegistry(factories); err != nil {
+		require.EqualError(t, err, "service: funding factory registry already configured")
+	}
 	for key, price := range map[string]float64{
 		deepseek.SearchToolPriceKey + ":converted-stream-accounting*":     2,
 		deepseek.FetchToolPriceKey + ":converted-stream-accounting*":      3,
@@ -107,6 +117,11 @@ func TestConvertedResponsesFailureAccountingDatabaseMatrix(t *testing.T) {
 				for _, outcome := range []string{"provider_usage", "estimated_usage", "role_only", "delivery_failure", "hosted_tools", "empty_tools"} {
 					t.Run(fmt.Sprintf("%s/%s", format, outcome), func(t *testing.T) {
 						runConvertedStreamAccountingCase(t, db, logDB, format, outcome)
+					})
+				}
+				for _, outcome := range []string{"failed", "bare_error", "cancelled", "failed_status", "eof", "done_without_terminal", "incomplete", "success", "empty_failure", "empty_eof", "fixed_partial", "fixed_empty", "fixed_success_missing_usage"} {
+					t.Run(fmt.Sprintf("buffered/%s/%s", format, outcome), func(t *testing.T) {
+						runBufferedResponsesAccountingCase(t, db, logDB, format, outcome)
 					})
 				}
 			}

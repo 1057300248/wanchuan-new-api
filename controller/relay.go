@@ -24,6 +24,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -107,6 +108,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				return
 			}
 			upstreamURLs := common.UpstreamAddresses(c)
+			if relayFormat != types.RelayFormatOpenAIRealtime && c.Writer.Written() &&
+				strings.HasPrefix(c.Writer.Header().Get("Content-Type"), "text/event-stream") {
+				writeRelayStreamError(c, relayFormat, newAPIError)
+				return
+			}
+			if relayFormat != types.RelayFormatOpenAIRealtime {
+				c.Header("Content-Type", "application/json; charset=utf-8")
+			}
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
 				helper.WssError(c, ws, newAPIError)
@@ -157,6 +166,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}()
 
+	generalSettings := operation_setting.GetGeneralSetting()
+	if relayFormat == types.RelayFormatClaude && relayInfo.IsStream && generalSettings.PingIntervalEnabled {
+		stopKeepAlive := helper.StartStreamKeepAlive(c, time.Duration(generalSettings.PingIntervalSeconds)*time.Second)
+		defer stopKeepAlive()
+	}
+
 	if newAPIError = relay.PrepareRequestBilling(c, relayInfo); newAPIError != nil {
 		return
 	}
@@ -192,6 +207,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		service.AppendUsedChannel(c, channel.Id)
+		// The initial reserve was checked against the distributor's selected
+		// route. Recheck every retry before repricing/precharge or upstream work.
+		if relayInfo.Request != nil && service.ShouldCheckRequestSensitive(c) {
+			if meta := relayInfo.Request.GetTokenCountMeta(); meta != nil {
+				if newAPIError = service.CheckRequestSensitiveText(c, meta.CombineText); newAPIError != nil {
+					break
+				}
+			}
+		}
 		if billingErr := service.PrepareTieredBillingForSelectedGroup(c, relayInfo); billingErr != nil {
 			newAPIError = billingErr
 			break
@@ -243,6 +267,29 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		retryLogStr := common.LogText("retry: %s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
 		logger.LogInfo(c, retryLogStr)
 	}
+}
+
+func writeRelayStreamError(c *gin.Context, format types.RelayFormat, apiError *types.NewAPIError) {
+	// Once keepalive commits the response, errors must use that same stream.
+	status, _ := common.GetContextKeyType[*relaycommon.StreamStatus](c, constant.ContextKeyResponseStreamStatus)
+	if status == nil {
+		status = relaycommon.NewStreamStatus()
+		common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, status)
+	}
+	status.MarkFailed(string(apiError.GetErrorCode()), string(apiError.GetErrorType()), apiError.StatusCode)
+	upstreamURLs := common.UpstreamAddresses(c)
+	helper.ExtendWriteDeadline(c)
+	if format == types.RelayFormatClaude {
+		_ = helper.ClaudeData(c, dto.ClaudeResponse{
+			Type:  "error",
+			Error: privacy.SanitizeClientClaudeError(c, apiError.StatusCode, apiError.ToClaudeError(upstreamURLs...)),
+		})
+		return
+	}
+	_ = helper.ObjectData(c, gin.H{
+		"error": privacy.SanitizeClientOpenAIError(c, apiError.StatusCode, apiError.ToOpenAIError(upstreamURLs...)),
+	})
+	helper.Done(c)
 }
 
 // CountClaudeTokens implements Anthropic's token-counting utility endpoint.
@@ -619,10 +666,12 @@ func executeTaskSubmissionWith(
 		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 	}
 
-	// Reserve any submit-time upward billing adjustment before persistence.
-	// This keeps insertion failures fully refundable while ensuring settlement
-	// after the barrier normally has a zero positive delta.
-	if relayInfo.Billing != nil {
+	// A real host session persists its held amount and final quote before any
+	// post-acceptance adjustment. The durable transaction then updates funds,
+	// token and usage together; a larger quote cannot widen the pre-record
+	// failure window through a token-first compensating reservation. Alternate
+	// BillingSettler implementations retain their existing reserve contract.
+	if relayInfo.Billing != nil && !service.SupportsDurableTaskBilling(relayInfo) {
 		stage = "reserve"
 		diagnostics.reserve("reserve_start", result.Quota)
 		if reserveErr := relayInfo.Billing.Reserve(result.Quota); reserveErr != nil {
@@ -705,6 +754,7 @@ func executeTaskSubmissionWith(
 			insertOmits = append(insertOmits, "data")
 		}
 	}
+	service.PrepareSubmittedTaskBilling(relayInfo, task, result.Quota)
 	diagnostics.insertStart(task)
 	if insertErr := task.InsertWithContext(c.Request.Context(), insertOmits...); insertErr != nil {
 		common.SysError(common.LogText("insert task error: %s", insertErr.Error()))
@@ -717,9 +767,16 @@ func executeTaskSubmissionWith(
 	diagnostics.durable(task)
 	diagnostics.settleStart(task, result.Quota)
 
-	if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
+	settledNow, settleErr := service.SettleSubmittedTaskBilling(c, relayInfo, task, result.Quota)
+	if settleErr != nil {
 		common.SysError(common.LogText("settle task billing error: %s", settleErr.Error()))
-		taskErr = service.TaskErrorWrapperLocal(errors.New("failed to settle task billing"), "task_billing_settlement_failed", http.StatusInternalServerError)
+
+		taskErr = service.TaskErrorWrapperLocal(fmt.Errorf("task %s was accepted; billing settlement is pending, keep this task ID and do not resubmit", task.TaskID), "task_billing_settlement_failed", http.StatusInternalServerError)
+		taskErr.NoRetry = true
+		taskErr.Data = map[string]any{"task_id": task.TaskID, "accepted": true, "settlement_pending": task.SettlementPending}
+		// Headers survive plugin/protocol-specific error presenters too.
+		c.Header("X-New-API-Task-ID", task.TaskID)
+		c.Header("X-New-API-Task-Accepted", "true")
 		diagnostics.failed("settle", "billing_error", taskErr, true)
 		return nil, taskErr
 	}
@@ -728,7 +785,9 @@ func executeTaskSubmissionWith(
 	} else {
 		policy.AddEvent(service.PolicyEvent{Decision: service.PolicyDecision{Action: "stop", Reason: "task_failed", Source: "upstream"}})
 	}
-	service.LogTaskConsumption(c, relayInfo, task)
+	if settledNow {
+		service.LogTaskConsumption(c, relayInfo, task)
+	}
 	diagnostics.complete(task, result.Quota)
 
 	return &taskSubmissionOutcome{Result: result, Task: task, RelayInfo: relayInfo}, nil
@@ -810,6 +869,9 @@ func taskSubmissionAPIError(taskErr *taskdto.TaskError) *types.NewAPIError {
 	err := taskErr.Error
 	if err == nil {
 		err = errors.New(taskErr.Message)
+	}
+	if taskErr.LocalError {
+		return types.NewErrorWithStatusCode(err, types.ErrorCode(taskErr.Code), taskErr.StatusCode, types.ErrOptionWithSkipRetry())
 	}
 	return types.NewOpenAIError(err, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode)
 }
