@@ -1,0 +1,103 @@
+{
+  "pin": "fc72d12bec2e4a2256158741c4ec40ed8586e29b",
+  "tree": "d74335e27f96f88064d8c634ff2f89434d33b9cd",
+  "database_suite": {
+    "label": "refund-operations",
+    "package": "model",
+    "top": "TestBillingRefundOperationsDatabaseMatrix",
+    "dsn_env": {
+      "mysql": "TEST_REFUND_OPS_MYSQL_DSN",
+      "postgres": "TEST_REFUND_OPS_POSTGRES_DSN"
+    },
+    "database": "repair_refund_operations",
+    "modes": [
+      "upgrade",
+      "fresh"
+    ],
+    "common_mode_leaf_suffixes": [
+      "poison_prefix_does_not_starve_refunds",
+      "new_intents_do_not_starve_older_due_retry",
+      "failure_history_clock_and_metadata_failure"
+    ],
+    "native_mode_leaf_suffixes": [
+      "held_source_lock_respects_deadline"
+    ],
+    "engine_leaf_suffixes": [
+      "long_pending_queue_pressure"
+    ],
+    "pressure_env": {
+      "TEST_REFUND_QUEUE_PRESSURE": "1"
+    },
+    "expected_passing_test_events": {
+      "sqlite": 11,
+      "mysql": 13,
+      "postgres": 13
+    }
+  },
+  "sqlite_only_suites": [
+    {
+      "label": "refund-intent-process",
+      "package": "service",
+      "selector": "^(TestBillingRefundIntentDeadlineSurvivesRequestCancellation|TestBillingRefundIntentSaturationAndSealedGroup|TestBillingRefundIntentActiveJobSaturatesWithoutExtraDatabaseWork|TestBillingRefundIntentShutdownKeepsAbsentDecisionUnrecoverable|TestBillingRefundIntentDrainFinishesAcceptedRetry|TestBillingRefundIntentRetryHonorsCommittedTerminalOwner|TestBillingRefundIntentReportBoundsUnvalidatedIdentity|TestBillingRefundIntentOutlivesReleasedSessionWithoutRetainingRequest|TestBillingRefundIntentProcessExit)$",
+      "required_tests": [
+        "TestBillingRefundIntentDeadlineSurvivesRequestCancellation",
+        "TestBillingRefundIntentSaturationAndSealedGroup/queue_full",
+        "TestBillingRefundIntentSaturationAndSealedGroup/sealed",
+        "TestBillingRefundIntentSaturationAndSealedGroup/database_busy",
+        "TestBillingRefundIntentSaturationAndSealedGroup",
+        "TestBillingRefundIntentActiveJobSaturatesWithoutExtraDatabaseWork",
+        "TestBillingRefundIntentShutdownKeepsAbsentDecisionUnrecoverable",
+        "TestBillingRefundIntentDrainFinishesAcceptedRetry",
+        "TestBillingRefundIntentRetryHonorsCommittedTerminalOwner",
+        "TestBillingRefundIntentReportBoundsUnvalidatedIdentity",
+        "TestBillingRefundIntentOutlivesReleasedSessionWithoutRetainingRequest",
+        "TestBillingRefundIntentProcessExit/before_intent",
+        "TestBillingRefundIntentProcessExit/after_retry_commits_intent",
+        "TestBillingRefundIntentProcessExit"
+      ],
+      "expected_passing_test_events": 14
+    },
+    {
+      "label": "task-persistence-presenter",
+      "package": "controller",
+      "selector": "^(TestTaskSubmissionUncertainPersistenceClientContracts)$",
+      "required_tests": [
+        "TestTaskSubmissionUncertainPersistenceClientContracts/rolled_back/native",
+        "TestTaskSubmissionUncertainPersistenceClientContracts/rolled_back/native_plugin",
+        "TestTaskSubmissionUncertainPersistenceClientContracts/rolled_back/images",
+        "TestTaskSubmissionUncertainPersistenceClientContracts/rolled_back/responses",
+        "TestTaskSubmissionUncertainPersistenceClientContracts/rolled_back/video",
+        "TestTaskSubmissionUncertainPersistenceClientContracts/committed/native",
+        "TestTaskSubmissionUncertainPersistenceClientContracts/committed/native_plugin",
+        "TestTaskSubmissionUncertainPersistenceClientContracts/committed/images",
+        "TestTaskSubmissionUncertainPersistenceClientContracts/committed/responses",
+        "TestTaskSubmissionUncertainPersistenceClientContracts/committed/video",
+        "TestTaskSubmissionUncertainPersistenceClientContracts"
+      ],
+      "expected_passing_test_events": 11
+    },
+    {
+      "label": "refund-deadline-classifier",
+      "package": "model",
+      "selector": "^(TestBillingRefundDeadlineIncludesTokenFenceAndUserCache|TestBillingRefundContextPreservesTokenFence|TestBillingRefundReplayInvalidatesUserCache|TestBillingRefundRedisErrorRetainsLegacyLiveContextPolicy|TestBillingRefundRetryClassificationAndSchedule|TestBillingRefundDueRecheckDoesNotBypassSchedule)$",
+      "required_tests": [
+        "TestBillingRefundDeadlineIncludesTokenFenceAndUserCache/postcommit_user_cache",
+        "TestBillingRefundDeadlineIncludesTokenFenceAndUserCache/precommit_token_fence",
+        "TestBillingRefundDeadlineIncludesTokenFenceAndUserCache",
+        "TestBillingRefundContextPreservesTokenFence",
+        "TestBillingRefundReplayInvalidatesUserCache",
+        "TestBillingRefundRedisErrorRetainsLegacyLiveContextPolicy",
+        "TestBillingRefundRetryClassificationAndSchedule/unknown_secret",
+        "TestBillingRefundRetryClassificationAndSchedule/timeout",
+        "TestBillingRefundRetryClassificationAndSchedule/cancel",
+        "TestBillingRefundRetryClassificationAndSchedule/identity",
+        "TestBillingRefundRetryClassificationAndSchedule/missing",
+        "TestBillingRefundRetryClassificationAndSchedule/period_unknown",
+        "TestBillingRefundRetryClassificationAndSchedule/metadata",
+        "TestBillingRefundRetryClassificationAndSchedule",
+        "TestBillingRefundDueRecheckDoesNotBypassSchedule"
+      ],
+      "expected_passing_test_events": 15
+    }
+  ]
+}

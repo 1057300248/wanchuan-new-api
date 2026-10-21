@@ -94,8 +94,33 @@
         "zero_delta_replacement/hold_0/key",
         "zero_delta_replacement/hold_0/owner",
         "zero_delta_replacement/hold_100/key",
-        "zero_delta_replacement/hold_100/owner"
+        "zero_delta_replacement/hold_100/owner",
+        "intent_deadline_cancelled_request",
+        "intent_bounded_admission/queue_full",
+        "intent_bounded_admission/sealed",
+        "intent_bounded_admission/database_busy",
+        "intent_active_job_capacity",
+        "intent_shutdown_gap",
+        "intent_drain_retry",
+        "intent_retry_terminal_owner",
+        "intent_released_session",
+        "task_commit_readback_outage/rolled_back",
+        "task_commit_readback_outage/committed",
+        "task_reconciliation_identity/user",
+        "task_reconciliation_identity/token",
+        "task_reconciliation_identity/fingerprint",
+        "task_reconciliation_identity/held",
+        "task_reconciliation_identity/token_held",
+        "task_reconciliation_identity/preconsume",
+        "task_reconciliation_identity/source_period",
+        "task_reconciliation_identity/subscription_period",
+        "task_reconciliation_identity/task_identity",
+        "task_reconciliation_identity/unsafe_status",
+        "task_reconciliation_identity/missing_destination",
+        "task_reconciliation_identity/other_terminal_owner"
       ]
     }
-  ]
+  ],
+  "followup_pin": "fc72d12bec2e4a2256158741c4ec40ed8586e29b",
+  "followup_tree": "d74335e27f96f88064d8c634ff2f89434d33b9cd"
 }

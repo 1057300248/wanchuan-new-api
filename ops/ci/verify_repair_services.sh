@@ -9,6 +9,8 @@ touch web/dist/index.html
 printf '%s\n' "$SOURCE_SHA" > "$OUT/revision.txt"
 go version > "$OUT/go-version.txt"
 status=0
+# Never inherit an operator database or pressure opt-in in unrelated reports.
+export TEST_REFUND_OPS_MYSQL_DSN= TEST_REFUND_OPS_POSTGRES_DSN= TEST_REFUND_QUEUE_PRESSURE=
 
 report() {
   local label=$1 package=$2 pattern=$3
@@ -39,12 +41,15 @@ database)
   export TEST_FINALIZATION_SERVICE_MYSQL_DSN= TEST_FINALIZATION_SERVICE_POSTGRES_DSN=
   finalization_model_mysql_dsn= finalization_model_postgres_dsn=
   finalization_service_mysql_dsn= finalization_service_postgres_dsn=
+  refund_operations_mysql_dsn= refund_operations_postgres_dsn=
   case "$DIALECT" in
   mysql)
     : "${MYSQL_ID:?a real MySQL service is required}" "${MYSQL_PORT:?a real MySQL port is required}"
     docker inspect --format '{{.Config.Image}} {{.Image}}' "$MYSQL_ID" > "$OUT/database-image.txt"
     docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'SELECT VERSION(); ALTER DATABASE repair_compat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_compat_log CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_token_migration CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;' > "$OUT/database-version.txt"
     docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'CREATE DATABASE repair_finalization_model CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_finalization_service CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
+    docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'CREATE DATABASE repair_refund_operations CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
+    refund_operations_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_refund_operations?charset=utf8mb4&parseTime=true&loc=UTC"
     finalization_model_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_model?charset=utf8mb4&parseTime=true&loc=UTC"
     finalization_service_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_service?charset=utf8mb4&parseTime=true&loc=UTC"
     export TEST_MYSQL_DSN="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_compat?charset=utf8mb4&parseTime=true&loc=UTC"
@@ -60,6 +65,8 @@ database)
     docker exec "$PG_ID" createdb -U postgres repair_token_migration
     docker exec "$PG_ID" createdb -U postgres repair_finalization_model
     docker exec "$PG_ID" createdb -U postgres repair_finalization_service
+    docker exec "$PG_ID" createdb -U postgres repair_refund_operations
+    refund_operations_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_refund_operations?sslmode=disable"
     finalization_model_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_model?sslmode=disable"
     finalization_service_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_service?sslmode=disable"
     export TEST_POSTGRES_DSN="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_compat?sslmode=disable"
@@ -240,13 +247,103 @@ database)
     'zero_delta_replacement/hold_0/key' \
     'zero_delta_replacement/hold_0/owner' \
     'zero_delta_replacement/hold_100/key' \
-    'zero_delta_replacement/hold_100/owner'; do
+    'zero_delta_replacement/hold_100/owner' \
+    'intent_deadline_cancelled_request' \
+    'intent_bounded_admission/queue_full' \
+    'intent_bounded_admission/sealed' \
+    'intent_bounded_admission/database_busy' \
+    'intent_active_job_capacity' \
+    'intent_shutdown_gap' \
+    'intent_drain_retry' \
+    'intent_retry_terminal_owner' \
+    'intent_released_session' \
+    'task_commit_readback_outage/rolled_back' \
+    'task_commit_readback_outage/committed' \
+    'task_reconciliation_identity/user' \
+    'task_reconciliation_identity/token' \
+    'task_reconciliation_identity/fingerprint' \
+    'task_reconciliation_identity/held' \
+    'task_reconciliation_identity/token_held' \
+    'task_reconciliation_identity/preconsume' \
+    'task_reconciliation_identity/source_period' \
+    'task_reconciliation_identity/subscription_period' \
+    'task_reconciliation_identity/task_identity' \
+    'task_reconciliation_identity/unsafe_status' \
+    'task_reconciliation_identity/missing_destination' \
+    'task_reconciliation_identity/other_terminal_owner'; do
     required+=("$prefix/$contract")
   done
   TEST_FINALIZATION_SERVICE_MYSQL_DSN="$finalization_service_mysql_dsn" TEST_FINALIZATION_SERVICE_POSTGRES_DSN="$finalization_service_postgres_dsn" \
     report request-finalization-service ./service "^TestBillingFinalizationSessionDatabaseMatrix$/$DIALECT$" "${required[@]}"
 
+  # The operations fixture refuses populated databases, upgrades the exact old
+  # receipt schema, and retains every poison-row hold while healthy work advances.
+  prefix="TestBillingRefundOperationsDatabaseMatrix/$DIALECT"
+  required=(TestBillingRefundOperationsDatabaseMatrix "$prefix")
+  for mode in upgrade fresh; do
+    required+=("$prefix/$mode")
+    for contract in poison_prefix_does_not_starve_refunds new_intents_do_not_starve_older_due_retry failure_history_clock_and_metadata_failure; do
+      required+=("$prefix/$mode/$contract")
+    done
+    if [ "$DIALECT" != sqlite ]; then
+      required+=("$prefix/$mode/held_source_lock_respects_deadline")
+    fi
+  done
+  required+=("$prefix/long_pending_queue_pressure")
+  TEST_REFUND_OPS_MYSQL_DSN="$refund_operations_mysql_dsn" TEST_REFUND_OPS_POSTGRES_DSN="$refund_operations_postgres_dsn" TEST_REFUND_QUEUE_PRESSURE=1 \
+    report refund-operations ./model "^TestBillingRefundOperationsDatabaseMatrix$/$DIALECT$" "${required[@]}"
+
   if [ "$DIALECT" = sqlite ]; then
+    # Enumerate intent tests: the subprocess-only helper must not run standalone.
+    required=(
+      'TestBillingRefundIntentDeadlineSurvivesRequestCancellation'
+      'TestBillingRefundIntentSaturationAndSealedGroup/queue_full'
+      'TestBillingRefundIntentSaturationAndSealedGroup/sealed'
+      'TestBillingRefundIntentSaturationAndSealedGroup/database_busy'
+      'TestBillingRefundIntentSaturationAndSealedGroup'
+      'TestBillingRefundIntentActiveJobSaturatesWithoutExtraDatabaseWork'
+      'TestBillingRefundIntentShutdownKeepsAbsentDecisionUnrecoverable'
+      'TestBillingRefundIntentDrainFinishesAcceptedRetry'
+      'TestBillingRefundIntentRetryHonorsCommittedTerminalOwner'
+      'TestBillingRefundIntentReportBoundsUnvalidatedIdentity'
+      'TestBillingRefundIntentOutlivesReleasedSessionWithoutRetainingRequest'
+      'TestBillingRefundIntentProcessExit/before_intent'
+      'TestBillingRefundIntentProcessExit/after_retry_commits_intent'
+      'TestBillingRefundIntentProcessExit'
+    )
+    report refund-intent-process ./service '^(TestBillingRefundIntentDeadlineSurvivesRequestCancellation|TestBillingRefundIntentSaturationAndSealedGroup|TestBillingRefundIntentActiveJobSaturatesWithoutExtraDatabaseWork|TestBillingRefundIntentShutdownKeepsAbsentDecisionUnrecoverable|TestBillingRefundIntentDrainFinishesAcceptedRetry|TestBillingRefundIntentRetryHonorsCommittedTerminalOwner|TestBillingRefundIntentReportBoundsUnvalidatedIdentity|TestBillingRefundIntentOutlivesReleasedSessionWithoutRetainingRequest|TestBillingRefundIntentProcessExit)$' "${required[@]}"
+    required=(
+      'TestTaskSubmissionUncertainPersistenceClientContracts/rolled_back/native'
+      'TestTaskSubmissionUncertainPersistenceClientContracts/rolled_back/native_plugin'
+      'TestTaskSubmissionUncertainPersistenceClientContracts/rolled_back/images'
+      'TestTaskSubmissionUncertainPersistenceClientContracts/rolled_back/responses'
+      'TestTaskSubmissionUncertainPersistenceClientContracts/rolled_back/video'
+      'TestTaskSubmissionUncertainPersistenceClientContracts/committed/native'
+      'TestTaskSubmissionUncertainPersistenceClientContracts/committed/native_plugin'
+      'TestTaskSubmissionUncertainPersistenceClientContracts/committed/images'
+      'TestTaskSubmissionUncertainPersistenceClientContracts/committed/responses'
+      'TestTaskSubmissionUncertainPersistenceClientContracts/committed/video'
+      'TestTaskSubmissionUncertainPersistenceClientContracts'
+    )
+    report task-persistence-presenter ./controller '^(TestTaskSubmissionUncertainPersistenceClientContracts)$' "${required[@]}"
+    required=(
+      'TestBillingRefundDeadlineIncludesTokenFenceAndUserCache/postcommit_user_cache'
+      'TestBillingRefundDeadlineIncludesTokenFenceAndUserCache/precommit_token_fence'
+      'TestBillingRefundDeadlineIncludesTokenFenceAndUserCache'
+      'TestBillingRefundContextPreservesTokenFence'
+      'TestBillingRefundReplayInvalidatesUserCache'
+      'TestBillingRefundRedisErrorRetainsLegacyLiveContextPolicy'
+      'TestBillingRefundRetryClassificationAndSchedule/unknown_secret'
+      'TestBillingRefundRetryClassificationAndSchedule/timeout'
+      'TestBillingRefundRetryClassificationAndSchedule/cancel'
+      'TestBillingRefundRetryClassificationAndSchedule/identity'
+      'TestBillingRefundRetryClassificationAndSchedule/missing'
+      'TestBillingRefundRetryClassificationAndSchedule/period_unknown'
+      'TestBillingRefundRetryClassificationAndSchedule/metadata'
+      'TestBillingRefundRetryClassificationAndSchedule'
+      'TestBillingRefundDueRecheckDoesNotBypassSchedule'
+    )
+    report refund-deadline-classifier ./model '^(TestBillingRefundDeadlineIncludesTokenFenceAndUserCache|TestBillingRefundContextPreservesTokenFence|TestBillingRefundReplayInvalidatesUserCache|TestBillingRefundRedisErrorRetainsLegacyLiveContextPolicy|TestBillingRefundRetryClassificationAndSchedule|TestBillingRefundDueRecheckDoesNotBypassSchedule)$' "${required[@]}"
     report subscription-period-replay ./model '^(TestSubscriptionPeriodTransactionRollback|TestSubscriptionPeriodReplayRejectsStaleConsumedObservation|TestSubscriptionPeriodJournalReserveSettlementValidation|TestSubscriptionPeriodReplayAfterAbsentSnapshot|TestSubscriptionRefundCommitsReceiptAndUsageTogether)$' TestSubscriptionPeriodTransactionRollback TestSubscriptionPeriodReplayRejectsStaleConsumedObservation TestSubscriptionPeriodJournalReserveSettlementValidation TestSubscriptionPeriodReplayAfterAbsentSnapshot TestSubscriptionRefundCommitsReceiptAndUsageTogether
     report reminder-option-validation ./model '^TestQuotaReminderThresholdOptionsRejectInvalidWithoutMutation$' TestQuotaReminderThresholdOptionsRejectInvalidWithoutMutation
     report reminder-request-validation ./controller '^(TestQuotaReminderProfileThresholdValidationPreservesLegacyFractions|TestQuotaReminderSiteOptionRejectsMalformedWireWithoutWrites)$' TestQuotaReminderProfileThresholdValidationPreservesLegacyFractions TestQuotaReminderSiteOptionRejectsMalformedWireWithoutWrites
