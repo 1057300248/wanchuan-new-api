@@ -19,11 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
-import { IMAGE_HISTORY_STORAGE_KEY, IMAGE_HISTORY_TTL_MS } from '../constants'
+import { IMAGE_HISTORY_TTL_MS } from '../constants'
 import { useImageHistory } from '../hooks/use-image-history'
 import { deleteImageBlob } from '../lib/blob-store'
 import { clearManagedObjectUrls } from '../lib/managed-object-urls'
 import type { GeneratedImage } from '../types'
+import { HISTORY_OWNER_KEY, signInHistoryOwner } from './history-fixture'
 
 vi.mock('../lib/blob-store', () => ({
   deleteImageBlob: vi.fn(),
@@ -72,6 +73,7 @@ function keptEntry(id: string, createdAt: number) {
 }
 
 beforeEach(() => {
+  signInHistoryOwner()
   window.localStorage.clear()
   clearManagedObjectUrls()
   vi.mocked(deleteImageBlob).mockResolvedValue(undefined)
@@ -94,7 +96,7 @@ describe('temporary history expires from React state on a long-open page', () =>
   test('the one-minute sweep drops expired temp entries but keeps local blobs', () => {
     const now = Date.now()
     window.localStorage.setItem(
-      IMAGE_HISTORY_STORAGE_KEY,
+      HISTORY_OWNER_KEY,
       JSON.stringify([tempEntry('fresh', now), keptEntry('kept', now)])
     )
     const { result } = renderHook(() => useImageHistory())
@@ -106,15 +108,15 @@ describe('temporary history expires from React state on a long-open page', () =>
     })
 
     expect(result.current.entries.map((entry) => entry.id)).toEqual(['kept'])
-    expect(
-      window.localStorage.getItem(IMAGE_HISTORY_STORAGE_KEY)
-    ).not.toContain('fresh')
+    expect(window.localStorage.getItem(HISTORY_OWNER_KEY)).not.toContain(
+      'fresh'
+    )
   })
 
   test('pushing a new entry opportunistically prunes already-expired temp entries', () => {
     const now = Date.now()
     window.localStorage.setItem(
-      IMAGE_HISTORY_STORAGE_KEY,
+      HISTORY_OWNER_KEY,
       JSON.stringify([tempEntry('old', now)])
     )
     const { result } = renderHook(() => useImageHistory())
@@ -175,9 +177,9 @@ describe('temporary history expires from React state on a long-open page', () =>
     expect(stored.type).toBe('b64')
     expect(stored.source).toBe('blob:temp-url')
     expect(URL.createObjectURL).toHaveBeenCalled()
-    expect(
-      window.localStorage.getItem(IMAGE_HISTORY_STORAGE_KEY) ?? ''
-    ).not.toContain('aGVsbG8=')
+    expect(window.localStorage.getItem(HISTORY_OWNER_KEY) ?? '').not.toContain(
+      'aGVsbG8='
+    )
     expect(result.current.resolveResultUrl(stored.id, 'fallback')).toBe(
       'blob:temp-url'
     )
@@ -192,10 +194,7 @@ describe('temporary history expires from React state on a long-open page', () =>
       id: 'polluted-safe-r',
       source: 'https://cdn.example/safe.png',
     })
-    window.localStorage.setItem(
-      IMAGE_HISTORY_STORAGE_KEY,
-      JSON.stringify([polluted])
-    )
+    window.localStorage.setItem(HISTORY_OWNER_KEY, JSON.stringify([polluted]))
 
     const { result } = renderHook(() => useImageHistory())
 

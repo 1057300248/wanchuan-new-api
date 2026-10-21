@@ -19,7 +19,6 @@ For commercial licensing, please contact support@quantumnous.com
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
-import { IMAGE_HISTORY_STORAGE_KEY } from '../constants'
 import { useImageHistory } from '../hooks/use-image-history'
 import {
   deleteImageBlob,
@@ -28,6 +27,11 @@ import {
 } from '../lib/blob-store'
 import { clearManagedObjectUrls } from '../lib/managed-object-urls'
 import type { GeneratedImage } from '../types'
+import {
+  HISTORY_OWNER_ID,
+  HISTORY_OWNER_KEY,
+  signInHistoryOwner,
+} from './history-fixture'
 
 vi.mock('../lib/blob-store', () => ({
   deleteImageBlob: vi.fn(),
@@ -63,10 +67,7 @@ function makeStoredEntry(id: string, createdAt: number, blobKey?: string) {
 }
 
 function seedStorage(entries: unknown[]) {
-  window.localStorage.setItem(
-    IMAGE_HISTORY_STORAGE_KEY,
-    JSON.stringify(entries)
-  )
+  window.localStorage.setItem(HISTORY_OWNER_KEY, JSON.stringify(entries))
 }
 
 function generatedImage(id: string): GeneratedImage {
@@ -81,6 +82,7 @@ function generatedImage(id: string): GeneratedImage {
 }
 
 beforeEach(() => {
+  signInHistoryOwner()
   window.localStorage.clear()
   clearManagedObjectUrls()
   vi.mocked(deleteImageBlob).mockResolvedValue(undefined)
@@ -122,7 +124,10 @@ describe('useImageHistory keeps blob storage free of orphans', () => {
 
     expect(result.current.entries).toHaveLength(120)
     expect(result.current.entries[0].prompt).toBe('a new image')
-    expect(vi.mocked(deleteImageBlob)).toHaveBeenCalledWith('blob-0')
+    expect(vi.mocked(deleteImageBlob)).toHaveBeenCalledWith(
+      'blob-0',
+      HISTORY_OWNER_ID
+    )
   })
 
   test('removeEntry deletes the IndexedDB blob and revokes its object URL', async () => {
@@ -140,8 +145,9 @@ describe('useImageHistory keeps blob storage free of orphans', () => {
       await result.current.keepLocally('e1', 'e1-r')
     })
     expect(vi.mocked(saveImageBlob)).toHaveBeenCalledWith(
-      'e1:e1-r',
-      expect.any(Blob)
+      expect.stringMatching(/^e1:e1-r:/),
+      expect.any(Blob),
+      HISTORY_OWNER_ID
     )
     expect(result.current.resolveResultUrl('e1-r', 'fallback')).toBe(
       'blob:kept-url'
@@ -152,7 +158,10 @@ describe('useImageHistory keeps blob storage free of orphans', () => {
     })
 
     expect(result.current.entries).toEqual([])
-    expect(vi.mocked(deleteImageBlob)).toHaveBeenCalledWith('e1:e1-r')
+    expect(vi.mocked(deleteImageBlob)).toHaveBeenCalledWith(
+      expect.stringMatching(/^e1:e1-r:/),
+      HISTORY_OWNER_ID
+    )
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:kept-url')
     expect(result.current.resolveResultUrl('e1-r', 'fallback')).toBe('fallback')
   })
@@ -177,7 +186,10 @@ describe('useImageHistory keeps blob storage free of orphans', () => {
     })
 
     expect(result.current.entries).toEqual([])
-    expect(vi.mocked(deleteImageBlob)).toHaveBeenCalledWith('e1:e1-r')
+    expect(vi.mocked(deleteImageBlob)).toHaveBeenCalledWith(
+      expect.stringMatching(/^e1:e1-r:/),
+      HISTORY_OWNER_ID
+    )
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:kept-url')
   })
 

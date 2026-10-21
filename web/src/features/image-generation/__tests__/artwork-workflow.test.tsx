@@ -17,15 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, afterEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
 import { ImageGenerationPage } from '../components/ImageGenerationPage'
-import { IMAGE_HISTORY_STORAGE_KEY } from '../constants'
 import type { ImageHistoryEntry } from '../types'
+import { HISTORY_OWNER_KEY, signInHistoryOwner } from './history-fixture'
 
 const entry: ImageHistoryEntry = {
   id: 'old',
@@ -46,8 +46,9 @@ const entry: ImageHistoryEntry = {
 let client: QueryClient
 let tokenModels: string[]
 beforeEach(() => {
+  signInHistoryOwner()
   localStorage.clear()
-  localStorage.setItem(IMAGE_HISTORY_STORAGE_KEY, JSON.stringify([entry]))
+  localStorage.setItem(HISTORY_OWNER_KEY, JSON.stringify([entry]))
   client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   })
@@ -213,4 +214,16 @@ test('empty upstream response retains prompt and previous artwork with a retry h
   expect(screen.getByLabelText('Prompt')).toHaveValue('New landscape')
   expect(screen.getByAltText('Previous landscape')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Generate' })).toBeEnabled()
+})
+
+test('changing the authenticated account clears the editor and historical preview without adopting old history', async () => {
+  renderPage()
+  const user = userEvent.setup()
+  await user.type(screen.getByLabelText('Prompt'), 'Private A draft')
+  expect(screen.getByAltText('Previous landscape')).toBeInTheDocument()
+  act(() => signInHistoryOwner(202))
+  expect(screen.getByLabelText('Prompt')).toHaveValue('')
+  expect(screen.queryByAltText('Previous landscape')).not.toBeInTheDocument()
+  act(() => signInHistoryOwner(101))
+  expect(await screen.findByAltText('Previous landscape')).toBeInTheDocument()
 })

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -24,6 +24,8 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { getAuthSessionEpoch } from '@/lib/auth-session'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { useImageData } from '../hooks/use-image-data'
 import { useImageGeneration } from '../hooks/use-image-generation'
@@ -38,6 +40,14 @@ import { GenerationForm } from './GenerationForm'
 import { HistoryPanel } from './HistoryPanel'
 
 export function ImageGenerationPage() {
+  const epoch = useSyncExternalStore(
+    useAuthStore.subscribe,
+    getAuthSessionEpoch
+  )
+  return <ImageGenerationWorkspace key={epoch} />
+}
+
+function ImageGenerationWorkspace() {
   const { t } = useTranslation()
   const data = useImageData()
   const history = useImageHistory()

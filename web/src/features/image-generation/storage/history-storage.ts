@@ -16,14 +16,20 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { IMAGE_HISTORY_STORAGE_KEY } from '../constants'
 import { isValidHistoryEntry, pruneHistoryEntries } from '../lib/history-utils'
 import { isBlobSchemeUrl } from '../lib/managed-object-urls'
 import type { ImageHistoryEntry } from '../types'
+import { getImageHistoryOwnerId, imageHistoryStorageKey } from './history-owner'
 
-export function loadHistoryEntries(): ImageHistoryEntry[] {
+export function loadHistoryEntries(
+  ownerId = getImageHistoryOwnerId()
+): ImageHistoryEntry[] {
+  const key = imageHistoryStorageKey(ownerId)
+  if (!key) return []
   try {
-    const raw = window.localStorage.getItem(IMAGE_HISTORY_STORAGE_KEY)
+    // Legacy global history has no trustworthy owner. Leave it intact but do
+    // not read or automatically assign it to whichever account signs in next.
+    const raw = window.localStorage.getItem(key)
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
@@ -39,7 +45,12 @@ export function loadHistoryEntries(): ImageHistoryEntry[] {
   }
 }
 
-export function saveHistoryEntries(entries: ImageHistoryEntry[]): boolean {
+export function saveHistoryEntries(
+  entries: ImageHistoryEntry[],
+  ownerId = getImageHistoryOwnerId()
+): boolean {
+  const key = imageHistoryStorageKey(ownerId)
+  if (!key) return false
   try {
     const persistedEntries = entries.map((entry) => ({
       ...entry,
@@ -55,10 +66,7 @@ export function saveHistoryEntries(entries: ImageHistoryEntry[]): boolean {
       }),
     }))
     const pruned = pruneHistoryEntries(persistedEntries)
-    window.localStorage.setItem(
-      IMAGE_HISTORY_STORAGE_KEY,
-      JSON.stringify(pruned)
-    )
+    window.localStorage.setItem(key, JSON.stringify(pruned))
     return true
   } catch {
     /* storage full or unavailable: keep in-memory state only */
@@ -66,9 +74,11 @@ export function saveHistoryEntries(entries: ImageHistoryEntry[]): boolean {
   }
 }
 
-export function clearHistoryStorage(): void {
+export function clearHistoryStorage(ownerId = getImageHistoryOwnerId()): void {
+  const key = imageHistoryStorageKey(ownerId)
+  if (!key) return
   try {
-    window.localStorage.removeItem(IMAGE_HISTORY_STORAGE_KEY)
+    window.localStorage.removeItem(key)
   } catch {
     /* ignore */
   }
