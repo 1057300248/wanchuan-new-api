@@ -169,6 +169,7 @@ elif name == "python3":
                     self.assertEqual(["TestSubscriptionPeriodTransactionRollback",
                                       "TestSubscriptionPeriodReplayRejectsStaleConsumedObservation",
                                       "TestSubscriptionPeriodJournalReserveSettlementValidation",
+                                      "TestSubscriptionPeriodReplayAfterAbsentSnapshot",
                                       "TestSubscriptionRefundCommitsReceiptAndUsageTogether"], gates["subscription-period-replay"])
                 else:
                     self.assertNotIn("subscription-period-replay", gates)
