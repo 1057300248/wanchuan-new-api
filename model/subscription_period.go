@@ -17,20 +17,24 @@ var (
 
 // lockSubscriptionReservationTx uses subscription -> receipt ordering, including
 // for reservations first created while another transaction was waiting. The
-// initial read only locates immutable identity; the locked read is authoritative.
+// optional initial read only locates immutable identity for legacy callers that
+// lack a subscription ID. A known ID must never be looked up again through a
+// consistent snapshot: MySQL can retain an absent snapshot after a current read
+// has already observed a concurrently committed reservation.
 func lockSubscriptionReservationTx(tx *gorm.DB, requestId string, subscriptionId int) (*SubscriptionPreConsumeRecord, *UserSubscription, error) {
 	if tx == nil || strings.TrimSpace(requestId) == "" {
 		return nil, nil, errors.New("invalid subscription receipt")
 	}
-	var snapshot SubscriptionPreConsumeRecord
-	if err := tx.Where("request_id = ?", requestId).First(&snapshot).Error; err != nil {
-		return nil, nil, err
-	}
-	if subscriptionId > 0 && snapshot.UserSubscriptionId != subscriptionId {
-		return nil, nil, errors.New("subscription receipt identity mismatch")
+	var snapshot *SubscriptionPreConsumeRecord
+	if subscriptionId <= 0 {
+		snapshot = &SubscriptionPreConsumeRecord{}
+		if err := tx.Where("request_id = ?", requestId).First(snapshot).Error; err != nil {
+			return nil, nil, err
+		}
+		subscriptionId = snapshot.UserSubscriptionId
 	}
 	var sub UserSubscription
-	err := lockForUpdate(tx).Where("id = ?", snapshot.UserSubscriptionId).First(&sub).Error
+	err := lockForUpdate(tx).Where("id = ?", subscriptionId).First(&sub).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil, err
 	}
@@ -38,7 +42,10 @@ func lockSubscriptionReservationTx(tx *gorm.DB, requestId string, subscriptionId
 	if err := lockForUpdate(tx).Where("request_id = ?", requestId).First(&record).Error; err != nil {
 		return nil, nil, err
 	}
-	if record.UserSubscriptionId != snapshot.UserSubscriptionId || record.UserId != snapshot.UserId {
+	if record.UserSubscriptionId != subscriptionId {
+		return nil, nil, errors.New("subscription receipt identity mismatch")
+	}
+	if snapshot != nil && record.UserId != snapshot.UserId {
 		return nil, nil, errors.New("subscription receipt identity changed")
 	}
 	if record.QuotaPeriod <= 0 {

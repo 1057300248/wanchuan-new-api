@@ -1,6 +1,8 @@
 package model
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -12,24 +14,53 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/glebarez/sqlite"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/schema"
 )
 
 func subscriptionPeriodDatabase(t *testing.T, kind common.DatabaseType, dsn string) *gorm.DB {
 	t.Helper()
+	fixtureName := fmt.Sprintf("speriod_%x", time.Now().UnixNano())
 	var driver gorm.Dialector = sqlite.Open(filepath.Join(t.TempDir(), "period.db"))
 	if kind == common.DatabaseTypeMySQL {
 		driver = mysql.Open(dsn)
 	}
 	if kind == common.DatabaseTypePostgreSQL {
-		driver = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+		// Explicit index names are schema-global on PostgreSQL. A table prefix
+		// alone collides with idx_user_sub_active from production startup tests.
+		admin, err := gorm.Open(postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true}), &gorm.Config{})
+		require.NoError(t, err)
+		adminSQL, err := admin.DB()
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, adminSQL.Close()) })
+		var existingIndex []string
+		indexQuery := "SELECT indexdef FROM pg_catalog.pg_indexes WHERE schemaname = current_schema() AND indexname = ?"
+		require.NoError(t, admin.Raw(indexQuery, "idx_user_sub_active").Scan(&existingIndex).Error)
+		t.Cleanup(func() {
+			var preservedIndex []string
+			require.NoError(t, admin.Raw(indexQuery, "idx_user_sub_active").Scan(&preservedIndex).Error)
+			assert.Equal(t, existingIndex, preservedIndex, "the pre-existing schema's index must remain untouched")
+		})
+		require.NoError(t, admin.Exec("CREATE SCHEMA ?", clause.Table{Name: fixtureName}).Error)
+		t.Cleanup(func() {
+			require.NoError(t, admin.Exec("DROP SCHEMA ? CASCADE", clause.Table{Name: fixtureName}).Error)
+		})
+		driver = postgres.New(postgres.Config{
+			DSN: dsn, PreferSimpleProtocol: true,
+			OptionOpenDB: []stdlib.OptionOpenDB{stdlib.OptionBeforeConnect(func(_ context.Context, config *pgx.ConnConfig) error {
+				config.RuntimeParams["search_path"] = fixtureName
+				return nil
+			})},
+		})
 	}
-	naming := schema.NamingStrategy{TablePrefix: fmt.Sprintf("speriod_%x_", time.Now().UnixNano())}
+	naming := schema.NamingStrategy{TablePrefix: fixtureName + "_"}
 	db, err := gorm.Open(driver, &gorm.Config{NamingStrategy: naming})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -39,6 +70,22 @@ func subscriptionPeriodDatabase(t *testing.T, kind common.DatabaseType, dsn stri
 		sqlDB.SetMaxOpenConns(1)
 	}
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	if kind == common.DatabaseTypePostgreSQL {
+		// Hold two physical connections simultaneously: SET on just the first
+		// connection would silently send concurrent work back into public.
+		func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			for range 2 {
+				conn, err := sqlDB.Conn(ctx)
+				require.NoError(t, err)
+				defer conn.Close()
+				var actualSchema string
+				require.NoError(t, conn.QueryRowContext(ctx, "SELECT current_schema()").Scan(&actualSchema))
+				require.Equal(t, fixtureName, actualSchema)
+			}
+		}()
+	}
 	for _, item := range []any{&SubscriptionPlan{}, &UserSubscription{}, &SubscriptionPreConsumeRecord{}, &Option{}} {
 		require.False(t, db.Migrator().HasTable(item), "fixture must never reuse an existing table")
 	}
@@ -168,6 +215,26 @@ func TestSubscriptionPeriodAccountingDatabaseMatrix(t *testing.T) {
 						_, err = PreConsumeUserSubscription("original", sub.UserId, "fixture", 0, 200)
 						require.Error(t, err)
 					case "parallel_preconsume":
+						if dialect.kind == common.DatabaseTypeMySQL {
+							// Establish an absent consistent snapshot, then commit the source
+							// from another connection before replaying through current reads.
+							tx := db.Begin(&sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+							require.NoError(t, tx.Error)
+							t.Cleanup(func() { _ = tx.Rollback().Error })
+							var absent SubscriptionPreConsumeRecord
+							initial := tx.Where("request_id = ?", "snapshot-new").Find(&absent)
+							require.NoError(t, initial.Error)
+							require.Zero(t, initial.RowsAffected)
+							created, err := PreConsumeUserSubscription("snapshot-new", sub.UserId, "fixture", 0, 50)
+							require.NoError(t, err)
+							replay, err := PreConsumeUserSubscriptionTx(tx, "snapshot-new", sub.UserId, "fixture", 0, 50)
+							require.NoError(t, err)
+							require.True(t, replay.Replayed)
+							assert.Equal(t, created.QuotaPeriod, replay.QuotaPeriod)
+							assert.EqualValues(t, 50, replay.ReservedAmount)
+							require.NoError(t, tx.Commit().Error)
+							require.NoError(t, RefundSubscriptionPreConsume("snapshot-new"))
+						}
 						results := make(chan error, 2)
 						var wg sync.WaitGroup
 						for range 2 {
@@ -414,4 +481,43 @@ func TestSubscriptionPeriodJournalReserveSettlementValidation(t *testing.T) {
 	}))
 	require.NoError(t, db.First(sub, sub.Id).Error)
 	assert.EqualValues(t, 100, sub.AmountUsed)
+}
+
+// A located receipt must be re-read only after the source lock, not through a
+// second consistent snapshot which may still say it did not exist. The real
+// MySQL repeatable-read schedule is also exercised by parallel_preconsume.
+func TestSubscriptionPeriodReplayAfterAbsentSnapshot(t *testing.T) {
+	db := subscriptionPeriodDatabase(t, common.DatabaseTypeSQLite, "")
+	require.NoError(t, db.AutoMigrate(&SubscriptionPlan{}, &UserSubscription{}, &SubscriptionPreConsumeRecord{}))
+	_, sub := subscriptionPeriodSeed(t, db)
+	_, err := PreConsumeUserSubscription("snapshot-replay", sub.UserId, "fixture", 0, 200)
+	require.NoError(t, err)
+	var observed SubscriptionPreConsumeRecord
+	require.NoError(t, db.Where("request_id = ?", "snapshot-replay").First(&observed).Error)
+	sourceRead := false
+	callback := "test:absent-subscription-snapshot"
+	require.NoError(t, db.Callback().Query().After("gorm:query").Register(callback, func(tx *gorm.DB) {
+		if tx.Statement.Table == db.NamingStrategy.TableName("UserSubscription") {
+			sourceRead = true
+		}
+		if tx.Statement.Table == db.NamingStrategy.TableName("SubscriptionPreConsumeRecord") && !sourceRead {
+			tx.RowsAffected = 0
+			tx.AddError(gorm.ErrRecordNotFound)
+		}
+	}))
+	t.Cleanup(func() { require.NoError(t, db.Callback().Query().Remove(callback)) })
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		replay, err := subscriptionReservationReplayTx(tx, &observed, sub.UserId, 200)
+		if err != nil {
+			return err
+		}
+		assert.True(t, replay.Replayed)
+		assert.EqualValues(t, 200, replay.ReservedAmount)
+		return nil
+	}))
+	require.NoError(t, db.First(sub, sub.Id).Error)
+	assert.EqualValues(t, 200, sub.AmountUsed)
+	var receipts int64
+	require.NoError(t, db.Model(&SubscriptionPreConsumeRecord{}).Where("request_id = ?", observed.RequestId).Count(&receipts).Error)
+	assert.EqualValues(t, 1, receipts)
 }

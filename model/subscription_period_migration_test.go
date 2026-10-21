@@ -90,6 +90,30 @@ func TestSubscriptionPeriodMigrationDatabaseMatrix(t *testing.T) {
 						require.NoError(t, err)
 					}
 					require.NoError(t, db.AutoMigrate(&UserSubscription{}, &SubscriptionPreConsumeRecord{}))
+					// An index of the same name on another PostgreSQL table must not
+					// make CREATE INDEX IF NOT EXISTS look like a successful migration.
+					indexes, err := db.Migrator().GetIndexes(&UserSubscription{})
+					require.NoError(t, err)
+					var activeIndex gorm.Index
+					for _, index := range indexes {
+						if index.Name() == "idx_user_sub_active" {
+							activeIndex = index
+						}
+					}
+					require.NotNil(t, activeIndex, "active-subscription index must belong to the fixture table")
+					columns := activeIndex.Columns()
+					if dialect.kind == common.DatabaseTypePostgreSQL {
+						// The driver returns PG index columns in table order, not index
+						// order. Read the ordered definition from the actual index OID.
+						columns = nil
+						require.NoError(t, db.Raw(`SELECT pg_get_indexdef(i.indexrelid, n, true)
+FROM pg_catalog.pg_index i
+JOIN pg_catalog.pg_class idx ON idx.oid = i.indexrelid
+CROSS JOIN generate_series(1, i.indnatts) AS n
+WHERE i.indrelid = to_regclass(?) AND idx.relname = ?
+ORDER BY n`, subTable, "idx_user_sub_active").Scan(&columns).Error)
+					}
+					assert.Equal(t, []string{"user_id", "status", "end_time"}, columns)
 					recorder := &migrationSQLRecorder{}
 					require.NoError(t, db.Session(&gorm.Session{Logger: recorder}).AutoMigrate(&UserSubscription{}, &SubscriptionPreConsumeRecord{}))
 					assert.Empty(t, recorder.schemaMutations(), "second startup must not alter the schema again")
