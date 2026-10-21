@@ -81,6 +81,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		applySystemPromptIfNeeded(c, info, request)
 		usage, newApiErr := textRequestViaResponses(c, info, adaptor, request)
 		if newApiErr != nil {
+			consumePartialTextStreamQuota(c, info, usage)
 			return newApiErr
 		}
 
@@ -188,14 +189,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 
 	usage, newApiErr := adaptor.DoResponse(c, httpResp, info)
 	if newApiErr != nil {
-		// A partial non-Responses stream can fail after producing billable
-		// output. Settle that observed usage exactly once; BillingSession then
-		// makes the outer failure refund a no-op. With no observed usage the
-		// pre-consume remains unsettled and the outer failure path refunds it.
-		if streamUsage, ok := usage.(*dto.Usage); ok && streamUsage != nil && info.IsStream &&
-			common.GetContextKeyBool(c, constant.ContextKeyStreamErrorHandled) {
-			service.PostTextConsumeQuota(c, info, streamUsage, nil)
-		}
+		consumePartialTextStreamQuota(c, info, usage)
 		// reset status code 重置状态码
 		service.ResetStatusCode(newApiErr, statusCodeMappingStr)
 		return newApiErr

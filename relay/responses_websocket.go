@@ -308,6 +308,11 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				return apiErr
 			}
 			service.AppendUsedChannel(c, channel.Id)
+			if service.ShouldCheckRequestSensitive(c) {
+				if apiErr = service.CheckRequestSensitiveText(c, create.Request.GetTokenCountMeta().CombineText); apiErr != nil {
+					return apiErr
+				}
+			}
 			if info == nil {
 				info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 				info.IsStream = true
@@ -479,7 +484,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				accumulator.Observe(&event.ResponsesStreamResponse, incoming.body)
 			}
 			switch event.Type {
-			case "response.completed", "response.done", "response.incomplete", "response.failed", "response.cancelled", "response.canceled":
+			case "response.completed", "response.done", "response.incomplete", "response.failed", "response.cancelled", "response.canceled", "response.error":
 				if event.Response != nil {
 					s.lastResponseID = event.Response.ID
 				}

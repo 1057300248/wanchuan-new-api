@@ -255,15 +255,31 @@ func TestResponseModelSharedResponsesAccumulator(t *testing.T) {
 }
 
 func TestResponseModelDoesNotRecordSynthesizedModel(t *testing.T) {
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	info := &relaycommon.RelayInfo{
-		OriginModelName: "requested", RelayFormat: types.RelayFormatOpenAI,
-		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "mapped"},
+	for _, tc := range []struct {
+		name, body string
+		wantError  bool
+	}{
+		{"interrupted without model", "data: [DONE]\n\n", true},
+		{"completed without model", "data: " + `{"type":"response.completed","response":{"status":"completed"}}` + "\n\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "requested", RelayFormat: types.RelayFormatOpenAI,
+				ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "mapped"},
+			}
+			_, apiErr := openai.OaiResponsesToChatBufferedStreamHandler(c, info, &http.Response{
+				StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(tc.body)),
+			})
+			if tc.wantError {
+				require.NotNil(t, apiErr, "a bare DONE marker is not a completed Responses response")
+				assert.Empty(t, recorder.Body.String())
+			} else {
+				require.Nil(t, apiErr)
+			}
+			assert.Nil(t, info.ResponseModel, "mapped request model is not an observed upstream model")
+		})
 	}
-	_, apiErr := openai.OaiResponsesToChatBufferedStreamHandler(c, info, &http.Response{
-		StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("data: [DONE]\n\n")),
-	})
-	require.Nil(t, apiErr)
-	assert.Nil(t, info.ResponseModel)
 }

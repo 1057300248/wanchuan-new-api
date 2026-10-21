@@ -157,6 +157,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			return taskErr
 		}
 	}
+	// A shared-model selection or retry can replace the initial decoder. Check
+	// this provider's final normalized prompt, never the previous candidate's,
+	// before buildSubmitRequest can fetch upstream data or billing can begin.
+	if apiErr := service.CheckTaskRequestSensitiveText(c); apiErr != nil {
+		return service.TaskErrorWrapperLocal(apiErr.Err, string(apiErr.GetErrorCode()), apiErr.StatusCode)
+	}
 	request, hasRequest := c.Get("task_request")
 	hasUsageProfiles := len(a.plugin.Meta.UsageProfiles) > 0
 	if hasRequest && !hasUsageProfiles {
