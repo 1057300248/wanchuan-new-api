@@ -157,7 +157,8 @@ elif name == "python3":
                 prefix = f"TestSubscriptionPeriodMigrationDatabaseMatrix/{dialect}"
                 self.assertEqual([prefix + "/fresh", prefix + "/upgrade"], gates["subscription-period-migration"])
                 for case in ("late_submit", "late_terminal_refund", "late_terminal_positive",
-                             "unknown_legacy_task", "settled_source_pending_task"):
+                             "unknown_legacy_task", "settled_source_pending_task",
+                             "live_session_refund", "live_session_reset_refund", "wallet_session_clears_period"):
                     self.assertIn(f"TestTaskWalletReceiptsDatabaseMatrix/{dialect}/subscription_period_{case}", gates["wallet"])
                 for test, gate in zip(tests, checks):
                     label = Path(gate["args"][2]).stem

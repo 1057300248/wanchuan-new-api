@@ -108,7 +108,7 @@ database)
   for token in limited_without_redis limited_with_redis unlimited_without_redis unlimited_with_redis limited_with_ordinary_request; do
     required+=("$prefix/batch_enabled_submission_reservation/$token")
   done
-  for contract in late_submit late_terminal_refund late_terminal_positive unknown_legacy_task settled_source_pending_task; do
+  for contract in late_submit late_terminal_refund late_terminal_positive unknown_legacy_task settled_source_pending_task live_session_refund live_session_reset_refund wallet_session_clears_period; do
     required+=("$prefix/subscription_period_$contract")
   done
   report wallet ./service "^TestTaskWalletReceiptsDatabaseMatrix$/$DIALECT$" "${required[@]}"
