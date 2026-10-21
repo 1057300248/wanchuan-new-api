@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { useAuthStore } from '@/stores/auth-store'
@@ -162,7 +162,7 @@ test('switching accounts aborts A native fetch and suppresses stale completion a
   act(() => signInHistoryOwner(202))
   expect(signal?.aborted).toBe(true)
   await act(async () => {
-    response.resolve(new Response(new Blob(['A'])))
+    response.resolve(new Response('A'))
     await pending
   })
   expect(saveImageBlob).not.toHaveBeenCalled()
@@ -175,17 +175,15 @@ test('old keep rollback remains bound to A and cannot delete a newer keep after 
   vi.mocked(saveImageBlob).mockReturnValueOnce(saved.promise)
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () => new Response(new Blob(['A'])))
+    vi.fn(async () => new Response('A'))
   )
   const { result } = renderHook(() => useImageHistory())
   let pending!: Promise<void>
-  await act(async () => {
+  act(() => {
     pending = result.current.keepLocally('A', 'A-r')
-    await Promise.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
   })
-  expect(saveImageBlob).toHaveBeenCalledTimes(1)
+  await waitFor(() => expect(saveImageBlob).toHaveBeenCalledTimes(1))
+  expect(await vi.mocked(saveImageBlob).mock.calls[0][1].text()).toBe('A')
   const oldKey = vi.mocked(saveImageBlob).mock.calls[0][0]
   act(() => useAuthStore.getState().auth.reset())
   act(() => signInHistoryOwner(202))
