@@ -44,6 +44,7 @@ const entry: ImageHistoryEntry = {
   ],
 }
 let client: QueryClient
+let tokenModels: string[]
 beforeEach(() => {
   localStorage.clear()
   localStorage.setItem(IMAGE_HISTORY_STORAGE_KEY, JSON.stringify([entry]))
@@ -68,9 +69,16 @@ beforeEach(() => {
       },
     ],
   })
-  client.setQueryData(['image-generation-group-models', 'test'], ['dall-e-3'])
+  tokenModels = ['dall-e-3']
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/token/7/models') {
+      return { data: { success: true, data: tokenModels } }
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  })
 })
 afterEach(() => {
+  vi.restoreAllMocks()
   client.clear()
   localStorage.clear()
   vi.unstubAllGlobals()
@@ -86,6 +94,9 @@ function renderPage() {
 test('reusing an unavailable historical model retains current key and clamps settings without generating', async () => {
   const post = vi.spyOn(api, 'post')
   renderPage()
+  await waitFor(() =>
+    expect(screen.getByLabelText('Model')).toHaveTextContent('dall-e-3')
+  )
   const user = userEvent.setup()
   await user.click(await screen.findByRole('button', { name: 'Reuse' }))
   expect(screen.getByLabelText('Prompt')).toHaveValue('Previous landscape')
@@ -135,10 +146,7 @@ test('reusing with reference images requires confirmation before clearing them',
       },
     ],
   })
-  client.setQueryData(
-    ['image-generation-group-models', 'test'],
-    ['gpt-image-1']
-  )
+  tokenModels = ['gpt-image-1']
   vi.stubGlobal(
     'URL',
     class extends URL {

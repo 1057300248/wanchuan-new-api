@@ -40,6 +40,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 
 import { downloadImage } from '../api'
 import type { ImageHistoryEntry } from '../types'
+import { ImageResolutionPreview } from './ImageResolutionPreview'
 
 type HistoryPanelProps = {
   onReuse?: (entry: ImageHistoryEntry) => void
@@ -309,10 +310,11 @@ export function HistoryPanel(props: HistoryPanelProps) {
       >
         {previewResult && previewEntry ? (
           <div className='grid gap-4'>
-            <img
-              src={props.resolveUrl(previewResult.id, previewResult.source)}
-              alt={previewEntry.prompt}
-              className='max-h-[60vh] w-full object-contain'
+            <ImageResolutionPreview
+              key={previewResult.id}
+              url={props.resolveUrl(previewResult.id, previewResult.source)}
+              prompt={previewEntry.prompt}
+              requestedSize={previewEntry.settings.size}
             />
             <p className='text-sm break-words whitespace-pre-wrap'>
               {previewEntry.prompt}
@@ -320,7 +322,7 @@ export function HistoryPanel(props: HistoryPanelProps) {
             <dl className='grid grid-cols-2 gap-2 text-sm break-all'>
               <dt>{t('Model')}</dt>
               <dd>{previewEntry.model}</dd>
-              <dt>{t('Size')}</dt>
+              <dt>{t('Requested image size')}</dt>
               <dd>{previewEntry.settings.size || t('Default size')}</dd>
               <dt>{t('Quality')}</dt>
               <dd>{previewEntry.settings.quality || '—'}</dd>

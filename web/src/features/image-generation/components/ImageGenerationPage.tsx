@@ -225,23 +225,23 @@ export function ImageGenerationPage() {
     canRetry: boolean
   } | null = null
   if (data.selectedKey && data.availableModels.length === 0) {
-    const groupLoading = data.isLoadingGroupModels
+    const tokenLoading = data.isLoadingTokenModels
     let modelsTitle = t('No image models available')
     let modelsDescription = t(
       'No image models match this API key. Check the model image-generation endpoint configuration, the key group, and its model restrictions, then refresh.'
     )
-    if (groupLoading) {
+    if (tokenLoading) {
       modelsTitle = t('Loading models...')
       modelsDescription = t('Loading available models for this API key.')
-    } else if (data.isGroupModelsError) {
+    } else if (data.isTokenModelsError) {
       modelsTitle = t('Loading failed')
       modelsDescription = t('Please check your connection and try again.')
     }
     modelNotice = {
       title: modelsTitle,
       description: modelsDescription,
-      destructive: !groupLoading && data.isGroupModelsError,
-      canRetry: !groupLoading,
+      destructive: !tokenLoading && data.isTokenModelsError,
+      canRetry: !tokenLoading,
     }
   }
 
@@ -271,7 +271,7 @@ export function ImageGenerationPage() {
                 onClick={() =>
                   void Promise.all([
                     data.refetchBootstrap(),
-                    data.refetchGroupModels(),
+                    data.refetchTokenModels(),
                   ])
                 }
               >
@@ -319,7 +319,7 @@ export function ImageGenerationPage() {
           onRemoveReference={references.removeItem}
           isGenerating={generation.isGenerating}
           formError={generation.error}
-          isInitializing={data.isLoadingGroupModels}
+          isInitializing={data.isLoadingTokenModels}
           onGenerate={() => void handleGenerate()}
           onCancel={generation.cancel}
         />

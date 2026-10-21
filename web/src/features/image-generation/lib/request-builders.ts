@@ -170,8 +170,15 @@ export function normalizeImageResponse(params: {
   model: string
   size: string
 }): GeneratedImage[] {
-  const raw = params.data as { data?: RawImageItem[] } | null
-  const items = Array.isArray(raw?.data) ? (raw?.data as RawImageItem[]) : []
+  const raw = params.data as { data?: RawImageItem | RawImageItem[] } | null
+  // Some image providers return a single object instead of a one-item array.
+  // Keep both shapes on the same URL validation and display path.
+  let items: RawImageItem[] = []
+  if (Array.isArray(raw?.data)) {
+    items = raw.data
+  } else if (raw?.data && typeof raw.data === 'object') {
+    items = [raw.data]
+  }
   const now = Date.now()
   const parsedSize = parseSizeDimensions(params.size)
   const dimensions =
