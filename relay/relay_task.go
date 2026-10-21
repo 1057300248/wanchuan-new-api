@@ -563,6 +563,7 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 	adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
 		ChannelType: channelModel.Type, ChannelId: channelModel.Id,
 		ChannelBaseUrl: baseURL, ApiKey: key, ChannelSetting: channelModel.GetSetting(),
+		HeadersOverride: channelModel.GetHeaderOverride(),
 	}})
 	if task.SettlementPending {
 		if err := service.RecoverTaskSettlement(context.Background(), task); err != nil {
