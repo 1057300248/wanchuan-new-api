@@ -1,5 +1,11 @@
 package model
 
+import (
+	"fmt"
+
+	"gorm.io/gorm"
+)
+
 type Midjourney struct {
 	Id          int    `json:"id"`
 	Code        int    `json:"code"`
@@ -26,6 +32,9 @@ type Midjourney struct {
 
 	TokenId          int `json:"-" gorm:"default:0"`
 	BillingChannelId int `json:"-" gorm:"default:0"`
+	// NULL is a legacy paid-only charge. An empty array marks a new task that
+	// has not been charged; nonempty receipts commit atomically with its debit.
+	WalletDebit []LedgerShare `json:"-" gorm:"serializer:json;type:text"`
 }
 
 // TaskQueryParams 用于包含所有搜索条件的结构体，可以根据需求添加更多字段
@@ -174,9 +183,20 @@ func (midjourney *Midjourney) Update() error {
 }
 
 func (midjourney *Midjourney) UpdateBillingState() error {
-	return DB.Model(midjourney).
-		Select("quota", "token_id", "billing_channel_id").
-		Updates(midjourney).Error
+	return midjourney.UpdateBillingStateTx(DB)
+}
+
+func (midjourney *Midjourney) UpdateBillingStateTx(tx *gorm.DB) error {
+	result := tx.Model(midjourney).
+		Select("quota", "token_id", "billing_channel_id", "wallet_debit").
+		Updates(midjourney)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("Midjourney billing state changed for task %s", midjourney.MjId)
+	}
+	return nil
 }
 
 func (midjourney *Midjourney) GetBillingChannelId() int {
@@ -192,7 +212,8 @@ func (midjourney *Midjourney) GetBillingChannelId() int {
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).
 // Uses Model().Select("*").Updates() to avoid GORM Save()'s INSERT fallback.
 func (midjourney *Midjourney) UpdateWithStatus(fromStatus string) (bool, error) {
-	result := DB.Model(midjourney).Where("status = ?", fromStatus).Select("*").Updates(midjourney)
+	result := DB.Model(midjourney).Where("status = ?", fromStatus).Select("*").
+		Omit("quota", "token_id", "billing_channel_id", "wallet_debit").Updates(midjourney)
 	if result.Error != nil {
 		return false, result.Error
 	}

@@ -460,9 +460,18 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 }
 
 func postConsumeQuotaWithOperation(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool, operationSuffix string) (result postConsumeQuotaResult, err error) {
+	return postConsumeQuotaWithWalletCommit(relayInfo, quota, preConsumedQuota, sendEmail, operationSuffix, nil)
+}
+
+// commit persists a task's refund receipt inside the wallet/token transaction.
+// It runs for replays too, so callers can recover the already committed state.
+func postConsumeQuotaWithWalletCommit(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool, operationSuffix string, commit func(*gorm.DB, *model.LedgerResult) error) (result postConsumeQuotaResult, err error) {
 
 	// 1) Consume from wallet quota OR subscription item
 	if relayInfo != nil && relayInfo.BillingSource == BillingSourceSubscription {
+		if commit != nil {
+			return result, errors.New("wallet commit callback does not support subscriptions")
+		}
 		if relayInfo.SubscriptionId == 0 {
 			return result, errors.New("subscription id is missing")
 		}
@@ -525,10 +534,15 @@ func postConsumeQuotaWithOperation(relayInfo *relaycommon.RelayInfo, quota int, 
 				if err != nil {
 					return err
 				}
-				if ledgerResult == nil || ledgerResult.Replayed || relayInfo.IsPlayground {
-					return nil
+				if ledgerResult != nil && !ledgerResult.Replayed && !relayInfo.IsPlayground {
+					if err := model.ApplyTokenQuotaDeltaTx(tx, relayInfo.TokenId, relayInfo.TokenKey, -quota); err != nil {
+						return err
+					}
 				}
-				return model.ApplyTokenQuotaDeltaTx(tx, relayInfo.TokenId, relayInfo.TokenKey, -quota)
+				if commit != nil {
+					return commit(tx, ledgerResult)
+				}
+				return nil
 			})
 			if !errors.Is(err, model.ErrLedgerDuplicate) {
 				break

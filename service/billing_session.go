@@ -258,15 +258,24 @@ func ledgerSharesFromReceipt(shares []moneyport.AccountShare) []model.LedgerShar
 }
 
 func (s *BillingSession) Reserve(targetQuota int) error {
+	return s.reserve(targetQuota, false)
+}
+
+// ReserveBeforeSubmit never uses the trusted-user bypass: a known task retry
+// price must be covered before the new upstream request is sent.
+func (s *BillingSession) ReserveBeforeSubmit(targetQuota int) error {
+	return s.reserve(targetQuota, true)
+}
+
+func (s *BillingSession) reserve(targetQuota int, requireAvailableQuota bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	imageRequest := false
 	if s.relayInfo != nil {
-		_, imageRequest = s.relayInfo.Request.(*dto.ImageRequest)
-		imageRequest = imageRequest || s.relayInfo.ImageRequestCount > 0
+		_, imageRequest := s.relayInfo.Request.(*dto.ImageRequest)
+		requireAvailableQuota = requireAvailableQuota || imageRequest || s.relayInfo.ImageRequestCount > 0
 	}
-	if s.settled || s.refunded || s.trusted && !imageRequest || targetQuota <= s.preConsumedQuota {
+	if s.settled || s.refunded || s.trusted && !requireAvailableQuota || targetQuota <= s.preConsumedQuota {
 		return nil
 	}
 
@@ -294,7 +303,7 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 	s.preConsumedQuota += delta
 	s.tokenConsumed += delta
 	s.extraReserved += delta
-	if imageRequest {
+	if requireAvailableQuota {
 		s.trusted = false
 	}
 	s.syncRelayInfo()
