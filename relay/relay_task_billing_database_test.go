@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/moneyport"
 	"github.com/QuantumNous/new-api/pkg/walletport"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -207,6 +208,52 @@ export function extractUsage(){return {seconds:2};}
 			var net int64
 			require.NoError(t, db.Model(&model.BalanceLedger{}).Select("COALESCE(SUM(delta), 0)").Where("user_id = ?", user.Id).Scan(&net).Error)
 			assert.Zero(t, net, fmt.Sprintf("every held account must be refunded: %s", tc.name))
+		})
+	}
+}
+
+func TestRelayTaskSensitiveRejectionPrecedesPluginAndBilling(t *testing.T) {
+	oldEnabled, oldPrompt := setting.CheckSensitiveEnabled, setting.CheckSensitiveOnPromptEnabled
+	oldWords, oldExempt := setting.SensitiveWordsToString(), setting.SensitiveCheckExemptGroupsToString()
+	setting.CheckSensitiveEnabled, setting.CheckSensitiveOnPromptEnabled = true, true
+	setting.SensitiveWordsFromString("blocked")
+	setting.LoadSensitiveCheckExemptGroups("")
+	t.Cleanup(func() {
+		setting.CheckSensitiveEnabled, setting.CheckSensitiveOnPromptEnabled = oldEnabled, oldPrompt
+		setting.SensitiveWordsFromString(oldWords)
+		setting.LoadSensitiveCheckExemptGroups(oldExempt)
+	})
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_, _ = w.Write([]byte(`{"id":"unexpected-paid-work"}`))
+	}))
+	t.Cleanup(server.Close)
+	for _, tc := range []struct {
+		name, contentType, body string
+		normalized              bool
+	}{
+		{name: "json", contentType: "application/json", body: `{"prompt":"blocked"}`},
+		{name: "vendor_json", contentType: "application/vnd.task+json", body: `{"prompt":"blocked"}`},
+		{name: "normalized_vendor_prompt", contentType: "application/json", body: `{"vendor_alias":"blocked"}`, normalized: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, info := newTaskSubmitContext(t, "declared-model", "")
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(tc.body))
+			c.Request.Header.Set("Content-Type", tc.contentType)
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, server.URL)
+			if tc.normalized {
+				c.Set("task_request", map[string]any{"prompt": "blocked"})
+			}
+			pinMappingOrderPlugin(t, c, strings.Replace(mappingOrderSubmitPlugin, `return {url:`, `throw new Error("build hook must not run before keyword rejection"); return {url:`, 1))
+			result, taskErr := RelayTaskSubmit(c, info)
+			require.Nil(t, result)
+			require.NotNil(t, taskErr)
+			assert.Equal(t, "sensitive_words_detected", taskErr.Code)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+			assert.Nil(t, info.Billing, "no precharge can be created for local rejection")
+			assert.Nil(t, info.TieredBillingSnapshot, "pricing hooks cannot precede local rejection")
+			assert.Zero(t, calls.Load(), "no paid or helper upstream request")
 		})
 	}
 }
