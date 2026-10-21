@@ -116,12 +116,22 @@ jobs:
           if-no-files-found: error
 
   redis:
-    name: Redis script eviction recovery
+    name: Redis script eviction recovery (${{ matrix.version }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: redis72
+            version: '7.2.16'
+            image: redis:7.2.16-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0
+          - name: redis880
+            version: '8.8.0'
+            image: redis:8.8.0-alpine@sha256:9d317178eceac8454a2284a9e6df2466b93c745529947f0cd42a0fa9609d7005
     services:
       redis:
-        image: redis:7.2-alpine
+        image: ${{ matrix.image }}
         ports: ['127.0.0.1::6379']
         options: --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=3s --health-retries=24
     steps:
@@ -129,7 +139,7 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           set -euo pipefail
-          out="$RUNNER_TEMP/repair-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-redis"
+          out="$RUNNER_TEMP/repair-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${{ matrix.name }}"
           mkdir -p "$out"
           printf 'OUT=%s\n' "$out" >> "$GITHUB_ENV"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -147,12 +157,13 @@ jobs:
         env:
           REDIS_ID: ${{ job.services.redis.id }}
           REDIS_PORT: ${{ job.services.redis.ports['6379'] }}
+          REDIS_EXPECTED_VERSION: ${{ matrix.version }}
         run: bash ops/ci/verify_repair_services.sh redis
       - name: Preserve exact-SHA Redis evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: repair-redis-${{ env.SOURCE_SHA }}
+          name: repair-${{ matrix.name }}-${{ env.SOURCE_SHA }}
           path: ${{ env.OUT }}/
           retention-days: 7
           if-no-files-found: error

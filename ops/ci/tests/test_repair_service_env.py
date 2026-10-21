@@ -12,11 +12,14 @@ DSN_KEYS = ("TEST_MYSQL_DSN", "TEST_MYSQL_LOG_DSN", "TEST_POSTGRES_DSN", "TEST_P
             "TEST_DATABASE_DSN", "TEST_LOG_DATABASE_DSN", "AUDIT_MYSQL_DSN", "AUDIT_POSTGRES_DSN",
             "TEST_PERF_MYSQL_DSN", "TEST_PERF_POSTGRES_DSN", "TEST_FIXED_MYSQL_DSN", "TEST_FIXED_MYSQL_LOG_DSN",
             "TEST_FIXED_POSTGRES_DSN", "TEST_FIXED_POSTGRES_LOG_DSN", "TEST_DATABASE_COMPAT",
-            "TEST_DATABASE_DIALECT", "TEST_TASK_DB_DIALECT")
+            "TEST_DATABASE_DIALECT", "TEST_TASK_DB_DIALECT", "TEST_RUNTIME_REDIS",
+            "TEST_REDIS_DSN", "TEST_REDIS_ADDR", "TEST_TASK_REDIS_ADDR")
 
 
 class RepairServiceEnvironmentTests(unittest.TestCase):
-    def run_script(self, dialect, reject_label="", creation_fails=False):
+    def run_script(self, dialect, reject_label="", creation_fails=False, *, mode="database",
+                   redis_version="8.8.0", redis_info="# Server\r\nredis_version:8.8.0\r\n",
+                   redis_info_fails=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             tools = root / "bin"
@@ -37,6 +40,10 @@ elif name == "go" and args == ["version"]:
     print("offline orchestration stub; no Go tests executed")
 elif name == "docker" and os.environ.get("MOCK_CREATE_FAIL") == "1" and any("repair_token_migration" in arg for arg in args):
     raise SystemExit(1)
+elif name == "docker" and args[-3:] == ["redis-cli", "INFO", "server"]:
+    if os.environ.get("MOCK_REDIS_INFO_FAIL") == "1":
+        raise SystemExit(1)
+    sys.stdout.write(os.environ["MOCK_REDIS_INFO"])
 elif name == "python3":
     assert args[0] == "ops/ci/check_go_test_report.py"
     assert args[1] == "--reject-skipped-descendants"
@@ -52,8 +59,10 @@ elif name == "python3":
                    "MYSQL_ID": "b" * 64, "MYSQL_PORT": "13306", "PG_ID": "c" * 64, "PG_PORT": "15432",
                    "AUDIT_MYSQL_DSN": "untrusted-ambient-fixture", "AUDIT_POSTGRES_DSN": "untrusted-ambient-fixture",
                    "MOCK_TRACE": str(trace), "MOCK_REJECT_LABEL": reject_label,
-                   "MOCK_CREATE_FAIL": "1" if creation_fails else "0"}
-            result = subprocess.run(["bash", str(SCRIPT), "database"], cwd=root, env=env,
+                   "MOCK_CREATE_FAIL": "1" if creation_fails else "0",
+                   "REDIS_ID": "d" * 64, "REDIS_PORT": "16379", "REDIS_EXPECTED_VERSION": redis_version,
+                   "MOCK_REDIS_INFO": redis_info, "MOCK_REDIS_INFO_FAIL": "1" if redis_info_fails else "0"}
+            result = subprocess.run(["bash", str(SCRIPT), mode], cwd=root, env=env,
                                     text=True, capture_output=True, timeout=20)
             records = [json.loads(line) for line in trace.read_text().splitlines()]
             return result, records
@@ -121,6 +130,60 @@ elif name == "python3":
                 result, rows = self.run_script(dialect, creation_fails=True)
                 self.assertNotEqual(0, result.returncode)
                 self.assertFalse(any(row["tool"] == "go" and row["args"] != ["version"] for row in rows))
+
+    def test_both_pinned_redis_versions_keep_all_real_contracts_and_loopback_dsns(self):
+        expected = {
+            "model-script-flush": ["TestModelRateLimitRealRedis/reservation_replay_and_expiry",
+                                   "TestModelRateLimitRealRedis/script_flush_resumes_request_pipeline"],
+            "token-bucket-script-flush": ["TestAllowFallsBackToEvalAfterScriptFlush/real_redis"],
+            "task-token-reservation": ["TestTaskBillingBatchReservationRestartRecovery/limited_with_redis",
+                                       "TestTaskBillingBatchReservationRestartRecovery/unlimited_with_redis",
+                                       "TestTaskBillingBatchReservationRestartRecovery/limited_with_ordinary_request"],
+        }
+        for version in ("7.2.16", "8.8.0"):
+            with self.subTest(version=version):
+                result, rows = self.run_script("", mode="redis", redis_version=version,
+                                               redis_info=f"# Server\r\nredis_version:{version}\r\nredis_mode:standalone\r\n")
+                self.assertEqual(0, result.returncode, result.stderr)
+                tests = [row for row in rows if row["tool"] == "go" and row["args"] != ["version"]]
+                gates = [row for row in rows if row["tool"] == "python3"]
+                self.assertEqual(3, len(tests))
+                self.assertEqual(3, len(gates))
+                self.assertEqual(set(expected), {Path(row["args"][2]).stem for row in gates})
+                for test, gate in zip(tests, gates):
+                    label = Path(gate["args"][2]).stem
+                    self.assertEqual(expected[label], gate["args"][3:])
+                    self.assertEqual("1", test["env"]["TEST_RUNTIME_REDIS"])
+                    self.assertEqual("redis://127.0.0.1:16379/0", test["env"]["TEST_REDIS_DSN"])
+                    self.assertEqual("127.0.0.1:16379", test["env"]["TEST_REDIS_ADDR"])
+                    if label == "task-token-reservation":
+                        self.assertEqual("127.0.0.1:16379", test["env"]["TEST_TASK_REDIS_ADDR"])
+
+    def test_wrong_missing_ambiguous_and_malformed_redis_versions_fail_before_tests(self):
+        cases = [("8.8.0", "redis_version:7.2.16\r\n"), ("8.8.0", ""),
+                 ("8.8.0", "redis_version:8.8.0\nredis_version:8.8.0\n"),
+                 ("8.8.0", "redis_version:8.8.0\nredis_version:\n"),
+                 ("8.8.0", "redis_version:8.8.0:extra\n"), ("8.8.0", "redis_version:8.8.0-rc1\n"),
+                 ("8.8.0", " redis_version:8.8.0\n"), ("", "redis_version:8.8.0\n"),
+                 ("8.8", "redis_version:8.8\n")]
+        for expected, info in cases:
+            with self.subTest(expected=expected, info=info):
+                result, rows = self.run_script("", mode="redis", redis_version=expected, redis_info=info)
+                self.assertNotEqual(0, result.returncode)
+                self.assertFalse(any(row["tool"] == "go" and row["args"] != ["version"] for row in rows))
+
+    def test_failed_redis_info_query_cannot_start_contracts(self):
+        result, rows = self.run_script("", mode="redis", redis_info_fails=True)
+        self.assertNotEqual(0, result.returncode)
+        self.assertFalse(any(row["tool"] == "go" and row["args"] != ["version"] for row in rows))
+
+    def test_redis_required_rejection_keeps_later_evidence_and_fails_job(self):
+        for label in ("model-script-flush", "token-bucket-script-flush", "task-token-reservation"):
+            with self.subTest(label=label):
+                result, rows = self.run_script("", mode="redis", reject_label=label)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("Required repair contracts failed", result.stderr)
+                self.assertEqual(3, sum(row["tool"] == "python3" for row in rows))
 
 
 if __name__ == "__main__":

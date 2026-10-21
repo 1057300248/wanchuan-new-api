@@ -186,8 +186,20 @@ database)
   ;;
 redis)
   : "${REDIS_ID:?a real Redis service is required}" "${REDIS_PORT:?a real Redis port is required}"
+  : "${REDIS_EXPECTED_VERSION:?an exact Redis version is required}"
+  if [[ ! "$REDIS_EXPECTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo 'An exact numeric Redis release is required.' >&2
+    exit 1
+  fi
+  printf '%s\n' "$REDIS_EXPECTED_VERSION" > "$OUT/redis-expected-version.txt"
   docker inspect --format '{{.Config.Image}} {{.Image}}' "$REDIS_ID" > "$OUT/redis-image.txt"
   docker exec "$REDIS_ID" redis-cli INFO server > "$OUT/redis-version.txt"
+  # A requested image tag is not evidence of the server actually exercised.
+  redis_version="$(awk '/^redis_version:/ { sub(/\r$/, ""); print }' "$OUT/redis-version.txt")"
+  if [ "$redis_version" != "redis_version:$REDIS_EXPECTED_VERSION" ]; then
+    echo 'Redis server version is missing, ambiguous, or differs from the required release.' >&2
+    exit 1
+  fi
   export TEST_RUNTIME_REDIS=1 TEST_REDIS_DSN="redis://127.0.0.1:$REDIS_PORT/0" TEST_REDIS_ADDR="127.0.0.1:$REDIS_PORT"
   report model-script-flush ./middleware '^TestModelRateLimitRealRedis$' TestModelRateLimitRealRedis/reservation_replay_and_expiry TestModelRateLimitRealRedis/script_flush_resumes_request_pipeline
   report token-bucket-script-flush ./common/limiter '^TestAllowFallsBackToEvalAfterScriptFlush$/real_redis$' TestAllowFallsBackToEvalAfterScriptFlush/real_redis
