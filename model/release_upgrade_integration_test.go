@@ -39,6 +39,7 @@ func TestReleaseUpgradePreservesWalletAndIdentity(t *testing.T) {
 	require.NoError(t, InitLogDB())
 	t.Cleanup(func() { require.NoError(t, CloseDB()) })
 	if phase == "seed" {
+		require.False(t, DB.Migrator().HasTable("billing_finalizations"), "exact released schema must not already contain the candidate terminal table")
 		// Refuse to seed a nonempty fixture instead of overwriting existing data.
 		var count int64
 		require.NoError(t, DB.Model(&User{}).Count(&count).Error)
@@ -81,6 +82,7 @@ func TestReleaseUpgradePreservesWalletAndIdentity(t *testing.T) {
 		require.EqualValues(t, 2, count, "the released version must persist the audit fixture")
 		return
 	}
+	require.True(t, DB.Migrator().HasTable("billing_finalizations"), "candidate startup must add the terminal table")
 	var user User
 	require.NoError(t, DB.Where("username = ?", "release-upgrade-owner").First(&user).Error)
 	assert.Equal(t, 5000, user.Quota)
