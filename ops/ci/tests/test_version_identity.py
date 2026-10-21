@@ -24,14 +24,21 @@ class VersionIdentityTests(unittest.TestCase):
                                     text=True, capture_output=True, timeout=10)
             return result, (root / "VERSION").read_text(), envfile.read_text() if envfile.exists() else ""
 
-    def test_rc41_source_version_and_commit_are_preserved(self):
-        version = (ROOT / "VERSION").read_text().strip()
-        self.assertTrue(version.startswith("v1.0.0-rc.41.chuanapi."))
-        result, stamped, environment = self.stamp(version + "\n")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        expected = version + "+gaaaaaaaaaaaa"
-        self.assertEqual(stamped, expected + "\n")
-        self.assertEqual(environment, "BINARY_VERSION=" + expected + "\n")
+    def test_source_version_and_commit_are_preserved(self):
+        versions = [
+            ("rc41", "v1.0.0-rc.41.chuanapi.20261001"),
+            ("rc44", "v1.0.0-rc.44.chuanapi.20261018"),
+            ("existing-metadata", "v1.0.0-rc.44+reviewed"),
+            ("checkout", (ROOT / "VERSION").read_text().strip()),
+        ]
+        sha = "0123456789abcdef0123456789abcdef01234567"
+        for source, version in versions:
+            with self.subTest(source=source, version=version):
+                result, stamped, environment = self.stamp(version + "\n", sha)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = version + (".g" if "+" in version else "+g") + sha[:12]
+                self.assertEqual(stamped, expected + "\n")
+                self.assertEqual(environment, "BINARY_VERSION=" + expected + "\n")
 
     def test_existing_build_metadata_is_extended_not_duplicated(self):
         result, stamped, _ = self.stamp("v1.0.0-rc.41+verified\n")
