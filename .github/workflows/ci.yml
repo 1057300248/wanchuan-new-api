@@ -18,7 +18,7 @@ jobs:
     name: Backend vet, build, and test
     if: github.event.action != 'closed' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       GOWORK: 'off'
 
@@ -71,10 +71,13 @@ jobs:
       - name: Race tests
         env:
           CGO_ENABLED: '1'
+          GOMAXPROCS: '2'
         run: |
-          go test -race ./...
+          # SQLite-heavy controller tests can exceed Go's default 10m under -race.
+          # Bound resource contention and runtime without reducing test coverage.
+          go test -race -p 2 -count=1 -timeout=20m ./...
           cd relaykit
-          go test -race ./...
+          go test -race -p 2 -count=1 -timeout=20m ./...
 
       - name: Release evidence gate tests
         run: python3 -m unittest discover -s ops/server/tests -p test_release_gate.py -v
