@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -107,12 +108,15 @@ func loadConfiguredGroupNamesTx(tx *gorm.DB) (map[string]struct{}, error) {
 		values[key] = groupRenameMemoryOptionValue(key)
 	}
 	var options []Option
-	if err := tx.Where("key IN ?", groupRenameOptionKeys).Find(&options).Error; err != nil {
+	if err := tx.Where(map[string]any{"key": groupRenameOptionKeys}).Find(&options).Error; err != nil {
 		return nil, err
 	}
 	for _, option := range options {
 		values[option.Key] = option.Value
 	}
+	// Policy membership is a reference, not a definition or authorization to
+	// reintroduce a renamed group into subscriptions or other group writers.
+	delete(values, setting.SensitiveCheckExemptGroupsOptionKey)
 	configured := make(map[string]struct{})
 	if err := collectGroupNamesFromOptions(values, configured); err != nil {
 		return nil, err
@@ -246,7 +250,7 @@ func bumpGroupConfigVersionTx(tx *gorm.DB) (int64, error) {
 		return 0, fmt.Errorf("invalid group config version %q: %w", option.Value, err)
 	}
 	next := current + 1
-	if err := tx.Model(&Option{}).Where("key = ?", groupConfigVersionOptionKey).
+	if err := tx.Model(&Option{}).Where(&Option{Key: groupConfigVersionOptionKey}).
 		Update("value", strconv.FormatInt(next, 10)).Error; err != nil {
 		return 0, err
 	}
@@ -321,23 +325,30 @@ func receiveGroupConfigEvents(ctx context.Context, ch <-chan *redis.Message) {
 }
 
 func reloadGroupRuntimeOptions() error {
-	var options []Option
-	if err := DB.Where("key IN ?", groupRenameOptionKeys).Find(&options).Error; err != nil {
-		return err
-	}
+	// The caller owns requestPolicyOptionMutex before groupConfigApplyMutex.
 	groupRenameRuntimeApplyMutex.Lock()
 	defer groupRenameRuntimeApplyMutex.Unlock()
+	var options []Option
+	if err := DB.Where(map[string]any{"key": groupRenameOptionKeys}).Find(&options).Error; err != nil {
+		return err
+	}
 	for _, option := range options {
 		if err := updateOptionMap(option.Key, option.Value); err != nil {
 			return err
 		}
 	}
-	return nil
+	return refreshRequestPolicySnapshot()
 }
 
 func applyGroupConfigInvalidation(version int64, mappings []GroupRenameMapping, reloadOptions bool) error {
 	if version <= 0 || version <= groupConfigAppliedVersion.Load() {
 		return nil
+	}
+	if reloadOptions {
+		// Periodic option loads already own the policy mutex and pass false.
+		// Keep the same lock order for Pub/Sub to avoid an inversion with them.
+		requestPolicyOptionMutex.Lock()
+		defer requestPolicyOptionMutex.Unlock()
 	}
 	groupConfigApplyMutex.Lock()
 	defer groupConfigApplyMutex.Unlock()

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -59,6 +60,8 @@ func (b *taskSubmissionTestBilling) Reserve(int) error {
 	*b.events = append(*b.events, "reserve")
 	return b.reserveErr
 }
+
+func (b *taskSubmissionTestBilling) ReserveBeforeSubmit(quota int) error { return b.Reserve(quota) }
 
 func TestPresentTaskSubmissionUsesNativePresenterAfterPersistence(t *testing.T) {
 	plugin, err := pluginruntime.CompilePlugin(`
@@ -582,15 +585,21 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 	plugin, err := pluginruntime.CompilePlugin(source, pluginruntime.Options{})
 	require.NoError(t, err)
 	for index, tc := range []struct {
-		name, status string
-		actual       any
-		count        float64
+		name, status      string
+		actual            any
+		count             float64
+		settlementFailure bool
+		shortage          bool
 	}{
-		{"partial", "SUCCESS", 2, 2}, {"zero", "SUCCESS", 0, 0}, {"larger", "SUCCESS", 6, 6},
-		{"invalid usage", "SUCCESS", -1, 4}, {"expression failure", "SUCCESS", 7, 4}, {"negative result", "SUCCESS", 8, 4}, {"missing usage", "SUCCESS", nil, 4}, {"failed", "FAILURE", 9, 0},
+		{"partial", "SUCCESS", 2, 2, false, false}, {"zero", "SUCCESS", 0, 0, false, false}, {"larger", "SUCCESS", 6, 6, false, false},
+		{"invalid usage", "SUCCESS", -1, 4, false, false}, {"expression failure", "SUCCESS", 7, 4, false, false}, {"negative result", "SUCCESS", 8, 4, false, false}, {"missing usage", "SUCCESS", nil, 4, false, false}, {"failed", "FAILURE", 9, 0, false, false},
+		{"accepted_settlement_failure_preserves_task_reference", "SUCCESS", 2, 2, true, false},
+		{"accepted_upward_shortage_persists_before_adjustment", "SUCCESS", 6, 6, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			var upstreamCalls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				upstreamCalls.Add(1)
 				w.Header().Set("Content-Type", "application/json")
 				body := map[string]any{"status": tc.status}
 				if tc.actual != nil {
@@ -604,6 +613,9 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 			}))
 			defer server.Close()
 			initial := int(20 * common.QuotaPerUnit)
+			if tc.shortage {
+				initial = common.QuotaRound(5 * 0.01 * common.QuotaPerUnit)
+			}
 			user := model.User{Username: fmt.Sprintf("task_user_%d", index), AffCode: fmt.Sprintf("task_aff_%d", index), Quota: initial, QuotaPaid: initial}
 			require.NoError(t, db.Create(&user).Error)
 			ch := model.Channel{Name: "test provider", Type: constant.ChannelTypeTaskPlugin}
@@ -626,8 +638,66 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 			info.UserSetting.BillingPreference = "wallet_only"
 			info.PublicTaskID = model.GenerateTaskID()
 			info.RequestId = fmt.Sprintf("task-request-%d", index)
+			c.Set(common.RequestIdKey, info.RequestId)
 			info.LockedChannel = &ch
+			var failSettlement atomic.Bool
+			if tc.settlementFailure && !tc.shortage {
+				failSettlement.Store(true)
+				const callback = "test:accepted-settlement-failure"
+				require.NoError(t, db.Callback().Update().After("gorm:update").Register(callback, func(tx *gorm.DB) {
+					if !failSettlement.Load() {
+						return
+					}
+					for _, field := range tx.Statement.Selects {
+						if field == "settlement_pending" {
+							tx.AddError(errors.New("forced accepted task settlement persistence failure"))
+							return
+						}
+					}
+				}))
+				t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove(callback)) })
+			}
 			outcome, taskErr := executeTaskSubmission(c, info)
+			if tc.settlementFailure {
+				require.Nil(t, outcome)
+				require.NotNil(t, taskErr)
+				assert.True(t, taskErr.NoRetry)
+				assert.Equal(t, "stop", decideTaskRetry(c, taskErr, 3).Action)
+				assert.Contains(t, taskErr.Message, info.PublicTaskID)
+				assert.Equal(t, info.PublicTaskID, c.Writer.Header().Get("X-New-API-Task-ID"))
+				assert.Equal(t, "true", c.Writer.Header().Get("X-New-API-Task-Accepted"))
+				assert.Equal(t, map[string]any{"task_id": info.PublicTaskID, "accepted": true, "settlement_pending": true}, taskErr.Data)
+				var saved model.Task
+				require.NoError(t, db.Where("task_id = ?", info.PublicTaskID).First(&saved).Error)
+				require.True(t, saved.SettlementPending)
+				assert.Equal(t, common.QuotaRound(4*0.01*common.QuotaPerUnit), saved.Quota)
+				var heldUser model.User
+				require.NoError(t, db.First(&heldUser, user.Id).Error)
+				assert.Equal(t, initial-saved.Quota, heldUser.Quota, "accepted durable task is not refunded on local settlement error")
+				assert.Zero(t, heldUser.UsedQuota)
+				failSettlement.Store(false)
+				if tc.shortage {
+					// No second paid submission: funding becomes available and the
+					// previously saved upward intent can now complete atomically.
+					topUp := common.QuotaRound(10 * 0.01 * common.QuotaPerUnit)
+					_, err := model.CreditQuota(model.LedgerEntry{UserId: user.Id, Account: model.AccountPaid, Delta: topUp, Reason: model.LedgerReasonBillingRefund, IdempotencyKey: fmt.Sprintf("test-shortage-topup-%d", user.Id)})
+					require.NoError(t, err)
+					initial += topUp
+				}
+				require.NoError(t, service.RecoverTaskSettlement(t.Context(), &saved))
+				require.NoError(t, service.RecoverTaskSettlement(t.Context(), &saved))
+				assert.False(t, saved.SettlementPending)
+				assert.Equal(t, common.QuotaRound(tc.count*0.01*common.QuotaPerUnit), saved.Quota)
+				require.NoError(t, db.First(&heldUser, user.Id).Error)
+				assert.Equal(t, initial-saved.Quota, heldUser.Quota)
+				assert.Equal(t, saved.Quota, heldUser.UsedQuota)
+				assert.Equal(t, 1, heldUser.RequestCount)
+				assert.EqualValues(t, 1, upstreamCalls.Load(), "recovery must not submit paid work again")
+				var logs int64
+				require.NoError(t, db.Model(&model.Log{}).Where("user_id = ?", user.Id).Count(&logs).Error)
+				assert.EqualValues(t, 1, logs)
+				return
+			}
 			require.Nil(t, taskErr)
 			require.NotNil(t, outcome)
 			want := common.QuotaRound(tc.count * 0.01 * common.QuotaPerUnit)
@@ -652,6 +722,7 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 			assert.Equal(t, want, logs[0].Quota)
 			var other map[string]any
 			require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
+			assert.Equal(t, float64(want), other["wallet_quota_deducted"], "submit log includes durable task adjustment, not just the initial hold")
 			if tc.status == "SUCCESS" {
 				assert.Equal(t, tc.count, other["usage_facts"].(map[string]any)["units"])
 			}

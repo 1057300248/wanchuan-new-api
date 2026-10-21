@@ -40,6 +40,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { FormDirtyIndicator } from '@/features/system-settings/components/form-dirty-indicator'
 import {
+  SettingsControlGroup,
   SettingsForm,
   SettingsSwitchContent,
   SettingsSwitchItem,
@@ -52,7 +53,7 @@ import {
   getMonitorTargets,
   saveMonitorSettings,
 } from './settings-api'
-import type { MonitorSettingsData } from './types'
+import type { MonitorConfig, MonitorSettingsData } from './types'
 
 const settingsKey = ['model-monitor-settings']
 const schema = z.object({
@@ -60,6 +61,7 @@ const schema = z.object({
   title: z.string().max(120, 'monitor.settings.invalid'),
   description: z.string().max(500, 'monitor.settings.invalid'),
   groups: z.record(z.string(), z.string().max(80, 'monitor.settings.invalid')),
+  hidden_groups: z.record(z.string(), z.boolean()),
 })
 
 export function MonitorSettings() {
@@ -97,10 +99,30 @@ function MonitorSettingsForm(props: { settings: MonitorSettingsData }) {
     retry: false,
     meta: { errorToast: false },
   })
+  const resetForm = (config: MonitorConfig) => {
+    // Keep mounted fields in the form defaults when the server omits blank
+    // names and visible groups, so a successful save leaves the form clean.
+    const current = form.getValues()
+    form.reset({
+      ...config,
+      groups: {
+        ...Object.fromEntries(
+          Object.keys(current.groups).map((id) => [id, ''])
+        ),
+        ...config.groups,
+      },
+      hidden_groups: {
+        ...Object.fromEntries(
+          Object.keys(current.hidden_groups).map((id) => [id, false])
+        ),
+        ...config.hidden_groups,
+      },
+    })
+  }
   const save = useMutation({
     mutationFn: saveMonitorSettings,
     onSuccess(config) {
-      form.reset(config)
+      resetForm(config)
       queryClient.setQueryData(settingsKey, { ...props.settings, config })
       void queryClient.invalidateQueries({ queryKey: ['model-monitor'] })
       toast.success(t('monitor.settings.saved'))
@@ -109,7 +131,10 @@ function MonitorSettingsForm(props: { settings: MonitorSettingsData }) {
   const groups = new Map(
     (targets.data ?? []).map((target) => [target.id, target])
   )
-  for (const id of Object.keys(props.settings.config.groups)) {
+  for (const id of [
+    ...Object.keys(props.settings.config.groups),
+    ...Object.keys(props.settings.config.hidden_groups),
+  ]) {
     if (!groups.has(id)) groups.set(id, { id, number: 0, model: '' })
   }
   const submit = form.handleSubmit((values) => save.mutate(values))
@@ -121,7 +146,7 @@ function MonitorSettingsForm(props: { settings: MonitorSettingsData }) {
         <SettingsForm onSubmit={submit}>
           <SettingsPageFormActions
             onSave={submit}
-            onReset={() => form.reset(props.settings.config)}
+            onReset={() => resetForm(props.settings.config)}
             isSaving={save.isPending}
             isSaveDisabled={!form.formState.isDirty}
           />
@@ -208,32 +233,62 @@ function MonitorSettingsForm(props: { settings: MonitorSettingsData }) {
             />
           )}
           {[...groups.values()].map((target) => (
-            <FormField
-              key={target.id}
-              control={form.control}
-              name={`groups.${target.id}`}
-              defaultValue=''
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    {target.number
-                      ? t('monitor.route', { number: target.number })
-                      : t('monitor.settings.unlisted')}{' '}
-                    {target.model}
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      {...field}
-                      value={field.value ?? ''}
-                      maxLength={80}
-                      placeholder={t('monitor.settings.groupPlaceholder')}
-                      disabled={save.isPending}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            <SettingsControlGroup key={target.id}>
+              <FormField
+                control={form.control}
+                name={`hidden_groups.${target.id}`}
+                defaultValue={false}
+                render={({ field }) => (
+                  <SettingsSwitchItem>
+                    <SettingsSwitchContent>
+                      <FormLabel>
+                        {t('monitor.settings.showGroup', {
+                          group: target.number
+                            ? t('monitor.route', { number: target.number })
+                            : t('monitor.settings.unlisted'),
+                        })}
+                      </FormLabel>
+                      <FormDescription>
+                        {t('monitor.settings.showGroupHelp')}
+                      </FormDescription>
+                    </SettingsSwitchContent>
+                    <FormControl>
+                      <Switch
+                        checked={!field.value}
+                        onCheckedChange={(checked) => field.onChange(!checked)}
+                        disabled={save.isPending}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </SettingsSwitchItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name={`groups.${target.id}`}
+                defaultValue=''
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      {target.number
+                        ? t('monitor.route', { number: target.number })
+                        : t('monitor.settings.unlisted')}{' '}
+                      {target.model}
+                    </FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        value={field.value ?? ''}
+                        maxLength={80}
+                        placeholder={t('monitor.settings.groupPlaceholder')}
+                        disabled={save.isPending}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </SettingsControlGroup>
           ))}
         </SettingsForm>
       </Form>

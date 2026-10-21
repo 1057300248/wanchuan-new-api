@@ -84,7 +84,13 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	// P1-2：钱包计费任务在提交日志中记录账户净份额（此时反映预扣+提交结算；
 	// 异步差额结算另行记录 task 引用账本与差额日志）。
 	if info.BillingSource == BillingSourceWallet {
-		FillWalletCostLogInfo(other, info.UserId, RelayWalletCostRefs(info))
+		refs := RelayWalletCostRefs(info)
+		if task != nil && task.PrivateData.SubmissionAccounted {
+			// Durable submit adjustments use task references, while the initial
+			// reservation retains its relay reference. Both determine net cost.
+			refs = append(refs, [2]string{"task", task.TaskID})
+		}
+		FillWalletCostLogInfo(other, info.UserId, refs)
 	}
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
@@ -96,8 +102,10 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 		Group:     info.UsingGroup,
 		Other:     other,
 	})
-	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
-	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
+	if task == nil || !task.PrivateData.SubmissionAccounted {
+		model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
+		model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -129,66 +137,22 @@ func taskIsSubscription(task *model.Task) bool {
 // 返回（钱包累计扣减份额, error）：delta > 0 时份额会累计入返回值（供任务持久化），
 // 保证后续退款按原账户精确退回；退款方向按已记录的份额分账退回。
 func taskAdjustFunding(task *model.Task, delta int, commit func(*gorm.DB, []model.LedgerShare, bool) error) ([]model.LedgerShare, error) {
-	entry := model.LedgerEntry{
-		UserId:        task.UserId,
-		Account:       model.AccountPaid,
-		ReferenceType: "task",
-		ReferenceId:   task.TaskID,
-		RequestId:     task.TaskID,
-	}
 	var order []model.LedgerAccount
 	if delta > 0 && !taskIsSubscription(task) {
-		// Policy lookup may query model.DB; resolve it before taking a database
-		// connection for the transaction (including single-connection SQLite).
 		order = taskDebitOrder(task)
+	}
+	key := "task:refund:" + task.TaskID
+	if delta > 0 {
+		key = "task:settle:" + task.TaskID
 	}
 	var result *model.LedgerResult
 	var nextShares []model.LedgerShare
 	var err error
 	for attempt := 0; attempt < 2; attempt++ {
-		result = nil
 		err = model.DB.Transaction(func(tx *gorm.DB) error {
-			nextShares = append([]model.LedgerShare(nil), task.PrivateData.WalletDebit...)
-			if taskIsSubscription(task) {
-				if err := model.PostConsumeUserSubscriptionDeltaTx(tx, task.PrivateData.SubscriptionId, int64(delta)); err != nil {
-					return err
-				}
-			} else if delta > 0 {
-				if len(nextShares) == 0 && task.Quota > 0 {
-					// Pre-receipt tasks used the legacy paid account. Keep that
-					// original charge when recording their first settlement delta.
-					nextShares = []model.LedgerShare{{Account: model.AccountPaid, Amount: task.Quota}}
-				}
-				entry.Delta = delta
-				entry.Reason = model.LedgerReasonTaskSettle
-				entry.IdempotencyKey = "task:settle:" + task.TaskID
-				result, err = model.DebitQuotaTx(tx, entry, order...)
-				if err != nil {
-					return err
-				}
-				nextShares = appendTaskShares(nextShares, result)
-			} else if delta < 0 {
-				refund := -delta
-				entry.Reason = model.LedgerReasonTaskRefund
-				entry.IdempotencyKey = "task:refund:" + task.TaskID
-				if len(nextShares) > 0 {
-					shares := SplitRefund(nextShares, refund)
-					total := 0
-					for _, share := range shares {
-						total += share.Amount
-					}
-					if total != refund {
-						return fmt.Errorf("task wallet receipt does not cover refund: task %s", task.TaskID)
-					}
-					result, err = model.CreditQuotaSharesTx(tx, entry, shares)
-					nextShares = subtractTaskShares(nextShares, shares)
-				} else {
-					entry.Delta = refund
-					result, err = model.CreditQuotaTx(tx, entry)
-				}
-				if err != nil {
-					return err
-				}
+			nextShares, result, err = taskAdjustFundingTx(tx, task, delta, key, order)
+			if err != nil {
+				return err
 			}
 			if commit != nil {
 				return commit(tx, nextShares, result != nil && result.Replayed)
@@ -206,6 +170,55 @@ func taskAdjustFunding(task *model.Task, delta int, commit func(*gorm.DB, []mode
 		model.RefreshUserQuotaCache(task.UserId, result.TotalAfter)
 	}
 	return nextShares, nil
+}
+
+// taskAdjustFundingTx has no out-of-transaction writes. The caller supplies a
+// stable lifecycle key and commits the receipt, token and task intent together.
+func taskAdjustFundingTx(tx *gorm.DB, task *model.Task, delta int, key string, order []model.LedgerAccount) ([]model.LedgerShare, *model.LedgerResult, error) {
+	shares := append([]model.LedgerShare(nil), task.PrivateData.WalletDebit...)
+	if taskIsSubscription(task) {
+		err := model.PostConsumeUserSubscriptionDeltaTx(tx, task.PrivateData.SubscriptionId, int64(delta))
+		return shares, nil, err
+	}
+	if delta == 0 {
+		return shares, nil, nil
+	}
+	entry := model.LedgerEntry{
+		UserId: task.UserId, Account: model.AccountPaid, ReferenceType: "task",
+		ReferenceId: task.TaskID, RequestId: task.TaskID, IdempotencyKey: key,
+	}
+	if delta > 0 {
+		if len(shares) == 0 && task.Quota > 0 {
+			shares = []model.LedgerShare{{Account: model.AccountPaid, Amount: task.Quota}}
+		}
+		entry.Delta = delta
+		entry.Reason = model.LedgerReasonTaskSettle
+		result, err := model.DebitQuotaTx(tx, entry, order...)
+		if err != nil {
+			return nil, nil, err
+		}
+		return appendTaskShares(shares, result), result, nil
+	}
+	refund := -delta
+	entry.Reason = model.LedgerReasonTaskRefund
+	if len(shares) == 0 {
+		entry.Delta = refund
+		result, err := model.CreditQuotaTx(tx, entry)
+		return shares, result, err
+	}
+	refunded := SplitRefund(shares, refund)
+	total := 0
+	for _, share := range refunded {
+		total += share.Amount
+	}
+	if total != refund {
+		return nil, nil, fmt.Errorf("task wallet receipt does not cover refund: task %s", task.TaskID)
+	}
+	result, err := model.CreditQuotaSharesTx(tx, entry, refunded)
+	if err != nil {
+		return nil, nil, err
+	}
+	return subtractTaskShares(shares, refunded), result, nil
 }
 
 // taskDebitOrder 返回任务钱包扣减顺序：依据任务记录的扣减份额（首个账户优先），
@@ -549,8 +562,17 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 // 当任务成功且返回了 totalTokens 时，根据模型倍率和分组倍率重新计算实际扣费额度，
 // 与预扣费的差额进行补扣或退还。支持钱包和订阅计费来源。
 func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) bool {
-	if totalTokens <= 0 {
+	actualQuota, reason, clamp, ok := taskQuotaByTokens(task, totalTokens)
+	if !ok {
 		return false
+	}
+	RecalculateTaskQuota(ctx, task, actualQuota, reason, clamp)
+	return true
+}
+
+func taskQuotaByTokens(task *model.Task, totalTokens int) (int, *common.Message, *common.QuotaClamp, bool) {
+	if totalTokens <= 0 {
+		return 0, nil, nil, false
 	}
 
 	modelName := taskModelName(task)
@@ -559,7 +581,7 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
 	// 只有配置了倍率(非固定价格)时才按 token 重新计费
 	if !hasRatioSetting || modelRatio <= 0 {
-		return false
+		return 0, nil, nil, false
 	}
 
 	// 获取用户和组的倍率信息
@@ -571,7 +593,7 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		}
 	}
 	if group == "" {
-		return false
+		return 0, nil, nil, false
 	}
 
 	groupRatio := ratio_setting.GetGroupRatio(group)
@@ -599,8 +621,7 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		"group_ratio":      fmt.Sprintf("%.2f", finalGroupRatio),
 		"other_multiplier": fmt.Sprintf("%.4f", otherMultiplier),
 	})
-	RecalculateTaskQuota(ctx, task, actualQuota, reason, clamp)
-	return true
+	return actualQuota, reason, clamp, true
 }
 
 // EvaluateTaskCompletionUsage evaluates actual facts against the frozen task

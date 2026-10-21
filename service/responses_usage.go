@@ -40,6 +40,10 @@ func (a *ResponsesUsageAccumulator) Observe(event *dto.ResponsesStreamResponse, 
 	}
 	if event.Response != nil {
 		a.info.ObserveResponseModel(event.Response.Model)
+		// Compatible providers can publish cumulative usage before their
+		// terminal event. A later error or disconnected transport must not
+		// erase already-observed billing facts.
+		ApplyResponsesUsage(a.usage, event.Response.Usage)
 	}
 	a.started = true
 	outcome := ObserveResponsesOutcome(a.info, event)
@@ -53,7 +57,6 @@ func (a *ResponsesUsageAccumulator) Observe(event *dto.ResponsesStreamResponse, 
 	switch event.Type {
 	case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled", "response.error", "error":
 		if event.Response != nil {
-			ApplyResponsesUsage(a.usage, event.Response.Usage)
 			if a.outputText.Len() == 0 {
 				// Some upstreams carry the output only on the terminal event.
 				a.outputText.WriteString(relayconvert.ExtractOutputTextFromResponses(event.Response))
@@ -66,6 +69,32 @@ func (a *ResponsesUsageAccumulator) Observe(event *dto.ResponsesStreamResponse, 
 		a.outputText.WriteString(event.Delta)
 	}
 	return outcome
+}
+
+// FinishBuffered finalizes accounting for an upstream SSE response that has not
+// been sent to the client. Successful responses retain the normal nonstream
+// estimator in the response converter. Failed buffers only estimate generated
+// output; a prelude without usage or tool work must remain fully refundable.
+// bufferedText is deduplicated generated text assembled from both deltas and
+// whole items. It is an alternative estimate, never added to the same deltas.
+func (a *ResponsesUsageAccumulator) FinishBuffered(failed bool, bufferedText string) *dto.Usage {
+	if a.finished {
+		return a.usage
+	}
+	if failed {
+		a.failed = true
+		if a.usage.CompletionTokens == 0 && bufferedText != "" {
+			// A completed output item may arrive without text deltas. Preserve
+			// the larger observed estimate without double-billing its done item
+			// or discarding reasoning/tool deltas already collected here.
+			model := a.info.GetUpstreamModelName()
+			a.usage.CompletionTokens = max(tokenkit.Count(model, bufferedText), tokenkit.Count(model, a.outputText.String()))
+		}
+		return a.Finish()
+	}
+	a.finished = true
+	a.tools.Finish()
+	return a.usage
 }
 
 func (a *ResponsesUsageAccumulator) Finish() *dto.Usage {

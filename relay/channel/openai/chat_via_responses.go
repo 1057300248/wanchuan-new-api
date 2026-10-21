@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
@@ -67,10 +68,13 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 
 	info.StreamStatus = relaycommon.NewStreamStatus()
 	info.StreamStatus.RequireTerminal()
+	common.SetContextKey(c, constant.ContextKeyResponsesPartialUsage, false)
 	accumulator := relayconvert.NewResponsesBufferedAccumulator()
-	tools := relaycommon.NewResponsesToolUsageObserver(info)
+	billingOutput := relayconvert.NewResponsesBufferedAccumulator()
+	usageAccumulator := service.NewResponsesUsageAccumulator(info)
 	var finalResponse *dto.OpenAIResponsesResponse
 	var streamErr *types.NewAPIError
+	terminalSeen := false
 
 	scanner := helper.NewStreamScanner(resp.Body)
 	scanner.Split(bufio.ScanLines)
@@ -83,6 +87,7 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 		data = strings.TrimSpace(data)
 		if data == "" || data == "[DONE]" {
 			if data == "[DONE]" {
+				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
 				break
 			}
 			continue
@@ -91,67 +96,163 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 		var streamResp dto.ResponsesStreamResponse
 		if err := common.UnmarshalJsonStr(data, &streamResp); err != nil {
 			logger.LogError(c, common.LogText("failed to unmarshal buffered responses stream event: %s", err.Error()))
-			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
 			break
 		}
-		if streamResp.Response != nil {
-			info.ObserveResponseModel(streamResp.Response.Model)
+		if streamResp.Type == "" || strings.ContainsAny(streamResp.Type, "\r\n") {
+			streamErr = types.NewOpenAIError(fmt.Errorf("upstream Responses event has an invalid type"), types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+			break
 		}
-		service.ObserveResponsesOutcome(info, &streamResp)
-		tools.Observe(&streamResp, []byte(data))
+		outcome := usageAccumulator.Observe(&streamResp, []byte(data))
 		accumulator.ProcessEvent(&streamResp)
+		observeResponsesBufferedBillingOutput(billingOutput, &streamResp, []byte(data))
+		if outcome == relaycommon.ResponseOutcomeFailed || outcome == relaycommon.ResponseOutcomeCancelled ||
+			streamResp.Response != nil && streamResp.Response.GetOpenAIError() != nil {
+			streamErr = newResponsesFailureError(&streamResp)
+			if outcome != relaycommon.ResponseOutcomeCancelled {
+				info.StreamStatus.MarkFailed(string(streamErr.GetErrorCode()), streamErr.ToOpenAIError().Type, streamErr.StatusCode)
+			}
+			break
+		}
 		switch streamResp.Type {
 		case "response.completed", "response.done", "response.incomplete":
+			terminalSeen = true
 			finalResponse = streamResp.Response
-			if streamResp.Type == "response.incomplete" {
-				if finalResponse == nil {
-					finalResponse = &dto.OpenAIResponsesResponse{}
-				}
-				if len(finalResponse.Status) == 0 {
-					finalResponse.Status = []byte(`"incomplete"`)
-				}
+			if finalResponse == nil {
+				streamErr = types.NewOpenAIError(fmt.Errorf("upstream Responses terminal event has no response"), types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+				break
 			}
-		case "response.failed", "response.error":
-			if streamResp.Response != nil {
-				if oaiErr := streamResp.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
-					streamErr = types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
-					break
-				}
+			if outcome == relaycommon.ResponseOutcomeIncomplete {
+				finalResponse.Status = []byte(`"incomplete"`)
 			}
-			streamErr = types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResp.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 		}
-		if streamErr != nil || finalResponse != nil {
+		if streamErr != nil || terminalSeen {
 			break
 		}
 	}
+	if streamErr == nil {
+		streamErr = service.RelayRequestCancellation(c)
+	}
+	if err := scanner.Err(); streamErr == nil && err != nil {
+		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, err)
+		streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+	}
+	if streamErr == nil && !terminalSeen {
+		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonEOF, nil)
+		streamErr = types.NewOpenAIError(fmt.Errorf("upstream Responses stream ended before a terminal event"), types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+	}
 	if streamErr != nil {
-		return nil, streamErr
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
-	}
-	if finalResponse == nil {
-		finalResponse = &dto.OpenAIResponsesResponse{
-			ID:        helper.GetResponseID(c),
-			CreatedAt: dto.IntValue(time.Now().Unix()),
-			Model:     info.UpstreamModelName,
-			Status:    []byte(`"completed"`),
+		bufferedResponse := &dto.OpenAIResponsesResponse{Output: billingOutput.BuildOutput()}
+		var bufferedText strings.Builder
+		for _, item := range bufferedResponse.Output {
+			switch item.Type {
+			case "message":
+				for _, content := range item.Content {
+					if content.Type == "output_text" {
+						bufferedText.WriteString(content.Text)
+					}
+				}
+			case dto.BuildInCallFunctionCall, "custom_tool_call":
+				bufferedText.WriteString(item.ArgumentsString())
+			}
 		}
+		bufferedText.WriteString(relayconvert.ExtractReasoningTextFromResponses(bufferedResponse))
+		usage := usageAccumulator.FinishBuffered(true, bufferedText.String())
+		common.SetContextKey(c, constant.ContextKeyResponsesPartialUsage, usage != nil)
+		info.StreamStatus.SetAPIError(streamErr)
+		info.StreamStatus.RecordError(streamErr.Error())
+		if streamErr.GetErrorCode() == service.ClientGoneErrorCode {
+			info.StreamStatus.MarkCancelled()
+			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, streamErr)
+		} else {
+			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonHandlerStop, streamErr)
+		}
+		return usage, streamErr
 	}
 	accumulator.SupplementResponseOutput(finalResponse)
-	tools.Finish()
+	observedUsage := usageAccumulator.FinishBuffered(false, "")
+	finalResponse.Usage = observedUsage
+	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
 
 	responseValue, usage, err := convertResponsesResponseForClient(c, info, finalResponse)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		common.SetContextKey(c, constant.ContextKeyResponsesPartialUsage, observedUsage != nil)
+		apiErr := types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+		info.StreamStatus.SetAPIError(apiErr)
+		info.StreamStatus.RecordError(apiErr.Error())
+		return observedUsage, apiErr
 	}
 	responseBody, err := common.Marshal(responseValue)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
+		common.SetContextKey(c, constant.ContextKeyResponsesPartialUsage, usage != nil)
+		apiErr := types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
+		info.StreamStatus.SetAPIError(apiErr)
+		info.StreamStatus.RecordError(apiErr.Error())
+		return usage, apiErr
 	}
 
+	// The source was SSE, but the buffered client response is ordinary JSON.
+	resp.Header.Del("Content-Type")
+	c.Header("Content-Type", "application/json")
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 	return usage, nil
+}
+
+// The client conversion DTO does not retain refusal text and custom tools use
+// input rather than function arguments. Project those fields only into this
+// billing buffer; the original response and its conversion remain untouched.
+func observeResponsesBufferedBillingOutput(accumulator *relayconvert.ResponsesBufferedAccumulator, event *dto.ResponsesStreamResponse, raw []byte) {
+	root := gjson.ParseBytes(raw)
+	projected := *event
+	projected.Item = responsesBufferedBillingItem(event.Item, root.Get("item"))
+	switch event.Type {
+	case "response.refusal.delta":
+		projected.Type = "response.output_text.delta"
+	case "response.refusal.done":
+		projected.Type = dto.ResponsesOutputTypeItemDone
+		projected.Item = &dto.ResponsesOutput{ID: event.ItemID, Type: "message", Content: []dto.ResponsesOutputContent{{Type: "output_text", Text: root.Get("refusal").String()}}}
+	case "response.custom_tool_call_input.done":
+		projected.Type = dto.ResponsesOutputTypeItemDone
+		projected.Item = &dto.ResponsesOutput{ID: event.ItemID, Type: "custom_tool_call", Arguments: []byte(root.Get("input").Raw)}
+	case "response.content_part.added", "response.content_part.done":
+		if part := root.Get("part"); part.Get("type").String() == "refusal" {
+			projected.Type = dto.ResponsesOutputTypeItemDone
+			projected.Item = &dto.ResponsesOutput{ID: event.ItemID, Type: "message", Content: []dto.ResponsesOutputContent{{Type: "output_text", Text: part.Get("refusal").String()}}}
+		}
+	}
+	accumulator.ProcessEvent(&projected)
+	if event.Response != nil {
+		rawItems := root.Get("response.output").Array()
+		for i := range event.Response.Output {
+			var rawItem gjson.Result
+			if i < len(rawItems) {
+				rawItem = rawItems[i]
+			}
+			item := responsesBufferedBillingItem(&event.Response.Output[i], rawItem)
+			accumulator.ProcessEvent(&dto.ResponsesStreamResponse{Type: dto.ResponsesOutputTypeItemDone, OutputIndex: &i, Item: item})
+		}
+	}
+}
+
+func responsesBufferedBillingItem(item *dto.ResponsesOutput, raw gjson.Result) *dto.ResponsesOutput {
+	if item == nil {
+		return nil
+	}
+	projected := *item
+	if item.Type == "custom_tool_call" {
+		projected.Arguments = item.Input
+	}
+	if item.Type == "message" {
+		projected.Content = append([]dto.ResponsesOutputContent(nil), item.Content...)
+		rawContent := raw.Get("content").Array()
+		for i := range projected.Content {
+			if projected.Content[i].Type == "refusal" && i < len(rawContent) {
+				projected.Content[i].Type = "output_text"
+				projected.Content[i].Text = rawContent[i].Get("refusal").String()
+			}
+		}
+	}
+	return &projected
 }
 
 func convertResponsesResponseForClient(c *gin.Context, info *relaycommon.RelayInfo, response *dto.OpenAIResponsesResponse) (any, *dto.Usage, error) {

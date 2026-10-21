@@ -6,10 +6,11 @@ import json
 from pathlib import Path
 
 
-def validate_report(path: Path, required: list[str]) -> dict[str, str]:
+def validate_report(path: Path, required: list[str], reject_skipped_descendants: bool = False) -> dict[str, str]:
     outcomes: dict[str, str] = {}
     packages: dict[str, str] = {}
     failures: list[str] = []
+    skipped_tests: set[str] = set()
     with path.open(encoding="utf-8") as stream:
         for number, line in enumerate(stream, 1):
             if not line.strip():
@@ -39,6 +40,8 @@ def validate_report(path: Path, required: list[str]) -> dict[str, str]:
             if test:
                 if action in {"pass", "skip", "fail"}:
                     outcomes[test] = action
+                if action == "skip":
+                    skipped_tests.add(test)
             elif action in {"start", "pass", "skip", "fail", "build-fail"}:
                 packages[package] = action
     if failures:
@@ -48,6 +51,13 @@ def validate_report(path: Path, required: list[str]) -> dict[str, str]:
     missing = [name for name in required if outcomes.get(name) != "pass"]
     if missing:
         raise ValueError("required test did not pass: " + ", ".join(missing))
+    if reject_skipped_descendants:
+        skipped = sorted(
+            test for test in skipped_tests
+            if any(test == name or test.startswith(name + "/") for name in required)
+        )
+        if skipped:
+            raise ValueError("required test descendant was skipped: " + ", ".join(skipped))
     if not required:
         raise ValueError("at least one required test must be specified")
     return {name: outcomes[name] for name in required}
@@ -55,11 +65,12 @@ def validate_report(path: Path, required: list[str]) -> dict[str, str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--reject-skipped-descendants", action="store_true")
     parser.add_argument("report", type=Path)
     parser.add_argument("required", nargs="+")
     args = parser.parse_args()
     try:
-        outcomes = validate_report(args.report, args.required)
+        outcomes = validate_report(args.report, args.required, args.reject_skipped_descendants)
     except (OSError, ValueError) as exc:
         parser.exit(1, f"integration evidence rejected: {exc}\n")
     print(json.dumps(outcomes, sort_keys=True))

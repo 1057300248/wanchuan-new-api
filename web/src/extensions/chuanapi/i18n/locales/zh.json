@@ -87,6 +87,8 @@
     "monitor.settings.defaultText": "留空使用对应语言的默认文案。",
     "monitor.settings.groups": "分组展示名称",
     "monitor.settings.groupsHelp": "名称仅用于此监测页面，并与对应参考分组绑定；留空恢复默认名称。",
+    "monitor.settings.showGroup": "显示 {{group}}",
+    "monitor.settings.showGroupHelp": "关闭后隐藏该分组及其结果、详情和图片，可随时重新开启。",
     "monitor.settings.groupPlaceholder": "自定义分组名称",
     "monitor.settings.unlisted": "此前保存的分组",
     "monitor.settings.targetsFailed": "无法加载当前分组",

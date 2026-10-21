@@ -66,6 +66,9 @@ func InitOptionMap() {
 	common.OptionMap["EmailAliasRestrictionEnabled"] = strconv.FormatBool(common.EmailAliasRestrictionEnabled)
 	common.OptionMap["EmailDomainWhitelist"] = strings.Join(common.EmailDomainWhitelist, ",")
 	common.OptionMap["SMTPServer"] = ""
+	common.OptionMap["EmailProvider"] = "smtp"
+	common.OptionMap["ResendApiKey"] = ""
+	common.OptionMap["ResendFrom"] = ""
 	common.OptionMap["SMTPFrom"] = ""
 	common.OptionMap["SMTPPort"] = strconv.Itoa(common.SMTPPort)
 	common.OptionMap["SMTPAccount"] = ""
@@ -184,6 +187,8 @@ func InitOptionMap() {
 	common.OptionMap["CheckSensitiveOnPromptEnabled"] = strconv.FormatBool(setting.CheckSensitiveOnPromptEnabled)
 	common.OptionMap["StopOnSensitiveEnabled"] = strconv.FormatBool(setting.StopOnSensitiveEnabled)
 	common.OptionMap["SensitiveWords"] = setting.SensitiveWordsToString()
+	common.OptionMap[setting.SensitiveCheckExemptGroupsOptionKey] = setting.SensitiveCheckExemptGroupsToString()
+	common.OptionMap[setting.PublicModelOwnedByOptionKey] = setting.GetPublicModelOwnedBy()
 	common.OptionMap["StreamCacheQueueLength"] = strconv.Itoa(setting.StreamCacheQueueLength)
 	common.OptionMap["AutomaticDisableKeywords"] = operation_setting.AutomaticDisableKeywordsToString()
 	common.OptionMap["AutomaticDisableStatusCodes"] = operation_setting.AutomaticDisableStatusCodesToString()
@@ -241,6 +246,27 @@ func validateOptionValue(key string, value string) error {
 	if err := operation_setting.ValidateQuotaOption(key, value); err != nil {
 		return err
 	}
+	if key == "EmailProvider" || key == "ResendApiKey" || key == "ResendFrom" {
+		if key == "EmailProvider" && value != "smtp" && value != "resend" {
+			return common.NewMessage("Email sending method must be SMTP or Resend")
+		}
+		common.OptionMapRWMutex.RLock()
+		settings := map[string]string{
+			"EmailProvider": common.OptionMap["EmailProvider"],
+			"ResendApiKey":  common.OptionMap["ResendApiKey"],
+			"ResendFrom":    common.OptionMap["ResendFrom"],
+		}
+		common.OptionMapRWMutex.RUnlock()
+		settings[key] = value
+		// While Resend is the active method, a change must keep settings it can
+		// send with. Inactive drafts are checked when Resend is turned on.
+		if settings["EmailProvider"] == "resend" {
+			return common.ValidateResendConfiguration(settings["ResendApiKey"], settings["ResendFrom"])
+		}
+	}
+	if key == "ResendKeyConfigured" {
+		return common.NewMessage("Resend key configuration status is read-only")
+	}
 	if key == operation_setting.ToolPriceOptionKey {
 		return operation_setting.ValidateToolPricesJSON(value)
 	}
@@ -261,6 +287,9 @@ func validateOptionValue(key string, value string) error {
 }
 
 func UpdateOption(key string, value string) error {
+	if key == setting.PublicModelOwnedByOptionKey {
+		return UpdateOptionsBulk(map[string]string{key: value})
+	}
 	if IsRequestPolicyOption(key) {
 		return UpdateRequestPolicyOptions(map[string]string{key: value})
 	}
@@ -311,7 +340,18 @@ func UpdateOptionsBulk(values map[string]string) error {
 			return err
 		}
 	}
+	values = maps.Clone(values)
 	for key, value := range values {
+		var normalizeErr error
+		switch key {
+		case setting.PublicModelOwnedByOptionKey:
+			values[key], normalizeErr = setting.NormalizePublicModelOwnedBy(value)
+		case setting.SensitiveCheckExemptGroupsOptionKey:
+			values[key], normalizeErr = setting.NormalizeSensitiveCheckExemptGroups(value)
+		}
+		if normalizeErr != nil {
+			return normalizeErr
+		}
 		if err := validateOptionValue(key, value); err != nil {
 			return err
 		}
@@ -337,6 +377,14 @@ func UpdateOptionsBulk(values map[string]string) error {
 	}
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if _, writesGroups := values[setting.SensitiveCheckExemptGroupsOptionKey]; writesGroups {
+			if err := lockGroupNamespace(tx); err != nil {
+				return err
+			}
+			if err := validateGroupNamesForWriteTx(tx, policySnapshot.TextExemptGroups...); err != nil {
+				return err
+			}
+		}
 		for k, v := range values {
 			option := Option{Key: k}
 			if err := tx.FirstOrCreate(&option, Option{Key: k}).Error; err != nil {
@@ -376,6 +424,14 @@ func updateOptionMap(key string, value string) (err error) {
 			return normalizeErr
 		}
 		value = normalized
+	}
+	switch key {
+	case setting.PublicModelOwnedByOptionKey:
+		setting.LoadPublicModelOwnedBy(value)
+		value = setting.GetPublicModelOwnedBy()
+	case setting.SensitiveCheckExemptGroupsOptionKey:
+		setting.LoadSensitiveCheckExemptGroups(value)
+		value = setting.SensitiveCheckExemptGroupsToString()
 	}
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()

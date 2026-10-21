@@ -20,11 +20,11 @@ def event(action, test=None):
 
 
 class GoTestReportTests(unittest.TestCase):
-    def check(self, events, required=None):
+    def check(self, events, required=None, reject_skipped_descendants=False):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "go.jsonl"
             path.write_text("".join(json.dumps(item) + "\n" for item in events), encoding="utf-8")
-            return MODULE.validate_report(path, required or ["TestRealDatabase"])
+            return MODULE.validate_report(path, required or ["TestRealDatabase"], reject_skipped_descendants)
 
     def test_accepts_executed_required_test_and_completed_package(self):
         self.assertEqual(
@@ -55,6 +55,27 @@ class GoTestReportTests(unittest.TestCase):
     def test_requires_exact_database_subtest(self):
         with self.assertRaises(ValueError):
             self.check([event("start"), event("pass", "TestMatrix"), event("skip", "TestMatrix/postgres"), event("pass")], ["TestMatrix/postgres"])
+
+    def test_strict_mode_rejects_skipped_case_inside_passing_required_database(self):
+        with self.assertRaisesRegex(ValueError, "descendant was skipped"):
+            self.check([
+                event("start"), event("skip", "TestMatrix/postgres/legacy_upgrade"),
+                event("pass", "TestMatrix/postgres"), event("pass", "TestMatrix"), event("pass"),
+            ], ["TestMatrix/postgres"], reject_skipped_descendants=True)
+
+    def test_strict_mode_allows_unselected_database_skip(self):
+        self.assertEqual(self.check([
+            event("start"), event("skip", "TestMatrix/mysql"),
+            event("pass", "TestMatrix/postgres/migration"), event("pass", "TestMatrix/postgres"),
+            event("pass", "TestMatrix"), event("pass"),
+        ], ["TestMatrix/postgres"], reject_skipped_descendants=True), {"TestMatrix/postgres": "pass"})
+
+    def test_strict_mode_rejects_skip_even_if_later_reported_as_pass(self):
+        with self.assertRaisesRegex(ValueError, "descendant was skipped"):
+            self.check([
+                event("start"), event("skip", "TestRealDatabase/legacy_upgrade"),
+                event("pass", "TestRealDatabase/legacy_upgrade"), event("pass", "TestRealDatabase"), event("pass"),
+            ], reject_skipped_descendants=True)
 
     def test_accepts_build_diagnostic_with_import_path(self):
         result = self.check([

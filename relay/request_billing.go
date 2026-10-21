@@ -1,10 +1,7 @@
 package relay
 
 import (
-	"errors"
-	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -42,12 +39,9 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 		}
 	}
 
-	if needSensitiveCheck && meta != nil {
-		if contains, words := service.CheckSensitiveText(meta.CombineText); contains {
-			service.RequestPolicy(c).AddEvent(service.PolicyEvent{ErrorCode: string(types.ErrorCodeSensitiveWordsDetected), ErrorSource: "local", Decision: service.PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "global"}, Health: "unchanged"})
-			message := fmt.Sprintf("user sensitive words detected: %s", strings.Join(words, ", "))
-			logger.LogWarn(c, message)
-			return types.NewError(errors.New(message), types.ErrorCodeSensitiveWordsDetected)
+	if meta != nil {
+		if apiErr := service.CheckRequestSensitiveText(c, meta.CombineText); apiErr != nil {
+			return apiErr
 		}
 	}
 
@@ -82,13 +76,17 @@ func RefundFailedRequestBilling(c *gin.Context, info *relaycommon.RelayInfo, api
 	return apiErr
 }
 
-// consumePartialTextStreamQuota settles observed usage from a handled stream
-// failure before the error reaches the outer refund path. A nil usage means
-// that the failed stream produced no billable output and its reserve is refunded.
+// consumePartialTextStreamQuota settles observed usage from a failed upstream
+// stream before the outer refund path, including a buffered nonstream response.
+// A nil usage means no billable work was observed and its reserve is refunded.
 func consumePartialTextStreamQuota(c *gin.Context, info *relaycommon.RelayInfo, rawUsage any) {
 	usage, ok := rawUsage.(*dto.Usage)
-	if !ok || usage == nil || info == nil || !info.IsStream ||
-		!common.GetContextKeyBool(c, constant.ContextKeyStreamErrorHandled) {
+	if !ok || usage == nil || info == nil {
+		return
+	}
+	streamFailure := info.IsStream && common.GetContextKeyBool(c, constant.ContextKeyStreamErrorHandled)
+	bufferedFailure := !info.IsStream && common.GetContextKeyBool(c, constant.ContextKeyResponsesPartialUsage)
+	if !streamFailure && !bufferedFailure {
 		return
 	}
 	containsAudio := usage.CompletionTokenDetails.AudioTokens > 0 || usage.PromptTokensDetails.AudioTokens > 0

@@ -219,7 +219,7 @@ func testGroupNamespaceRollbackState(t *testing.T) {
 	require.Error(t, err)
 
 	var count int64
-	require.NoError(t, DB.Model(&Option{}).Where("key IN ?", []string{groupRenameAliasesOptionKey, groupConfigVersionOptionKey}).Count(&count).Error)
+	require.NoError(t, DB.Model(&Option{}).Where(map[string]any{"key": []string{groupRenameAliasesOptionKey, groupConfigVersionOptionKey}}).Count(&count).Error)
 	assert.Zero(t, count, "rename alias/version state must roll back with the transaction")
 
 	groupRenameTxFailureHook = nil
@@ -339,7 +339,7 @@ func testGroupConfigPubSubAndFallback(t *testing.T) {
 	_, err := RenameGroups([]GroupRenameMapping{{From: "old", To: "new"}})
 	require.NoError(t, err)
 	var versionOption Option
-	require.NoError(t, DB.Where("key = ?", groupConfigVersionOptionKey).First(&versionOption).Error)
+	require.NoError(t, DB.Where(&Option{Key: groupConfigVersionOptionKey}).First(&versionOption).Error)
 	version, err := strconv.ParseInt(versionOption.Value, 10, 64)
 	require.NoError(t, err)
 	require.Positive(t, version)

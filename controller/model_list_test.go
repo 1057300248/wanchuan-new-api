@@ -553,7 +553,7 @@ func TestListModelsPublicOwnerOverridesWithoutLeakingOtherChannels(t *testing.T)
 	for _, item := range payload.Data {
 		owners[item.Id] = item.OwnedBy
 	}
-	assert.Equal(t, map[string]string{"public-a": "WanChuan A", "public-b": "WanChuan B"}, owners)
+	assert.Equal(t, map[string]string{"public-a": "chuanapi", "public-b": "chuanapi"}, owners)
 	for _, private := range []string{"private-name", "secret-", "private-owner"} {
 		assert.NotContains(t, recorder.Body.String(), private)
 	}
@@ -568,7 +568,7 @@ func TestListModelsPublicOwnerOverridesWithoutLeakingOtherChannels(t *testing.T)
 	payload = decodeListModelsPayload(t, recorder)
 	require.Len(t, payload.Data, 1)
 	assert.Equal(t, "public-b", payload.Data[0].Id)
-	assert.Equal(t, "WanChuan B", payload.Data[0].OwnedBy)
+	assert.Equal(t, "chuanapi", payload.Data[0].OwnedBy)
 	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 902).Update("setting", `{}`).Error)
-	assert.Equal(t, "openai", getPreferredModelOwners([]string{"public-b"}, []string{"default"})["public-b"])
+	assert.Equal(t, "chuanapi", buildOpenAIModel("public-b").OwnedBy)
 }

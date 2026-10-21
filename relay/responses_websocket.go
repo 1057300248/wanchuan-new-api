@@ -308,6 +308,11 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				return apiErr
 			}
 			service.AppendUsedChannel(c, channel.Id)
+			if service.ShouldCheckRequestSensitive(c) {
+				if apiErr = service.CheckRequestSensitiveText(c, create.Request.GetTokenCountMeta().CombineText); apiErr != nil {
+					return apiErr
+				}
+			}
 			if info == nil {
 				info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 				info.IsStream = true
