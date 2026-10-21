@@ -32,7 +32,7 @@ func tokenCacheTTLSeconds() int {
 // While the fence exists readers simply serve the database without caching.
 const tokenCacheFenceSeconds = 10
 
-// invalidateTokenCacheForMutation is called before a token metadata mutation
+// invalidateTokenCacheForMutation is called before a token metadata or quota mutation
 // writes to the database: it raises the fence and drops the cached hash so no
 // reader can act on (or re-publish) the pre-mutation state.
 func invalidateTokenCacheForMutation(key string) error {
@@ -49,9 +49,9 @@ func invalidateTokenCacheForMutation(key string) error {
 
 // cacheInitToken publishes a database snapshot only when no mutation fence is
 // active and the hash is cold. An existing hash only gets its TTL refreshed:
-// its RemainQuota may already be ahead of this snapshot because atomic
-// pre-consume decrements Redis first, so a snapshot must never overwrite any
-// field of a live hash.
+// a database snapshot may predate a concurrent mutation or cache publication,
+// so it must never overwrite a newer live hash. Quota mutations fence this
+// derived cache before updating the authoritative database counters.
 // 返回值：0=被 fence 拦截，1=完成初始化，2=哈希已存在，仅刷新 TTL。
 func cacheInitToken(token Token) (int, error) {
 	if !common.RedisEnabled {
@@ -66,7 +66,7 @@ if redis.call('EXISTS', KEYS[2]) == 1 then
   return 0
 end
 if redis.call('EXISTS', KEYS[1]) == 1 then
-  redis.call('EXPIRE', KEYS[1], ARGV[17])
+  redis.call('EXPIRE', KEYS[1], ARGV[18])
   return 2
 end
 redis.call('HSET', KEYS[1],
@@ -74,8 +74,9 @@ redis.call('HSET', KEYS[1],
   'CreatedTime', ARGV[5], 'AccessedTime', ARGV[6], 'ExpiredTime', ARGV[7],
   'UnlimitedQuota', ARGV[8], 'ModelLimitsEnabled', ARGV[9], 'ModelLimits', ARGV[10],
   'AllowIps', ARGV[11], 'Group', ARGV[12], 'CrossGroupRetry', ARGV[13],
-  'AutoGroups', ARGV[14], 'RemainQuota', ARGV[15], 'UsedQuota', ARGV[16])
-redis.call('EXPIRE', KEYS[1], ARGV[17])
+  'AutoGroups', ARGV[14], 'RemainQuota', ARGV[15], 'UsedQuota', ARGV[16],
+  'AllowUserQuotaQuery', ARGV[17])
+redis.call('EXPIRE', KEYS[1], ARGV[18])
 return 1`
 
 	return common.RDB.Eval(context.Background(), script, []string{
@@ -86,6 +87,7 @@ return 1`
 		strconv.FormatBool(token.UnlimitedQuota), strconv.FormatBool(token.ModelLimitsEnabled),
 		token.ModelLimits, allowIps, token.Group, strconv.FormatBool(token.CrossGroupRetry),
 		token.AutoGroups, token.RemainQuota, token.UsedQuota,
+		strconv.FormatBool(token.AllowUserQuotaQuery),
 		tokenCacheTTLSeconds(),
 	).Int()
 }

@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import i18next from 'i18next'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 
+import { getAuthSessionEpoch } from '@/lib/auth-session'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import {
@@ -86,22 +87,62 @@ export function usePayment() {
   const [calculating, setCalculating] = useState(false)
   const [processing, setProcessing] = useState(false)
 
-  // Calculate payment amount
+  const quoteSequenceRef = useRef(0)
+  const quoteRef = useRef<{
+    topupAmount: number
+    paymentType: string
+    sessionEpoch: number
+  } | null>(null)
+
+  useEffect(
+    () => () => {
+      quoteSequenceRef.current += 1
+      quoteRef.current = null
+    },
+    []
+  )
+
+  const isQuoteCurrent = useCallback(
+    (topupAmount: number, paymentType: string) => {
+      const quote = quoteRef.current
+      return (
+        quote !== null &&
+        quote.topupAmount === topupAmount &&
+        quote.paymentType === paymentType &&
+        quote.sessionEpoch === getAuthSessionEpoch()
+      )
+    },
+    []
+  )
+
+  // Bind the quote to the latest amount/method selection, not response order.
   const calculatePaymentAmount = useCallback(
     async (topupAmount: number, paymentType: string) => {
+      const sequence = ++quoteSequenceRef.current
+      const sessionEpoch = getAuthSessionEpoch()
+      const isLatest = () =>
+        sequence === quoteSequenceRef.current &&
+        sessionEpoch === getAuthSessionEpoch()
+      quoteRef.current = null
+      setAmount(0)
+      setCalculating(true)
       try {
-        setCalculating(true)
         const calculatedAmount = await requestPaymentAmount(
           topupAmount,
           paymentType
         )
+        if (!isLatest()) return 0
+        // Preserve the server's fractional price/fees; never round the quote.
+        if (!Number.isFinite(calculatedAmount) || calculatedAmount <= 0) {
+          return 0
+        }
+        quoteRef.current = { topupAmount, paymentType, sessionEpoch }
         setAmount(calculatedAmount)
         return calculatedAmount
       } catch {
-        setAmount(0)
         return 0
       } finally {
-        setCalculating(false)
+        if (isLatest()) setCalculating(false)
       }
     },
     []
@@ -164,6 +205,7 @@ export function usePayment() {
     calculating,
     processing,
     calculatePaymentAmount,
+    isQuoteCurrent,
     processPayment,
     setAmount,
   }

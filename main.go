@@ -47,7 +47,7 @@ func main() {
 		os.Exit(jsplugin.RunCLI(os.Args[2:], os.Stdout, os.Stderr))
 	}
 	if err := runApplication(); err != nil {
-		common.FatalLog(common.MaskSensitiveInfo(err.Error()))
+		common.FatalLog(common.MaskSensitiveLogInfo(err.Error()))
 	}
 }
 
@@ -195,7 +195,7 @@ func runApplication() error {
 	safeToCloseResources = false
 	app.Start(balanceInterval, os.Getenv("ENABLE_PPROF") == "true")
 	if err := common.StartPyroScope(); err != nil {
-		common.SysError("start pyroscope error: " + common.MaskSensitiveInfo(err.Error()))
+		common.SysError("start pyroscope error: " + common.MaskSensitiveLogInfo(err.Error()))
 	}
 	serveErrors := make(chan error, 1)
 	go func() { serveErrors <- srv.Serve(listener) }()

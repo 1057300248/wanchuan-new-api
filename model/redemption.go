@@ -203,7 +203,6 @@ func Redeem(key string, userId int) (quota int, err error) {
 		// 账本提交后失效用户缓存；守卫式增量与失效叠加安全（对已删除哈希跳过）。
 		RefreshUserQuotaCache(userId, replayTotalAfter)
 	}
-	syncCreditUserQuotaCache(userId, redemption.Quota, common.LogText("redemption"))
 	RecordLog(userId, LogTypeTopup, common.NewMessage("Topped up {{quota}} with a redemption code, code ID {{id}}", map[string]any{"quota": logger.FormatQuota(redemption.Quota), "id": redemption.Id}))
 	return redemption.Quota, nil
 }

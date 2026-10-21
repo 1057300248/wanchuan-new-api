@@ -36,6 +36,9 @@ var channelCacheRefreshFailures atomic.Uint64
 // a channel was deleted. Existing upstream tasks must remain pending for retry.
 var ErrChannelCacheStale = errors.New("channel cache snapshot exceeded staleness budget")
 
+// ErrChannelCacheMiss is snapshot absence, not proof of database deletion.
+var ErrChannelCacheMiss = errors.New("channel is absent from cache snapshot")
+
 // ChannelCacheHealth exposes counters, not channel IDs, keys, or DSNs.
 func ChannelCacheHealth() (lastSuccess time.Time, failures uint64) {
 	if ts := channelCacheLastRefresh.Load(); ts != 0 {
@@ -61,7 +64,7 @@ func channelCacheExpired() bool {
 
 func InitChannelCache() {
 	if err := RefreshChannelCache(context.Background()); err != nil {
-		common.SysError("channel cache refresh failed; previous snapshot retained: " + common.MaskSensitiveInfo(err.Error()))
+		common.SysError("channel cache refresh failed; previous snapshot retained: " + common.MaskSensitiveLogInfo(err.Error()))
 	}
 }
 
@@ -228,7 +231,7 @@ func RunChannelCacheSync(ctx context.Context, frequency int) {
 				return
 			}
 			if err := RefreshChannelCache(ctx); err != nil && ctx.Err() == nil {
-				common.SysError("channel cache refresh failed; retaining previous snapshot: " + common.MaskSensitiveInfo(err.Error()))
+				common.SysError("channel cache refresh failed; retaining previous snapshot: " + common.MaskSensitiveLogInfo(err.Error()))
 			}
 			timer.Reset(interval)
 		}
@@ -354,7 +357,7 @@ func CacheGetChannel(id int) (*Channel, error) {
 
 	c, ok := channelsIDM[id]
 	if !ok {
-		return nil, fmt.Errorf("channel #%d no longer exists", id)
+		return nil, fmt.Errorf("channel #%d is absent from cache: %w", id, ErrChannelCacheMiss)
 	}
 	return c, nil
 }
@@ -376,7 +379,7 @@ func CacheGetChannelInfo(id int) (*ChannelInfo, error) {
 
 	c, ok := channelsIDM[id]
 	if !ok {
-		return nil, fmt.Errorf("channel #%d no longer exists", id)
+		return nil, fmt.Errorf("channel #%d is absent from cache: %w", id, ErrChannelCacheMiss)
 	}
 	return &c.ChannelInfo, nil
 }

@@ -35,8 +35,21 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
-	if oaiError := responsesResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+	event := dto.ResponsesStreamResponse{Type: "response.completed", Response: &responsesResponse}
+	outcome := service.ObserveResponsesOutcome(info, &event)
+	if outcome == relaycommon.ResponseOutcomeFailed || outcome == relaycommon.ResponseOutcomeCancelled || responsesResponse.GetOpenAIError() != nil {
+		if info.StreamStatus == nil {
+			info.StreamStatus = relaycommon.NewStreamStatus()
+		}
+		event.Type = "response.failed"
+		if outcome == relaycommon.ResponseOutcomeCancelled {
+			event.Type = "response.cancelled"
+		}
+		accumulator := service.NewResponsesUsageAccumulator(info)
+		accumulator.Observe(&event, responseBody)
+		usage := accumulator.Finish()
+		common.SetContextKey(c, constant.ContextKeyResponsesPartialUsage, usage != nil)
+		return usage, newResponsesFailureError(&event)
 	}
 
 	info.ObserveResponseModel(responsesResponse.Model)
@@ -54,24 +67,9 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	// compute usage
 	usage := &dto.Usage{}
 	service.ApplyResponsesUsage(usage, responsesResponse.Usage)
-	// Count actual tool invocations from Output (not tool declarations).
-	for _, output := range responsesResponse.Output {
-		switch output.Type {
-		case dto.BuildInCallWebSearchCall:
-			info.CountBillableToolCall(dto.BuildInCallWebSearchCall, "")
-		case dto.BuildInCallFileSearchCall:
-			info.CountBillableToolCall(dto.BuildInCallFileSearchCall, "")
-		case dto.BuildInCallFunctionCall:
-			info.CountBillableToolCall(dto.BuildInCallFunctionCall, output.Name)
-		}
-	}
-	info.ApplyVendorToolUsage(responseBody)
-
-	imageCounter := &relaycommon.ImageGenerationCallCounter{}
-	for i := range responsesResponse.Output {
-		imageCounter.Observe(&responsesResponse.Output[i], &i)
-	}
-	imageCounter.Commit(info)
+	tools := relaycommon.NewResponsesToolUsageObserver(info)
+	tools.ObserveResponse(&responsesResponse, responseBody)
+	tools.Finish()
 
 	return usage, nil
 }
@@ -135,43 +133,65 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			}
 			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", response.CreatedAt))
 		}
+		// The provider has already generated this frame even if downstream
+		// delivery fails, so retain its output and native usage before writing.
+		outcome := accumulator.Observe(&streamResponse, []byte(data))
+		failed := outcome == relaycommon.ResponseOutcomeFailed || outcome == relaycommon.ResponseOutcomeCancelled
+		if failed && (streamResponse.Type == "response.completed" || streamResponse.Type == "response.done") {
+			// Compatible providers sometimes use a successful event name for a
+			// failed response. Emit its real terminal outcome exactly once.
+			streamResponse.Type = "response.failed"
+			if outcome == relaycommon.ResponseOutcomeCancelled {
+				streamResponse.Type = "response.cancelled"
+			}
+			var rewriteErr error
+			data, rewriteErr = sjson.Set(data, "type", streamResponse.Type)
+			if rewriteErr == nil {
+				data, rewriteErr = sjson.Set(data, "response.status", strings.TrimPrefix(streamResponse.Type, "response."))
+			}
+			if rewriteErr != nil {
+				streamErr = types.NewErrorWithStatusCode(rewriteErr, types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+				sr.Stop(streamErr)
+				return
+			}
+		}
 		if err := helper.ResponseChunkData(c, streamResponse, data); err != nil {
-			writeFailed = true
-			streamErr = types.NewErrorWithStatusCode(err, types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+			writeFailed = helper.IsStreamWriteError(err)
+			streamErr = NewStreamResponseError(info, err)
 			sr.Stop(streamErr)
 			return
 		}
-		accumulator.Observe(&streamResponse, []byte(data))
+		if failed {
+			// A native failed/incomplete event is a terminal response. Bare error
+			// events still need a Responses terminal synthesized below.
+			terminalSeen = streamResponse.Type != "error" && streamResponse.Type != "response.error"
+			streamErr = newResponsesFailureError(&streamResponse)
+			sr.Stop(streamErr)
+			return
+		}
 		switch streamResponse.Type {
 		case "response.completed", "response.done", "response.incomplete":
 			terminalSeen = true
 			sr.Done()
-		case "error", "response.error", "response.failed", "response.cancelled", "response.canceled":
-			// A native failed/incomplete event is a terminal response. Bare error
-			// events still need a Responses terminal synthesized below.
-			terminalSeen = streamResponse.Type != "error" && streamResponse.Type != "response.error"
-			upstreamError := types.OpenAIError{Type: "server_error", Code: streamResponse.Code, Message: streamResponse.Message, Param: streamResponse.Param}
-			if streamResponse.Response != nil {
-				if err := streamResponse.Response.GetOpenAIError(); err != nil {
-					upstreamError = *err
-				}
-			}
-			if upstreamError.Type == "" {
-				upstreamError.Type = "server_error"
-			}
-			if upstreamError.Code == nil || upstreamError.Code == "" {
-				upstreamError.Code = "server_error"
-			}
-			if strings.TrimSpace(upstreamError.Message) == "" {
-				upstreamError.Message = "upstream response stream failed: " + streamResponse.Type
-			}
-			streamErr = types.WithOpenAIError(upstreamError, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
-			sr.Stop(streamErr)
 		}
 	})
 
 	common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, info.StreamStatus)
 	info.StreamStatus.RequireTerminal()
+	if streamErr == nil {
+		streamErr = info.StreamStatus.APIError()
+	}
+	if streamErr == nil {
+		streamErr = service.RelayRequestCancellation(c)
+	}
+	if streamErr == nil && info.StreamStatus.EndReason == relaycommon.StreamEndReasonClientGone {
+		streamErr = service.NewRelayClientGoneError(info.StreamStatus.EndError)
+	}
+	if isClientGoneStreamError(streamErr) {
+		writeFailed = true
+		info.StreamStatus.MarkCancelled()
+		info.StreamStatus.SetAPIError(streamErr)
+	}
 	if streamErr == nil && !terminalSeen {
 		statusCode := http.StatusBadGateway
 		var err error = fmt.Errorf("upstream response stream ended before a terminal event")
@@ -193,7 +213,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		// A native failed event already carries the error. Bare error events and
 		// abnormal EOF need a Responses terminal failure, never a fake completion.
 		if !terminalSeen && !writeFailed && c.Request.Context().Err() == nil {
-			oaiError := streamErr.ToOpenAIError()
+			oaiError := streamErr.ToOpenAIError(common.UpstreamAddresses(c)...)
 			var code any = "server_error"
 			if streamErr.GetErrorType() == types.ErrorTypeOpenAIError {
 				code = oaiError.Code
@@ -208,12 +228,34 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			if err != nil {
 				info.StreamStatus.RecordError(err.Error())
 				logger.LogError(c, "failed to send Responses terminal error: "+err.Error())
+				if helper.IsStreamWriteError(err) {
+					streamErr = NewStreamResponseError(info, err)
+				}
 			}
 		}
 		return accumulator.Finish(), streamErr
 	}
 
 	return accumulator.Finish(), nil
+}
+
+func newResponsesFailureError(event *dto.ResponsesStreamResponse) *types.NewAPIError {
+	upstreamError := types.OpenAIError{Type: "server_error", Code: event.Code, Message: event.Message, Param: event.Param}
+	if event.Response != nil {
+		if err := event.Response.GetOpenAIError(); err != nil {
+			upstreamError = *err
+		}
+	}
+	if upstreamError.Type == "" {
+		upstreamError.Type = "server_error"
+	}
+	if upstreamError.Code == nil || upstreamError.Code == "" {
+		upstreamError.Code = "server_error"
+	}
+	if strings.TrimSpace(upstreamError.Message) == "" {
+		upstreamError.Message = "upstream response stream failed: " + event.Type
+	}
+	return types.WithOpenAIError(upstreamError, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
 }
 
 func rewriteSGLangResponsesCreatedAt(info *relaycommon.RelayInfo, payload []byte, path string, createdAt dto.IntValue) []byte {

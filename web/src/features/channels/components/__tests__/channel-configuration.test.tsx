@@ -2969,3 +2969,179 @@ test('a New API channel binds upstream task plugins and publishes their models',
   expect(setting).not.toHaveProperty('task_plugin_key')
   expect(payload.models?.split(',').sort()).toEqual(['gpt-5', 'video-b-1'])
 })
+
+test.each([
+  {
+    saved: undefined,
+    shown: 'InvokeModel (legacy)',
+    next: 'Mantle (Messages API)',
+    value: 'mantle',
+  },
+  {
+    saved: 'mantle',
+    shown: 'Mantle (Messages API)',
+    next: 'InvokeModel (legacy)',
+    value: 'invoke_model',
+  },
+])(
+  'AWS API defaults or restores $shown and saves the selected interface',
+  async ({ saved, shown, next, value }) => {
+    editingChannel = {
+      ...editingChannel,
+      type: 33,
+      base_url: '',
+      models: 'claude-opus-4-7',
+      settings: JSON.stringify({
+        aws_key_type: 'api_key',
+        aws_api_type: saved,
+      }),
+    }
+    const put = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true } })
+    const user = userEvent.setup()
+    render(<ConfigurationHarness currentRow={editingChannel} />)
+    const selector = await screen.findByRole('combobox', { name: 'AWS API' })
+    await waitFor(() => expect(selector).toHaveTextContent(shown))
+    await user.click(selector)
+    await user.click(screen.getByRole('option', { name: next }))
+    expect(selector).toHaveTextContent(next)
+    await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+    await waitFor(() => expect(put).toHaveBeenCalled())
+    const payload = put.mock.calls[0]?.[1] as { settings: string }
+    expect(JSON.parse(payload.settings)).toMatchObject({
+      aws_key_type: 'api_key',
+      aws_api_type: value,
+    })
+  }
+)
+
+test('AWS interface selection is disabled without sensitive channel write permission', async () => {
+  editingChannel = {
+    ...editingChannel,
+    type: 33,
+    settings: '{"aws_api_type":"mantle"}',
+  }
+  useAuthStore.setState({
+    auth: {
+      ...originalAuth,
+      user: {
+        id: 10,
+        username: 'operator',
+        role: ROLE.ADMIN,
+        permissions: {
+          admin_permissions: { channel: { read: true, write: true } },
+        },
+      },
+    },
+  })
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  expect(
+    await screen.findByRole('combobox', { name: 'AWS API' })
+  ).toBeDisabled()
+})
+
+test('Vertex project ID is disabled without sensitive channel write permission', async () => {
+  editingChannel = {
+    ...editingChannel,
+    type: 41,
+    settings:
+      '{"vertex_key_type":"api_key","vertex_project_id":"private-project"}',
+  }
+  useAuthStore.setState({
+    auth: {
+      ...originalAuth,
+      user: {
+        id: 10,
+        username: 'operator',
+        role: ROLE.ADMIN,
+        permissions: {
+          admin_permissions: { channel: { read: true, write: true } },
+        },
+      },
+    },
+  })
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+
+  expect(
+    await screen.findByRole('textbox', { name: 'Vertex AI Project ID' })
+  ).toBeDisabled()
+})
+
+test('public owner saves separately from the internal name and can be explicitly cleared', async () => {
+  editingChannel = {
+    ...editingChannel,
+    setting:
+      '{"model_owned_by":"Public label","proxy":"https://proxy.example"}',
+  }
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  const owner = await screen.findByRole('textbox', {
+    name: 'Channel model owner label',
+  })
+  await waitFor(() => expect(owner).toHaveValue('Public label'))
+  await user.clear(owner)
+  await user.type(owner, '  万川公开  ')
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0]?.[1] as { name: string; setting: string }
+  expect(payload.name).toBe('Existing channel')
+  expect(JSON.parse(payload.setting)).toMatchObject({
+    model_owned_by: '万川公开',
+    proxy: 'https://proxy.example',
+  })
+})
+
+test('using the channel name for discovery requires an explicit action and clearing removes the override', async () => {
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  const owner = await screen.findByRole('textbox', {
+    name: 'Channel model owner label',
+  })
+  await waitFor(() =>
+    expect(screen.getByRole('textbox', { name: /^Name\s*\*$/ })).toHaveValue(
+      'Existing channel'
+    )
+  )
+  expect(owner).toHaveValue('')
+  await user.click(
+    screen.getByRole('button', { name: 'Use channel name as label' })
+  )
+  expect(owner).toHaveValue('Existing channel')
+  await user.clear(owner)
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0]?.[1] as { setting: string }
+  expect(JSON.parse(payload.setting)).not.toHaveProperty('model_owned_by')
+})
+
+test('operators without sensitive write permission cannot publish a channel name', async () => {
+  useAuthStore.setState({
+    auth: {
+      ...originalAuth,
+      user: {
+        id: 10,
+        username: 'operator',
+        role: ROLE.ADMIN,
+        permissions: {
+          admin_permissions: { channel: { read: true, write: true } },
+        },
+      },
+    },
+  })
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  expect(
+    await screen.findByRole('textbox', {
+      name: 'Channel model owner label',
+    })
+  ).toBeDisabled()
+  expect(
+    screen.getByRole('button', { name: 'Use channel name as label' })
+  ).toBeDisabled()
+})

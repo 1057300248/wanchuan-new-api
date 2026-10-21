@@ -13,6 +13,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 
@@ -270,6 +271,34 @@ func TestClineResponsesRejectsUnrepresentableHistory(t *testing.T) {
 			assert.True(t, types.IsSkipRetryError(apiErr))
 			assert.Equal(t, types.ErrorCode("responses_history_unsupported"), apiErr.GetErrorCode())
 			assert.NotContains(t, err.Error(), "private-opaque-value")
+		})
+	}
+}
+
+func TestClineResponsesReasoningDoesNotLeakToNonClineRetry(t *testing.T) {
+	for _, channelType := range []int{constant.ChannelTypeOpenAI, constant.ChannelTypeOpenRouter, constant.ChannelTypeAdvancedCustom} {
+		t.Run(fmt.Sprintf("channel=%d", channelType), func(t *testing.T) {
+			env := newClineTestEnv(t, types.RelayFormatOpenAIResponses, relayconstant.RelayModeResponses, false, "test-model", "http://127.0.0.1:1")
+			request := dto.OpenAIResponsesRequest{Model: "test-model", Input: []byte(`[{"role":"user","content":"inspect"},{"type":"reasoning","content":[{"type":"reasoning_text","text":"private reasoning"}]},{"role":"assistant","content":"checking"}]`)}
+			converted, err := env.adaptor.ConvertOpenAIResponsesRequest(env.context, env.info, request)
+			require.NoError(t, err)
+			clineChat, ok := converted.(*dto.GeneralOpenAIRequest)
+			require.True(t, ok)
+			require.Len(t, clineChat.Messages, 2)
+			assert.Equal(t, "private reasoning", clineChat.Messages[1].GetReasoningContent())
+
+			// A retry reuses RelayInfo but rebuilds channel metadata. The Cline
+			// dialect opt-in must not survive into an unrelated Chat bridge.
+			common.SetContextKey(env.context, constant.ContextKeyChannelType, channelType)
+			env.info.InitChannelMeta(env.context)
+			result, err := service.ConvertRequestByID(env.context, env.info, relayconvert.ConverterOpenAIResponsesToOpenAIChat, request)
+			require.NoError(t, err)
+			chat, ok := result.Value.(*dto.GeneralOpenAIRequest)
+			require.True(t, ok)
+			require.Len(t, chat.Messages, 2)
+			assert.Equal(t, "checking", chat.Messages[1].Content)
+			assert.Nil(t, chat.Messages[1].ReasoningContent)
+			assert.Empty(t, result.Diagnostics)
 		})
 	}
 }

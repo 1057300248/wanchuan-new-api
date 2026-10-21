@@ -16,7 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import { afterEach, describe, expect, test } from 'vitest'
 
 const { createInstance } = await import('i18next')
@@ -193,14 +199,16 @@ function selectComboboxOption(
   fireEvent.click(option)
 }
 
-afterEach(() => {
-  apiClient.get = originalGet
-  apiClient.post = originalPost
-  localStorage.clear()
+afterEach(async () => {
+  cleanup()
   if (renderedDrawer) {
+    await renderedDrawer.queryClient.cancelQueries()
     renderedDrawer.queryClient.clear()
     renderedDrawer = null
   }
+  apiClient.get = originalGet
+  apiClient.post = originalPost
+  localStorage.clear()
 })
 
 describe('API keys mutate drawer Auto group integration', () => {
@@ -276,5 +284,26 @@ describe('API keys mutate drawer Auto group integration', () => {
     fireEvent.click(findButton('Save changes', true))
     await waitFor(() => expect(createdPayloads).toHaveLength(1))
     expect(createdPayloads[0]?.auto_groups).toEqual(['vip'])
+  })
+})
+
+describe('API keys mutate drawer user quota query switch', () => {
+  test('sends false for a new key after the switch, which starts on, is turned off', async () => {
+    const createdPayloads: Array<Record<string, unknown>> = []
+    installApiFixtures(createdPayloads)
+    await renderCreateDrawer()
+
+    fireEvent.click(findButton('Advanced Settings', true))
+    const quotaQuerySwitch = await screen.findByRole('switch', {
+      name: 'Allow querying user quota',
+    })
+    expect(quotaQuerySwitch).toBeChecked()
+    fireEvent.click(quotaQuerySwitch)
+    expect(quotaQuerySwitch).not.toBeChecked()
+
+    changeInput(getControlByLabel('Name'), 'no-user-quota')
+    fireEvent.click(findButton('Save changes', true))
+    await waitFor(() => expect(createdPayloads).toHaveLength(1))
+    expect(createdPayloads[0]?.allow_user_quota_query).toBe(false)
   })
 })

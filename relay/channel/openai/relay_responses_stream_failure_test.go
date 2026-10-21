@@ -60,11 +60,13 @@ func TestOaiResponsesStreamHandlerReportsUpstreamFailure(t *testing.T) {
 		{"grok model error with null code", `{"code":null,"message":"Internal server error from model.","param":null,"type":"error"}`, "Internal server error from model.", "server_error", "upstream request failed (request id: responses-stream-regression)", 2},
 		{"provider error code", `{"type":"error","code":"rate_limit_exceeded","message":"Slow down"}`, "Slow down", "rate_limit_exceeded", "too many requests (request id: responses-stream-regression)", 2},
 		{"native failed without error type", `{"type":"response.failed","response":{"id":"resp_failed","status":"failed","error":{"code":"server_error","message":"Generation failed"}}}`, "Generation failed", "server_error", "upstream request failed (request id: responses-stream-regression)", 1},
+		{"response error", `{"type":"response.error","message":"Generation failed"}`, "Generation failed", "server_error", "upstream request failed (request id: responses-stream-regression)", 2},
 		{"cancelled response", `{"type":"response.cancelled","response":{"status":"cancelled"}}`, "upstream response stream failed: response.cancelled", "server_error", "", 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c, w, info, resp := responsesStreamFixture(t, strings.NewReader("data: "+tc.event+"\n\n"))
+			info.SetEstimatePromptTokens(8)
 			usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
 			require.NotNil(t, apiErr)
 			assert.Equal(t, tc.message, apiErr.Error(), "the internal error keeps upstream diagnostics for retries and admin logs")
@@ -73,7 +75,7 @@ func TestOaiResponsesStreamHandlerReportsUpstreamFailure(t *testing.T) {
 			assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyResponsesStreamErrorHandled))
 			require.NotNil(t, info.StreamStatus)
 			assert.True(t, info.StreamStatus.HasErrors())
-			assert.Equal(t, 0, usage.TotalTokens, "error-only responses must not fabricate billable usage")
+			assert.Nil(t, usage, "an explicit failure without output must remain refundable even under fixed request pricing")
 			assert.Equal(t, 1, info.ReceivedResponseCount)
 			assert.NotContains(t, w.Body.String(), "event: response.completed")
 			events := responsesStreamEvents(t, w.Body.String())
@@ -94,6 +96,84 @@ func TestOaiResponsesStreamHandlerReportsUpstreamFailure(t *testing.T) {
 				assert.Equal(t, "response.failed", events[0].Type)
 			}
 		})
+	}
+}
+
+func TestOaiResponsesStreamHandlerRejectsFailedResponseStatus(t *testing.T) {
+	for _, eventType := range []string{"response.done", "response.completed"} {
+		for _, status := range []string{"failed", "error", "cancelled", "canceled"} {
+			t.Run(eventType+"/"+status, func(t *testing.T) {
+				body := `data: {"type":"` + eventType + `","response":{"id":"resp_failed","status":"` + status + `","error":{"code":"server_error","message":"Generation failed"}}}` + "\n\n"
+				c, w, info, resp := responsesStreamFixture(t, strings.NewReader(body))
+				info.SetEstimatePromptTokens(8)
+
+				usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+
+				require.NotNil(t, apiErr, "a terminal event name must not override its failed response status")
+				assert.True(t, types.IsSkipRetryError(apiErr))
+				assert.Nil(t, usage)
+				assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyResponsesStreamErrorHandled))
+				assert.NotContains(t, w.Body.String(), "event: response.completed")
+				assert.NotContains(t, w.Body.String(), "event: response.done")
+				events := responsesStreamEvents(t, w.Body.String())
+				require.Len(t, events, 1, "emit one truthful terminal, not a successful terminal followed by an error")
+				wantType := "response.failed"
+				if status == "cancelled" || status == "canceled" {
+					wantType = "response.cancelled"
+				}
+				assert.Equal(t, wantType, events[0].Type)
+				assert.NotContains(t, w.Body.String(), "Generation failed")
+			})
+		}
+	}
+}
+
+func TestOaiResponsesStreamHandlerPreservesNativeMissingUsagePolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		wantError  bool
+	}{
+		{"successful terminal without usage", `data: {"type":"response.completed","response":{"status":"completed"}}`, false},
+		{"created only then disconnect", `data: {"type":"response.created","response":{"status":"in_progress"}}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _, info, resp := responsesStreamFixture(t, strings.NewReader(tc.body+"\n\n"))
+			info.SetEstimatePromptTokens(8)
+			usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+			assert.Equal(t, tc.wantError, apiErr != nil)
+			require.NotNil(t, usage, "success and accepted streams cut off without an explicit provider failure retain prompt estimation")
+			assert.Equal(t, 8, usage.PromptTokens)
+			assert.Zero(t, usage.CompletionTokens)
+		})
+	}
+}
+
+func TestOaiResponsesHandlerRejectsNativeFailure(t *testing.T) {
+	for _, status := range []string{"failed", "error", "cancelled", "canceled"} {
+		for _, withUsage := range []bool{false, true} {
+			name := status + "/empty"
+			body := `{"id":"resp_failed","status":"` + status + `","error":{"code":"server_error","message":"private provider failure"},"output":[]}`
+			if withUsage {
+				name = status + "/partial"
+				body = `{"id":"resp_failed","status":"` + status + `","error":{"code":"server_error","message":"private provider failure"},"usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10},"output":[]}`
+			}
+			t.Run(name, func(t *testing.T) {
+				c, w, info, resp := responsesStreamFixture(t, strings.NewReader(body))
+				info.IsStream = false
+				info.SetEstimatePromptTokens(8)
+				usage, apiErr := OaiResponsesHandler(c, info, resp)
+				require.NotNil(t, apiErr, "HTTP 200 and an omitted error.type must not turn a failed response into success")
+				assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+				assert.True(t, types.IsSkipRetryError(apiErr))
+				assert.Empty(t, w.Body.String(), "leave one sanitized error response to the outer HTTP controller")
+				if withUsage {
+					require.NotNil(t, usage)
+					assert.Equal(t, 10, usage.TotalTokens)
+				} else {
+					assert.Nil(t, usage)
+				}
+			})
+		}
 	}
 }
 

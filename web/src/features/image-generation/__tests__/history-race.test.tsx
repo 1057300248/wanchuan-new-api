@@ -19,7 +19,6 @@ For commercial licensing, please contact support@quantumnous.com
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
-import { IMAGE_HISTORY_STORAGE_KEY } from '../constants'
 import { useImageHistory } from '../hooks/use-image-history'
 import {
   deleteImageBlob,
@@ -28,6 +27,11 @@ import {
 } from '../lib/blob-store'
 import { clearManagedObjectUrls } from '../lib/managed-object-urls'
 import { isSafeImageUrl } from '../lib/request-builders'
+import {
+  HISTORY_OWNER_ID,
+  HISTORY_OWNER_KEY,
+  signInHistoryOwner,
+} from './history-fixture'
 
 vi.mock('../lib/blob-store', () => ({
   deleteImageBlob: vi.fn(),
@@ -87,10 +91,7 @@ function seedKeptEntry(id: string) {
 }
 
 function seedStorage(entries: unknown[]) {
-  window.localStorage.setItem(
-    IMAGE_HISTORY_STORAGE_KEY,
-    JSON.stringify(entries)
-  )
+  window.localStorage.setItem(HISTORY_OWNER_KEY, JSON.stringify(entries))
 }
 
 function createdBlobUrl(): string | undefined {
@@ -103,6 +104,7 @@ let resolveSave: ((value: undefined) => void) | null = null
 let urlCounter = 0
 
 beforeEach(() => {
+  signInHistoryOwner()
   window.localStorage.clear()
   clearManagedObjectUrls()
   urlCounter = 0
@@ -156,7 +158,10 @@ describe('keepLocally does not orphan blobs when history changes mid-flight', ()
       type: 'url',
       source: 'https://cdn.example/a.png',
     })
-    expect(deleteImageBlob).toHaveBeenCalledWith('e1:e1-r')
+    expect(deleteImageBlob).toHaveBeenCalledWith(
+      expect.stringMatching(/^e1:e1-r:/),
+      HISTORY_OWNER_ID
+    )
     expect(result.current.resolveResultUrl('e1-r', 'fallback')).toBe('fallback')
   })
 
@@ -186,7 +191,10 @@ describe('keepLocally does not orphan blobs when history changes mid-flight', ()
       await keepPromise
     })
 
-    expect(vi.mocked(deleteImageBlob)).toHaveBeenCalledWith('e1:e1-r')
+    expect(vi.mocked(deleteImageBlob)).toHaveBeenCalledWith(
+      expect.stringMatching(/^e1:e1-r:/),
+      HISTORY_OWNER_ID
+    )
     expect(URL.createObjectURL).not.toHaveBeenCalled()
     expect(URL.revokeObjectURL).not.toHaveBeenCalled()
     expect(result.current.entries).toEqual([])
@@ -215,7 +223,10 @@ describe('keepLocally does not orphan blobs when history changes mid-flight', ()
     })
 
     expect(result.current.entries).toEqual([])
-    expect(vi.mocked(deleteImageBlob)).toHaveBeenCalledWith('e1:e1-r')
+    expect(vi.mocked(deleteImageBlob)).toHaveBeenCalledWith(
+      expect.stringMatching(/^e1:e1-r:/),
+      HISTORY_OWNER_ID
+    )
     expect(URL.createObjectURL).not.toHaveBeenCalled()
     expect(URL.revokeObjectURL).not.toHaveBeenCalled()
     expect(result.current.resolveResultUrl('e1-r', 'fallback')).toBe('fallback')
@@ -241,7 +252,10 @@ describe('keepLocally does not orphan blobs when history changes mid-flight', ()
       await keepPromise
     })
 
-    expect(vi.mocked(deleteImageBlob)).toHaveBeenCalledWith('e1:e1-r')
+    expect(vi.mocked(deleteImageBlob)).toHaveBeenCalledWith(
+      expect.stringMatching(/^e1:e1-r:/),
+      HISTORY_OWNER_ID
+    )
     expect(URL.createObjectURL).not.toHaveBeenCalled()
   })
 
@@ -264,7 +278,10 @@ describe('keepLocally does not orphan blobs when history changes mid-flight', ()
     expect(url).toBeDefined()
     expect(result.current.entries).toEqual([])
     expect(result.current.resolveResultUrl('e1-r', 'fallback')).toBe('fallback')
-    expect(vi.mocked(deleteImageBlob)).toHaveBeenCalledWith('e1:e1-r')
+    expect(vi.mocked(deleteImageBlob)).toHaveBeenCalledWith(
+      expect.stringMatching(/^e1:e1-r:/),
+      HISTORY_OWNER_ID
+    )
     expect(URL.revokeObjectURL).toHaveBeenCalledWith(url)
     if (url) expect(isSafeImageUrl(url)).toBe(false)
   })
@@ -282,7 +299,10 @@ describe('keepLocally does not orphan blobs when history changes mid-flight', ()
 
     expect(result.current.entries).toHaveLength(1)
     expect(result.current.entries[0].results[0].keptLocally).toBe(false)
-    expect(vi.mocked(deleteImageBlob)).not.toHaveBeenCalledWith('e1:e1-r')
+    expect(vi.mocked(deleteImageBlob)).not.toHaveBeenCalledWith(
+      expect.stringMatching(/^e1:e1-r:/),
+      HISTORY_OWNER_ID
+    )
     expect(URL.createObjectURL).not.toHaveBeenCalled()
     expect(URL.revokeObjectURL).not.toHaveBeenCalled()
   })
@@ -311,7 +331,10 @@ describe('keepLocally does not orphan blobs when history changes mid-flight', ()
     })
 
     expect(result.current.entries[0].results[0].keptLocally).toBe(true)
-    expect(vi.mocked(deleteImageBlob)).not.toHaveBeenCalledWith('e1:e1-r')
+    expect(vi.mocked(deleteImageBlob)).not.toHaveBeenCalledWith(
+      expect.stringMatching(/^e1:e1-r:/),
+      HISTORY_OWNER_ID
+    )
     expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
   })
 
@@ -406,7 +429,10 @@ describe('restoreBlobUrls does not orphan object URLs when history changes mid-l
     await act(async () => {
       await Promise.resolve()
     })
-    expect(vi.mocked(loadImageBlob)).toHaveBeenCalledWith('e1:e1-r')
+    expect(vi.mocked(loadImageBlob)).toHaveBeenCalledWith(
+      'e1:e1-r',
+      HISTORY_OWNER_ID
+    )
 
     act(() => {
       result.current.removeEntry('e1')
@@ -437,7 +463,10 @@ describe('restoreBlobUrls does not orphan object URLs when history changes mid-l
     await act(async () => {
       await Promise.resolve()
     })
-    expect(vi.mocked(loadImageBlob)).toHaveBeenCalledWith('e1:e1-r')
+    expect(vi.mocked(loadImageBlob)).toHaveBeenCalledWith(
+      'e1:e1-r',
+      HISTORY_OWNER_ID
+    )
 
     unmount()
 

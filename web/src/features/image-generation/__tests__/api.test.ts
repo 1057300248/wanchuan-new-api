@@ -20,7 +20,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
-import { requestImageGeneration } from '../api'
+import { loadImageTokenModels, requestImageGeneration } from '../api'
 
 vi.mock('@/features/keys/api', () => ({
   fetchTokenKey: vi.fn(),
@@ -77,6 +77,44 @@ test('async generation submits once then retrieves the result using the dashboar
   )
   expect(result[0].url).toBe('https://example.com/image.png')
 })
+
+test.each([false, true])(
+  'displays a single object-shaped image from a successful request (async: %s)',
+  async (asyncMode) => {
+    const id = 'c'.repeat(48)
+    const imagePayload = {
+      data: { b64_json: 'aGVsbG8=', mime_type: 'image/webp' },
+    }
+    postMock.mockResolvedValue(
+      asyncMode
+        ? { status: 202, data: { id, status: 'running' } }
+        : { status: 200, data: imagePayload }
+    )
+    vi.mocked(api.get).mockResolvedValue({
+      data: { id, status: 'succeeded', result: imagePayload },
+    })
+
+    const images = await requestImageGeneration({
+      fullKey: 'fixture',
+      model: 'gpt-image-2',
+      prompt: 'A lake',
+      count: 1,
+      size: 'auto',
+      quality: 'auto',
+      style: '',
+      images: [],
+      asyncMode,
+    })
+
+    expect(images).toEqual([
+      expect.objectContaining({
+        url: 'data:image/webp;base64,aGVsbG8=',
+        source: 'b64',
+      }),
+    ])
+    expect(postMock).toHaveBeenCalledTimes(1)
+  }
+)
 
 test('async terminal failure preserves the upstream message and never resubmits', async () => {
   const id = 'b'.repeat(48)
@@ -375,4 +413,29 @@ describe('requestImageGeneration selects the synchronous image endpoint', () => 
       height: 1024,
     })
   })
+})
+
+test('image model discovery requests the owned token scope using the dashboard session', async () => {
+  vi.mocked(api.get).mockResolvedValue({
+    data: { success: true, data: ['gpt-image-2'] },
+  })
+
+  await expect(loadImageTokenModels(7)).resolves.toEqual(['gpt-image-2'])
+  expect(api.get).toHaveBeenCalledExactlyOnceWith('/api/token/7/models', {
+    skipErrorHandler: true,
+  })
+})
+
+test('image model discovery preserves a failed token authorization response', async () => {
+  vi.mocked(api.get).mockResolvedValue({
+    data: { success: false, message: 'Token access revoked' },
+  })
+
+  await expect(loadImageTokenModels(7)).rejects.toThrow('Token access revoked')
+})
+
+test('image model discovery rejects a malformed scope instead of accepting cached models', async () => {
+  vi.mocked(api.get).mockResolvedValue({ data: { success: true, data: null } })
+
+  await expect(loadImageTokenModels(7)).rejects.toThrow('Failed to load models')
 })

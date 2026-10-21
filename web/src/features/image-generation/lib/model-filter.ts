@@ -27,17 +27,9 @@ function normalizeModelName(value: string): string {
   return value.trim().toLowerCase()
 }
 
-function parseModelLimits(modelLimits: string): Set<string> {
-  const items = modelLimits
-    .split(',')
-    .map((item) => item.trim())
-    .filter((item) => item !== '')
-  return new Set(items.map(normalizeModelName))
-}
-
 export function getAvailableImageModels(params: {
   pricingModels: PricingLike[]
-  groupModels: string[]
+  tokenModels: string[]
   token: ImageApiKeyOption | null
 }): string[] {
   if (!params.token) return []
@@ -51,17 +43,12 @@ export function getAvailableImageModels(params: {
   }
   if (imageModels.size === 0) return []
 
-  const groupSet = new Set(
-    params.groupModels.map((model) => normalizeModelName(model))
+  const tokenSet = new Set(
+    params.tokenModels.map((model) => normalizeModelName(model))
   )
 
-  let allowed = [...imageModels].filter((model) => groupSet.has(model))
-  if (allowed.length === 0) return []
-
-  if (params.token.model_limits_enabled) {
-    const limits = parseModelLimits(params.token.model_limits)
-    allowed = allowed.filter((model) => limits.has(model))
-  }
+  // The owned-token endpoint applies routing and model restrictions server-side.
+  const allowed = [...imageModels].filter((model) => tokenSet.has(model))
   if (allowed.length === 0) return []
 
   const displayName = new Map<string, string>()
@@ -71,7 +58,7 @@ export function getAvailableImageModels(params: {
       displayName.set(key, item.model_name)
     }
   }
-  for (const model of params.groupModels) {
+  for (const model of params.tokenModels) {
     const key = normalizeModelName(model)
     if (!displayName.has(key)) displayName.set(key, model)
   }

@@ -642,6 +642,24 @@ func assertResponsesWSAccounting(t *testing.T, fixture *responsesWSBillingTest, 
 		assert.Equal(t, quota, logs[index].Quota)
 		charged += quota
 	}
+	// Joining the HTTP/WS handlers does not join BillingSession's legacy
+	// background refund. In particular, its wallet leg can commit before the
+	// token leg. Wait for BOTH authoritative rows, not a cache, fixed delay or
+	// source-only signal. On timeout CollectT reports the last exact counters;
+	// all original accounting/ledger assertions below remain unchanged.
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		var token model.Token
+		var user model.User
+		if !assert.NoError(collect, model.DB.First(&token, fixture.token.Id).Error) ||
+			!assert.NoError(collect, model.DB.First(&user, fixture.user.Id).Error) {
+			return
+		}
+		assert.Equal(collect, 3000-charged, token.RemainQuota, "terminal token remaining quota")
+		assert.Equal(collect, charged, token.UsedQuota, "terminal token used quota")
+		assert.Equal(collect, 100000-charged, user.Quota, "terminal wallet quota")
+		assert.Equal(collect, charged, user.UsedQuota, "terminal user used quota")
+		assert.Equal(collect, user.Quota, user.QuotaPaid+user.QuotaBonus+user.QuotaReward, "terminal split-account invariant")
+	}, 3*time.Second, 10*time.Millisecond, "request accounting did not reach its exact terminal state")
 	require.NoError(t, model.DB.First(fixture.token, fixture.token.Id).Error)
 	require.NoError(t, model.DB.First(fixture.user, fixture.user.Id).Error)
 	assert.Equal(t, 3000-charged, fixture.token.RemainQuota)
@@ -1028,13 +1046,14 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 			delta       bool
 			failed      bool
 			ignored     bool
+			refundable  bool
 		}{
-			{name: "failed-null-fixed", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":null,"error":{"code":"server_error","message":"sensitive upstream detail"}}}`, expected: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":null,"error":{"code":"server_error","message":"upstream request failed"}}}`, sseExpected: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":null,"error":{"code":"server_error","message":"upstream request failed (request id: responses-http-billing)"}}}`, failed: true},
-			{name: "failed-missing-fixed", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed"}}`, failed: true},
+			{name: "failed-null-fixed", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":null,"error":{"code":"server_error","message":"sensitive upstream detail"}}}`, expected: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":null,"error":{"code":"server_error","message":"upstream request failed"}}}`, sseExpected: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":null,"error":{"code":"server_error","message":"upstream request failed (request id: responses-http-billing)"}}}`, failed: true, refundable: true},
+			{name: "failed-missing-fixed", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed"}}`, failed: true, refundable: true},
 			{name: "failed-actual-usage", expression: `tier("input", p * 2)`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":{"input_tokens":1000,"output_tokens":10,"total_tokens":1010}}}`, failed: true},
 			{name: "failed-estimated-output", expression: `tier("output", c * 2000)`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":null}}`, delta: true, failed: true},
-			{name: "error-after-created", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"error","status":500,"error":{"type":"server_error","code":"server_error","message":"Internal server error"}}`, sseTerminal: `{"type":"error","code":"server_error","message":"Internal server error","param":null,"sequence_number":2}`, expected: `{"type":"error","status":500,"error":{"type":"server_error","code":"server_error","message":"upstream request failed"}}`, sseExpected: `{"type":"error","code":"server_error","message":"upstream request failed (request id: responses-http-billing)","sequence_number":2}`, failed: true},
-			{name: "business-error-after-created", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"error","status":400,"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"Input too long"}}`, sseTerminal: `{"type":"error","code":"context_length_exceeded","message":"Input too long","param":null,"sequence_number":2}`, expected: `{"type":"error","status":400,"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"invalid request"}}`, sseExpected: `{"type":"error","code":"context_length_exceeded","message":"invalid request (request id: responses-http-billing)","sequence_number":2}`, failed: true, ignored: true},
+			{name: "error-after-created", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"error","status":500,"error":{"type":"server_error","code":"server_error","message":"Internal server error"}}`, sseTerminal: `{"type":"error","code":"server_error","message":"Internal server error","param":null,"sequence_number":2}`, expected: `{"type":"error","status":500,"error":{"type":"server_error","code":"server_error","message":"upstream request failed"}}`, sseExpected: `{"type":"error","code":"server_error","message":"upstream request failed (request id: responses-http-billing)","sequence_number":2}`, failed: true, refundable: true},
+			{name: "business-error-after-created", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"error","status":400,"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"Input too long"}}`, sseTerminal: `{"type":"error","code":"context_length_exceeded","message":"Input too long","param":null,"sequence_number":2}`, expected: `{"type":"error","status":400,"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"invalid request"}}`, sseExpected: `{"type":"error","code":"context_length_exceeded","message":"invalid request (request id: responses-http-billing)","sequence_number":2}`, failed: true, refundable: true, ignored: true},
 			{name: "completed-at-output-limit", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.incomplete","response":{"id":"first","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":1000,"output_tokens":1,"total_tokens":1001}}}`},
 			{name: "completed-zero-fixed", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.completed","response":{"id":"first","status":"completed","usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}`},
 		} {
@@ -1110,7 +1129,10 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 						assert.JSONEq(t, expected, string(actual), "upstream frames must be delivered once; only recognized error fields are rewritten")
 					}
 				}
-				quotas := []int{1000}
+				var quotas []int
+				if !tc.refundable {
+					quotas = append(quotas, 1000)
+				}
 				if tc.failed {
 					// The first terminal must complete settlement and middleware before
 					// admitting this immediately following request.
@@ -1132,7 +1154,7 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 				require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
 				adminInfo := other["admin_info"].(map[string]any)
 				stream := adminInfo["stream_status"].(map[string]any)
-				if tc.failed {
+				if tc.failed && !tc.refundable {
 					assert.Equal(t, "error", stream["status"])
 					assert.Equal(t, "failed", stream["response_status"])
 				} else {
@@ -1149,7 +1171,10 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 					assert.NotContains(t, entry.Other, "sensitive upstream detail")
 					assert.NotContains(t, entry.Other, "admin_info")
 				}
-				expectedRequests := int64(len(quotas))
+				expectedRequests := int64(1)
+				if tc.failed {
+					expectedRequests++
+				}
 				if tc.ignored {
 					expectedRequests--
 				}
@@ -1278,7 +1303,7 @@ func TestResponsesWebSocketAmbiguousControlErrorClosesAndSettlesOnce(t *testing.
 	require.ErrorAs(t, err, &closeErr, "an unattributed error must close the connection instead of remaining busy")
 	assert.Equal(t, websocket.CloseInternalServerErr, closeErr.Code)
 	fixture.closeAndWait(t)
-	assertResponsesWSAccounting(t, fixture, []int{1000})
+	assertResponsesWSAccounting(t, fixture, nil)
 }
 
 // Every way a session ends sends the client a close frame whose code says
@@ -1509,7 +1534,11 @@ func TestResponsesWebSocketIgnoresLateErrorForPreviousResponse(t *testing.T) {
 			require.Equal(t, "response.created", created["type"], "the late error must not reach the client or end the request: %v", created)
 			assert.Equal(t, "response.completed", readResponsesWSTestEvent(t, fixture.client)["type"])
 			fixture.closeAndWait(t)
-			assertResponsesWSAccounting(t, fixture, []int{1000, 1000})
+			quotas := []int{1000}
+			if tc.firstTerminalType == "response.completed" {
+				quotas = append(quotas, 1000)
+			}
+			assertResponsesWSAccounting(t, fixture, quotas)
 		})
 	}
 }

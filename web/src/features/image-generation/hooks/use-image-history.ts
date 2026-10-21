@@ -16,9 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 
 import { apiResourceUrl } from '@/lib/api-url'
+import { getAuthSessionEpoch } from '@/lib/auth-session'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { IMAGE_HISTORY_MAX_ENTRIES } from '../constants'
 import {
@@ -36,6 +44,7 @@ import {
   isDataSchemeUrl,
   revokeManagedObjectUrl,
 } from '../lib/managed-object-urls'
+import { getImageHistoryOwnerId } from '../storage/history-owner'
 import {
   clearHistoryStorage,
   loadHistoryEntries,
@@ -112,9 +121,16 @@ function toHistoryEntry(params: {
 }
 
 export function useImageHistory() {
-  const [entries, setEntriesState] = useState<ImageHistoryEntry[]>(() =>
-    loadHistoryEntries()
+  const ownerEpoch = useSyncExternalStore(
+    useAuthStore.subscribe,
+    getAuthSessionEpoch
   )
+  const ownerId = getImageHistoryOwnerId()
+  const scopeRef = useRef({ ownerId, ownerEpoch })
+  const [{ entries, entriesEpoch }, setEntriesState] = useState(() => ({
+    entries: loadHistoryEntries(ownerId),
+    entriesEpoch: ownerEpoch,
+  }))
   const [query, setQuery] = useState('')
   const [orientation, setOrientation] = useState<
     'all' | 'square' | 'landscape' | 'portrait'
@@ -125,10 +141,24 @@ export function useImageHistory() {
   const blobUrlsRef = useRef(blobUrls)
   const mountedRef = useRef(true)
   const keepInFlightRef = useRef(new Set<string>())
+  const fetchControllersRef = useRef(new Set<AbortController>())
+
+  const isCurrentOwner = useCallback(
+    () =>
+      mountedRef.current &&
+      ownerId !== null &&
+      scopeRef.current.ownerEpoch === ownerEpoch &&
+      getAuthSessionEpoch() === ownerEpoch &&
+      getImageHistoryOwnerId() === ownerId,
+    [ownerId, ownerEpoch]
+  )
 
   const commitEntries = useCallback((next: ImageHistoryEntry[]) => {
     entriesRef.current = next
-    setEntriesState(next)
+    setEntriesState({
+      entries: next,
+      entriesEpoch: scopeRef.current.ownerEpoch,
+    })
   }, [])
 
   const commitBlobUrls = useCallback((next: Record<string, string>) => {
@@ -137,10 +167,27 @@ export function useImageHistory() {
   }, [])
 
   useEffect(() => {
-    saveHistoryEntries(entries)
-  }, [entries])
+    if (scopeRef.current.ownerEpoch === ownerEpoch) return
+    for (const controller of fetchControllersRef.current) controller.abort()
+    fetchControllersRef.current.clear()
+    for (const url of Object.values(blobUrlsRef.current)) {
+      revokeManagedObjectUrl(url)
+    }
+    scopeRef.current = { ownerId, ownerEpoch }
+    commitBlobUrls({})
+    commitEntries(loadHistoryEntries(ownerId))
+    setQuery('')
+    setOrientation('all')
+  }, [ownerId, ownerEpoch, commitBlobUrls, commitEntries])
+
+  useEffect(() => {
+    if (entriesEpoch === ownerEpoch && isCurrentOwner()) {
+      saveHistoryEntries(entries, ownerId)
+    }
+  }, [entries, entriesEpoch, ownerEpoch, isCurrentOwner, ownerId])
 
   const pruneExpiredFromState = useCallback(() => {
+    if (!isCurrentOwner()) return
     const previous = entriesRef.current
     if (previous.length === 0) return
     const pruned = pruneHistoryEntries(previous, Date.now())
@@ -159,7 +206,7 @@ export function useImageHistory() {
     }
     for (const result of removedResults) {
       if (result.blobKey) {
-        void deleteImageBlob(result.blobKey).catch(() => undefined)
+        void deleteImageBlob(result.blobKey, ownerId).catch(() => undefined)
       }
       const objectUrl = blobUrlsRef.current[result.id]
       if (objectUrl) revokeManagedObjectUrl(objectUrl)
@@ -176,7 +223,7 @@ export function useImageHistory() {
       }
     }
     if (changed) commitBlobUrls(nextUrls)
-  }, [commitBlobUrls, commitEntries])
+  }, [commitBlobUrls, commitEntries, isCurrentOwner, ownerId])
 
   const pushEntry = useCallback(
     (params: {
@@ -188,7 +235,7 @@ export function useImageHistory() {
       count: number
       images: GeneratedImage[]
     }) => {
-      if (params.images.length === 0) return
+      if (!isCurrentOwner() || params.images.length === 0) return
       pruneExpiredFromState()
       const { entry, tempObjectUrls } = toHistoryEntry(params)
       const previous = entriesRef.current
@@ -198,7 +245,7 @@ export function useImageHistory() {
       for (const item of evicted) {
         for (const result of item.results) {
           if (result.blobKey) {
-            void deleteImageBlob(result.blobKey).catch(() => undefined)
+            void deleteImageBlob(result.blobKey, ownerId).catch(() => undefined)
           }
           const objectUrl = blobUrlsRef.current[result.id]
           if (objectUrl) revokeManagedObjectUrl(objectUrl)
@@ -212,16 +259,23 @@ export function useImageHistory() {
       commitEntries(next)
       commitBlobUrls(nextUrls)
     },
-    [commitBlobUrls, commitEntries, pruneExpiredFromState]
+    [
+      commitBlobUrls,
+      commitEntries,
+      pruneExpiredFromState,
+      isCurrentOwner,
+      ownerId,
+    ]
   )
 
   const removeEntry = useCallback(
     (id: string) => {
+      if (!isCurrentOwner()) return
       const target = entriesRef.current.find((entry) => entry.id === id)
       if (!target) return
       for (const result of target.results) {
         if (result.blobKey) {
-          void deleteImageBlob(result.blobKey).catch(() => undefined)
+          void deleteImageBlob(result.blobKey, ownerId).catch(() => undefined)
         }
         const objectUrl = blobUrlsRef.current[result.id]
         if (objectUrl) revokeManagedObjectUrl(objectUrl)
@@ -237,14 +291,15 @@ export function useImageHistory() {
       }
       if (changed) commitBlobUrls(nextUrls)
     },
-    [commitBlobUrls, commitEntries]
+    [commitBlobUrls, commitEntries, isCurrentOwner, ownerId]
   )
 
   const clearAll = useCallback(() => {
+    if (!isCurrentOwner()) return
     for (const entry of entriesRef.current) {
       for (const result of entry.results) {
         if (result.blobKey) {
-          void deleteImageBlob(result.blobKey).catch(() => undefined)
+          void deleteImageBlob(result.blobKey, ownerId).catch(() => undefined)
         }
       }
     }
@@ -253,24 +308,25 @@ export function useImageHistory() {
     }
     commitEntries([])
     commitBlobUrls({})
-    clearHistoryStorage()
-  }, [commitBlobUrls, commitEntries])
+    clearHistoryStorage(ownerId)
+  }, [commitBlobUrls, commitEntries, isCurrentOwner, ownerId])
 
   const keepLocally = useCallback(
     async (entryId: string, resultId: string) => {
+      if (!isCurrentOwner()) return
       const findTarget = () => {
         const entry = entriesRef.current.find((item) => item.id === entryId)
         const result = entry?.results.find((item) => item.id === resultId)
         return { entry, result }
       }
       const isStillPresent = (source: string) => {
-        if (!mountedRef.current) return false
+        if (!isCurrentOwner()) return false
         const current = findTarget()
         if (!current.entry || !current.result) return false
         if (current.result.keptLocally) return false
         return current.result.source === source
       }
-      const operationKey = `${entryId}:${resultId}`
+      const operationKey = `${ownerEpoch}:${entryId}:${resultId}`
       if (keepInFlightRef.current.has(operationKey)) return
 
       const initial = findTarget()
@@ -280,30 +336,39 @@ export function useImageHistory() {
 
       keepInFlightRef.current.add(operationKey)
       const sourceAtStart = initial.result.source
-      const blobKey = operationKey
+      // A superseded keep operation may finish after this owner signs back in.
+      // Give it a distinct temporary key so rollback cannot delete a newer keep.
+      const uniqueId =
+        globalThis.crypto?.randomUUID?.() ??
+        `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      const blobKey = `${entryId}:${resultId}:${uniqueId}`
+      const controller = new AbortController()
+      fetchControllersRef.current.add(controller)
       let savedBlob = false
       let objectUrl: string | null = null
       try {
-        const response = await fetch(apiResourceUrl(sourceAtStart))
+        const response = await fetch(apiResourceUrl(sourceAtStart), {
+          signal: controller.signal,
+        })
         if (!isStillPresent(sourceAtStart)) return
         if (!response.ok) throw new Error('keep-failed')
         const blob = await response.blob()
         if (!isStillPresent(sourceAtStart)) return
-        await saveImageBlob(blobKey, blob)
+        await saveImageBlob(blobKey, blob, ownerId)
         savedBlob = true
         if (!isStillPresent(sourceAtStart)) {
-          await deleteImageBlob(blobKey).catch(() => undefined)
+          await deleteImageBlob(blobKey, ownerId).catch(() => undefined)
           return
         }
         try {
           objectUrl = createManagedObjectUrl(blob)
         } catch {
-          await deleteImageBlob(blobKey).catch(() => undefined)
+          await deleteImageBlob(blobKey, ownerId).catch(() => undefined)
           savedBlob = false
           throw new Error('keep-failed')
         }
         if (!isStillPresent(sourceAtStart)) {
-          await deleteImageBlob(blobKey).catch(() => undefined)
+          await deleteImageBlob(blobKey, ownerId).catch(() => undefined)
           savedBlob = false
           revokeManagedObjectUrl(objectUrl)
           objectUrl = null
@@ -327,7 +392,9 @@ export function useImageHistory() {
             }),
           }
         })
-        if (!saveHistoryEntries(nextEntries)) throw new Error('keep-failed')
+        if (!saveHistoryEntries(nextEntries, ownerId)) {
+          throw new Error('keep-failed')
+        }
         commitBlobUrls({ ...blobUrlsRef.current, [resultId]: committedUrl })
         commitEntries(nextEntries)
         if (previousUrl && previousUrl !== committedUrl) {
@@ -337,30 +404,33 @@ export function useImageHistory() {
         objectUrl = null
       } catch {
         if (savedBlob) {
-          await deleteImageBlob(blobKey).catch(() => undefined)
+          await deleteImageBlob(blobKey, ownerId).catch(() => undefined)
         }
         if (objectUrl) {
           revokeManagedObjectUrl(objectUrl)
-          if (blobUrlsRef.current[resultId] === objectUrl) {
+          if (isCurrentOwner() && blobUrlsRef.current[resultId] === objectUrl) {
             const nextUrls = { ...blobUrlsRef.current }
             delete nextUrls[resultId]
             commitBlobUrls(nextUrls)
           }
         }
-        throw new Error('keep-failed')
+        if (isCurrentOwner()) throw new Error('keep-failed')
       } finally {
+        fetchControllersRef.current.delete(controller)
         keepInFlightRef.current.delete(operationKey)
       }
     },
-    [commitBlobUrls, commitEntries]
+    [commitBlobUrls, commitEntries, isCurrentOwner, ownerId, ownerEpoch]
   )
 
   const resolveResultUrl = useCallback(
-    (resultId: string, fallback: string) => blobUrls[resultId] ?? fallback,
-    [blobUrls]
+    (resultId: string, fallback: string) =>
+      isCurrentOwner() ? (blobUrls[resultId] ?? fallback) : '',
+    [blobUrls, isCurrentOwner]
   )
 
   const restoreBlobUrls = useCallback(async () => {
+    if (!isCurrentOwner()) return
     const snapshot = entriesRef.current
     for (const entry of snapshot) {
       for (const result of entry.results) {
@@ -368,10 +438,11 @@ export function useImageHistory() {
         if (blobUrlsRef.current[result.id]) continue
         let blob: Blob | null = null
         try {
-          blob = await loadImageBlob(result.blobKey)
+          blob = await loadImageBlob(result.blobKey, ownerId)
         } catch {
           continue
         }
+        if (!isCurrentOwner()) return
         if (!blob) continue
         const liveResult = entriesRef.current
           .find((item) => item.id === entry.id)
@@ -384,7 +455,7 @@ export function useImageHistory() {
           continue
         }
         if (blobUrlsRef.current[result.id]) continue
-        if (!mountedRef.current) return
+        if (!isCurrentOwner()) return
         let objectUrl: string
         try {
           objectUrl = createManagedObjectUrl(blob)
@@ -395,7 +466,7 @@ export function useImageHistory() {
           .find((item) => item.id === entry.id)
           ?.results.find((item) => item.id === result.id)
         if (
-          !mountedRef.current ||
+          !isCurrentOwner() ||
           !confirmed ||
           confirmed.type !== 'blob' ||
           confirmed.blobKey !== result.blobKey
@@ -410,7 +481,7 @@ export function useImageHistory() {
         commitBlobUrls({ ...blobUrlsRef.current, [result.id]: objectUrl })
       }
     }
-  }, [commitBlobUrls])
+  }, [commitBlobUrls, isCurrentOwner, ownerId])
 
   useEffect(() => {
     void restoreBlobUrls()
@@ -425,8 +496,11 @@ export function useImageHistory() {
 
   useEffect(() => {
     mountedRef.current = true
+    const fetchControllers = fetchControllersRef.current
     return () => {
       mountedRef.current = false
+      for (const controller of fetchControllers) controller.abort()
+      fetchControllers.clear()
       for (const url of Object.values(blobUrlsRef.current)) {
         try {
           revokeManagedObjectUrl(url)
@@ -437,10 +511,12 @@ export function useImageHistory() {
     }
   }, [])
 
-  const visibleEntries = filterHistoryEntries(entries, query, orientation)
+  const ownedEntries =
+    entriesEpoch === ownerEpoch && isCurrentOwner() ? entries : []
+  const visibleEntries = filterHistoryEntries(ownedEntries, query, orientation)
 
   return {
-    entries,
+    entries: ownedEntries,
     visibleEntries,
     query,
     setQuery,

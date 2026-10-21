@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -12,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"gorm.io/gorm"
 )
 
 type TaskStatus string
@@ -48,24 +50,28 @@ const (
 const TaskRefundLegacyCutoff int64 = 1771718400 // 2026-02-22 00:00:00 UTC
 
 type Task struct {
-	ID         int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
-	CreatedAt  int64                 `json:"created_at" gorm:"index"`
-	UpdatedAt  int64                 `json:"updated_at"`
-	TaskID     string                `json:"task_id" gorm:"type:varchar(191);index"` // 第三方id，不一定有/ song id\ Task id
-	Platform   constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
-	UserId     int                   `json:"user_id" gorm:"index"`
-	Group      string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
-	ChannelId  int                   `json:"channel_id" gorm:"index"`
-	Quota      int                   `json:"quota"`
-	Action     string                `json:"action" gorm:"type:varchar(40);index"` // 任务类型, song, lyrics, description-mode
-	Status     TaskStatus            `json:"status" gorm:"type:varchar(20);index"` // 任务状态
-	FailReason string                `json:"fail_reason"`
-	SubmitTime int64                 `json:"submit_time" gorm:"index"`
-	StartTime  int64                 `json:"start_time" gorm:"index"`
-	FinishTime int64                 `json:"finish_time" gorm:"index"`
-	Progress   string                `json:"progress" gorm:"type:varchar(20);index"`
-	Properties Properties            `json:"properties" gorm:"type:json"`
-	Username   string                `json:"username,omitempty" gorm:"-"`
+	ID        int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
+	CreatedAt int64                 `json:"created_at" gorm:"index"`
+	UpdatedAt int64                 `json:"updated_at"`
+	TaskID    string                `json:"task_id" gorm:"type:varchar(191);index"` // 第三方id，不一定有/ song id\ Task id
+	Platform  constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
+	UserId    int                   `json:"user_id" gorm:"index"`
+	Group     string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
+	ChannelId int                   `json:"channel_id" gorm:"index"`
+	Quota     int                   `json:"quota"`
+	// SettlementPending keeps completed tasks discoverable until their main-DB
+	// funding, token and usage transaction commits. Old rows may contain NULL.
+	SettlementPending     bool       `json:"-" gorm:"index"`
+	SettlementAttemptedAt int64      `json:"-" gorm:"index"`
+	Action                string     `json:"action" gorm:"type:varchar(40);index"` // 任务类型, song, lyrics, description-mode
+	Status                TaskStatus `json:"status" gorm:"type:varchar(20);index"` // 任务状态
+	FailReason            string     `json:"fail_reason"`
+	SubmitTime            int64      `json:"submit_time" gorm:"index"`
+	StartTime             int64      `json:"start_time" gorm:"index"`
+	FinishTime            int64      `json:"finish_time" gorm:"index"`
+	Progress              string     `json:"progress" gorm:"type:varchar(20);index"`
+	Properties            Properties `json:"properties" gorm:"type:json"`
+	Username              string     `json:"username,omitempty" gorm:"-"`
 	// 禁止返回给用户，内部可能包含key等隐私信息
 	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
 	Data        json.RawMessage `json:"data" gorm:"type:json"`
@@ -118,11 +124,12 @@ type TaskPrivateData struct {
 	// RequestId 提交请求的账本引用（预扣费 reference），用于返利对账。
 	RequestId string `json:"request_id,omitempty"`
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
-	BillingSource  string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
-	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
-	TokenId        int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
-	NodeName       string              `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
-	BillingContext *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
+	BillingSource           string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
+	SubscriptionId          int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
+	SubscriptionQuotaPeriod int64               `json:"subscription_quota_period,omitempty"`
+	TokenId                 int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
+	NodeName                string              `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
+	BillingContext          *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
 	// WalletDebit 钱包计费各账户实际扣减份额（按扣减顺序），异步结算补扣时
 	// 累计更新；退款按此精确退回原账户。为空表示纯 paid 计费（兼容旧数据）。
 	WalletDebit []LedgerShare `json:"wallet_debit,omitempty"`
@@ -141,6 +148,21 @@ type TaskPrivateData struct {
 	// and every retrieval surface treats the task as not found. The zero
 	// value keeps historical rows retained and retrievable.
 	ResultDiscarded bool `json:"result_discarded,omitempty"`
+	// PendingSettlement is frozen with the submit/terminal observation, not
+	// recomputed from a new plugin or new pricing after a restart.
+	PendingSettlement   *TaskSettlement `json:"pending_settlement,omitempty"`
+	SubmissionAccounted bool            `json:"submission_accounted,omitempty"`
+}
+
+// TaskSettlement is private durable financial intent. Phase separates the
+// submission adjustment from the later terminal adjustment of the same task.
+// No credentials or upstream payloads belong in this record.
+type TaskSettlement struct {
+	Phase     string             `json:"phase"`
+	Quota     int                `json:"quota"`
+	Reason    *common.Message    `json:"reason,omitempty"`
+	Clamp     *common.QuotaClamp `json:"clamp,omitempty"`
+	SkipFunds bool               `json:"skip_funds,omitempty"`
 }
 
 type TaskExecutionSnapshot struct {
@@ -241,6 +263,7 @@ func GenerateTaskID() string {
 }
 
 func (p *TaskPrivateData) Scan(val any) error {
+	*p = TaskPrivateData{}
 	bytesValue := jsonScanBytes(val)
 	if len(bytesValue) == 0 {
 		return nil
@@ -250,10 +273,10 @@ func (p *TaskPrivateData) Scan(val any) error {
 
 func (p TaskPrivateData) Value() (driver.Value, error) {
 	if p.Key == "" && p.UpstreamTaskID == "" && p.ResultURL == "" && p.Execution == nil &&
-		p.BillingSource == "" && p.SubscriptionId == 0 && p.TokenId == 0 &&
+		p.BillingSource == "" && p.SubscriptionId == 0 && p.SubscriptionQuotaPeriod == 0 && p.TokenId == 0 &&
 		p.NodeName == "" && p.BillingContext == nil && len(p.WalletDebit) == 0 &&
 		p.RequestId == "" && !p.ResponsesBackground &&
-		len(p.PluginState) == 0 && p.PollFailures == 0 && !p.ResultDiscarded {
+		len(p.PluginState) == 0 && p.PollFailures == 0 && !p.ResultDiscarded && p.PendingSettlement == nil && !p.SubmissionAccounted {
 		return nil, nil
 	}
 	// 同 Properties.Value:string 避免 PG simple protocol 的 bytea 编码。
@@ -434,9 +457,7 @@ func GetAllUnFinishSyncTasks(limit int) []*Task {
 func HasUnfinishedSyncTasks() bool {
 	var id int64
 	err := DB.Model(&Task{}).
-		Where("progress != ?", "100%").
-		Where("status != ?", TaskStatusFailure).
-		Where("status != ?", TaskStatusSuccess).
+		Where("settlement_pending = ? OR (progress != ? AND status NOT IN ?)", true, "100%", []TaskStatus{TaskStatusFailure, TaskStatusSuccess}).
 		Limit(1).
 		Pluck("id", &id).Error
 	return err == nil && id != 0
@@ -580,8 +601,19 @@ func (Task *Task) Update() error {
 	return err
 }
 
-func (t *Task) UpdateQuota() error {
-	return DB.Model(t).Update("quota", t.Quota).Error
+// UpdateBillingStateTx commits the final quota and its wallet receipt together.
+// The previous quota guards against a stale observer applying the same token or
+// subscription adjustment twice. A failed update rolls back the caller's funds.
+func (t *Task) UpdateBillingStateTx(tx *gorm.DB, previousQuota int) error {
+	result := tx.Model(&Task{}).Where("id = ? AND quota = ?", t.ID, previousQuota).
+		Select("quota", "private_data").Updates(t)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("task billing state changed for task %s", t.TaskID)
+	}
+	return nil
 }
 
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).
@@ -594,18 +626,69 @@ func (t *Task) UpdateQuota() error {
 // falls back to INSERT ON CONFLICT when the WHERE-guarded UPDATE matches
 // zero rows, which silently bypasses the CAS guard.
 func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
-	// GORM may write timestamps and serialized fields back to the value passed to
-	// Updates. Use a snapshot so polling observers can safely read the in-memory
-	// task while the conditional database update is running.
-	updateSnapshot := *t
-	result := DB.Model(&Task{}).
-		Where("id = ? AND status = ?", t.ID, fromStatus).
-		Select("*").
-		Updates(&updateSnapshot)
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected > 0, nil
+	won := false
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var stored Task
+		if err := lockForUpdate(tx).First(&stored, t.ID).Error; err != nil {
+			return err
+		}
+		if stored.Status != fromStatus {
+			return nil
+		}
+		pendingSubmission := stored.SettlementPending && stored.PrivateData.PendingSettlement != nil &&
+			stored.PrivateData.PendingSettlement.Phase == "submit" &&
+			stored.Status != TaskStatusSuccess && stored.Status != TaskStatusFailure
+		terminal := t.Status == TaskStatusSuccess || t.Status == TaskStatusFailure
+		replaceSubmission := pendingSubmission && terminal && t.SettlementPending && t.PrivateData.PendingSettlement != nil
+		if stored.SettlementPending && !replaceSubmission && !(pendingSubmission && !terminal) {
+			return nil
+		}
+		if (stored.Status == TaskStatusSuccess || stored.Status == TaskStatusFailure) && t.Status != stored.Status {
+			return nil
+		}
+		// A stale poll/query must not overwrite a submission adjustment's
+		// committed quota or receipt. Keep financial fields from the locked row.
+		updateSnapshot := *t
+		updateSnapshot.Quota = stored.Quota
+		updateSnapshot.PrivateData.WalletDebit = stored.PrivateData.WalletDebit
+		updateSnapshot.PrivateData.SubmissionAccounted = stored.PrivateData.SubmissionAccounted
+		updateSnapshot.SettlementAttemptedAt = stored.SettlementAttemptedAt
+		if !terminal {
+			// Progress/plugin state can advance while a provisional submit top-up
+			// is pending, but a stale observer cannot resurrect a cleared intent.
+			updateSnapshot.SettlementPending = stored.SettlementPending
+			updateSnapshot.PrivateData.PendingSettlement = stored.PrivateData.PendingSettlement
+		}
+		if replaceSubmission {
+			intent := *updateSnapshot.PrivateData.PendingSettlement
+			if !intent.SkipFunds {
+				intent.Phase = "submit"
+			}
+			updateSnapshot.PrivateData.PendingSettlement = &intent
+		}
+		guard := tx.Model(&Task{}).Where("id = ? AND status = ?", t.ID, fromStatus)
+		if stored.SettlementPending {
+			guard = guard.Where("settlement_pending = ?", true)
+		} else {
+			guard = guard.Where("settlement_pending = ? OR settlement_pending IS NULL", false)
+		}
+		result := guard.
+			Select("*").Updates(&updateSnapshot)
+		if result.Error != nil {
+			return result.Error
+		}
+		won = result.RowsAffected > 0
+		if won {
+			t.Quota = updateSnapshot.Quota
+			t.PrivateData.WalletDebit = updateSnapshot.PrivateData.WalletDebit
+			t.PrivateData.SubmissionAccounted = updateSnapshot.PrivateData.SubmissionAccounted
+			t.PrivateData.PendingSettlement = updateSnapshot.PrivateData.PendingSettlement
+			t.SettlementPending = updateSnapshot.SettlementPending
+			t.SettlementAttemptedAt = updateSnapshot.SettlementAttemptedAt
+		}
+		return nil
+	})
+	return won, err
 }
 
 // TaskBulkUpdateByID performs an unconditional bulk UPDATE by primary key IDs.

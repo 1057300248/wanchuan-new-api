@@ -413,15 +413,18 @@ func TestIdempotencySignatureCoversOverrideTransferAndDebitOrder(t *testing.T) {
 	require.ErrorIs(t, err, ErrLedgerIdempotencyConflict)
 }
 
-func TestInsertLinuxDOWithTxCreditsFiveDollarsOnce(t *testing.T) {
+func TestInsertLinuxDOWithTxCreditsThreeDollarsOnce(t *testing.T) {
 	setupLedgerTestState(t)
 	previousEnabled := common.SignupBonusEnabled
 	previousQuota := common.QuotaForSignupBonus
+	previousQuotaPerUnit := common.QuotaPerUnit
 	common.SignupBonusEnabled = true
 	common.QuotaForSignupBonus = 1234
+	common.QuotaPerUnit = 500000
 	t.Cleanup(func() {
 		common.SignupBonusEnabled = previousEnabled
 		common.QuotaForSignupBonus = previousQuota
+		common.QuotaPerUnit = previousQuotaPerUnit
 	})
 
 	user := &User{Username: "ledger-new-user", Password: "Cedar-river-782!quiet", Status: common.UserStatusEnabled}
@@ -432,8 +435,8 @@ func TestInsertLinuxDOWithTxCreditsFiveDollarsOnce(t *testing.T) {
 	// P1-1：注册赠金进入 bonus 账户，reason 为 signup_bonus，不进入 paid。
 	created := getUserBalances(t, user.Id)
 	assert.Zero(t, created.QuotaPaid)
-	assert.Equal(t, 2500000, created.QuotaBonus)
-	assert.Equal(t, 2500000, created.Quota)
+	assert.Equal(t, 1500000, created.QuotaBonus)
+	assert.Equal(t, 1500000, created.Quota)
 	assertQuotaInvariant(t, created)
 	assert.Equal(t, int64(1), countLedgerRows(t, "credit:linuxdo_signup:88001"))
 	var rows []BalanceLedger
@@ -777,9 +780,8 @@ func TestTopupDuplicateCallbackNoDoubleCredit(t *testing.T) {
 	// 第一次回调成功入账
 	require.NoError(t, Recharge("LEDGER-TN-1", "cus-1", "127.0.0.1"))
 
-	// 重复回调：订单状态非 pending，直接失败，不重复入账
-	err := Recharge("LEDGER-TN-1", "cus-1", "127.0.0.1")
-	require.Error(t, err)
+	// 重复回调返回成功，让支付平台停止重试，但不重复入账。
+	require.NoError(t, Recharge("LEDGER-TN-1", "cus-1", "127.0.0.1"))
 
 	// 账本幂等键兜底：同一 trade_no 只有一行
 	assert.Equal(t, int64(1), countLedgerRows(t, "credit:topup:LEDGER-TN-1"))

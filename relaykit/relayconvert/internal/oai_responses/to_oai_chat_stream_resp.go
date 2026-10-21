@@ -33,6 +33,7 @@ type ResponsesToChatStreamState struct {
 	pendingArgsByOutputIndex   map[int]string
 	pendingArgsByItemID        map[string]string
 	captureUsageText           bool
+	hasUsageText               bool
 	usageText                  strings.Builder
 }
 
@@ -76,9 +77,18 @@ func newResponsesToChatStreamState(model string, includeUsage bool, captureUsage
 }
 
 func (s *ResponsesToChatStreamState) appendUsageText(text string) {
+	if text != "" {
+		s.hasUsageText = true
+	}
 	if s.captureUsageText {
 		s.usageText.WriteString(text)
 	}
+}
+
+// HasUsageText distinguishes generated text, reasoning and tool output from
+// a role-only prelude even when the caller opts out of retaining the text.
+func (s *ResponsesToChatStreamState) HasUsageText() bool {
+	return s != nil && s.hasUsageText
 }
 
 func (s *ResponsesToChatStreamState) StreamUsage() *dto.Usage {

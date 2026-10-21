@@ -25,21 +25,6 @@ end
 redis.call('HINCRBY', KEYS[1], 'Quota', ARGV[1])
 return 1`
 
-const tokenQuotaReserveScript = `
-if tonumber(redis.call('HGET', KEYS[1], 'Id') or '0') ~= tonumber(ARGV[2])
-  or redis.call('HEXISTS', KEYS[1], 'RemainQuota') == 0
-  or redis.call('HEXISTS', KEYS[1], 'UsedQuota') == 0 then
-  return -1
-end
-local remain = tonumber(redis.call('HGET', KEYS[1], 'RemainQuota'))
-if remain == nil or remain < tonumber(ARGV[1]) then
-  return 0
-end
-redis.call('HINCRBY', KEYS[1], 'RemainQuota', -tonumber(ARGV[1]))
-redis.call('HINCRBY', KEYS[1], 'UsedQuota', tonumber(ARGV[1]))
-redis.call('HSET', KEYS[1], 'AccessedTime', ARGV[3])
-return 1`
-
 const tokenQuotaDeltaScript = `
 if tonumber(redis.call('HGET', KEYS[1], 'Id') or '0') ~= tonumber(ARGV[2])
   or redis.call('HEXISTS', KEYS[1], 'RemainQuota') == 0
@@ -71,12 +56,6 @@ func cacheApplyUserQuotaDelta(userID int, delta int64) (cacheQuotaResult, error)
 	return quotaResultFromLua(result, err)
 }
 
-func cacheTryReserveTokenQuota(id int, key string, amount int64) (cacheQuotaResult, error) {
-	result, err := common.RDB.Eval(context.Background(), tokenQuotaReserveScript,
-		[]string{getTokenCacheKey(key)}, amount, id, common.GetTimestamp()).Int()
-	return quotaResultFromLua(result, err)
-}
-
 func cacheApplyTokenQuotaDelta(id int, key string, delta int64) (cacheQuotaResult, error) {
 	result, err := common.RDB.Eval(context.Background(), tokenQuotaDeltaScript,
 		[]string{getTokenCacheKey(key)}, delta, id, common.GetTimestamp()).Int()
@@ -98,27 +77,6 @@ func TryReserveUserQuota(id int, quota int) (bool, error) {
 	return false, ErrUserQuotaReserveUnavailable
 }
 
-func persistTokenQuotaDelta(id int, delta int) error {
-	if common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeTokenQuota, id, delta)
-		return nil
-	}
-	result := DB.Model(&Token{}).Where("id = ?", id).Updates(
-		map[string]any{
-			"remain_quota":  gorm.Expr("remain_quota + ?", delta),
-			"used_quota":    gorm.Expr("used_quota - ?", delta),
-			"accessed_time": common.GetTimestamp(),
-		},
-	)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
-}
-
 func reserveTokenQuotaDB(id int, quota int) (bool, error) {
 	result := DB.Model(&Token{}).
 		Where("id = ? AND remain_quota >= ?", id, quota).
@@ -130,8 +88,10 @@ func reserveTokenQuotaDB(id int, quota int) (bool, error) {
 	return result.RowsAffected == 1, result.Error
 }
 
-// TryReserveTokenQuota atomically checks and deducts a token quota. Unlimited
-// tokens skip the balance check but still update remain/used accounting.
+// TryReserveTokenQuota atomically checks and deducts a token quota. Every token
+// mutation writes through to the database, even when usage statistics are
+// batched: invalidating a shared token cache must not erase another request's
+// unpersisted reservation. Unlimited tokens skip only the balance check.
 func TryReserveTokenQuota(id int, key string, quota int, unlimited bool) (bool, error) {
 	if quota < 0 {
 		return false, errors.New("quota cannot be negative")
@@ -140,33 +100,23 @@ func TryReserveTokenQuota(id int, key string, quota int, unlimited bool) (bool, 
 		return true, nil
 	}
 	if unlimited {
-		return true, DecreaseTokenQuota(id, key, quota)
+		err := applyTokenQuotaDelta(id, key, -quota)
+		return err == nil, err
 	}
-	if !common.RedisEnabled {
-		return reserveTokenQuotaDB(id, quota)
+	// Redis is a derived read cache, never the authorization to spend. The
+	// conditional database update also protects against a concurrent cache
+	// invalidation while another reservation is waiting to persist.
+	if err := invalidateTokenCacheForMutation(key); err != nil {
+		common.SysLog("failed to invalidate token quota cache before reservation: " + err.Error())
 	}
+	return reserveTokenQuotaDB(id, quota)
+}
 
-	result, err := cacheTryReserveTokenQuota(id, key, int64(quota))
-	if err == nil && result == cacheQuotaMiss {
-		if _, hydrateErr := GetTokenByKey(key, true); hydrateErr == nil {
-			result, err = cacheTryReserveTokenQuota(id, key, int64(quota))
-		}
-	}
-	if err != nil || result == cacheQuotaMiss {
-		if err != nil {
-			common.SysLog(common.LogText("token quota cache reserve unavailable, falling back to database: %s", err.Error()))
-		}
-		return reserveTokenQuotaDB(id, quota)
-	}
-	if result == cacheQuotaInsufficient {
-		return false, nil
-	}
-	if err = persistTokenQuotaDelta(id, -quota); err != nil {
-		compensated, compensateErr := cacheApplyTokenQuotaDelta(id, key, int64(quota))
-		if compensateErr != nil || compensated != cacheQuotaOK {
-			common.SysError(common.LogText("failed to compensate reserved token quota: result=%d error=%v", compensated, compensateErr))
-		}
-		return false, err
-	}
-	return true, nil
+// applyTokenQuotaDelta fences the derived cache and commits the counter before
+// returning. No speculative credit or detached cache delta can race a rollback,
+// task settlement or rehydration. User/channel usage statistics may still batch.
+func applyTokenQuotaDelta(id int, key string, delta int) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		return ApplyTokenQuotaDeltaTx(tx, id, key, delta)
+	})
 }

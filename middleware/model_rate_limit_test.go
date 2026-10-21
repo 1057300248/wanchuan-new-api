@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -53,14 +55,14 @@ func TestModelRateLimitStreamFailuresDoNotConsumeSuccessLimit(t *testing.T) {
 	for _, backend := range []string{"memory", "redis"} {
 		for _, totalLimit := range []int{0, 2} {
 			t.Run(fmt.Sprintf("%s/total=%d", backend, totalLimit), func(t *testing.T) {
-				userID := 7200000 + int(modelRateLimitTestUsers.Add(1))
-				handler := memoryRateLimitHandler(60, totalLimit, 1)
+				subject := strconv.Itoa(7200000 + int(modelRateLimitTestUsers.Add(1)))
+				handler := memoryRateLimitHandler(subject, 60, totalLimit, 1)
 				if backend == "redis" {
 					useRateLimitMiniRedis(t)
-					handler = redisRateLimitHandler(60, totalLimit, 1)
+					handler = redisRateLimitHandler(subject, 60, totalLimit, 1)
 				}
 				router := gin.New()
-				router.GET("/:outcome", func(c *gin.Context) { c.Set("id", userID) }, handler, func(c *gin.Context) {
+				router.GET("/:outcome", handler, func(c *gin.Context) {
 					status := relaycommon.NewStreamStatus()
 					if c.Param("outcome") == "failed" {
 						status.MarkFailed("server_error", "", 0)
@@ -85,10 +87,11 @@ func TestModelRateLimitStreamFailuresDoNotConsumeSuccessLimit(t *testing.T) {
 func TestModelRateLimitReservesConcurrentSuccessAdmission(t *testing.T) {
 	for _, backend := range []string{"memory", "redis"} {
 		t.Run(backend, func(t *testing.T) {
-			handler := memoryRateLimitHandler(60, 0, 1)
+			subject := strconv.Itoa(7200000 + int(modelRateLimitTestUsers.Add(1)))
+			handler := memoryRateLimitHandler(subject, 60, 0, 1)
 			if backend == "redis" {
 				useRateLimitMiniRedis(t)
-				handler = redisRateLimitHandler(60, 0, 1)
+				handler = redisRateLimitHandler(subject, 60, 0, 1)
 			}
 			userID := 7200000 + int(modelRateLimitTestUsers.Add(1))
 			entered, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -216,6 +219,8 @@ func TestModelRedisRateLimitFailsClosedWithoutClobberingInvalidKeys(t *testing.T
 	assert.False(t, allowed)
 }
 
+// SCRIPT FLUSH clears the server-wide script cache: use a disposable Redis
+// instance dedicated to this test, never a shared cache or production service.
 func TestModelRateLimitRealRedis(t *testing.T) {
 	if os.Getenv("TEST_RUNTIME_REDIS") != "1" {
 		t.Skip("set TEST_RUNTIME_REDIS=1 for isolated real Redis verification")
@@ -229,7 +234,85 @@ func TestModelRateLimitRealRedis(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	require.NoError(t, client.Ping(ctx).Err())
-	checkModelRedisReservationContract(t, client)
+	t.Run("reservation_replay_and_expiry", func(t *testing.T) {
+		checkModelRedisReservationContract(t, client)
+	})
+	t.Run("script_flush_resumes_request_pipeline", func(t *testing.T) {
+		previousClient := common.RDB
+		common.RDB = client
+		t.Cleanup(func() { common.RDB = previousClient })
+		ctx := t.Context()
+		subject := "script-flush:" + uuid.NewString()
+		totalKey := "rateLimit:" + ModelRequestRateLimitCountMark + ":" + subject + ":v2"
+		successKey := "rateLimit:" + ModelRequestRateLimitSuccessCountMark + ":" + subject
+		t.Cleanup(func() {
+			keys, err := client.Keys(context.Background(), "rateLimit:*:"+subject+"*").Result()
+			require.NoError(t, err)
+			if len(keys) > 0 {
+				require.NoError(t, client.Del(context.Background(), keys...).Err())
+			}
+		})
+
+		handled := 0
+		router := gin.New()
+		router.GET("/:outcome", redisRateLimitHandler(subject, 60, 4, 2), func(c *gin.Context) {
+			handled++
+			if c.Param("outcome") == "failed" {
+				c.Status(http.StatusBadGateway)
+				return
+			}
+			if c.Param("outcome") == "flush-before-completion" {
+				// In-flight requests must finish accounting after Redis evicts scripts,
+				// not just requests admitted after the eviction.
+				require.NoError(t, client.ScriptFlush(ctx).Err())
+			}
+			c.Status(http.StatusOK)
+		})
+
+		// Warm all admission/completion scripts without consuming a success slot.
+		require.Equal(t, http.StatusBadGateway, performRateLimitRequest(router, "/failed", "127.0.0.1:1000").Code)
+		assertModelRedisRequestCounters(t, client, totalKey, successKey, 1, 0)
+		hashes := []string{modelTotalRequestScript.Hash(), modelSuccessReserveScript.Hash(), modelSuccessCompleteScript.Hash()}
+		exists, err := client.ScriptExists(ctx, hashes...).Result()
+		require.NoError(t, err)
+		require.Equal(t, []bool{true, true, true}, exists)
+		require.NoError(t, client.ScriptFlush(ctx).Err())
+		exists, err = client.ScriptExists(ctx, hashes...).Result()
+		require.NoError(t, err)
+		require.Equal(t, []bool{false, false, false}, exists)
+
+		require.Equal(t, http.StatusOK, performRateLimitRequest(router, "/flush-before-completion", "127.0.0.1:1000").Code)
+		assertModelRedisRequestCounters(t, client, totalKey, successKey, 2, 1)
+		require.Equal(t, http.StatusOK, performRateLimitRequest(router, "/completed", "127.0.0.1:1000").Code)
+		successLimited := performRateLimitRequest(router, "/completed", "127.0.0.1:1000")
+		require.Equal(t, http.StatusTooManyRequests, successLimited.Code)
+		assert.Contains(t, successLimited.Body.String(), "model_success_request_limit_exceeded")
+		totalLimited := performRateLimitRequest(router, "/completed", "127.0.0.1:1000")
+		require.Equal(t, http.StatusTooManyRequests, totalLimited.Code)
+		assert.Contains(t, totalLimited.Body.String(), "model_total_request_limit_exceeded")
+		assert.Equal(t, 3, handled, "rejected requests must not reach the upstream handler")
+		assertModelRedisRequestCounters(t, client, totalKey, successKey, 4, 2)
+		for _, key := range []string{totalKey, successKey} {
+			ttl, err := client.PTTL(ctx, key).Result()
+			require.NoError(t, err)
+			assert.Positive(t, ttl, "script recovery must retain counter expiry")
+			assert.LessOrEqual(t, ttl, time.Minute)
+		}
+	})
+}
+
+func assertModelRedisRequestCounters(t *testing.T, client *redis.Client, totalKey, successKey string, attempts, successes int64) {
+	t.Helper()
+	ctx := t.Context()
+	pipe := client.Pipeline()
+	total := pipe.ZCard(ctx, totalKey)
+	completed := pipe.LLen(ctx, successKey)
+	pending := pipe.ZCard(ctx, successKey+":pending-v2")
+	_, err := pipe.Exec(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, attempts, total.Val())
+	assert.Equal(t, successes, completed.Val())
+	assert.Zero(t, pending.Val(), "finished requests must release all leased admissions")
 }
 
 // The memory limiter answers like the Redis limiter: an OpenAI error body
@@ -244,12 +327,11 @@ func TestModelMemoryRateLimitRejectionsReturnOpenAIError(t *testing.T) {
 		{name: "success", successLimit: 1, messageKey: "model_success_request_limit_exceeded"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			userID := 7200000 + int(modelRateLimitTestUsers.Add(1))
+			subject := strconv.Itoa(7200000 + int(modelRateLimitTestUsers.Add(1)))
 			router := gin.New()
 			router.GET("/", func(c *gin.Context) {
-				c.Set("id", userID)
 				c.Set(common.RequestIdKey, "req-limited")
-			}, memoryRateLimitHandler(60, tc.totalLimit, tc.successLimit), func(c *gin.Context) {
+			}, memoryRateLimitHandler(subject, 60, tc.totalLimit, tc.successLimit), func(c *gin.Context) {
 				c.Status(http.StatusOK)
 			})
 			require.Equal(t, http.StatusOK, performRateLimitRequest(router, "/", "127.0.0.1:1000").Code)
@@ -264,6 +346,60 @@ func TestModelMemoryRateLimitRejectionsReturnOpenAIError(t *testing.T) {
 			}})
 			require.NoError(t, err)
 			assert.JSONEq(t, string(want), resp.Body.String())
+		})
+	}
+}
+
+// A group with its own limit counts each user's requests on its own; groups
+// without one keep sharing the user's global limit.
+func TestModelRateLimitCountsConfiguredGroupsSeparately(t *testing.T) {
+	previousEnabled, previousMinutes := setting.ModelRequestRateLimitEnabled, setting.ModelRequestRateLimitDurationMinutes
+	previousTotal, previousSuccess := setting.ModelRequestRateLimitCount, setting.ModelRequestRateLimitSuccessCount
+	previousGroups, previousRedisEnabled := setting.ModelRequestRateLimitGroup, common.RedisEnabled
+	t.Cleanup(func() {
+		setting.ModelRequestRateLimitEnabled, setting.ModelRequestRateLimitDurationMinutes = previousEnabled, previousMinutes
+		setting.ModelRequestRateLimitCount, setting.ModelRequestRateLimitSuccessCount = previousTotal, previousSuccess
+		setting.ModelRequestRateLimitGroup, common.RedisEnabled = previousGroups, previousRedisEnabled
+	})
+	setting.ModelRequestRateLimitEnabled, setting.ModelRequestRateLimitDurationMinutes = true, 1
+	common.RedisEnabled = false
+
+	// Groups a and b have their own limits; c and d have none and share the global one.
+	steps := []struct {
+		group string
+		want  int
+	}{
+		{"a", http.StatusOK}, {"a", http.StatusTooManyRequests},
+		{"b", http.StatusOK}, {"b", http.StatusTooManyRequests},
+		{"c", http.StatusOK}, {"d", http.StatusTooManyRequests},
+	}
+	for _, tc := range []struct {
+		backend, limit string
+		counts         [2]int // [total, success] for groups a and b and for the global limit
+	}{
+		{"memory", "success", [2]int{0, 1}},
+		{"redis", "success", [2]int{0, 1}},
+		{"memory", "total", [2]int{1, 1000}},
+		{"redis", "total", [2]int{1, 1000}},
+	} {
+		t.Run(tc.backend+"/"+tc.limit, func(t *testing.T) {
+			if tc.backend == "redis" {
+				useRateLimitMiniRedis(t)
+			}
+			setting.ModelRequestRateLimitCount, setting.ModelRequestRateLimitSuccessCount = tc.counts[0], tc.counts[1]
+			setting.ModelRequestRateLimitGroup = map[string][2]int{"a": tc.counts, "b": tc.counts}
+			userID := 7200000 + int(modelRateLimitTestUsers.Add(1))
+			router := gin.New()
+			router.GET("/:group", func(c *gin.Context) {
+				c.Set("id", userID)
+				common.SetContextKey(c, constant.ContextKeyTokenGroup, c.Param("group"))
+			}, ModelRequestRateLimit(), func(c *gin.Context) {
+				c.Status(http.StatusOK)
+			})
+
+			for _, step := range steps {
+				assert.Equal(t, step.want, performRateLimitRequest(router, "/"+step.group, "127.0.0.1:1000").Code, "group %s", step.group)
+			}
 		})
 	}
 }

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "stage": "incremental-clean-rebuild",
+  "production_baseline": {
+    "repository": "1057300248/wanchuan-new-api",
+    "commit": "093c7197d5eac50787971fd5ff7553a414142fc7",
+    "tree": "c95f344510ce914c810f51cc8bdff5112934d038"
+  },
+  "feature_reference": {
+    "pull_request": 17,
+    "commit": "da88d8f977f8cbbd12561556344b90a0e94530e1",
+    "tree": "709f4d5c02098b7eb41b173a1271a350861d81be"
+  },
+  "upstream_reference": {
+    "repository": "QuantumNous/new-api",
+    "commit": "206e0fa5c600127a314a97f88592c067f784f4a6",
+    "release_tag": "v1.0.0-rc.45",
+    "release_commit": "6cf0d90b5ff27f901697dddd61e0c28aba8efefc",
+    "commits_after_release": 16,
+    "alignment_method": "Incremental feature ports, not a literal merge of the upstream commit history."
+  },
+  "version": "v1.0.0-rc.45.chuanapi.1",
+  "scope": "Incremental ports from immutable production source; not a release, merge or deployment authorization. Feature parity is not asserted by this manifest."
+}

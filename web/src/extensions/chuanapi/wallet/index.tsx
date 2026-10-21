@@ -112,6 +112,7 @@ export function Wallet(_props: WalletProps) {
     calculating,
     processing,
     calculatePaymentAmount,
+    isQuoteCurrent,
     processPayment,
   } = usePayment()
   const { redeeming, redeemCode } = useRedemption()
@@ -142,6 +143,7 @@ export function Wallet(_props: WalletProps) {
     void fetchUser()
   }, [fetchUser])
 
+  const paymentSelectionRef = useRef(0)
   const topupAmountInitializedRef = useRef(false)
   const refreshBalancesPromiseRef = useRef<Promise<void> | null>(null)
   useEffect(() => {
@@ -192,18 +194,23 @@ export function Wallet(_props: WalletProps) {
   )
 
   const handleSelectPreset = (preset: PresetAmount) => {
+    paymentSelectionRef.current += 1
+    setPaymentLoading(null)
     setTopupAmount(preset.value)
     setSelectedPreset(preset.value)
     void calculatePaymentAmount(preset.value, getCurrentPaymentType())
   }
 
   const handleTopupAmountChange = (amount: number) => {
+    paymentSelectionRef.current += 1
+    setPaymentLoading(null)
     setTopupAmount(amount)
     setSelectedPreset(null)
     void calculatePaymentAmount(amount, getCurrentPaymentType())
   }
 
   const handlePaymentMethodSelect = async (method: PaymentMethod) => {
+    const selection = ++paymentSelectionRef.current
     setSelectedPaymentMethod(method)
     setSelectedWaffoMethodIndex(null)
     setPaymentLoading(method.type)
@@ -212,14 +219,24 @@ export function Wallet(_props: WalletProps) {
       if (topupAmount < getMinTopupAmount(topupInfo)) return
 
       await calculatePaymentAmount(topupAmount, method.type)
-      setConfirmDialogOpen(true)
+      if (
+        selection === paymentSelectionRef.current &&
+        isQuoteCurrent(topupAmount, method.type)
+      ) {
+        setConfirmDialogOpen(true)
+      }
     } finally {
-      setPaymentLoading(null)
+      if (selection === paymentSelectionRef.current) setPaymentLoading(null)
     }
   }
 
   const handlePaymentConfirm = async () => {
-    if (!selectedPaymentMethod) return
+    if (
+      !selectedPaymentMethod ||
+      !isQuoteCurrent(topupAmount, selectedPaymentMethod.type)
+    ) {
+      return
+    }
 
     const success = await dispatchSelectedPayment(
       selectedPaymentMethod,
@@ -275,6 +292,7 @@ export function Wallet(_props: WalletProps) {
     method: WaffoPayMethod,
     index: number
   ) => {
+    const selection = ++paymentSelectionRef.current
     const loadingKey = `waffo-${index}`
     setSelectedPaymentMethod({
       name: method.name,
@@ -286,9 +304,14 @@ export function Wallet(_props: WalletProps) {
 
     try {
       await calculatePaymentAmount(topupAmount, PAYMENT_TYPES.WAFFO)
-      setConfirmDialogOpen(true)
+      if (
+        selection === paymentSelectionRef.current &&
+        isQuoteCurrent(topupAmount, PAYMENT_TYPES.WAFFO)
+      ) {
+        setConfirmDialogOpen(true)
+      }
     } finally {
-      setPaymentLoading(null)
+      if (selection === paymentSelectionRef.current) setPaymentLoading(null)
     }
   }
 
@@ -380,6 +403,10 @@ export function Wallet(_props: WalletProps) {
         paymentAmount={paymentAmount}
         paymentMethod={selectedPaymentMethod}
         calculating={calculating}
+        quoteValid={
+          !!selectedPaymentMethod &&
+          isQuoteCurrent(topupAmount, selectedPaymentMethod.type)
+        }
         processing={processing || waffoProcessing || pancakeProcessing}
         discountRate={discountRate}
         usdExchangeRate={effectiveUsdExchangeRate}

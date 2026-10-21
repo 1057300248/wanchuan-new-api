@@ -37,8 +37,8 @@ func TestCacheControlByPath(t *testing.T) {
 		target   string
 		expected string
 	}{
-		{name: "root is revalidated", target: "/", expected: "no-cache"},
-		{name: "root with query string is revalidated", target: "/?v=123&lang=en", expected: "no-cache"},
+		{name: "root is not stored", target: "/", expected: "no-store"},
+		{name: "root with query string is not stored", target: "/?v=123&lang=en", expected: "no-store"},
 		{name: "static bundle is immutable", target: "/static/app.js", expected: "public,max-age=31536000,immutable"},
 		{name: "static bundle with query is immutable", target: "/static/app.js?v=123", expected: "public,max-age=31536000,immutable"},
 		{name: "other web asset uses one week", target: "/logo.png", expected: "public,max-age=604800"},
@@ -50,6 +50,7 @@ func TestCacheControlByPath(t *testing.T) {
 			require.Equal(t, http.StatusOK, recorder.Code)
 			require.Equal(t, tc.expected, recorder.Header().Get("Cache-Control"))
 			require.NotEmpty(t, recorder.Header().Get("Cache-Version"))
+			require.Equal(t, "nosniff", recorder.Header().Get("X-Content-Type-Options"))
 		})
 	}
 }

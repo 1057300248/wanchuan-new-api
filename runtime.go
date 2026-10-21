@@ -40,7 +40,7 @@ func (app *applicationRuntime) Start(balanceInterval time.Duration, enablePprof 
 		app.workers.Go("authorization-policy-sync", func(schedule, work context.Context) {
 			lifecycle.Periodic(schedule, work, func() time.Duration { return time.Duration(common.SyncFrequency) * time.Second }, false, func(context.Context) {
 				if err := authz.ReloadPolicy(); err != nil {
-					common.SysError("authorization policy refresh failed: " + common.MaskSensitiveInfo(err.Error()))
+					common.SysError("authorization policy refresh failed: " + common.MaskSensitiveLogInfo(err.Error()))
 				}
 			})
 		})
@@ -135,7 +135,7 @@ func (app *applicationRuntime) Shutdown(server *http.Server) bool {
 	select {
 	case err := <-done:
 		if err != nil {
-			common.SysError("runtime finalization failed: " + common.MaskSensitiveInfo(err.Error()))
+			common.SysError("runtime finalization failed: " + common.MaskSensitiveLogInfo(err.Error()))
 			return false
 		}
 		return true

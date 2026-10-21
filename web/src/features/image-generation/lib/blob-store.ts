@@ -17,6 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { IMAGE_BLOB_STORE_NAME } from '../constants'
+import {
+  getImageHistoryOwnerId,
+  imageHistoryStorageKey,
+} from '../storage/history-owner'
 
 const DB_NAME = 'image-generation-db'
 const DB_VERSION = 1
@@ -41,12 +45,21 @@ function openDatabase(): Promise<IDBDatabase> {
   })
 }
 
-export async function saveImageBlob(key: string, blob: Blob): Promise<void> {
+export async function saveImageBlob(
+  key: string,
+  blob: Blob,
+  ownerId = getImageHistoryOwnerId()
+): Promise<void> {
+  const ownerKey = imageHistoryStorageKey(ownerId)
+  if (!ownerKey) {
+    throw new Error('Image history requires an authenticated owner')
+  }
+  const scopedKey = `${ownerKey}:${key}`
   const db = await openDatabase()
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(IMAGE_BLOB_STORE_NAME, 'readwrite')
-      tx.objectStore(IMAGE_BLOB_STORE_NAME).put(blob, key)
+      tx.objectStore(IMAGE_BLOB_STORE_NAME).put(blob, scopedKey)
       tx.addEventListener('complete', () => resolve())
       tx.addEventListener('error', () =>
         reject(tx.error ?? new Error('Failed to save blob'))
@@ -57,12 +70,18 @@ export async function saveImageBlob(key: string, blob: Blob): Promise<void> {
   }
 }
 
-export async function loadImageBlob(key: string): Promise<Blob | null> {
+export async function loadImageBlob(
+  key: string,
+  ownerId = getImageHistoryOwnerId()
+): Promise<Blob | null> {
+  const ownerKey = imageHistoryStorageKey(ownerId)
+  if (!ownerKey) return null
+  const scopedKey = `${ownerKey}:${key}`
   const db = await openDatabase()
   try {
     return await new Promise<Blob | null>((resolve, reject) => {
       const tx = db.transaction(IMAGE_BLOB_STORE_NAME, 'readonly')
-      const request = tx.objectStore(IMAGE_BLOB_STORE_NAME).get(key)
+      const request = tx.objectStore(IMAGE_BLOB_STORE_NAME).get(scopedKey)
       request.addEventListener('success', () => {
         const value = request.result as Blob | undefined
         resolve(value ?? null)
@@ -76,12 +95,18 @@ export async function loadImageBlob(key: string): Promise<Blob | null> {
   }
 }
 
-export async function deleteImageBlob(key: string): Promise<void> {
+export async function deleteImageBlob(
+  key: string,
+  ownerId = getImageHistoryOwnerId()
+): Promise<void> {
+  const ownerKey = imageHistoryStorageKey(ownerId)
+  if (!ownerKey) return
+  const scopedKey = `${ownerKey}:${key}`
   const db = await openDatabase()
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(IMAGE_BLOB_STORE_NAME, 'readwrite')
-      tx.objectStore(IMAGE_BLOB_STORE_NAME).delete(key)
+      tx.objectStore(IMAGE_BLOB_STORE_NAME).delete(scopedKey)
       tx.addEventListener('complete', () => resolve())
       tx.addEventListener('error', () =>
         reject(tx.error ?? new Error('Failed to delete blob'))

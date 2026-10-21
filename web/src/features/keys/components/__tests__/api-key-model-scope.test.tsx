@@ -182,6 +182,7 @@ const restrictedKey: ApiKey = {
   model_limits_enabled: true,
   model_limits: 'a-only',
   allow_ips: '',
+  allow_user_quota_query: true,
 }
 
 let client: QueryClient

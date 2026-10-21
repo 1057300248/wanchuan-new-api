@@ -1,0 +1,234 @@
+"""Exercise CI shell orchestration with offline command stubs, not real services."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+SCRIPT = Path(__file__).resolve().parents[1] / "verify_repair_services.sh"
+DSN_KEYS = ("TEST_MYSQL_DSN", "TEST_MYSQL_LOG_DSN", "TEST_POSTGRES_DSN", "TEST_POSTGRES_LOG_DSN",
+            "TEST_DATABASE_DSN", "TEST_LOG_DATABASE_DSN", "AUDIT_MYSQL_DSN", "AUDIT_POSTGRES_DSN",
+            "TEST_PERF_MYSQL_DSN", "TEST_PERF_POSTGRES_DSN", "TEST_FIXED_MYSQL_DSN", "TEST_FIXED_MYSQL_LOG_DSN",
+            "TEST_FIXED_POSTGRES_DSN", "TEST_FIXED_POSTGRES_LOG_DSN", "TEST_DATABASE_COMPAT",
+            "TEST_DATABASE_DIALECT", "TEST_TASK_DB_DIALECT", "TEST_RUNTIME_REDIS",
+            "TEST_REDIS_DSN", "TEST_REDIS_ADDR", "TEST_TASK_REDIS_ADDR")
+
+
+class RepairServiceEnvironmentTests(unittest.TestCase):
+    def run_script(self, dialect, reject_label="", creation_fails=False, *, mode="database",
+                   redis_version="8.8.0", redis_info="# Server\r\nredis_version:8.8.0\r\n",
+                   redis_info_fails=False):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tools = root / "bin"
+            tools.mkdir()
+            trace = root / "trace.jsonl"
+            stub = tools / "tool.py"
+            stub.write_text("#!" + sys.executable + "\n" + '''import json, os, pathlib, sys
+name = pathlib.Path(sys.argv[0]).name
+args = sys.argv[1:]
+record = {"tool": name, "args": args}
+if name == "go" and args != ["version"]:
+    record["env"] = {key: os.environ.get(key, "") for key in ''' + repr(DSN_KEYS) + '''}
+with open(os.environ["MOCK_TRACE"], "a") as stream:
+    stream.write(json.dumps(record) + "\\n")
+if name == "git" and args == ["rev-parse", "HEAD"]:
+    print(os.environ["SOURCE_SHA"])
+elif name == "go" and args == ["version"]:
+    print("offline orchestration stub; no Go tests executed")
+elif name == "docker" and os.environ.get("MOCK_CREATE_FAIL") == "1" and any("repair_token_migration" in arg for arg in args):
+    raise SystemExit(1)
+elif name == "docker" and args[-3:] == ["redis-cli", "INFO", "server"]:
+    if os.environ.get("MOCK_REDIS_INFO_FAIL") == "1":
+        raise SystemExit(1)
+    sys.stdout.write(os.environ["MOCK_REDIS_INFO"])
+elif name == "python3":
+    assert args[0] == "ops/ci/check_go_test_report.py"
+    assert args[1] == "--reject-skipped-descendants"
+    assert len(args) > 3
+    if pathlib.Path(args[2]).stem == os.environ.get("MOCK_REJECT_LABEL"):
+        raise SystemExit(1)
+''')
+            stub.chmod(0o755)
+            for name in ("git", "go", "docker", "python3"):
+                (tools / name).symlink_to(stub)
+            env = {"PATH": str(tools) + os.pathsep + os.environ["PATH"], "HOME": str(root),
+                   "OUT": str(root / "evidence"), "SOURCE_SHA": "a" * 40, "DIALECT": dialect,
+                   "MYSQL_ID": "b" * 64, "MYSQL_PORT": "13306", "PG_ID": "c" * 64, "PG_PORT": "15432",
+                   "AUDIT_MYSQL_DSN": "untrusted-ambient-fixture", "AUDIT_POSTGRES_DSN": "untrusted-ambient-fixture",
+                   "MOCK_TRACE": str(trace), "MOCK_REJECT_LABEL": reject_label,
+                   "MOCK_CREATE_FAIL": "1" if creation_fails else "0",
+                   "REDIS_ID": "d" * 64, "REDIS_PORT": "16379", "REDIS_EXPECTED_VERSION": redis_version,
+                   "MOCK_REDIS_INFO": redis_info, "MOCK_REDIS_INFO_FAIL": "1" if redis_info_fails else "0"}
+            result = subprocess.run(["bash", str(SCRIPT), mode], cwd=root, env=env,
+                                    text=True, capture_output=True, timeout=20)
+            records = [json.loads(line) for line in trace.read_text().splitlines()]
+            return result, records
+
+    def test_real_database_selectors_receive_isolated_and_matching_dsns(self):
+        for dialect, selected, inactive, port in (("mysql", "MYSQL", "POSTGRES", "13306"),
+                                                 ("postgres", "POSTGRES", "MYSQL", "15432")):
+            with self.subTest(dialect=dialect):
+                result, rows = self.run_script(dialect)
+                self.assertEqual(0, result.returncode, result.stderr)
+                tests = [row for row in rows if row["tool"] == "go" and row["args"] != ["version"]]
+                gates = [row for row in rows if row["tool"] == "python3"]
+                self.assertEqual(22, len(tests))
+                self.assertEqual(len(tests), len(gates), "every suite must retain its strict evidence gate")
+                self.assertEqual({"startup", "channel-priority", "audit-ordered-index", "setup-aff-code-index",
+                                  "token-migration", "token-audit", "performance-aggregation", "performance-runtime-flush",
+                                  "setup-wallet", "task-migration", "dashboard-migration", "midjourney-migration",
+                                  "wallet", "owner", "owner-group-settings", "monitor-visibility", "sensitive-group-rename",
+                                  "converted-responses", "native-responses", "immediate-settlement",
+                                  "subscription-period", "subscription-period-migration"},
+                                 {Path(gate["args"][2]).stem for gate in gates})
+                for test, gate in zip(tests, gates):
+                    label = Path(gate["args"][2]).stem
+                    env = test["env"]
+                    self.assertEqual("1", env["TEST_DATABASE_COMPAT"])
+                    self.assertEqual(dialect, env["TEST_DATABASE_DIALECT"])
+                    self.assertEqual("", env[f"TEST_{inactive}_DSN"])
+                    self.assertEqual("", env[f"AUDIT_{inactive}_DSN"])
+                    main = env["TEST_DATABASE_DSN"]
+                    self.assertIn("127.0.0.1:" + port, main)
+                    self.assertIn("/repair_compat?", main)
+                    self.assertEqual(main, env[f"AUDIT_{selected}_DSN"])
+                    actual = env[f"TEST_{selected}_DSN"]
+                    if label == "token-migration":
+                        self.assertIn("/repair_token_migration?", actual)
+                        self.assertNotEqual(main, actual, "legacy migration may never reuse the startup database")
+                    else:
+                        self.assertEqual(main, actual, "migration override must not leak into another suite")
+                    if label.startswith("performance-"):
+                        self.assertEqual(main, env[f"TEST_PERF_{selected}_DSN"])
+                    if label in ("native-responses", "converted-responses"):
+                        self.assertEqual(main, env[f"TEST_FIXED_{selected}_DSN"])
+                        self.assertEqual(env["TEST_LOG_DATABASE_DSN"], env[f"TEST_FIXED_{selected}_LOG_DSN"])
+                    if label == "immediate-settlement":
+                        self.assertEqual(dialect, env["TEST_TASK_DB_DIALECT"])
+                creation = [row for row in rows if row["tool"] == "docker" and any("repair_token_migration" in arg for arg in row["args"])]
+                self.assertEqual(1, len(creation))
+                self.assertNotIn("IF NOT EXISTS", " ".join(creation[0]["args"]))
+                self.assertNotIn("DROP", " ".join(creation[0]["args"]))
+
+    def test_sqlite_cannot_inherit_external_audit_dsns(self):
+        result, rows = self.run_script("sqlite")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertFalse(any(row["tool"] == "docker" for row in rows))
+        for row in rows:
+            if row["tool"] == "go" and row["args"] != ["version"]:
+                for key in DSN_KEYS:
+                    if key.endswith("DSN"):
+                        self.assertEqual("", row["env"][key], key)
+
+    def test_required_rejection_fails_job_but_keeps_independent_evidence(self):
+        for label in ("token-migration", "token-audit", "subscription-period", "subscription-period-migration"):
+            with self.subTest(label=label):
+                result, rows = self.run_script("postgres", reject_label=label)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("Required repair contracts failed", result.stderr)
+                self.assertTrue(any(row["tool"] == "python3" and Path(row["args"][2]).stem == "immediate-settlement" for row in rows))
+
+    def test_existing_migration_database_cannot_be_reused_after_create_failure(self):
+        for dialect in ("mysql", "postgres"):
+            with self.subTest(dialect=dialect):
+                result, rows = self.run_script(dialect, creation_fails=True)
+                self.assertNotEqual(0, result.returncode)
+                self.assertFalse(any(row["tool"] == "go" and row["args"] != ["version"] for row in rows))
+
+    def test_subscription_period_required_cases_and_selectors_are_complete(self):
+        for dialect in ("sqlite", "mysql", "postgres"):
+            with self.subTest(dialect=dialect):
+                result, rows = self.run_script(dialect)
+                self.assertEqual(0, result.returncode, result.stderr)
+                tests = [row for row in rows if row["tool"] == "go" and row["args"] != ["version"]]
+                checks = [row for row in rows if row["tool"] == "python3"]
+                gates = {Path(row["args"][2]).stem: row["args"][3:] for row in checks}
+                expected_cases = (
+                    "same_period_settle", "same_period_upward", "same_period_zero", "same_period_refund",
+                    "quota_ceiling", "journal_identity", "preconsume_replay", "parallel_preconsume",
+                    "auto_reset_settle", "auto_reset_refund", "manual_reset_settle", "same_second_reset_refund",
+                    "old_positive_settle", "reserve_closed_period", "legacy_unknown", "deleted_source",
+                    "expired_source", "underflow", "parallel_settle", "parallel_refund", "reset_races_refund")
+                prefix = f"TestSubscriptionPeriodAccountingDatabaseMatrix/{dialect}"
+                self.assertEqual([prefix] + [prefix + "/" + case for case in expected_cases], gates["subscription-period"])
+                prefix = f"TestSubscriptionPeriodMigrationDatabaseMatrix/{dialect}"
+                self.assertEqual([prefix + "/fresh", prefix + "/upgrade"], gates["subscription-period-migration"])
+                for case in ("late_submit", "late_terminal_refund", "late_terminal_positive",
+                             "unknown_legacy_task", "settled_source_pending_task",
+                             "live_session_refund", "live_session_reset_refund", "wallet_session_clears_period"):
+                    self.assertIn(f"TestTaskWalletReceiptsDatabaseMatrix/{dialect}/subscription_period_{case}", gates["wallet"])
+                for test, gate in zip(tests, checks):
+                    label = Path(gate["args"][2]).stem
+                    if label in ("subscription-period", "subscription-period-migration"):
+                        test_name = "TestSubscriptionPeriod" + ("Accounting" if label == "subscription-period" else "Migration") + "DatabaseMatrix"
+                        self.assertEqual("./model", test["args"][4])
+                        self.assertEqual(f"^{test_name}$/{dialect}$", test["args"][test["args"].index("-run") + 1])
+                if dialect == "sqlite":
+                    self.assertEqual(["TestSubscriptionPeriodTransactionRollback",
+                                      "TestSubscriptionPeriodReplayRejectsStaleConsumedObservation",
+                                      "TestSubscriptionPeriodJournalReserveSettlementValidation",
+                                      "TestSubscriptionPeriodReplayAfterAbsentSnapshot",
+                                      "TestSubscriptionRefundCommitsReceiptAndUsageTogether"], gates["subscription-period-replay"])
+                else:
+                    self.assertNotIn("subscription-period-replay", gates)
+
+    def test_both_pinned_redis_versions_keep_all_real_contracts_and_loopback_dsns(self):
+        expected = {
+            "model-script-flush": ["TestModelRateLimitRealRedis/reservation_replay_and_expiry",
+                                   "TestModelRateLimitRealRedis/script_flush_resumes_request_pipeline"],
+            "token-bucket-script-flush": ["TestAllowFallsBackToEvalAfterScriptFlush/real_redis"],
+            "task-token-reservation": ["TestTaskBillingBatchReservationRestartRecovery/limited_with_redis",
+                                       "TestTaskBillingBatchReservationRestartRecovery/unlimited_with_redis",
+                                       "TestTaskBillingBatchReservationRestartRecovery/limited_with_ordinary_request"],
+        }
+        for version in ("7.2.16", "8.8.0"):
+            with self.subTest(version=version):
+                result, rows = self.run_script("", mode="redis", redis_version=version,
+                                               redis_info=f"# Server\r\nredis_version:{version}\r\nredis_mode:standalone\r\n")
+                self.assertEqual(0, result.returncode, result.stderr)
+                tests = [row for row in rows if row["tool"] == "go" and row["args"] != ["version"]]
+                gates = [row for row in rows if row["tool"] == "python3"]
+                self.assertEqual(3, len(tests))
+                self.assertEqual(3, len(gates))
+                self.assertEqual(set(expected), {Path(row["args"][2]).stem for row in gates})
+                for test, gate in zip(tests, gates):
+                    label = Path(gate["args"][2]).stem
+                    self.assertEqual(expected[label], gate["args"][3:])
+                    self.assertEqual("1", test["env"]["TEST_RUNTIME_REDIS"])
+                    self.assertEqual("redis://127.0.0.1:16379/0", test["env"]["TEST_REDIS_DSN"])
+                    self.assertEqual("127.0.0.1:16379", test["env"]["TEST_REDIS_ADDR"])
+                    if label == "task-token-reservation":
+                        self.assertEqual("127.0.0.1:16379", test["env"]["TEST_TASK_REDIS_ADDR"])
+
+    def test_wrong_missing_ambiguous_and_malformed_redis_versions_fail_before_tests(self):
+        cases = [("8.8.0", "redis_version:7.2.16\r\n"), ("8.8.0", ""),
+                 ("8.8.0", "redis_version:8.8.0\nredis_version:8.8.0\n"),
+                 ("8.8.0", "redis_version:8.8.0\nredis_version:\n"),
+                 ("8.8.0", "redis_version:8.8.0:extra\n"), ("8.8.0", "redis_version:8.8.0-rc1\n"),
+                 ("8.8.0", " redis_version:8.8.0\n"), ("", "redis_version:8.8.0\n"),
+                 ("8.8", "redis_version:8.8\n")]
+        for expected, info in cases:
+            with self.subTest(expected=expected, info=info):
+                result, rows = self.run_script("", mode="redis", redis_version=expected, redis_info=info)
+                self.assertNotEqual(0, result.returncode)
+                self.assertFalse(any(row["tool"] == "go" and row["args"] != ["version"] for row in rows))
+
+    def test_failed_redis_info_query_cannot_start_contracts(self):
+        result, rows = self.run_script("", mode="redis", redis_info_fails=True)
+        self.assertNotEqual(0, result.returncode)
+        self.assertFalse(any(row["tool"] == "go" and row["args"] != ["version"] for row in rows))
+
+    def test_redis_required_rejection_keeps_later_evidence_and_fails_job(self):
+        for label in ("model-script-flush", "token-bucket-script-flush", "task-token-reservation"):
+            with self.subTest(label=label):
+                result, rows = self.run_script("", mode="redis", reject_label=label)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("Required repair contracts failed", result.stderr)
+                self.assertEqual(3, sum(row["tool"] == "python3" for row in rows))
+
+
+if __name__ == "__main__":
+    unittest.main()

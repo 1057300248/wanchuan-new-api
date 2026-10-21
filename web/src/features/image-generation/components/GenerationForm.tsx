@@ -46,6 +46,7 @@ import {
   IMAGE_PROMPT_EXAMPLE_KEYS,
 } from '../constants'
 import type { ImageApiKeyOption, ReferenceImageItem } from '../types'
+import { ImageResolutionPresets } from './ImageResolutionPresets'
 import { ReferenceUploader } from './ReferenceUploader'
 
 const IMAGE_PARAMETER_LABEL_KEYS: Record<string, string> = {
@@ -265,7 +266,7 @@ export function GenerationForm(props: GenerationFormProps) {
             </PopoverTrigger>
             <PopoverContent
               align='start'
-              className='w-80 max-w-[calc(100vw-2rem)]'
+              className='max-h-[65vh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto'
             >
               <PopoverTitle>{t('Add reference images')}</PopoverTitle>
               <ReferenceUploader
@@ -278,6 +279,13 @@ export function GenerationForm(props: GenerationFormProps) {
               />
             </PopoverContent>
           </Popover>
+          <ImageResolutionPresets
+            model={props.value.model}
+            size={props.value.size}
+            sizes={props.sizes}
+            disabled={props.isGenerating || props.isInitializing}
+            onChange={(size) => props.onChange({ size })}
+          />
           {(['size', 'quality'] as const).map((parameter) => {
             const options = parameter === 'size' ? props.sizes : props.qualities
             const label = parameter === 'size' ? t('Size') : t('Quality')
@@ -309,7 +317,7 @@ export function GenerationForm(props: GenerationFormProps) {
                 </PopoverTrigger>
                 <PopoverContent
                   align='start'
-                  className='w-80 max-w-[calc(100vw-2rem)]'
+                  className='max-h-[65vh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto'
                 >
                   <PopoverTitle>{label}</PopoverTitle>
                   <div

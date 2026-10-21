@@ -77,10 +77,13 @@ func TestPostConsumeQuotaRollsBackWalletWhenTokenUpdateFails(t *testing.T) {
 	seedBonusEligibleModel(t, "atomic-paid", boolPtr(false))
 	const userID = 9450
 	seedBonusUser(t, userID, 0, 10_000)
+	seedToken(t, 999_999, userID, "existing-token", 10_000)
+	require.NoError(t, model.DB.Exec(`CREATE TRIGGER fail_legacy_settle_token BEFORE UPDATE ON tokens BEGIN SELECT RAISE(ABORT, 'forced token update failure'); END`).Error)
+	t.Cleanup(func() { model.DB.Exec("DROP TRIGGER IF EXISTS fail_legacy_settle_token") })
 	relayInfo := &relaycommon.RelayInfo{
 		UserId:          userID,
 		TokenId:         999_999,
-		TokenKey:        "missing-token",
+		TokenKey:        "existing-token",
 		RequestId:       "atomic-failure-request",
 		OriginModelName: "atomic-paid",
 		BillingSource:   BillingSourceWallet,

@@ -36,6 +36,8 @@ func captureGroupRenameRuntimeState(t *testing.T) {
 	originalRateLimit := setting.ModelRequestRateLimitGroup2JSONString()
 	originalMaxTokenAutoGroups := setting.GetMaxTokenAutoGroups()
 	originalDefaultUseAutoGroup := setting.DefaultUseAutoGroup
+	originalExemptGroups := setting.SensitiveCheckExemptGroupsToString()
+	originalPolicySnapshot := requestPolicySnapshot.Load()
 	t.Cleanup(func() {
 		common.OptionMapRWMutex.Lock()
 		if hadOptionMap {
@@ -53,6 +55,8 @@ func captureGroupRenameRuntimeState(t *testing.T) {
 		require.NoError(t, setting.UpdateModelRequestRateLimitGroupByJSONString(originalRateLimit))
 		require.NoError(t, setting.UpdateMaxTokenAutoGroups(strconv.Itoa(originalMaxTokenAutoGroups)))
 		setting.DefaultUseAutoGroup = originalDefaultUseAutoGroup
+		setting.LoadSensitiveCheckExemptGroups(originalExemptGroups)
+		requestPolicySnapshot.Store(originalPolicySnapshot)
 	})
 }
 
@@ -91,6 +95,7 @@ func TestGroupRenameMigratesEveryGroupSurface(t *testing.T) {
 	seedGroupRenameOption(t, "AutoGroups", `["old","keep"]`)
 	seedGroupRenameOption(t, "ModelRequestRateLimitGroup", `{"old":[100,50]}`)
 	seedGroupRenameOption(t, "group_ratio_setting.group_special_usable_group", `{"old":{"+:keep":"k","-:old":"h","plain":"p"},"keep":{"+:old":"o"}}`)
+	seedGroupRenameOption(t, setting.SensitiveCheckExemptGroupsOptionKey, " old \nkeep\nold ")
 
 	channel := Channel{Id: 1, Key: "sk-test", Name: "channel", Status: common.ChannelStatusEnabled, Group: "old,keep", Models: "m1"}
 	require.NoError(t, DB.Create(&channel).Error)
@@ -117,7 +122,7 @@ func TestGroupRenameMigratesEveryGroupSurface(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, []GroupRenameMapping{{From: "old", To: "new"}}, result.Renames)
-	assert.Equal(t, 7, result.Options)
+	assert.Equal(t, 8, result.Options)
 	assert.Equal(t, 1, result.Channels)
 	assert.Equal(t, int64(1), result.Abilities)
 	assert.Equal(t, 1, result.Users)
@@ -194,6 +199,7 @@ func TestGroupRenameMigratesEveryGroupSurface(t *testing.T) {
 	assert.Equal(t, 1.2, common.GetTopupGroupRatio("new"))
 	assert.Equal(t, "Old group", setting.GetUserUsableGroupsCopy()["new"])
 	assert.Contains(t, setting.GetAutoGroups(), "new")
+	assertSensitiveGroupPolicy(t, "new\nkeep")
 	_, _, found := setting.GetGroupRateLimit("new")
 	assert.True(t, found)
 	nestedRatio, ok := ratio_setting.GetGroupGroupRatio("new", "keep")
@@ -256,6 +262,9 @@ func TestGroupRenameRejectsInvalidMappings(t *testing.T) {
 func TestGroupRenameRollsBackAllWritesOnFailure(t *testing.T) {
 	setupGroupRenameTest(t)
 	seedGroupRenameOption(t, "GroupRatio", `{"old":1}`)
+	seedGroupRenameOption(t, setting.SensitiveCheckExemptGroupsOptionKey, "old")
+	require.NoError(t, updateOptionMap(setting.SensitiveCheckExemptGroupsOptionKey, "old"))
+	require.NoError(t, refreshRequestPolicySnapshot())
 	user := User{Username: "rename-rollback-user", Password: "hash", Group: "old", Status: common.UserStatusEnabled}
 	require.NoError(t, DB.Create(&user).Error)
 	channel := Channel{Id: 2, Key: "sk-rollback", Name: "channel", Status: common.ChannelStatusEnabled, Group: "old", Models: "m1"}
@@ -286,6 +295,7 @@ func TestGroupRenameRollsBackAllWritesOnFailure(t *testing.T) {
 	var option Option
 	require.NoError(t, DB.Where(&Option{Key: "GroupRatio"}).First(&option).Error)
 	assert.Equal(t, `{"old":1}`, option.Value)
+	assertSensitiveGroupPolicy(t, "old")
 	assert.True(t, ratio_setting.ContainsGroupRatio("old"))
 	assert.False(t, ratio_setting.ContainsGroupRatio("new"))
 }

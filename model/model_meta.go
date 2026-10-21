@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	"gorm.io/gorm"
 )
@@ -471,21 +472,48 @@ func normalizeLookupValues(values []string) []string {
 	return normalized
 }
 
+// PreferredModelOwner contains public discovery metadata only. The deterministic
+// representative is not a promise about weighted routing or request failover.
+type PreferredModelOwner struct {
+	ChannelType  int
+	ModelOwnedBy string
+}
+
 func GetPreferredModelOwnerChannelTypes(modelNames []string, groups []string) (map[string]int, error) {
-	result := make(map[string]int)
+	owners, err := lookupPreferredModelOwners(modelNames, groups)
+	result := make(map[string]int, len(owners))
+	for name, owner := range owners {
+		result[name] = owner.ChannelType
+	}
+	return result, err
+}
+
+// GetPreferredModelOwners is scoped to the caller's visible groups. An empty
+// scope must never turn a public discovery query into a global channel lookup.
+func GetPreferredModelOwners(modelNames []string, groups []string) (map[string]PreferredModelOwner, error) {
+	groups = normalizeLookupValues(groups)
+	if len(groups) == 0 {
+		return map[string]PreferredModelOwner{}, nil
+	}
+	return lookupPreferredModelOwners(modelNames, groups)
+}
+
+func lookupPreferredModelOwners(modelNames []string, groups []string) (map[string]PreferredModelOwner, error) {
+	result := make(map[string]PreferredModelOwner)
 	modelNames = normalizeLookupValues(modelNames)
 	if len(modelNames) == 0 {
 		return result, nil
 	}
 
 	type row struct {
-		Model       string
-		ChannelType int
+		Model          string
+		ChannelType    int
+		ChannelSetting *string
 	}
 	var rows []row
 
 	query := DB.Table("abilities").
-		Select("abilities.model as model, channels.type as channel_type").
+		Select("abilities.model as model, channels.type as channel_type, channels.setting as channel_setting").
 		Joins("JOIN channels ON abilities.channel_id = channels.id").
 		Where("abilities.model IN ? AND abilities.enabled = ? AND channels.status = ?", modelNames, true, common.ChannelStatusEnabled).
 		Order("COALESCE(abilities.priority, 0) DESC").
@@ -505,7 +533,16 @@ func GetPreferredModelOwnerChannelTypes(modelNames []string, groups []string) (m
 		if _, ok := result[r.Model]; ok {
 			continue
 		}
-		result[r.Model] = r.ChannelType
+		owner := PreferredModelOwner{ChannelType: r.ChannelType}
+		// Decode locally: Channel.GetSetting repairs malformed settings by writing
+		// to the database, which is not appropriate in a public read endpoint.
+		if r.ChannelSetting != nil {
+			var setting dto.ChannelSettings
+			if err := common.UnmarshalJsonStr(*r.ChannelSetting, &setting); err == nil && setting.ValidateModelOwnedBy() == nil {
+				owner.ModelOwnedBy = strings.TrimSpace(setting.ModelOwnedBy)
+			}
+		}
+		result[r.Model] = owner
 	}
 	return result, nil
 }

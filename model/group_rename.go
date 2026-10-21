@@ -54,6 +54,7 @@ var groupRenameOptionKeys = []string{
 	"AutoGroups",
 	"ModelRequestRateLimitGroup",
 	"group_ratio_setting.group_special_usable_group",
+	setting.SensitiveCheckExemptGroupsOptionKey,
 }
 
 // groupRenameWritableOptionKeys are the option keys a rename request may persist
@@ -69,6 +70,7 @@ var groupRenameWritableOptionKeys = map[string]struct{}{
 	"group_ratio_setting.group_special_usable_group": {},
 	"MaxTokenAutoGroups":                             {},
 	"DefaultUseAutoGroup":                            {},
+	setting.SensitiveCheckExemptGroupsOptionKey:      {},
 }
 
 var groupRenameReferenceOptionKeys = map[string]struct{}{
@@ -79,6 +81,7 @@ var groupRenameReferenceOptionKeys = map[string]struct{}{
 	"AutoGroups":                 {},
 	"ModelRequestRateLimitGroup": {},
 	"group_ratio_setting.group_special_usable_group": {},
+	setting.SensitiveCheckExemptGroupsOptionKey:      {},
 }
 
 func isGroupRenameOptionKey(key string) bool {
@@ -183,6 +186,14 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 		if _, ok := groupRenameWritableOptionKeys[key]; !ok {
 			return nil, fmt.Errorf("%w: unsupported option %s", ErrGroupRenameInvalidOption, key)
 		}
+	}
+	if raw, ok := request.Options[setting.SensitiveCheckExemptGroupsOptionKey]; ok {
+		normalized, err := setting.NormalizeSensitiveCheckExemptGroups(raw)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrGroupRenameInvalidOption, err)
+		}
+		request.Options = maps.Clone(request.Options)
+		request.Options[setting.SensitiveCheckExemptGroupsOptionKey] = normalized
 	}
 	state := &groupRenameTxState{appliedOptions: make(map[string]string)}
 	var plan *groupRenamePlan
@@ -360,6 +371,8 @@ func groupRenameMemoryOptionValue(key string) string {
 		return strconv.Itoa(setting.GetMaxTokenAutoGroups())
 	case "DefaultUseAutoGroup":
 		return strconv.FormatBool(setting.DefaultUseAutoGroup)
+	case setting.SensitiveCheckExemptGroupsOptionKey:
+		return setting.SensitiveCheckExemptGroupsToString()
 	default:
 		return "{}"
 	}
@@ -589,6 +602,10 @@ func collectGroupRenameTokenKeys(tx *gorm.DB, plan *groupRenamePlan, autoTokens 
 func collectGroupRenameUnmappedRemovals(request GroupRenameApplyRequest, current map[string]string, plan *groupRenamePlan) (map[string]struct{}, error) {
 	removed := make(map[string]struct{})
 	for key, value := range request.Options {
+		if key == setting.SensitiveCheckExemptGroupsOptionKey {
+			// Revoking a policy exemption does not remove the group itself.
+			continue
+		}
 		if _, reference := groupRenameReferenceOptionKeys[key]; !reference {
 			continue
 		}
@@ -614,6 +631,30 @@ func validateGroupRenameOptionUpdates(tx *gorm.DB, request GroupRenameApplyReque
 	for key, value := range request.Options {
 		if err := validateOptionValue(key, value); err != nil {
 			return fmt.Errorf("%w: %s: %v", ErrGroupRenameInvalidOption, key, err)
+		}
+		if key == setting.SensitiveCheckExemptGroupsOptionKey {
+			// Explicit options are post-rename values. Revocations are allowed,
+			// but a stale source name must not leave a bypass for its recreation.
+			definitions := maps.Clone(effective)
+			delete(definitions, setting.SensitiveCheckExemptGroupsOptionKey)
+			configured := make(map[string]struct{})
+			if err := collectGroupNamesFromOptions(definitions, configured); err != nil {
+				return err
+			}
+			for _, mapping := range plan.mappings {
+				configured[mapping.To] = struct{}{}
+			}
+			for group := range strings.SplitSeq(value, "\n") {
+				if target, mapped := plan.sources[group]; mapped {
+					return fmt.Errorf("%w: %s -> %s in %s", ErrGroupRenameUnmappedChange, group, target, key)
+				}
+				if _, introduced := configured[group]; !introduced {
+					if err := validateGroupNamesForWriteTx(tx, group); err != nil {
+						return err
+					}
+				}
+			}
+			continue
 		}
 		if _, reference := groupRenameReferenceOptionKeys[key]; !reference {
 			continue
@@ -768,6 +809,12 @@ func groupRenameOptionGroupKeys(key, raw string) ([]string, error) {
 		return nil, nil
 	}
 	switch key {
+	case setting.SensitiveCheckExemptGroupsOptionKey:
+		normalized, err := setting.NormalizeSensitiveCheckExemptGroups(raw)
+		if err != nil || normalized == "" {
+			return nil, err
+		}
+		return strings.Split(normalized, "\n"), nil
 	case "GroupRatio", "TopupGroupRatio", "UserUsableGroups", "ModelRequestRateLimitGroup":
 		values := make(map[string]json.RawMessage)
 		if err := common.UnmarshalJsonStr(raw, &values); err != nil {
@@ -863,6 +910,18 @@ func rewriteGroupRenameOptionValues(optionValues, provided map[string]string, pl
 
 func rewriteGroupRenameOptionValue(key, raw string, plan *groupRenamePlan) (string, bool, error) {
 	switch key {
+	case setting.SensitiveCheckExemptGroupsOptionKey:
+		groups, err := groupRenameOptionGroupKeys(key, raw)
+		if err != nil {
+			return "", false, err
+		}
+		for i, group := range groups {
+			if target, mapped := plan.sources[group]; mapped {
+				groups[i] = target
+			}
+		}
+		normalized, err := setting.NormalizeSensitiveCheckExemptGroups(strings.Join(groups, "\n"))
+		return normalized, normalized != raw, err
 	case "GroupRatio", "TopupGroupRatio", "UserUsableGroups", "ModelRequestRateLimitGroup":
 		return renameGroupKeyedValues(raw, plan)
 	case "AutoGroups":
@@ -1216,6 +1275,9 @@ func renameGroupSubscriptionReferences(tx *gorm.DB, plan *groupRenamePlan, state
 // value is re-read from the database while holding a package mutex, so a late
 // runtime apply cannot overwrite state written by a newer committed change.
 func applyGroupRenameRuntime(state *groupRenameTxState) {
+	// The transaction has committed before taking the policy mutex: policy
+	// writers take this mutex before their namespace lock, never the reverse.
+	requestPolicyOptionMutex.Lock()
 	groupRenameRuntimeApplyMutex.Lock()
 	for _, key := range state.affectedOptionKeys {
 		var option Option
@@ -1227,7 +1289,11 @@ func applyGroupRenameRuntime(state *groupRenameTxState) {
 			common.SysError("group rename: failed to refresh option " + key + ": " + err.Error())
 		}
 	}
+	if err := refreshRequestPolicySnapshot(); err != nil {
+		common.SysError("group rename: failed to refresh request policy: " + err.Error())
+	}
 	groupRenameRuntimeApplyMutex.Unlock()
+	requestPolicyOptionMutex.Unlock()
 	InvalidatePricingCache()
 	InitChannelCache()
 	for _, planId := range slices.Compact(slices.Sorted(slices.Values(state.affectedPlanIds))) {

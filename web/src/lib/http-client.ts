@@ -16,7 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import axios, { type AxiosRequestConfig } from 'axios'
+import axios, {
+  type AxiosRequestConfig,
+  type InternalAxiosRequestConfig,
+} from 'axios'
 import { t } from 'i18next'
 
 import i18n from '@/i18n/config'
@@ -25,6 +28,7 @@ import { API_BASE_URL } from '@/lib/api-url'
 import {
   applyAuthRotation,
   clearAuthentication,
+  getAuthSessionEpoch,
   getFreshAuthHeaders,
   refreshAuthentication,
 } from '@/lib/auth-session'
@@ -45,6 +49,7 @@ declare module 'axios' {
     acceptAuthRotation?: boolean
     preserveAuthorization?: boolean
     singleUseAuthorization?: boolean
+    authSessionEpoch?: number
   }
 }
 
@@ -67,7 +72,7 @@ api.get = ((url: string, config: ApiRequestConfig = {}) => {
 
   const params = config.params ? JSON.stringify(config.params) : '{}'
   const sessionSID = useAuthStore.getState().auth.session?.sid || 'anonymous'
-  const key = `${sessionSID}:${url}?${params}`
+  const key = `${getAuthSessionEpoch()}:${sessionSID}:${url}?${params}`
   const existingRequest = inFlightGet.get(key)
   if (existingRequest) return existingRequest
 
@@ -87,8 +92,36 @@ function redirectToSignIn(): void {
   }
 }
 
+function assertCurrentRequestSession(
+  config: InternalAxiosRequestConfig | undefined,
+  allowRefreshSignOut = false
+): void {
+  if (!config) return
+  config.cancelToken?.throwIfRequested()
+  if (config.signal?.aborted) {
+    throw new axios.CanceledError('Request canceled', config)
+  }
+  const startedEpoch = config.authSessionEpoch
+  const currentEpoch = getAuthSessionEpoch()
+  if (startedEpoch === undefined || startedEpoch === currentEpoch) return
+  const auth = useAuthStore.getState().auth
+  // A terminal refresh may itself clear this request's session. Preserve the
+  // existing expiry notification/redirect only for that one transition, never
+  // for a newer signed-in owner (or a logout/login/logout sequence).
+  if (
+    allowRefreshSignOut &&
+    currentEpoch === startedEpoch + 1 &&
+    !auth.user &&
+    !auth.session
+  ) {
+    return
+  }
+  throw new axios.CanceledError('Authentication session changed', config)
+}
+
 api.interceptors.response.use(
   (response) => {
+    assertCurrentRequestSession(response.config)
     if (response.config.acceptAuthRotation && response.data?.success === true) {
       applyAuthRotation(response.data.data)
     }
@@ -96,9 +129,10 @@ api.interceptors.response.use(
     return response
   },
   async (error) => {
-    const config = error?.config as ApiRequestConfig | undefined
+    const config = error?.config as InternalAxiosRequestConfig | undefined
     const skipErrorHandler = config?.skipErrorHandler
     const status = error?.response?.status
+    assertCurrentRequestSession(config)
 
     if (status === 401) {
       if (
@@ -109,13 +143,14 @@ api.interceptors.response.use(
       ) {
         config.authRetry = true
         const outcome = await refreshAuthentication()
+        assertCurrentRequestSession(
+          config,
+          outcome.kind === 'anonymous' || outcome.kind === 'out_of_sync'
+        )
         if (outcome.kind === 'authenticated') {
           const token = useAuthStore.getState().auth.accessToken
           if (token && !config.preserveAuthorization) {
-            config.headers = {
-              ...config.headers,
-              Authorization: `Bearer ${token}`,
-            }
+            config.headers.set('Authorization', `Bearer ${token}`)
           }
           return api.request(config)
         }
@@ -153,28 +188,46 @@ api.interceptors.response.use(
   }
 )
 
-api.interceptors.request.use(async (config) => {
-  config.headers.set(
-    'Accept-Language',
-    toBackendLanguage(i18n.resolvedLanguage || i18n.language)
-  )
-  if (config.preserveAuthorization) return config
-  if (config.singleUseAuthorization || config.headers.has('X-Security-Proof')) {
-    // Refresh before spending a proof/flow, never by replaying its request.
-    config.skipAuthRefresh = true
-    try {
-      const headers = await getFreshAuthHeaders()
-      for (const [name, value] of Object.entries(headers)) {
-        config.headers.set(name, value)
+api.interceptors.request.use(
+  async (config) => {
+    assertCurrentRequestSession(config)
+    config.headers.set(
+      'Accept-Language',
+      toBackendLanguage(i18n.resolvedLanguage || i18n.language)
+    )
+    if (config.preserveAuthorization) return config
+    if (
+      config.singleUseAuthorization ||
+      config.headers.has('X-Security-Proof')
+    ) {
+      // Refresh before spending a proof/flow, never by replaying its request.
+      config.skipAuthRefresh = true
+      try {
+        const headers = await getFreshAuthHeaders()
+        assertCurrentRequestSession(config)
+        for (const [name, value] of Object.entries(headers)) {
+          config.headers.set(name, value)
+        }
+      } catch (error) {
+        assertCurrentRequestSession(config)
+        throw axios.AxiosError.from(error, undefined, config)
       }
-    } catch (error) {
-      throw axios.AxiosError.from(error, undefined, config)
+      return config
+    }
+    const accessToken = useAuthStore.getState().auth.accessToken
+    if (accessToken) {
+      config.headers.Authorization = `Bearer ${accessToken}`
     }
     return config
+  },
+  undefined,
+  {
+    runWhen: (config) => {
+      // Axios evaluates runWhen synchronously at invocation time, before the
+      // asynchronous interceptor chain. Capture here so even a session switch
+      // before the first microtask cannot reattribute the caller's operation.
+      config.authSessionEpoch ??= getAuthSessionEpoch()
+      return true
+    },
   }
-  const accessToken = useAuthStore.getState().auth.accessToken
-  if (accessToken) {
-    config.headers.Authorization = `Bearer ${accessToken}`
-  }
-  return config
-})
+)

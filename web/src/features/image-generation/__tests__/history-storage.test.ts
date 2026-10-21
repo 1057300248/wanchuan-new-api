@@ -18,12 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { beforeEach, describe, expect, test } from 'vitest'
 
-import { IMAGE_HISTORY_STORAGE_KEY } from '../constants'
 import {
   clearHistoryStorage,
   loadHistoryEntries,
   saveHistoryEntries,
 } from '../storage/history-storage'
+import { HISTORY_OWNER_KEY, signInHistoryOwner } from './history-fixture'
 
 function makeStoredEntry(id: string, createdAt: number) {
   return {
@@ -51,14 +51,15 @@ function makeStoredEntry(id: string, createdAt: number) {
 
 describe('history storage degrades safely on corrupt data', () => {
   beforeEach(() => {
+    signInHistoryOwner()
     window.localStorage.clear()
   })
 
   test('returns empty for missing, non-array, or malformed payloads', () => {
     expect(loadHistoryEntries()).toEqual([])
-    window.localStorage.setItem(IMAGE_HISTORY_STORAGE_KEY, '{"nope":true}')
+    window.localStorage.setItem(HISTORY_OWNER_KEY, '{"nope":true}')
     expect(loadHistoryEntries()).toEqual([])
-    window.localStorage.setItem(IMAGE_HISTORY_STORAGE_KEY, 'not-json{{{')
+    window.localStorage.setItem(HISTORY_OWNER_KEY, 'not-json{{{')
     expect(loadHistoryEntries()).toEqual([])
   })
 
@@ -79,9 +80,9 @@ describe('history storage degrades safely on corrupt data', () => {
       source: 'data:image/png;base64,aGVsbG8=',
     }
     saveHistoryEntries([entry as never])
-    expect(
-      window.localStorage.getItem(IMAGE_HISTORY_STORAGE_KEY)
-    ).not.toContain('aGVsbG8=')
+    expect(window.localStorage.getItem(HISTORY_OWNER_KEY)).not.toContain(
+      'aGVsbG8='
+    )
     expect(loadHistoryEntries()).toEqual([])
   })
 })

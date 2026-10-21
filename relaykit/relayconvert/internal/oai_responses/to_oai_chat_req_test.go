@@ -3,6 +3,7 @@ package oairesponses
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -23,6 +24,7 @@ func TestResponsesReasoningReplayPlaintextAndSummary(t *testing.T) {
 	}{
 		{"plaintext takes precedence", `{"content":[{"type":"reasoning_text","text":"full reasoning"}],"summary":[{"type":"summary_text","text":"summary"}]}`, "full reasoning", false},
 		{"legacy summary", `{"content":null,"summary":[{"type":"summary_text","text":"first"},{"type":"summary_text","text":"second"}]}`, "first\n\nsecond", true},
+		{"empty content falls back to summary", `{"content":[{"type":"reasoning_text","text":""}],"summary":[{"type":"summary_text","text":"fallback"}]}`, "fallback", true},
 		{"empty placeholder", `{"encrypted_content":"","summary":[]}`, "", false},
 		{"null placeholder", `{"encrypted_content":null,"content":null,"summary":null}`, "", false},
 	} {
@@ -56,6 +58,7 @@ func TestResponsesReasoningReplayRejectsMalformedParts(t *testing.T) {
 		`{"type":"reasoning","content":[{"type":"output_text","text":"private-value"}]}`,
 		`{"type":"reasoning","summary":[{"type":"summary_text","text":123}]}`,
 		`{"type":"reasoning","encrypted_content":{"private-value":true}}`,
+		`{"type":"reasoning","encrypted_content":"private-value","content":[{"type":"reasoning_text","text":"plaintext cannot replace encrypted state"}]}`,
 		`{"role":"assistant","content":{"text":"private-value"}}`,
 	} {
 		t.Run(item, func(t *testing.T) {
@@ -122,6 +125,38 @@ func TestResponsesReasoningReplayRejectsReasoningBetweenParallelResults(t *testi
 	assert.Equal(t, 400, apiErr.StatusCode)
 	assert.True(t, types.IsSkipRetryError(apiErr))
 	assert.NotContains(t, err.Error(), "private partial result analysis")
+}
+
+func TestResponsesReasoningReplayPreservesParallelResultOrder(t *testing.T) {
+	for _, order := range [][2]string{{"a", "b"}, {"b", "a"}} {
+		t.Run(order[0]+" then "+order[1], func(t *testing.T) {
+			got, err := ResponsesRequestToChatCompletionsRequestWithOptions(context.Background(), &dto.OpenAIResponsesRequest{
+				Model: "test",
+				Input: []byte(fmt.Sprintf(`[
+					{"role":"user","content":"inspect"},
+					{"type":"reasoning","content":[{"type":"reasoning_text","text":"plan"}]},
+					{"type":"function_call","call_id":"a","name":"read","arguments":"{}"},
+					{"type":"function_call","call_id":"b","name":"read","arguments":"{}"},
+					{"type":"function_call_output","call_id":%q,"output":"first received result"},
+					{"type":"reasoning","content":[],"summary":[]},
+					{"type":"function_call_output","call_id":%q,"output":"second received result"},
+					{"type":"reasoning","content":[{"type":"reasoning_text","text":"both results inspected"}]},
+					{"role":"assistant","content":"done"}
+				]`, order[0], order[1])),
+			}, &convmeta.Options{ReplayResponsesReasoning: true})
+			require.NoError(t, err)
+			require.Len(t, got.Messages, 5)
+			assert.Equal(t, "plan", got.Messages[1].GetReasoningContent())
+			calls := got.Messages[1].ParseToolCalls()
+			require.Len(t, calls, 2)
+			assert.Equal(t, "a", calls[0].ID)
+			assert.Equal(t, "b", calls[1].ID)
+			assert.Equal(t, dto.Message{Role: "tool", ToolCallId: order[0], Content: "first received result"}, got.Messages[2])
+			assert.Equal(t, dto.Message{Role: "tool", ToolCallId: order[1], Content: "second received result"}, got.Messages[3])
+			assert.Equal(t, "both results inspected", got.Messages[4].GetReasoningContent())
+			assert.Equal(t, "done", got.Messages[4].Content)
+		})
+	}
 }
 
 func TestResponsesReasoningHistoryDoesNotCreateUserMessages(t *testing.T) {
