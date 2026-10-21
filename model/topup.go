@@ -264,6 +264,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		return errors.New("payment order number not provided")
 	}
 
+	alreadyDone := false
 	var quota int
 	var ledgerTotalAfter int
 	topUp := &TopUp{}
@@ -283,6 +284,10 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 			return ErrPaymentMethodMismatch
 		}
 
+		if topUp.Status == common.TopUpStatusSuccess {
+			alreadyDone = true
+			return nil
+		}
 		if topUp.Status != common.TopUpStatusPending {
 			return errors.New("invalid top-up order status")
 		}
@@ -324,6 +329,9 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		return errors.New("top-up failed")
 	}
 
+	if alreadyDone {
+		return nil
+	}
 	RefreshUserQuotaCache(topUp.UserId, ledgerTotalAfter)
 	RecordTopupLog(topUp.UserId, common.NewMessage("Online top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"quota": logger.FormatQuota(quota), "amount": topUp.Amount}), callerIp, topUp.PaymentMethod, PaymentMethodStripe)
 

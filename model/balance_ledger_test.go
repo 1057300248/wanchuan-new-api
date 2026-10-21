@@ -780,9 +780,8 @@ func TestTopupDuplicateCallbackNoDoubleCredit(t *testing.T) {
 	// 第一次回调成功入账
 	require.NoError(t, Recharge("LEDGER-TN-1", "cus-1", "127.0.0.1"))
 
-	// 重复回调：订单状态非 pending，直接失败，不重复入账
-	err := Recharge("LEDGER-TN-1", "cus-1", "127.0.0.1")
-	require.Error(t, err)
+	// 重复回调返回成功，让支付平台停止重试，但不重复入账。
+	require.NoError(t, Recharge("LEDGER-TN-1", "cus-1", "127.0.0.1"))
 
 	// 账本幂等键兜底：同一 trade_no 只有一行
 	assert.Equal(t, int64(1), countLedgerRows(t, "credit:topup:LEDGER-TN-1"))
