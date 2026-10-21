@@ -642,6 +642,24 @@ func assertResponsesWSAccounting(t *testing.T, fixture *responsesWSBillingTest, 
 		assert.Equal(t, quota, logs[index].Quota)
 		charged += quota
 	}
+	// Joining the HTTP/WS handlers does not join BillingSession's legacy
+	// background refund. In particular, its wallet leg can commit before the
+	// token leg. Wait for BOTH authoritative rows, not a cache, fixed delay or
+	// source-only signal. On timeout CollectT reports the last exact counters;
+	// all original accounting/ledger assertions below remain unchanged.
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		var token model.Token
+		var user model.User
+		if !assert.NoError(collect, model.DB.First(&token, fixture.token.Id).Error) ||
+			!assert.NoError(collect, model.DB.First(&user, fixture.user.Id).Error) {
+			return
+		}
+		assert.Equal(collect, 3000-charged, token.RemainQuota, "terminal token remaining quota")
+		assert.Equal(collect, charged, token.UsedQuota, "terminal token used quota")
+		assert.Equal(collect, 100000-charged, user.Quota, "terminal wallet quota")
+		assert.Equal(collect, charged, user.UsedQuota, "terminal user used quota")
+		assert.Equal(collect, user.Quota, user.QuotaPaid+user.QuotaBonus+user.QuotaReward, "terminal split-account invariant")
+	}, 3*time.Second, 10*time.Millisecond, "request accounting did not reach its exact terminal state")
 	require.NoError(t, model.DB.First(fixture.token, fixture.token.Id).Error)
 	require.NoError(t, model.DB.First(fixture.user, fixture.user.Id).Error)
 	assert.Equal(t, 3000-charged, fixture.token.RemainQuota)
