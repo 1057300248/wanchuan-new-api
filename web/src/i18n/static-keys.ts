@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  'Channel model owner label must be at most 64 characters without control or formatting characters',
   'Public model owner must be at most 128 characters and contain no control or formatting characters',
   'Filtering exemptions require exact group names, one per line; auto and wildcards are not allowed',
   'This password is too common. Choose a different password.',

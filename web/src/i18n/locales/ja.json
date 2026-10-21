@@ -7508,6 +7508,10 @@
     "Vertex AI Project ID": "Vertex AI プロジェクト ID",
     "When a channel is disabled or re-enabled automatically, or a test of all channels finishes": "チャネルが自動で無効化または再有効化されたとき、または全チャネルのテストが完了したとき",
     "When enabled, this API key can be used to check your account's remaining and used quota.": "有効にすると、このAPIキーでアカウントの残りクォータと使用済みクォータを確認できます。",
-    "You do not have permission to edit channels": "チャンネルを編集する権限がありません"
+    "You do not have permission to edit channels": "チャンネルを編集する権限がありません",
+    "Channel model owner label": "チャネルのモデル所有者ラベル",
+    "Stored as channel metadata. Public model lists and details use the site-wide owner setting. This label does not select a routing channel.": "チャネルのメタデータとして保存されます。公開モデルの一覧と詳細にはサイト全体の所有者設定が使用されます。このラベルはルーティング先のチャネルを選択しません。",
+    "Use channel name as label": "チャネル名をラベルとして使用",
+    "Channel model owner label must be at most 64 characters without control or formatting characters": "チャネルのモデル所有者ラベルは64文字以内で、制御文字や書式制御文字を含めることはできません"
   }
 }

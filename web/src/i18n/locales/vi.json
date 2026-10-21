@@ -7508,6 +7508,10 @@
     "Vertex AI Project ID": "ID dự án Vertex AI",
     "When a channel is disabled or re-enabled automatically, or a test of all channels finishes": "Khi một kênh bị tự động tắt hoặc bật lại, hoặc khi kiểm tra tất cả kênh hoàn tất",
     "When enabled, this API key can be used to check your account's remaining and used quota.": "Khi được bật, bạn có thể dùng khóa API này để xem hạn mức còn lại và hạn mức đã dùng của tài khoản.",
-    "You do not have permission to edit channels": "Bạn không có quyền chỉnh sửa kênh"
+    "You do not have permission to edit channels": "Bạn không có quyền chỉnh sửa kênh",
+    "Channel model owner label": "Nhãn chủ sở hữu mô hình của kênh",
+    "Stored as channel metadata. Public model lists and details use the site-wide owner setting. This label does not select a routing channel.": "Được lưu dưới dạng siêu dữ liệu của kênh. Danh sách và thông tin mô hình công khai dùng thiết lập chủ sở hữu của toàn trang. Nhãn này không chọn kênh định tuyến.",
+    "Use channel name as label": "Dùng tên kênh làm nhãn",
+    "Channel model owner label must be at most 64 characters without control or formatting characters": "Nhãn chủ sở hữu mô hình của kênh không được quá 64 ký tự và không chứa ký tự điều khiển hoặc định dạng"
   }
 }

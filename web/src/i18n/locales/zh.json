@@ -7508,6 +7508,10 @@
     "Vertex AI Project ID": "Vertex AI 项目 ID",
     "When a channel is disabled or re-enabled automatically, or a test of all channels finishes": "渠道被自动禁用或重新启用，或全部渠道测试完成时",
     "When enabled, this API key can be used to check your account's remaining and used quota.": "开启后，可用这个令牌查询账户的剩余额度和已用额度。",
-    "You do not have permission to edit channels": "你没有编辑渠道的权限"
+    "You do not have permission to edit channels": "你没有编辑渠道的权限",
+    "Channel model owner label": "渠道模型所有者标签",
+    "Stored as channel metadata. Public model lists and details use the site-wide owner setting. This label does not select a routing channel.": "仅作为渠道元数据保存。公开模型列表和详情使用站点统一的所有者设置。此标签不用于选择路由渠道。",
+    "Use channel name as label": "使用渠道名称作为标签",
+    "Channel model owner label must be at most 64 characters without control or formatting characters": "渠道模型所有者标签最多为 64 个字符，且不能包含控制字符或格式字符"
   }
 }

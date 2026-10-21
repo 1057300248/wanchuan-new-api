@@ -7508,6 +7508,10 @@
     "Vertex AI Project ID": "ID проекта Vertex AI",
     "When a channel is disabled or re-enabled automatically, or a test of all channels finishes": "Когда канал автоматически отключается или снова включается, а также по завершении проверки всех каналов",
     "When enabled, this API key can be used to check your account's remaining and used quota.": "Если включено, через этот API-ключ можно узнать оставшуюся и использованную квоту вашего аккаунта.",
-    "You do not have permission to edit channels": "У вас нет прав на редактирование каналов"
+    "You do not have permission to edit channels": "У вас нет прав на редактирование каналов",
+    "Channel model owner label": "Метка владельца модели канала",
+    "Stored as channel metadata. Public model lists and details use the site-wide owner setting. This label does not select a routing channel.": "Сохраняется как метаданные канала. Публичные списки и сведения о моделях используют владельца, заданного для всего сайта. Эта метка не выбирает канал маршрутизации.",
+    "Use channel name as label": "Использовать имя канала как метку",
+    "Channel model owner label must be at most 64 characters without control or formatting characters": "Метка владельца модели канала должна содержать не более 64 символов без управляющих символов и символов форматирования"
   }
 }
