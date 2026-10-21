@@ -41,6 +41,7 @@ const baseToken: ApiKey = {
   model_limits_enabled: false,
   model_limits: '',
   allow_ips: '',
+  allow_user_quota_query: true,
 }
 
 describe('CC Switch token-scoped models', () => {
