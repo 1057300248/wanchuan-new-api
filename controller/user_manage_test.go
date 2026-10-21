@@ -567,15 +567,15 @@ func TestManageUserQuotaConcurrentSnapshots(t *testing.T) {
 	assert.Equal(t, balance, user.Quota)
 }
 
-func TestManageUserQuotaCacheUsesCommittedIntegerDifference(t *testing.T) {
+func TestManageUserQuotaCacheReloadsCommittedLedgerBalance(t *testing.T) {
 	for _, tc := range []struct {
 		name, mode                               string
 		before, cached, value, after, wantCached int
 		failUpdate, failCache, missingCache      bool
 	}{
-		{name: "add_preserves_reservations", mode: "add", before: 1000, cached: 900, value: 500, after: 1500, wantCached: 1400},
-		{name: "subtract_preserves_reservations", mode: "subtract", before: 1000, cached: 900, value: 500, after: 500, wantCached: 400},
-		{name: "override_preserves_reservations", mode: "override", before: 1000, cached: 900, value: 2000, after: 2000, wantCached: 1900},
+		{name: "add_replaces_stale_cache", mode: "add", before: 1000, cached: 900, value: 500, after: 1500, wantCached: 1500},
+		{name: "subtract_replaces_stale_cache", mode: "subtract", before: 1000, cached: 900, value: 500, after: 500, wantCached: 500},
+		{name: "override_replaces_stale_cache", mode: "override", before: 1000, cached: 900, value: 2000, after: 2000, wantCached: 2000},
 		{name: "large_odd_difference", mode: "override", before: common.MaxWalletQuota, cached: common.MaxWalletQuota, value: 0, after: 0, wantCached: 0},
 		{name: "rollback_does_not_change_cache", mode: "subtract", before: 1000, cached: 900, value: 500, after: 1000, wantCached: 900, failUpdate: true},
 		{name: "cache_error_keeps_committed_change", mode: "add", before: 1000, value: 500, after: 1500, failCache: true},
