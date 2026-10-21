@@ -695,4 +695,72 @@ describe('wallet funding flow', () => {
     expect(screen.queryByText('Referral Program')).not.toBeInTheDocument()
     expect(screen.queryByText('Referral History')).not.toBeInTheDocument()
   })
+
+  test.each(['custom amount', 'preset'])(
+    'changing %s during a method quote releases loading and cannot open a stale confirmation',
+    async (selection) => {
+      vi.mocked(getTopupInfo).mockResolvedValue({
+        success: true,
+        data: onlineTopupInfo,
+      })
+      renderWallet()
+      const amountInput = await screen.findByLabelText('Custom Amount')
+      await waitFor(() => expect(amountInput).toHaveDisplayValue('10'))
+      await waitFor(() =>
+        expect(calculateAmount).toHaveBeenCalledWith({ amount: 10 })
+      )
+      let resolveMethod!: (
+        value: Awaited<ReturnType<typeof calculateAmount>>
+      ) => void
+      let resolveAmount!: (
+        value: Awaited<ReturnType<typeof calculateAmount>>
+      ) => void
+      vi.mocked(calculateAmount)
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveMethod = resolve
+            })
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveAmount = resolve
+            })
+        )
+      const epay = screen.getByRole('button', { name: 'Epay' })
+      await userEvent.setup().click(epay)
+      expect(epay).toBeDisabled()
+      if (selection === 'preset') {
+        await userEvent
+          .setup()
+          .click(screen.getByRole('button', { name: /^50 Pay/ }))
+      } else {
+        fireEvent.change(amountInput, { target: { value: '20' } })
+      }
+      const selectedAmount = selection === 'preset' ? 50 : 20
+      await waitFor(() =>
+        expect(calculateAmount).toHaveBeenLastCalledWith({
+          amount: selectedAmount,
+        })
+      )
+      await act(async () => {
+        resolveAmount({ success: true, data: '146.5' })
+      })
+      await act(async () => {
+        resolveMethod({ success: true, data: '73' })
+      })
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+      expect(epay).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Alipay' })).toBeEnabled()
+      await userEvent.setup().click(epay)
+      const dialog = await screen.findByRole('alertdialog')
+      expect(
+        within(dialog).getByRole('button', { name: 'Confirm Payment' })
+      ).toBeEnabled()
+      expect(calculateAmount).toHaveBeenLastCalledWith({
+        amount: selectedAmount,
+      })
+    }
+  )
 })

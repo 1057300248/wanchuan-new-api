@@ -43,6 +43,7 @@ interface PaymentConfirmDialogProps {
   topupAmount: number
   paymentAmount: number
   paymentMethod: PaymentMethod | undefined
+  quoteValid: boolean
   calculating: boolean
   processing: boolean
   discountRate?: number
@@ -57,6 +58,7 @@ export function PaymentConfirmDialog({
   paymentAmount,
   paymentMethod,
   calculating,
+  quoteValid,
   processing,
   discountRate = DEFAULT_DISCOUNT_RATE,
   usdExchangeRate = 1,
@@ -145,7 +147,10 @@ export function PaymentConfirmDialog({
           <AlertDialogCancel disabled={processing}>
             {t('Cancel')}
           </AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm} disabled={processing}>
+          <AlertDialogAction
+            onClick={onConfirm}
+            disabled={processing || calculating || !quoteValid}
+          >
             {processing && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
             {t('Confirm Payment')}
           </AlertDialogAction>
