@@ -183,6 +183,8 @@ func InitOptionMap() {
 	common.OptionMap["CheckSensitiveOnPromptEnabled"] = strconv.FormatBool(setting.CheckSensitiveOnPromptEnabled)
 	common.OptionMap["StopOnSensitiveEnabled"] = strconv.FormatBool(setting.StopOnSensitiveEnabled)
 	common.OptionMap["SensitiveWords"] = setting.SensitiveWordsToString()
+	common.OptionMap[setting.SensitiveCheckExemptGroupsOptionKey] = setting.SensitiveCheckExemptGroupsToString()
+	common.OptionMap[setting.PublicModelOwnedByOptionKey] = setting.GetPublicModelOwnedBy()
 	common.OptionMap["StreamCacheQueueLength"] = strconv.Itoa(setting.StreamCacheQueueLength)
 	common.OptionMap["AutomaticDisableKeywords"] = operation_setting.AutomaticDisableKeywordsToString()
 	common.OptionMap["AutomaticDisableStatusCodes"] = operation_setting.AutomaticDisableStatusCodesToString()
@@ -260,6 +262,9 @@ func validateOptionValue(key string, value string) error {
 }
 
 func UpdateOption(key string, value string) error {
+	if key == setting.PublicModelOwnedByOptionKey {
+		return UpdateOptionsBulk(map[string]string{key: value})
+	}
 	if IsRequestPolicyOption(key) {
 		return UpdateRequestPolicyOptions(map[string]string{key: value})
 	}
@@ -310,7 +315,18 @@ func UpdateOptionsBulk(values map[string]string) error {
 			return err
 		}
 	}
+	values = maps.Clone(values)
 	for key, value := range values {
+		var normalizeErr error
+		switch key {
+		case setting.PublicModelOwnedByOptionKey:
+			values[key], normalizeErr = setting.NormalizePublicModelOwnedBy(value)
+		case setting.SensitiveCheckExemptGroupsOptionKey:
+			values[key], normalizeErr = setting.NormalizeSensitiveCheckExemptGroups(value)
+		}
+		if normalizeErr != nil {
+			return normalizeErr
+		}
 		if err := validateOptionValue(key, value); err != nil {
 			return err
 		}
@@ -336,6 +352,14 @@ func UpdateOptionsBulk(values map[string]string) error {
 	}
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if _, writesGroups := values[setting.SensitiveCheckExemptGroupsOptionKey]; writesGroups {
+			if err := lockGroupNamespace(tx); err != nil {
+				return err
+			}
+			if err := validateGroupNamesForWriteTx(tx, policySnapshot.TextExemptGroups...); err != nil {
+				return err
+			}
+		}
 		for k, v := range values {
 			option := Option{Key: k}
 			if err := tx.FirstOrCreate(&option, Option{Key: k}).Error; err != nil {
@@ -375,6 +399,14 @@ func updateOptionMap(key string, value string) (err error) {
 			return normalizeErr
 		}
 		value = normalized
+	}
+	switch key {
+	case setting.PublicModelOwnedByOptionKey:
+		setting.LoadPublicModelOwnedBy(value)
+		value = setting.GetPublicModelOwnedBy()
+	case setting.SensitiveCheckExemptGroupsOptionKey:
+		setting.LoadSensitiveCheckExemptGroups(value)
+		value = setting.SensitiveCheckExemptGroupsToString()
 	}
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()

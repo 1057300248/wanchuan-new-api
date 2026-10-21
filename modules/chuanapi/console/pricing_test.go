@@ -44,7 +44,7 @@ func performPublicPricingRequest(t *testing.T, decorate func(*gin.Context)) *htt
 	return recorder
 }
 
-func TestGetPublicPricingProjectsAnonymousPublicGroupsOnly(t *testing.T) {
+func TestAnonymousCatalogsProjectOnlyPublicModelFields(t *testing.T) {
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	previousRedis := common.RedisEnabled
 	previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
@@ -68,7 +68,7 @@ func TestGetPublicPricingProjectsAnonymousPublicGroupsOnly(t *testing.T) {
 	originalUsableGroups := setting.UserUsableGroups2JSONString()
 	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
 	originalAutoGroups := setting.AutoGroups2JsonString()
-	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default"}`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","unpriced":"Missing ratio"}`))
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"private":9}`))
 	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["default","private"]`))
 	t.Cleanup(func() {
@@ -80,12 +80,16 @@ func TestGetPublicPricingProjectsAnonymousPublicGroupsOnly(t *testing.T) {
 	require.NoError(t, db.Create(&model.Channel{
 		Id: 801, Type: constant.ChannelTypeOpenAI, Key: "fixture-key",
 		Status: common.ChannelStatusEnabled, Name: "fixture-channel",
-		Models: "public-model,private-model", Group: "default,private",
+		Models: "public-model,private-model,stealth/pixel-canary,unpriced-model", Group: "default,private,unpriced",
 	}).Error)
 	require.NoError(t, db.Create(&[]model.Ability{
 		{Group: "default", Model: "public-model", ChannelId: 801, Enabled: true},
+		{Group: "private", Model: "public-model", ChannelId: 801, Enabled: true},
+		{Group: "default", Model: "stealth/pixel-canary", ChannelId: 801, Enabled: true},
+		{Group: "unpriced", Model: "unpriced-model", ChannelId: 801, Enabled: true},
 		{Group: "private", Model: "private-model", ChannelId: 801, Enabled: true},
 	}).Error)
+	require.NoError(t, db.Create(&model.Model{ModelName: "public-model", Description: "private-supplier-note", Status: 1}).Error)
 	model.InvalidatePricingCache()
 
 	anonymous := performPublicPricingRequest(t, nil)
@@ -104,6 +108,18 @@ func TestGetPublicPricingProjectsAnonymousPublicGroupsOnly(t *testing.T) {
 	forged := performPublicPricingRequest(t, func(c *gin.Context) { c.Set("id", 4242) })
 	assert.Equal(t, anonymous.Body.String(), forged.Body.String(),
 		"an identity in the context must not personalize the anonymous catalogue")
+
+	llmsRecorder := httptest.NewRecorder()
+	llmsContext, _ := gin.CreateTestContext(llmsRecorder)
+	llmsContext.Request = httptest.NewRequest(http.MethodGet, "/llms-full.txt", nil)
+	GetLlmsFull(llmsContext)
+	require.Equal(t, http.StatusOK, llmsRecorder.Code)
+	assert.Contains(t, llmsRecorder.Body.String(), "public-model")
+	assert.Contains(t, llmsRecorder.Body.String(), "rate-1")
+	for _, internal := range []string{"private", "stealth/pixel-canary", "unpriced-model", "default"} {
+		assert.NotContains(t, llmsRecorder.Body.String(), internal,
+			"the text catalogue must use the same public projection as pricing")
+	}
 }
 
 func TestPublicPricingRowsHideRoutingAndNotesWithoutMutatingSource(t *testing.T) {
@@ -115,8 +131,8 @@ func TestPublicPricingRowsHideRoutingAndNotesWithoutMutatingSource(t *testing.T)
 	for _, internal := range []string{"supplier-a", "supplier-b", "private-supplier", "private-owner", "internal-note"} {
 		assert.NotContains(t, string(payload), internal)
 	}
-	assert.Equal(t, []string{"rate-1"}, public[0]["enable_groups"])
-	assert.Equal(t, rows[0].BillingExpr, public[0]["billing_expr"])
+	assert.Equal(t, []string{"rate-1"}, public[0].EnableGroup)
+	assert.Equal(t, rows[0].BillingExpr, public[0].BillingExpr)
 	assert.Equal(t, []string{"supplier-a", "supplier-b"}, rows[0].EnableGroup)
 	assert.Empty(t, publicPricingRows(rows, map[string]string{}))
 }
