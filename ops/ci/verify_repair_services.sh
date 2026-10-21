@@ -31,27 +31,33 @@ database)
   export TEST_DATABASE_COMPAT=1 TEST_DATABASE_DIALECT="$DIALECT"
   export TEST_DATABASE_DSN= TEST_LOG_DATABASE_DSN=
   export TEST_MYSQL_DSN= TEST_MYSQL_LOG_DSN= TEST_POSTGRES_DSN= TEST_POSTGRES_LOG_DSN=
+  export AUDIT_MYSQL_DSN= AUDIT_POSTGRES_DSN=
+  token_migration_mysql_dsn= token_migration_postgres_dsn=
   case "$DIALECT" in
   mysql)
     : "${MYSQL_ID:?a real MySQL service is required}" "${MYSQL_PORT:?a real MySQL port is required}"
     docker inspect --format '{{.Config.Image}} {{.Image}}' "$MYSQL_ID" > "$OUT/database-image.txt"
-    docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'SELECT VERSION(); ALTER DATABASE repair_compat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_compat_log CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;' > "$OUT/database-version.txt"
+    docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'SELECT VERSION(); ALTER DATABASE repair_compat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_compat_log CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_token_migration CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;' > "$OUT/database-version.txt"
     export TEST_MYSQL_DSN="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_compat?charset=utf8mb4&parseTime=true&loc=UTC"
     export TEST_MYSQL_LOG_DSN="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_compat_log?charset=utf8mb4&parseTime=true&loc=UTC"
     export TEST_DATABASE_DSN="$TEST_MYSQL_DSN" TEST_LOG_DATABASE_DSN="$TEST_MYSQL_LOG_DSN"
+    token_migration_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_token_migration?charset=utf8mb4&parseTime=true&loc=UTC"
     ;;
   postgres)
     : "${PG_ID:?a real PostgreSQL service is required}" "${PG_PORT:?a real PostgreSQL port is required}"
     docker inspect --format '{{.Config.Image}} {{.Image}}' "$PG_ID" > "$OUT/database-image.txt"
     docker exec "$PG_ID" psql -U postgres -d repair_compat -Atc 'SHOW server_version;' > "$OUT/database-version.txt"
     docker exec "$PG_ID" createdb -U postgres repair_compat_log
+    docker exec "$PG_ID" createdb -U postgres repair_token_migration
     export TEST_POSTGRES_DSN="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_compat?sslmode=disable"
     export TEST_POSTGRES_LOG_DSN="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_compat_log?sslmode=disable"
     export TEST_DATABASE_DSN="$TEST_POSTGRES_DSN" TEST_LOG_DATABASE_DSN="$TEST_POSTGRES_LOG_DSN"
+    token_migration_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_token_migration?sslmode=disable"
     ;;
   sqlite) ;;
   *) echo "Unsupported database dialect: $DIALECT" >&2; exit 1 ;;
   esac
+  export AUDIT_MYSQL_DSN="$TEST_MYSQL_DSN" AUDIT_POSTGRES_DSN="$TEST_POSTGRES_DSN"
 
   # Production startup installs an immutable registry; keep it in its own process.
   report startup ./model '^TestDatabaseCompatibilityReal$' TestDatabaseCompatibilityReal
@@ -67,7 +73,11 @@ database)
     mysql) migration=TestTokenMigrationFromChar48ToVarchar128MySQL ;;
     postgres) migration=TestTokenMigrationFromChar48ToVarchar128Postgres ;;
   esac
-  report token-migration ./controller "^$migration$" "$migration"
+  # This safety-sensitive legacy-schema test refuses an existing tokens table.
+  # Use a fresh database owned by this disposable service, never the startup DB;
+  # service teardown removes it without dropping any externally supplied data.
+  TEST_MYSQL_DSN="$token_migration_mysql_dsn" TEST_POSTGRES_DSN="$token_migration_postgres_dsn" \
+    report token-migration ./controller "^$migration$" "$migration"
   prefix="TestAPITokenAuditDatabaseMatrix/$DIALECT"
   report token-audit ./controller "^TestAPITokenAuditDatabaseMatrix$/$DIALECT$" "$prefix/separate_log=false" "$prefix/separate_log=true"
   export TEST_PERF_MYSQL_DSN="$TEST_MYSQL_DSN" TEST_PERF_POSTGRES_DSN="$TEST_POSTGRES_DSN"

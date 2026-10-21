@@ -103,7 +103,9 @@ jobs:
         run: bash ops/ci/verify_repair_services.sh database
       - name: Integration evidence gate regressions
         if: (success() || failure()) && matrix.dialect == 'sqlite'
-        run: python3 -m unittest discover -s ops/ci/tests -p test_go_test_report.py -v
+        run: |
+          python3 -m unittest discover -s ops/ci/tests -p test_go_test_report.py -v
+          python3 -m unittest discover -s ops/ci/tests -p test_repair_service_env.py -v
       - name: Preserve exact-SHA database evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
