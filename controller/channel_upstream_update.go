@@ -353,7 +353,7 @@ func getFetchModelsResponseBody(method string, requestURL string, channel *model
 	if err != nil {
 		return nil, err
 	}
-	response, err := client.Do(request)
+	response, err := service.DoRequestWithoutRedirects(client, request)
 	if err != nil {
 		return nil, err
 	}

@@ -641,7 +641,7 @@ func FetchGeminiModels(baseURL, apiKey string, setting dto.ChannelSettings) ([]s
 
 		request.Header.Set("x-goog-api-key", apiKey)
 
-		response, err := client.Do(request)
+		response, err := service.DoRequestWithoutRedirects(client, request)
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("request failed: %v", err)
