@@ -44,6 +44,7 @@ describe('frontend extension navigation contract', () => {
         documentNavigation: true,
       },
       { title: 'Pricing', href: '/pricing' },
+      { title: 'monitor.title', href: '/model-monitor' },
     ])
     expect(links).toEqual([
       { title: 'Home', href: '/' },
@@ -66,6 +67,7 @@ describe('frontend extension navigation contract', () => {
     )
 
     expect(result).toEqual([
+      { title: 'monitor.title', href: '/model-monitor' },
       {
         title: 'Docs',
         href: '/help',

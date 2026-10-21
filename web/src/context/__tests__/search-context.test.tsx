@@ -17,15 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, test, vi } from 'vitest'
+import { describe, expect, test } from 'vitest'
 
 import { useSearch } from '../search-context'
-
-vi.mock('@/components/command-menu', () => ({
-  CommandMenu: () => <div data-testid='command-menu' />,
-}))
-
-const { SearchProvider } = await import('../search-provider')
+import { SearchProvider } from '../search-provider'
 
 function Probe() {
   const { open, setOpen } = useSearch()
@@ -39,7 +34,7 @@ function Probe() {
   )
 }
 
-describe('search context split', () => {
+describe('search provider', () => {
   test('throws when useSearch is used outside SearchProvider', () => {
     function Outside() {
       useSearch()
@@ -51,7 +46,7 @@ describe('search context split', () => {
     )
   })
 
-  test('provides open state to descendants without import cycle', () => {
+  test('provides the search state to descendants', () => {
     render(
       <SearchProvider>
         <Probe />
