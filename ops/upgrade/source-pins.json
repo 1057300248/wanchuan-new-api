@@ -15,6 +15,6 @@
     "repository": "QuantumNous/new-api",
     "commit": "206e0fa5c600127a314a97f88592c067f784f4a6"
   },
-  "version": "v1.0.0-rc.44.chuanapi.rebuild.20261021",
+  "version": "v1.0.0-rc.44.chuanapi.clean093",
   "scope": "Incremental ports from immutable production source; not a release, merge or deployment authorization. Feature parity is not asserted by this manifest."
 }
