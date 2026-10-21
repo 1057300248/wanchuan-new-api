@@ -53,7 +53,7 @@ func TestBillingFinalizationDatabaseMatrix(t *testing.T) {
 			common.SetDatabaseTypes(dialect.name, dialect.name)
 			t.Cleanup(func() { DB = oldDB; common.SetDatabaseTypes(oldType, oldLogType) })
 			// Representative previous-schema database, then additive migration.
-			require.NoError(t, db.AutoMigrate(&User{}, &Token{}, &BalanceLedgerOperation{}, &BalanceLedger{}, &UserSubscription{}, &SubscriptionPreConsumeRecord{}, &Task{}))
+			require.NoError(t, db.AutoMigrate(&Option{}, &User{}, &Token{}, &BalanceLedgerOperation{}, &BalanceLedger{}, &UserSubscription{}, &SubscriptionPreConsumeRecord{}, &Task{}))
 			require.False(t, db.Migrator().HasTable(&BillingFinalization{}))
 			require.NoError(t, db.AutoMigrate(&BillingFinalization{}))
 			serial := 0
@@ -141,6 +141,13 @@ func TestBillingFinalizationDatabaseMatrix(t *testing.T) {
 							r.TokenFingerprint = ""
 						}
 						pending(t, r)
+						if mode == "no_token" {
+							var stored BillingFinalization
+							require.NoError(t, db.First(&stored, "request_id = ?", r.RequestID).Error)
+							require.Equal(t, "", stored.TokenFingerprint, "empty identity must not acquire fixed-width padding")
+							require.True(t, sameBillingIdentity(r, stored))
+							pending(t, r)
+						}
 						switch mode {
 						case "soft_deleted":
 							require.NoError(t, db.Delete(&Token{}, r.TokenID).Error)
@@ -163,6 +170,16 @@ func TestBillingFinalizationDatabaseMatrix(t *testing.T) {
 						var u User
 						require.NoError(t, db.First(&u, r.UserID).Error)
 						require.Equal(t, 1000, u.Quota)
+						if mode == "no_token" {
+							require.NoError(t, RecoverBillingRefund(context.Background(), r.RequestID))
+							state, err := PersistBillingRefund(context.Background(), r)
+							require.NoError(t, err)
+							require.Equal(t, BillingRefunded, state)
+							var untouched Token
+							require.NoError(t, db.First(&untouched, r.UserID).Error)
+							require.Equal(t, 900, untouched.RemainQuota)
+							require.Equal(t, 100, untouched.UsedQuota)
+						}
 						if mode == "hard_deleted" || mode == "no_token" {
 							return
 						}
@@ -373,14 +390,35 @@ func TestBillingFinalizationDatabaseMatrix(t *testing.T) {
 			t.Run("migration_preserves_pending_and_tombstones", func(t *testing.T) {
 				r := seed(t, 100, 100)
 				pending(t, r)
+				empty := seed(t, 100, 0)
+				empty.TokenID, empty.TokenFingerprint = 0, ""
+				pending(t, empty)
 				before := []BillingFinalization{}
 				require.NoError(t, db.Order("request_id").Find(&before).Error)
+				// Reproduce the initial fixed-width schema on this owned fixture,
+				// including existing empty no-token and full SHA-256 identities.
+				legacy := struct {
+					TokenFingerprint string `gorm:"type:char(64);not null"`
+				}{}
+				require.NoError(t, db.Table("billing_finalizations").Migrator().AlterColumn(&legacy, "TokenFingerprint"))
+				if dialect.name == common.DatabaseTypePostgreSQL {
+					var padded string
+					require.NoError(t, db.Model(&BillingFinalization{}).Select("token_fingerprint").Where("request_id = ?", empty.RequestID).Scan(&padded).Error)
+					require.Equal(t, 64, len(padded), "legacy PostgreSQL CHAR identity padding reproducer")
+				}
 				require.NoError(t, db.AutoMigrate(&BillingFinalization{}))
-				require.NoError(t, db.AutoMigrate(&BillingFinalization{}))
+				recorder := &migrationSQLRecorder{}
+				require.NoError(t, db.Session(&gorm.Session{Logger: recorder}).AutoMigrate(&BillingFinalization{}))
+				require.Empty(t, recorder.schemaMutations(), "second migration must not repeat schema changes")
 				after := []BillingFinalization{}
 				require.NoError(t, db.Order("request_id").Find(&after).Error)
 				require.Equal(t, before, after)
 				require.NoError(t, RecoverBillingRefund(context.Background(), r.RequestID))
+				require.NoError(t, RecoverBillingRefund(context.Background(), empty.RequestID))
+				require.NoError(t, RecoverBillingRefund(context.Background(), empty.RequestID))
+				balances(t, r, 1000, 1000)
+				empty.TokenID = empty.UserID // inspect the unrelated unchanged fixture token
+				balances(t, empty, 1000, 1000)
 			})
 			t.Run("rollback_probe_no_permanent_owner", func(t *testing.T) {
 				r := seed(t, 100, 100)

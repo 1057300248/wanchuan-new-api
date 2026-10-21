@@ -56,7 +56,7 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 				common.SetDatabaseTypes(oldMain, oldLog)
 				model.InvalidateModelBonusEligibleCache()
 			})
-			require.NoError(t, db.AutoMigrate(&model.BillingFinalization{}, &model.Task{}, &model.User{}, &model.Token{}, &model.Log{}, &model.Channel{}, &model.Midjourney{}, &model.TopUp{}, &model.UserSubscription{}, &model.SystemTask{}, &model.SystemTaskLock{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Model{}, &model.Vendor{}, &model.ModelBonusEligibleAudit{}, &model.ReferralCommission{}, &model.Redemption{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.SubscriptionPreConsumeRecord{}))
+			require.NoError(t, db.AutoMigrate(&model.Option{}, &model.BillingFinalization{}, &model.Task{}, &model.User{}, &model.Token{}, &model.Log{}, &model.Channel{}, &model.Midjourney{}, &model.TopUp{}, &model.UserSubscription{}, &model.SystemTask{}, &model.SystemTaskLock{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Model{}, &model.Vendor{}, &model.ModelBonusEligibleAudit{}, &model.ReferralCommission{}, &model.Redemption{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.SubscriptionPreConsumeRecord{}))
 			var version string
 			q := "SELECT version()"
 			if dialect.name == common.DatabaseTypeSQLite {

@@ -31,11 +31,12 @@ var ErrBillingFinalized = errors.New("request billing already has a different te
 // A crash before this row commits still requires source-ledger reconciliation.
 // Never delete terminal rows while their original financial receipts survive.
 type BillingFinalization struct {
-	RequestID        string `gorm:"type:varchar(64);primaryKey"`
-	UserID           int    `gorm:"not null;index"`
-	Source           string `gorm:"type:varchar(16);not null"`
-	TokenID          int    `gorm:"not null"`
-	TokenFingerprint string `json:"-" gorm:"type:char(64);not null"`
+	RequestID string `gorm:"type:varchar(64);primaryKey"`
+	UserID    int    `gorm:"not null;index"`
+	Source    string `gorm:"type:varchar(16);not null"`
+	TokenID   int    `gorm:"not null"`
+	// VARCHAR preserves the empty no-token identity; PostgreSQL CHAR pads it.
+	TokenFingerprint string `json:"-" gorm:"type:varchar(64);not null"`
 	// Legacy source and token reservations need not be equal. Never fabricate a
 	// token credit from the source total or vice versa.
 	SourceHeld         int    `gorm:"type:bigint;not null"`
