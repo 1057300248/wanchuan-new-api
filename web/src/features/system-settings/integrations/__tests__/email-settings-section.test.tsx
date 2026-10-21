@@ -352,17 +352,15 @@ describe('converted quota reminder range', () => {
     'keeps blank, zero and finite %s amounts valid but rejects unsafe converted quota',
     (quotaDisplayType) => {
       const previous = useSystemConfigStore.getState().config.currency
-      useSystemConfigStore
-        .getState()
-        .setConfig({
-          currency: {
-            ...previous,
-            quotaDisplayType,
-            quotaPerUnit: 500000,
-            usdExchangeRate: 7,
-            customCurrencyExchangeRate: 2,
-          },
-        })
+      useSystemConfigStore.getState().setConfig({
+        currency: {
+          ...previous,
+          quotaDisplayType,
+          quotaPerUnit: 500000,
+          usdExchangeRate: 7,
+          customCurrencyExchangeRate: 2,
+        },
+      })
       try {
         const schema = createEmailSchema((key) => key)
         for (const amount of ['', '0', '1']) {
