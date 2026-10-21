@@ -3,6 +3,7 @@ package router
 import (
 	"embed"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -47,11 +48,21 @@ func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.Han
 		middleware.Cache(),
 		middleware.ServeFrontendFiles(frontendFS),
 		func(c *gin.Context) {
+			// A missing build asset must not receive the SPA shell. Preserve
+			// plugin dispatch precedence, and reject encoded/dot-segment
+			// static paths without changing legitimate nested SPA routes.
+			requestPath := c.Request.URL.Path
+			cleanPath := path.Clean(requestPath)
+			if strings.HasPrefix(requestPath, "/static/") || cleanPath == "/static" || strings.HasPrefix(cleanPath, "/static/") {
+				c.Header("Cache-Control", "no-store")
+				c.Data(http.StatusNotFound, "text/plain; charset=utf-8", []byte("Not Found\n"))
+				return
+			}
 			if strings.HasPrefix(c.Request.RequestURI, "/v1") || strings.HasPrefix(c.Request.RequestURI, "/api") || strings.HasPrefix(c.Request.RequestURI, "/assets") {
 				controller.RelayNotFound(c)
 				return
 			}
-			c.Header("Cache-Control", "no-cache")
+			c.Header("Cache-Control", "no-store")
 			c.Data(http.StatusOK, "text/html; charset=utf-8", assets.IndexPage)
 		},
 	)

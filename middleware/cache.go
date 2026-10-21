@@ -12,9 +12,10 @@ func Cache() func(c *gin.Context) {
 		if c.Request != nil && c.Request.URL != nil {
 			path = c.Request.URL.Path
 		}
+		c.Header("X-Content-Type-Options", "nosniff")
 		switch {
-		case path == "/":
-			c.Header("Cache-Control", "no-cache")
+		case path == "/" || path == "/index.html":
+			c.Header("Cache-Control", "no-store")
 		case strings.HasPrefix(path, "/static/"):
 			c.Header("Cache-Control", "public,max-age=31536000,immutable")
 		default:
