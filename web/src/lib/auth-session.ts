@@ -86,6 +86,24 @@ const authClient = axios.create({
 const refreshRaceDelays = [80, 200, 500] as const
 let refreshPromise: Promise<RefreshOutcome> | null = null
 let authEpoch = 0
+let authSessionEpoch = 0
+
+// Token refresh/rotation keeps an owner's in-flight requests valid. Identity
+// changes do not: a logout followed by a login must invalidate them even when
+// a session identifier is reused. Observe the store so every auth entry point
+// (including setUser/reset) participates in this boundary.
+useAuthStore.subscribe((state, previousState) => {
+  if (
+    state.auth.user?.id !== previousState.auth.user?.id ||
+    state.auth.session?.sid !== previousState.auth.session?.sid
+  ) {
+    authSessionEpoch += 1
+  }
+})
+
+export function getAuthSessionEpoch(): number {
+  return authSessionEpoch
+}
 
 class AuthRefreshSupersededError extends Error {
   constructor() {
