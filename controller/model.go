@@ -28,6 +28,9 @@ import (
 
 // https://platform.openai.com/docs/api-reference/models/list
 
+// Public model ownership identifies this gateway rather than its upstream routes.
+const publicModelOwner = "chuanapi"
+
 var openAIModels []dto.OpenAIModels
 var openAIModelsMap map[string]dto.OpenAIModels
 var channelId2Models map[int][]string
@@ -175,6 +178,7 @@ func buildOpenAIModel(modelName string, ownerByModel map[string]string) dto.Open
 	if owner, ok := ownerByModel[modelName]; ok && owner != "" {
 		oaiModel.OwnedBy = owner
 	}
+	oaiModel.OwnedBy = publicModelOwner
 	oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(modelName)
 	return oaiModel
 }
@@ -357,6 +361,7 @@ func RetrieveModel(c *gin.Context, modelType int) {
 				Type:        "model",
 			})
 		default:
+			aiModel.OwnedBy = publicModelOwner
 			c.JSON(200, aiModel)
 		}
 	} else {
