@@ -68,6 +68,8 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 			t.Run("separate_held_amounts", TestPolicyPreservingRefundSeparateHeldAmounts)
 			t.Run("intent_failure_admission", TestPolicyPreservingRefundIntentFailureClosesLocalAdmission)
 			t.Run("commit_boundaries", TestPolicyPreservingTerminalCommitBoundaries)
+			t.Run("task_commit_readback_outage", TestTaskPersistenceUncertainCommitAndReadbackOutage)
+			t.Run("task_reconciliation_identity", TestTaskPersistenceReconciliationRequiresOriginalIdentity)
 			t.Run("refund_commit_boundaries", TestPolicyPreservingRefundCommitBoundaries)
 			t.Run("extension_capability", TestPolicyPreservingExtensionCapabilityBoundary)
 			t.Run("zero_delta_replacement", TestPolicyPreservingZeroTokenDeltaRetainsReplacementCounter)

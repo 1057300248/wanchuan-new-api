@@ -760,6 +760,17 @@ func executeTaskSubmissionWith(
 	if insertErr := service.PersistTaskWithBillingOwner(c.Request.Context(), relayInfo, task, insertOmits...); insertErr != nil {
 		common.SysError(common.LogText("insert task error: %s", insertErr.Error()))
 		taskErr = service.TaskErrorWrapperLocal(errors.New("failed to persist task"), "task_insert_failed", http.StatusInternalServerError)
+		var uncertain *service.TaskPersistenceUncertainError
+		if errors.As(insertErr, &uncertain) {
+			correlation := uncertain.Correlation()
+			taskErr.Data = correlation
+			// Preserve status, body error code, NoRetry and the existing refund
+			// decision. Headers survive protocol/native privacy presenters too.
+			// The ID is correlation only: do not mark an uncertain task accepted.
+			c.Header("X-New-API-Task-ID", correlation.TaskID)
+			c.Header("X-New-API-Task-Request-ID", correlation.RequestID)
+			c.Header("X-New-API-Task-Persistence", correlation.Persistence)
+		}
 		diagnostics.failed("insert", "database_error", taskErr, false)
 		return nil, taskErr
 	}

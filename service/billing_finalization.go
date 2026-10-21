@@ -210,6 +210,11 @@ func PersistTaskWithBillingOwner(ctx context.Context, info *relaycommon.RelayInf
 		readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if readErr := model.ReadCommittedBillingTask(readCtx, receipt, task); readErr != nil {
+			if !errors.Is(readErr, model.ErrBillingFinalized) {
+				// Preserve the existing failure/refund policy. This is correlation
+				// evidence, not an accepted task or a decision about another submit.
+				return &TaskPersistenceUncertainError{receipt: receipt, taskPublicID: task.TaskID, cause: err}
+			}
 			return err
 		}
 	}
