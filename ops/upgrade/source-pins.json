@@ -13,8 +13,12 @@
   },
   "upstream_reference": {
     "repository": "QuantumNous/new-api",
-    "commit": "206e0fa5c600127a314a97f88592c067f784f4a6"
+    "commit": "206e0fa5c600127a314a97f88592c067f784f4a6",
+    "release_tag": "v1.0.0-rc.45",
+    "release_commit": "6cf0d90b5ff27f901697dddd61e0c28aba8efefc",
+    "commits_after_release": 16,
+    "alignment_method": "Incremental feature ports, not a literal merge of the upstream commit history."
   },
-  "version": "v1.0.0-rc.44.chuanapi.clean093",
+  "version": "v1.0.0-rc.45.chuanapi.1",
   "scope": "Incremental ports from immutable production source; not a release, merge or deployment authorization. Feature parity is not asserted by this manifest."
 }

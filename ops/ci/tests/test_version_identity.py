@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -45,6 +46,18 @@ class VersionIdentityTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(stamped, "v1.0.0-rc.41+verified.gaaaaaaaaaaaa\n")
         self.assertEqual(stamped.count("+"), 1)
+
+    def test_checkout_version_fits_setup_column_with_commit_stamp(self):
+        version = (ROOT / "VERSION").read_text().strip()
+        self.assertTrue(0 < len(version) <= 50)
+        result, stamped, _ = self.stamp(version + "\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(0 < len(stamped.strip()) <= 50,
+                        "the committed build identity must fit setups.version varchar(50)")
+
+    def test_source_pin_manifest_matches_checkout_version(self):
+        pins = json.loads((ROOT / "ops/upgrade/source-pins.json").read_text())
+        self.assertEqual(pins["version"], (ROOT / "VERSION").read_text().strip())
 
     def test_bad_identity_does_not_write_version_or_environment(self):
         for version, sha in [("", "a" * 40), ("v1.0.0\necho unsafe", "a" * 40),
