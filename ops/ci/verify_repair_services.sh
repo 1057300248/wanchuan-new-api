@@ -75,6 +75,12 @@ database)
   report wallet ./service "^TestTaskWalletReceiptsDatabaseMatrix$/$DIALECT$" "${required[@]}"
   report owner ./model "^TestPublicModelOwnerDatabaseMatrix$/$DIALECT$" "TestPublicModelOwnerDatabaseMatrix/$DIALECT"
   report owner-group-settings ./model "^TestRequestPolicyDatabaseMatrix$/$DIALECT$" "TestRequestPolicyDatabaseMatrix/$DIALECT"
+  prefix="TestMonitorHiddenGroupsDatabaseMatrix/$DIALECT"
+  required=("$prefix/production_json_reload" "$prefix/fresh_default_insert" "$prefix/corrupt_saved_visibility_fails_closed" "$prefix/failed_write_preserves_saved_visibility" "$prefix/concurrent_legacy_write_preserves_visibility" "$prefix/connection_reopen_preserves_visibility")
+  for contract in omitted_preserves null_preserves empty_clears false_clears explicit_replaces invalid_key_rejected invalid_false_key_rejected invalid_type_rejected too_many_rejected; do
+    required+=("$prefix/save_contract/$contract")
+  done
+  report monitor-visibility ./modules/chuanapi/console/monitor "^TestMonitorHiddenGroupsDatabaseMatrix$/$DIALECT$" "${required[@]}"
   prefix="TestSensitiveExemptionGroupRenameDatabaseMatrix/$DIALECT"
   required=("$prefix/rename_preserves_policy_not_old_name" "$prefix/collision_and_coordinated_removal" "$prefix/explicit_options_normalize_and_revoke" "$prefix/invalid_or_stale_explicit_options_rollback" "$prefix/stale_policy_writes_and_no_group_definition" "$prefix/explicit_reintroduction_remains_possible" "$prefix/policy_save_precedes_rename" "$prefix/concurrent_rename_policy_save/rollback=false" "$prefix/concurrent_rename_policy_save/rollback=true")
   report sensitive-group-rename ./model "^TestSensitiveExemptionGroupRenameDatabaseMatrix$/$DIALECT$" "${required[@]}"

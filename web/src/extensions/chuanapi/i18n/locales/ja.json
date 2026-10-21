@@ -87,6 +87,8 @@
     "monitor.settings.defaultText": "空欄の場合は各言語の既定文を使用します。",
     "monitor.settings.groups": "グループ表示名",
     "monitor.settings.groupsHelp": "このページ専用の名前です。同じ参照グループに紐づきます。空欄で既定名に戻ります。",
+    "monitor.settings.showGroup": "{{group}} を表示",
+    "monitor.settings.showGroupHelp": "オフにすると、このグループの結果・詳細・画像が非表示になります。いつでも再度オンにできます。",
     "monitor.settings.groupPlaceholder": "カスタムグループ名",
     "monitor.settings.unlisted": "保存済みグループ",
     "monitor.settings.targetsFailed": "現在のグループを読み込めません",

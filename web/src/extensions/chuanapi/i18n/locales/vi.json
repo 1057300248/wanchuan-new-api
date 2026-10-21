@@ -87,6 +87,8 @@
     "monitor.settings.defaultText": "Để trống để dùng nội dung mặc định theo ngôn ngữ.",
     "monitor.settings.groups": "Tên hiển thị của nhóm",
     "monitor.settings.groupsHelp": "Tên chỉ áp dụng cho trang này và luôn gắn với cùng nhóm tham chiếu. Để trống để khôi phục tên mặc định.",
+    "monitor.settings.showGroup": "Hiển thị {{group}}",
+    "monitor.settings.showGroupHelp": "Tắt để ẩn nhóm này cùng kết quả, chi tiết và hình ảnh. Bạn có thể bật lại bất cứ lúc nào.",
     "monitor.settings.groupPlaceholder": "Tên nhóm tùy chỉnh",
     "monitor.settings.unlisted": "Nhóm đã lưu trước đó",
     "monitor.settings.targetsFailed": "Không thể tải các nhóm hiện tại",

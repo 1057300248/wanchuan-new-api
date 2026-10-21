@@ -1,6 +1,8 @@
 package cline_test
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 
@@ -118,6 +121,186 @@ func TestClineResponsesRequestConversionMessageArrayWithTools(t *testing.T) {
 	assert.Equal(t, "call_1", gjson.GetBytes(body, "messages.2.tool_call_id").String())
 	assert.Equal(t, "read_file", gjson.GetBytes(body, "tools.0.function.name").String())
 	assert.Equal(t, "Read a file", gjson.GetBytes(body, "tools.0.function.description").String())
+}
+
+func TestClineResponsesReasoningStaysWithAssistantToolCalls(t *testing.T) {
+	env := newClineTestEnv(t, types.RelayFormatOpenAIResponses, relayconstant.RelayModeResponses, false, "cline-pass/kimi-k3", "http://127.0.0.1:1")
+	request := &dto.OpenAIResponsesRequest{
+		Model: env.info.OriginModelName,
+		Input: []byte(`[
+			{"role":"user","content":"check both files"},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"inspect both files"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"checking files"}]},
+			{"type":"function_call","call_id":"a","name":"read_file","arguments":"{}"},
+			{"type":"reasoning","content":[{"type":"reasoning_text","text":"also inspect config"}],"summary":[{"type":"summary_text","text":"do not duplicate"}]},
+			{"type":"function_call","call_id":"b","name":"read_file","arguments":"{}"},
+			{"type":"function_call_output","call_id":"a","output":"first"},
+			{"type":"function_call_output","call_id":"b","output":"second"},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"both results checked"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]},
+			{"role":"user","content":"continue"}
+		]`),
+	}
+	converted, err := env.adaptor.ConvertOpenAIResponsesRequest(env.context, env.info, *request)
+	require.NoError(t, err)
+	body, err := common.Marshal(converted)
+	require.NoError(t, err)
+	require.Len(t, gjson.GetBytes(body, "messages").Array(), 6)
+	assert.Equal(t, "inspect both files\n\nalso inspect config", gjson.GetBytes(body, "messages.1.reasoning_content").String())
+	assert.Equal(t, "checking files", gjson.GetBytes(body, "messages.1.content").String())
+	require.Len(t, gjson.GetBytes(body, "messages.1.tool_calls").Array(), 2)
+	assert.Equal(t, "a", gjson.GetBytes(body, "messages.1.tool_calls.0.id").String())
+	assert.Equal(t, "b", gjson.GetBytes(body, "messages.1.tool_calls.1.id").String())
+	assert.Equal(t, "first", gjson.GetBytes(body, "messages.2.content").String())
+	assert.Equal(t, "second", gjson.GetBytes(body, "messages.3.content").String())
+	assert.Equal(t, "both results checked", gjson.GetBytes(body, "messages.4.reasoning_content").String())
+	assert.Equal(t, "done", gjson.GetBytes(body, "messages.4.content").String())
+	assert.Equal(t, "continue", gjson.GetBytes(body, "messages.5.content").String())
+}
+
+func TestClineResponsesReasoningThreeRoundReplay(t *testing.T) {
+	// Replay the actual returned output, as a Responses client does. The first
+	// batch mixes a function tool and a custom tool; the next uses their results.
+	messages := []string{
+		`{"role":"assistant","reasoning_content":"inspect both files","content":"checking files","tool_calls":[{"index":0,"id":"a","type":"function","function":{"name":"read_file","arguments":"{}"}},{"index":1,"id":"b","type":"function","function":{"name":"exec","arguments":"{\"input\":\"ls\"}"}}]}`,
+		`{"role":"assistant","reasoning_content":"both results checked","content":"checking difference","tool_calls":[{"index":0,"id":"c","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"diff\"}"}}]}`,
+		`{"role":"assistant","reasoning_content":"all results checked","content":"finished"}`,
+	}
+	for _, model := range []string{"cline-pass/kimi-k3", "cline-free/deepseek-v4.1-flash", "cline-free/qwen3.8-max", "cline-free/glm-5.3"} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", model, stream), func(t *testing.T) {
+				upstream, received := newClineUpstream(t, func(w http.ResponseWriter, r *http.Request, body []byte) {
+					toolCount := len(gjson.GetBytes(body, `messages.#(role=="tool")#`).Array())
+					round := 0
+					if toolCount == 2 {
+						round = 1
+					} else if toolCount == 3 {
+						round = 2
+					}
+					finish := "tool_calls"
+					if round == 2 {
+						finish = "stop"
+					}
+					if !stream {
+						w.Header().Set("Content-Type", "application/json")
+						fmt.Fprintf(w, `{"success":true,"data":{"id":"chat","model":"upstream","choices":[{"index":0,"message":%s,"finish_reason":%q}],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}}}`, messages[round], finish)
+						return
+					}
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprintf(w, "data: {\"success\":true,\"data\":{\"id\":\"chat\",\"choices\":[{\"index\":0,\"delta\":%s}]}}\n\n", messages[round])
+					fmt.Fprintf(w, "data: {\"success\":true,\"data\":{\"id\":\"chat\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":%q}]}}\n\n", finish)
+					fmt.Fprint(w, "data: {\"success\":true,\"data\":{\"id\":\"chat\",\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":4,\"total_tokens\":14}}}\n\ndata: [DONE]\n\n")
+				})
+				history := []json.RawMessage{json.RawMessage(`{"role":"user","content":"check both files"}`)}
+				for round := range 3 {
+					env := newClineTestEnv(t, types.RelayFormatOpenAIResponses, relayconstant.RelayModeResponses, stream, model, upstream.URL+"/v1")
+					input, err := common.Marshal(history)
+					require.NoError(t, err)
+					request := &dto.OpenAIResponsesRequest{
+						Model: model, Stream: &stream, Input: input,
+						Tools: []byte(`[{"type":"function","name":"read_file","parameters":{"type":"object"}},{"type":"custom","name":"exec","format":{"type":"text"}}]`),
+					}
+					converted, err := env.adaptor.ConvertOpenAIResponsesRequest(env.context, env.info, *request)
+					require.NoError(t, err)
+					resp := env.send(t, converted)
+					_, apiErr := env.receive(t, resp)
+					require.Nil(t, apiErr)
+					wire := (<-received).body
+					assert.Equal(t, []int{1, 4, 6}[round], len(gjson.GetBytes(wire, "messages").Array()))
+					if round > 0 {
+						assert.Equal(t, "inspect both files", gjson.GetBytes(wire, "messages.1.reasoning_content").String())
+						assert.Equal(t, "checking files", gjson.GetBytes(wire, "messages.1.content").String())
+						require.Len(t, gjson.GetBytes(wire, "messages.1.tool_calls").Array(), 2)
+						assert.Equal(t, "a", gjson.GetBytes(wire, "messages.2.tool_call_id").String())
+						assert.Equal(t, "file contents", gjson.GetBytes(wire, "messages.2.content").String())
+						assert.Equal(t, "b", gjson.GetBytes(wire, "messages.3.tool_call_id").String())
+						assert.Equal(t, "directory listing", gjson.GetBytes(wire, "messages.3.content").String())
+						assert.JSONEq(t, `{"input":"ls"}`, gjson.GetBytes(wire, "messages.1.tool_calls.1.function.arguments").String())
+					}
+					if round == 2 {
+						assert.Equal(t, "both results checked", gjson.GetBytes(wire, "messages.4.reasoning_content").String())
+						assert.Equal(t, "c", gjson.GetBytes(wire, "messages.4.tool_calls.0.id").String())
+						assert.Equal(t, "difference found", gjson.GetBytes(wire, "messages.5.content").String())
+					}
+					output := gjson.Get(env.recorder.Body.String(), "output")
+					if stream {
+						payloads := dataPayloads(env.recorder.Body.String())
+						completed := findEventPayload(payloads, "response.completed")
+						require.NotEmpty(t, completed)
+						assert.Equal(t, 1, countEvents(streamEventTypes(env.recorder.Body.String()), "response.completed"))
+						output = gjson.Get(completed, "response.output")
+					}
+					require.True(t, output.IsArray())
+					var items []json.RawMessage
+					require.NoError(t, common.Unmarshal([]byte(output.Raw), &items))
+					history = append(history, items...)
+					switch round {
+					case 0:
+						assert.Equal(t, "ls", output.Get(`#(type=="custom_tool_call").input`).String())
+						history = append(history,
+							json.RawMessage(`{"type":"function_call_output","call_id":"a","output":"file contents"}`),
+							json.RawMessage(`{"type":"custom_tool_call_output","call_id":"b","output":"directory listing"}`))
+					case 1:
+						history = append(history, json.RawMessage(`{"type":"function_call_output","call_id":"c","output":"difference found"}`))
+					case 2:
+						assert.Equal(t, "finished", output.Get(`#(type=="message").content.0.text`).String())
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestClineResponsesRejectsUnrepresentableHistory(t *testing.T) {
+	for _, item := range []string{
+		`{"type":"reasoning","encrypted_content":"private-opaque-value","summary":[]}`,
+		`{"type":"reasoning","encrypted_content":"private-opaque-value","summary":[{"type":"summary_text","text":"summary cannot restore opaque state"}]}`,
+		`{"type":"compaction","encrypted_content":"private-opaque-value"}`,
+		`{"type":"item_reference","id":"private-opaque-value"}`,
+		`{"type":"agent_message","content":"private-opaque-value"}`,
+	} {
+		t.Run(gjson.Get(item, "type").String(), func(t *testing.T) {
+			env := newClineTestEnv(t, types.RelayFormatOpenAIResponses, relayconstant.RelayModeResponses, false, "cline-pass/kimi-k3", "http://127.0.0.1:1")
+			request := &dto.OpenAIResponsesRequest{Model: env.info.OriginModelName, Input: []byte("[" + item + "]")}
+			converted, err := env.adaptor.ConvertOpenAIResponsesRequest(env.context, env.info, *request)
+			require.Error(t, err)
+			assert.Nil(t, converted)
+			var apiErr *types.NewAPIError
+			require.ErrorAs(t, err, &apiErr)
+			assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+			assert.True(t, types.IsSkipRetryError(apiErr))
+			assert.Equal(t, types.ErrorCode("responses_history_unsupported"), apiErr.GetErrorCode())
+			assert.NotContains(t, err.Error(), "private-opaque-value")
+		})
+	}
+}
+
+func TestClineResponsesReasoningDoesNotLeakToNonClineRetry(t *testing.T) {
+	for _, channelType := range []int{constant.ChannelTypeOpenAI, constant.ChannelTypeOpenRouter, constant.ChannelTypeAdvancedCustom} {
+		t.Run(fmt.Sprintf("channel=%d", channelType), func(t *testing.T) {
+			env := newClineTestEnv(t, types.RelayFormatOpenAIResponses, relayconstant.RelayModeResponses, false, "test-model", "http://127.0.0.1:1")
+			request := dto.OpenAIResponsesRequest{Model: "test-model", Input: []byte(`[{"role":"user","content":"inspect"},{"type":"reasoning","content":[{"type":"reasoning_text","text":"private reasoning"}]},{"role":"assistant","content":"checking"}]`)}
+			converted, err := env.adaptor.ConvertOpenAIResponsesRequest(env.context, env.info, request)
+			require.NoError(t, err)
+			clineChat, ok := converted.(*dto.GeneralOpenAIRequest)
+			require.True(t, ok)
+			require.Len(t, clineChat.Messages, 2)
+			assert.Equal(t, "private reasoning", clineChat.Messages[1].GetReasoningContent())
+
+			// A retry reuses RelayInfo but rebuilds channel metadata. The Cline
+			// dialect opt-in must not survive into an unrelated Chat bridge.
+			common.SetContextKey(env.context, constant.ContextKeyChannelType, channelType)
+			env.info.InitChannelMeta(env.context)
+			result, err := service.ConvertRequestByID(env.context, env.info, relayconvert.ConverterOpenAIResponsesToOpenAIChat, request)
+			require.NoError(t, err)
+			chat, ok := result.Value.(*dto.GeneralOpenAIRequest)
+			require.True(t, ok)
+			require.Len(t, chat.Messages, 2)
+			assert.Equal(t, "checking", chat.Messages[1].Content)
+			assert.Nil(t, chat.Messages[1].ReasoningContent)
+			assert.Empty(t, result.Diagnostics)
+		})
+	}
 }
 
 func TestClineResponsesRequestMaxOutputTokensExplicitZero(t *testing.T) {

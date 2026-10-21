@@ -57,6 +57,9 @@ func (s *Service) snapshotWithConfig(ctx context.Context, config Config) (Snapsh
 		// group when the upstream list is reordered or a new group is inserted.
 		digest := sha256.Sum256([]byte(target.ID))
 		id := fmt.Sprintf("route-%x", digest[:16])
+		if config.HiddenGroups[id] {
+			continue
+		}
 		ids[target.ID] = id
 		data.Targets = append(data.Targets, Target{ID: id, Number: index + 1, Model: publicText(target.Model), Name: config.Groups[id]})
 	}

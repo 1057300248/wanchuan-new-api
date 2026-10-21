@@ -27,6 +27,7 @@ export type MonitorConfig = {
   title: string
   description: string
   groups: Record<string, string>
+  hidden_groups: Record<string, boolean>
 }
 export type MonitorSettingsData = {
   config: MonitorConfig

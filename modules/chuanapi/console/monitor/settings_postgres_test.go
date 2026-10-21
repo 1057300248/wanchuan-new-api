@@ -70,7 +70,7 @@ func TestMonitorSettingsPostgresPersistenceAndAuthorization(t *testing.T) {
 		engine.ServeHTTP(response, req)
 		return response
 	}
-	config := Config{Enabled: true, Title: "页面标题", Description: "Public reference", Groups: map[string]string{"route-" + strings.Repeat("a", 32): "自定义分组"}}
+	config := Config{Enabled: true, Title: "页面标题", Description: "Public reference", Groups: map[string]string{"route-" + strings.Repeat("a", 32): "自定义分组"}, HiddenGroups: map[string]bool{"route-" + strings.Repeat("a", 32): true}}
 	body, err := common.Marshal(config)
 	require.NoError(t, err)
 	for _, path := range []string{"/api/option/model-monitor", "/api/option/model-monitor/targets"} {

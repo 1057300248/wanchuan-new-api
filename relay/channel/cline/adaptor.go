@@ -115,6 +115,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	// Cline only exposes chat completions upstream, so the Responses API is
 	// bridged through the shared relaykit converter and the OpenAI response
 	// handler pair. /v1/responses/compact stays unsupported.
+	info.ConvOptions().ReplayResponsesReasoning = true
 	result, err := service.ConvertRequestByID(c, info, relayconvert.ConverterOpenAIResponsesToOpenAIChat, request)
 	if err != nil {
 		return nil, err

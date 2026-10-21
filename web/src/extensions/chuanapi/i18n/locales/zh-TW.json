@@ -87,6 +87,8 @@
     "monitor.settings.defaultText": "留空使用對應語言的預設文案。",
     "monitor.settings.groups": "分組顯示名稱",
     "monitor.settings.groupsHelp": "名稱僅用於此監測頁面，並與對應參考分組綁定；留空恢復預設名稱。",
+    "monitor.settings.showGroup": "顯示 {{group}}",
+    "monitor.settings.showGroupHelp": "關閉後隱藏此分組及其結果、詳情和圖片，可隨時重新開啟。",
     "monitor.settings.groupPlaceholder": "自訂分組名稱",
     "monitor.settings.unlisted": "先前儲存的分組",
     "monitor.settings.targetsFailed": "無法載入目前分組",

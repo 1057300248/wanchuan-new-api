@@ -87,6 +87,8 @@
     "monitor.settings.defaultText": "Оставьте пустым для переведённого текста по умолчанию.",
     "monitor.settings.groups": "Отображаемые названия групп",
     "monitor.settings.groupsHelp": "Названия действуют только на этой странице и закреплены за соответствующей группой. Пустое поле возвращает стандартное название.",
+    "monitor.settings.showGroup": "Показывать {{group}}",
+    "monitor.settings.showGroupHelp": "Отключите, чтобы скрыть эту группу, её результаты, подробности и изображения. Можно включить снова в любое время.",
     "monitor.settings.groupPlaceholder": "Своё название группы",
     "monitor.settings.unlisted": "Ранее сохранённая группа",
     "monitor.settings.targetsFailed": "Не удалось загрузить текущие группы",
