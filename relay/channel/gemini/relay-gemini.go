@@ -454,11 +454,11 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 		case types.RelayFormatClaude:
 			c.JSON(newAPIError.StatusCode, gin.H{
 				"type":  "error",
-				"error": privacy.SanitizeClientClaudeError(c, newAPIError.StatusCode, newAPIError.ToClaudeError()),
+				"error": privacy.SanitizeClientClaudeError(c, newAPIError.StatusCode, newAPIError.ToClaudeError(common.UpstreamAddresses(c)...)),
 			})
 		default:
 			c.JSON(newAPIError.StatusCode, gin.H{
-				"error": privacy.SanitizeClientOpenAIError(c, newAPIError.StatusCode, newAPIError.ToOpenAIError()),
+				"error": privacy.SanitizeClientOpenAIError(c, newAPIError.StatusCode, newAPIError.ToOpenAIError(common.UpstreamAddresses(c)...)),
 			})
 		}
 		return &usage, nil

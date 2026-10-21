@@ -61,7 +61,7 @@ func channelCacheExpired() bool {
 
 func InitChannelCache() {
 	if err := RefreshChannelCache(context.Background()); err != nil {
-		common.SysError("channel cache refresh failed; previous snapshot retained: " + common.MaskSensitiveInfo(err.Error()))
+		common.SysError("channel cache refresh failed; previous snapshot retained: " + common.MaskSensitiveLogInfo(err.Error()))
 	}
 }
 
@@ -228,7 +228,7 @@ func RunChannelCacheSync(ctx context.Context, frequency int) {
 				return
 			}
 			if err := RefreshChannelCache(ctx); err != nil && ctx.Err() == nil {
-				common.SysError("channel cache refresh failed; retaining previous snapshot: " + common.MaskSensitiveInfo(err.Error()))
+				common.SysError("channel cache refresh failed; retaining previous snapshot: " + common.MaskSensitiveLogInfo(err.Error()))
 			}
 			timer.Reset(interval)
 		}

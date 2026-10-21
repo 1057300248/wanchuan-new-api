@@ -43,15 +43,16 @@ func HandleStreamFailure(c *gin.Context, info *relaycommon.RelayInfo, apiErr *ty
 	if c == nil || info == nil || apiErr == nil {
 		return fmt.Errorf("invalid stream failure")
 	}
+	upstreamURLs := common.UpstreamAddresses(c)
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
-		safe := privacy.SanitizeClientOpenAIError(c, apiErr.StatusCode, apiErr.ToOpenAIError())
+		safe := privacy.SanitizeClientOpenAIError(c, apiErr.StatusCode, apiErr.ToOpenAIError(upstreamURLs...))
 		return helper.ObjectData(c, map[string]any{"error": safe})
 	case types.RelayFormatClaude:
-		safe := privacy.SanitizeClientClaudeError(c, apiErr.StatusCode, apiErr.ToClaudeError())
+		safe := privacy.SanitizeClientClaudeError(c, apiErr.StatusCode, apiErr.ToClaudeError(upstreamURLs...))
 		return helper.ClaudeData(c, dto.ClaudeResponse{Type: "error", Error: safe})
 	case types.RelayFormatGemini:
-		safe := privacy.SanitizeClientOpenAIError(c, apiErr.StatusCode, apiErr.ToOpenAIError())
+		safe := privacy.SanitizeClientOpenAIError(c, apiErr.StatusCode, apiErr.ToOpenAIError(upstreamURLs...))
 		return helper.ObjectData(c, map[string]any{
 			"error": map[string]any{
 				"code":    apiErr.StatusCode,

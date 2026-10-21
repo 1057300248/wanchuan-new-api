@@ -191,7 +191,7 @@ func WssError(c *gin.Context, ws *websocket.Conn, apiErr *types.NewAPIError) {
 	if ws == nil || apiErr == nil {
 		return
 	}
-	openaiError := privacy.SanitizeClientOpenAIError(c, apiErr.StatusCode, apiErr.ToOpenAIError())
+	openaiError := privacy.SanitizeClientOpenAIError(c, apiErr.StatusCode, apiErr.ToOpenAIError(common.UpstreamAddresses(c)...))
 	errorObj := &dto.RealtimeEvent{
 		Type:    "error",
 		EventId: GetLocalRealtimeID(c),

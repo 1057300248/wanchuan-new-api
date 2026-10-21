@@ -110,11 +110,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			case types.RelayFormatClaude:
 				c.JSON(newAPIError.StatusCode, gin.H{
 					"type":  "error",
-					"error": privacy.SanitizeClientClaudeError(c, newAPIError.StatusCode, newAPIError.ToClaudeError()),
+					"error": privacy.SanitizeClientClaudeError(c, newAPIError.StatusCode, newAPIError.ToClaudeError(common.UpstreamAddresses(c)...)),
 				})
 			default:
 				c.JSON(newAPIError.StatusCode, gin.H{
-					"error": privacy.SanitizeClientOpenAIError(c, newAPIError.StatusCode, newAPIError.ToOpenAIError()),
+					"error": privacy.SanitizeClientOpenAIError(c, newAPIError.StatusCode, newAPIError.ToOpenAIError(common.UpstreamAddresses(c)...)),
 				})
 			}
 		}

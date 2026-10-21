@@ -193,7 +193,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		// A native failed event already carries the error. Bare error events and
 		// abnormal EOF need a Responses terminal failure, never a fake completion.
 		if !terminalSeen && !writeFailed && c.Request.Context().Err() == nil {
-			oaiError := streamErr.ToOpenAIError()
+			oaiError := streamErr.ToOpenAIError(common.UpstreamAddresses(c)...)
 			var code any = "server_error"
 			if streamErr.GetErrorType() == types.ErrorTypeOpenAIError {
 				code = oaiError.Code
