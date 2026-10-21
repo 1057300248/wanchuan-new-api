@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -130,56 +130,37 @@ func (s *BillingSession) settleDurableLocked(actual int) error {
 	return nil
 }
 
-func (s *BillingSession) requestDurableRefundLocked() {
+func (s *BillingSession) requestDurableRefundLocked() (model.BillingFinalization, error) {
 	// Close admission at the pre-existing Refund decision even if the pending
 	// write's ACK is uncertain. This is NOT a successful-refund flag.
 	s.refundRequested = true
-	if s.refundInFlight {
-		return
-	}
 	receipt, err := s.terminalReceiptLocked()
 	if err != nil {
-		common.SysError("cannot capture billing refund: " + err.Error())
-		return
+		return receipt, err
 	}
-	state, err := model.PersistBillingRefund(context.Background(), receipt)
-	if errors.Is(err, model.ErrBillingFinalized) {
-		// A lost task/settlement commit ACK cannot create a second financial owner.
-		if state == model.BillingTaskOwned {
-			s.taskOwned = true
-		}
-		if state == model.BillingSettled {
-			s.fundingSettled = true
-		}
-		common.SysError("billing refund has another terminal owner: " + receipt.RequestID)
-		return
+	if receipt.RequestID == "" || len(receipt.RequestID) > 64 || strings.TrimSpace(receipt.RequestID) != receipt.RequestID {
+		return receipt, errors.New("invalid billing refund request identity")
 	}
-	if err != nil {
-		common.SysError("cannot persist billing refund intent (retry/reconciliation required): " + err.Error())
-		return
-	}
-	if state == model.BillingRefunded {
-		s.refunded = true
-		return
-	}
+	// Do not let a short ID sliced from a large request buffer retain that
+	// buffer throughout an outage. The worker owns only this exact compact ID.
+	receipt.RequestID = strings.Clone(receipt.RequestID)
 	s.refundInFlight = true
-	// Submit only after releasing the mutex: embedded hosts may execute inline
-	// during drain. The caller handles launch after returning from this helper.
+	// Freeze the original receipt before unlocking. No persistence, semaphore
+	// wait or background submission is allowed under the request mutex.
+	return receipt, nil
 }
 
-func (s *BillingSession) completeDurableRefund() {
+func (s *BillingSession) finishDurableRefund(state string) {
 	s.mu.Lock()
-	receipt := *s.terminalReceipt
-	s.mu.Unlock()
-	err := model.RecoverBillingRefund(context.Background(), receipt.RequestID)
-	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.refundInFlight = false
-	if err == nil {
+	switch state {
+	case model.BillingRefunded:
 		s.refunded = true
-	}
-	s.mu.Unlock()
-	if err != nil {
-		common.SysError("billing refund remains pending: " + err.Error())
+	case model.BillingTaskOwned:
+		s.taskOwned = true
+	case model.BillingSettled:
+		s.fundingSettled = true
 	}
 }
 

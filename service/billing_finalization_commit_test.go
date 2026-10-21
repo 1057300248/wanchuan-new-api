@@ -6,6 +6,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/stretchr/testify/require"
@@ -70,7 +71,10 @@ func TestPolicyPreservingTerminalCommitBoundaries(t *testing.T) {
 			t.Run("refund_intent", func(t *testing.T) {
 				s := legacyRefundSession(t, "intent-commit-boundary", 100, 100)
 				terminalCommitFault(t, mode)
+				retrying, releaseRetry := pauseRefundIntentRetry(t)
+				useRefundDispatcher(t, 2, 1, time.Second)
 				s.Refund(testGinContext(t))
+				awaitRefundSignal(t, retrying)
 				require.True(t, s.NeedsRefund())
 				require.ErrorIs(t, s.Reserve(200), model.ErrBillingFinalized)
 				require.ErrorIs(t, s.Settle(200), model.ErrBillingFinalized)
@@ -81,11 +85,11 @@ func TestPolicyPreservingTerminalCommitBoundaries(t *testing.T) {
 					require.Zero(t, count)
 				} else {
 					require.EqualValues(t, 1, count)
-					n, err := model.RecoverPendingBillingRefunds(context.Background(), 10)
-					require.NoError(t, err)
-					require.Equal(t, 1, n)
+					var pending model.BillingFinalization
+					require.NoError(t, model.DB.First(&pending, "request_id = ?", s.relayInfo.RequestId).Error)
+					require.Equal(t, model.BillingRefundPending, pending.State)
 				}
-				s.Refund(testGinContext(t))
+				releaseRetry()
 				waitRefundCallback(t, s)
 				require.False(t, s.NeedsRefund())
 				assertUserBalances(t, 31201, 0, 1000, 0)

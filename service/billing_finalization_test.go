@@ -64,11 +64,15 @@ func TestPolicyPreservingRefundSourceFailureNeverRestoresTokenAlone(t *testing.T
 	require.Equal(t, 900, token.RemainQuota)
 	require.NoError(t, model.DB.Callback().Update().Remove(name))
 	// Discard the live session: only committed intent drives restart recovery.
+	// Make this failed receipt due explicitly; operational backoff must not be
+	// bypassed merely because the underlying source has recovered.
+	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Where("request_id = ?", "original-refund-fault").Update("next_retry_at", 0).Error)
 	n, err := model.RecoverPendingBillingRefunds(context.Background(), 100)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 	require.NoError(t, model.RecoverBillingRefund(context.Background(), "original-refund-fault"))
 	s.Refund(testGinContext(t))
+	waitRefundCallback(t, s)
 	require.False(t, s.NeedsRefund())
 	assertUserBalances(t, 31201, 0, 1000, 0)
 	require.NoError(t, model.DB.First(&token, 31202).Error)
@@ -89,12 +93,17 @@ func TestPolicyPreservingRefundSeparateHeldAmounts(t *testing.T) {
 func TestPolicyPreservingRefundIntentFailureClosesLocalAdmission(t *testing.T) {
 	s := legacyRefundSession(t, "pending-write-fails", 100, 100)
 	name := "fail_pending_intent"
+	var failOnce sync.Once
 	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(name, func(tx *gorm.DB) {
 		if tx.Statement.Table == "billing_finalizations" {
-			tx.AddError(errors.New("pending write failed"))
+			failOnce.Do(func() { tx.AddError(errors.New("pending write failed")) })
 		}
 	}))
+	t.Cleanup(func() { model.DB.Callback().Update().Remove(name) })
+	retrying, releaseRetry := pauseRefundIntentRetry(t)
+	useRefundDispatcher(t, 2, 1, time.Second)
 	s.Refund(testGinContext(t))
+	awaitRefundSignal(t, retrying)
 	require.True(t, s.NeedsRefund())
 	require.ErrorIs(t, s.Reserve(200), model.ErrBillingFinalized)
 	require.ErrorIs(t, s.Settle(100), model.ErrBillingFinalized)
@@ -102,11 +111,13 @@ func TestPolicyPreservingRefundIntentFailureClosesLocalAdmission(t *testing.T) {
 	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Count(&n).Error)
 	require.Zero(t, n)
 	assertUserBalances(t, 31201, 0, 900, 0)
-	require.NoError(t, model.DB.Callback().Update().Remove(name))
-	s.Refund(testGinContext(t))
+	releaseRetry()
 	waitRefundCallback(t, s)
 	require.False(t, s.NeedsRefund())
 	assertUserBalances(t, 31201, 0, 1000, 0)
+	var token model.Token
+	require.NoError(t, model.DB.First(&token, 31202).Error)
+	require.Equal(t, 1000, token.RemainQuota)
 }
 
 func TestPolicyPreservingSettlementFinalMoreLessAndReplay(t *testing.T) {

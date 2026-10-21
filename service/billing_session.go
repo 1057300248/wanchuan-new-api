@@ -172,13 +172,17 @@ func (s *BillingSession) Refund(c *gin.Context) {
 		return
 	}
 	if s.durableTerminalSource() {
-		alreadyRunning := s.refundInFlight
-		s.requestDurableRefundLocked()
-		launch := !alreadyRunning && s.refundInFlight
-		s.mu.Unlock()
-		if launch {
-			runBillingBackground(s.completeDurableRefund)
+		if s.refundInFlight {
+			s.mu.Unlock()
+			return
 		}
+		receipt, err := s.requestDurableRefundLocked()
+		s.mu.Unlock()
+		if err != nil {
+			reportBillingRefundIntent("capture_failed", receipt, 0, err)
+			return
+		}
+		billingRefundIntents.submitOrPersist(s, receipt)
 		return
 	}
 	// Unmarked extensions keep their original non-durable refund contract.

@@ -26,7 +26,14 @@ func runBillingBackground(fn func()) {
 
 func DrainBillingBackground(ctx context.Context) error {
 	billingBackground.BeginDrain()
-	return billingBackground.Wait(ctx)
+	err := billingBackground.Wait(ctx)
+	if err != nil && ctx.Err() != nil {
+		// An unavailable intent store must not leave retry timers running after
+		// the bounded shutdown deadline. Each unpersisted job reports the gap;
+		// only committed refund_pending rows are restart-recoverable.
+		billingBackground.ForceCancel()
+	}
+	return err
 }
 
 func StartRuntimeWorkers(group *lifecycle.Group) {
