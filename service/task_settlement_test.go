@@ -268,7 +268,7 @@ func runDurableTaskSettlementCases(t *testing.T) {
 
 	t.Run("subscription_pending_token_failure_recovers_once", func(t *testing.T) {
 		user, token, channel := seedReceiptActors(t, 0, 0)
-		sub := model.UserSubscription{UserId: user.Id, AmountTotal: 5000, AmountUsed: 100, Status: "active"}
+		sub := model.UserSubscription{UserId: user.Id, AmountTotal: 5000, AmountUsed: 100, QuotaPeriod: 1, Status: "active"}
 		require.NoError(t, model.DB.Create(&sub).Error)
 		require.NoError(t, model.DB.Model(token).Updates(map[string]any{"remain_quota": 1900, "used_quota": 100}).Error)
 		task := makeTask(user.Id, channel.Id, 100, token.Id, BillingSourceSubscription, sub.Id)

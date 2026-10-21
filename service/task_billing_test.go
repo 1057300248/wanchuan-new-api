@@ -71,6 +71,7 @@ func TestMain(m *testing.M) {
 		&model.Redemption{},
 		&model.SubscriptionPlan{},
 		&model.SubscriptionOrder{},
+		&model.SubscriptionPreConsumeRecord{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -112,6 +113,7 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM top_ups")
 		model.DB.Exec("DELETE FROM redemptions")
 		model.DB.Exec("DELETE FROM subscription_orders")
+		model.DB.Exec("DELETE FROM subscription_pre_consume_records")
 		model.DB.Exec("DELETE FROM subscription_plans")
 		model.DB.Exec("DELETE FROM user_subscriptions")
 		model.DB.Exec("DELETE FROM system_task_locks")
@@ -150,6 +152,7 @@ func seedSubscription(t *testing.T, id int, userId int, amountTotal int64, amoun
 		UserId:      userId,
 		AmountTotal: amountTotal,
 		AmountUsed:  amountUsed,
+		QuotaPeriod: 1,
 		Status:      "active",
 		StartTime:   time.Now().Unix(),
 		EndTime:     time.Now().Add(30 * 24 * time.Hour).Unix(),
@@ -178,6 +181,10 @@ func seedChargedAccounting(t *testing.T, userID, channelID, tokenID, quota, requ
 }
 
 func makeTask(userId, channelId, quota, tokenId int, billingSource string, subscriptionId int) *model.Task {
+	period := int64(0)
+	if billingSource == BillingSourceSubscription {
+		period = 1
+	}
 	return &model.Task{
 		TaskID:    "task_" + time.Now().Format("150405.000"),
 		UserId:    userId,
@@ -192,9 +199,10 @@ func makeTask(userId, channelId, quota, tokenId int, billingSource string, subsc
 			OriginModelName: "test-model",
 		},
 		PrivateData: model.TaskPrivateData{
-			BillingSource:  billingSource,
-			SubscriptionId: subscriptionId,
-			TokenId:        tokenId,
+			BillingSource:           billingSource,
+			SubscriptionId:          subscriptionId,
+			SubscriptionQuotaPeriod: period,
+			TokenId:                 tokenId,
 			BillingContext: &model.TaskBillingContext{
 				ModelPrice:      0.02,
 				GroupRatio:      1.0,

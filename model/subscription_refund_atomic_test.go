@@ -21,8 +21,8 @@ func TestSubscriptionRefundCommitsReceiptAndUsageTogether(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { sqlDB.Close() })
 	require.NoError(t, db.AutoMigrate(&UserSubscription{}, &SubscriptionPreConsumeRecord{}))
-	require.NoError(t, db.Create(&UserSubscription{Id: 29301, UserId: 29302, PlanId: 29303, AmountTotal: 1000, AmountUsed: 200, Status: "active"}).Error)
-	require.NoError(t, db.Create(&SubscriptionPreConsumeRecord{RequestId: "atomic-sub-refund", UserId: 29302, UserSubscriptionId: 29301, PreConsumed: 100, Status: "consumed"}).Error)
+	require.NoError(t, db.Create(&UserSubscription{Id: 29301, UserId: 29302, PlanId: 29303, AmountTotal: 1000, AmountUsed: 200, QuotaPeriod: 1, Status: "active"}).Error)
+	require.NoError(t, db.Create(&SubscriptionPreConsumeRecord{RequestId: "atomic-sub-refund", UserId: 29302, UserSubscriptionId: 29301, PreConsumed: 100, ReservedAmount: 100, QuotaPeriod: 1, Status: "consumed"}).Error)
 	originalDB := DB
 	t.Cleanup(func() { DB = originalDB })
 	// A deadline bounds the regression if refund accidentally requests a second

@@ -124,11 +124,12 @@ type TaskPrivateData struct {
 	// RequestId 提交请求的账本引用（预扣费 reference），用于返利对账。
 	RequestId string `json:"request_id,omitempty"`
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
-	BillingSource  string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
-	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
-	TokenId        int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
-	NodeName       string              `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
-	BillingContext *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
+	BillingSource           string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
+	SubscriptionId          int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
+	SubscriptionQuotaPeriod int64               `json:"subscription_quota_period,omitempty"`
+	TokenId                 int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
+	NodeName                string              `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
+	BillingContext          *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
 	// WalletDebit 钱包计费各账户实际扣减份额（按扣减顺序），异步结算补扣时
 	// 累计更新；退款按此精确退回原账户。为空表示纯 paid 计费（兼容旧数据）。
 	WalletDebit []LedgerShare `json:"wallet_debit,omitempty"`
@@ -272,7 +273,7 @@ func (p *TaskPrivateData) Scan(val any) error {
 
 func (p TaskPrivateData) Value() (driver.Value, error) {
 	if p.Key == "" && p.UpstreamTaskID == "" && p.ResultURL == "" && p.Execution == nil &&
-		p.BillingSource == "" && p.SubscriptionId == 0 && p.TokenId == 0 &&
+		p.BillingSource == "" && p.SubscriptionId == 0 && p.SubscriptionQuotaPeriod == 0 && p.TokenId == 0 &&
 		p.NodeName == "" && p.BillingContext == nil && len(p.WalletDebit) == 0 &&
 		p.RequestId == "" && !p.ResponsesBackground &&
 		len(p.PluginState) == 0 && p.PollFailures == 0 && !p.ResultDiscarded && p.PendingSettlement == nil && !p.SubmissionAccounted {

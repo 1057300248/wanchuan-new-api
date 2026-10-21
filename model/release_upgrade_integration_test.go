@@ -53,6 +53,13 @@ func TestReleaseUpgradePreservesWalletAndIdentity(t *testing.T) {
 			Status: common.TokenStatusEnabled, ExpiredTime: -1, Group: "default", RemainQuota: 700,
 			UsedQuota: 300, ModelLimitsEnabled: true, ModelLimits: "release-upgrade-model"}
 		require.NoError(t, DB.Create(&token).Error)
+		subscriptionPlan := SubscriptionPlan{Title: "release-upgrade-subscription", TotalAmount: 1000, QuotaResetPeriod: SubscriptionResetNever}
+		require.NoError(t, DB.Create(&subscriptionPlan).Error)
+		subscription := UserSubscription{UserId: user.Id, PlanId: subscriptionPlan.Id, AmountTotal: 1000, AmountUsed: 350,
+			StartTime: 1788600000, EndTime: 4102444800, Status: "active", Source: "order", AllowWalletOverflow: true}
+		require.NoError(t, DB.Create(&subscription).Error)
+		require.NoError(t, DB.Create(&SubscriptionPreConsumeRecord{RequestId: "release-upgrade-subscription-request", UserId: user.Id,
+			UserSubscriptionId: subscription.Id, PreConsumed: 200, Status: "consumed"}).Error)
 		mj := Midjourney{UserId: user.Id, MjId: "release-upgrade-mj", Action: "IMAGINE", Status: "IN_PROGRESS", Progress: "50%",
 			Quota: 300, TokenId: token.Id, ChannelId: 19, BillingChannelId: 23, Prompt: "historical Midjourney prompt", SubmitTime: 1788600000}
 		require.NoError(t, DB.Create(&mj).Error)
@@ -94,6 +101,42 @@ func TestReleaseUpgradePreservesWalletAndIdentity(t *testing.T) {
 	assert.Equal(t, 300, token.UsedQuota)
 	assert.True(t, token.ModelLimitsEnabled)
 	assert.Equal(t, "release-upgrade-model", token.ModelLimits)
+	var subscriptionPlan SubscriptionPlan
+	require.NoError(t, DB.Where("title = ?", "release-upgrade-subscription").First(&subscriptionPlan).Error)
+	var subscription UserSubscription
+	require.NoError(t, DB.Where("user_id = ? AND plan_id = ?", user.Id, subscriptionPlan.Id).First(&subscription).Error)
+	assert.EqualValues(t, 1000, subscription.AmountTotal)
+	assert.EqualValues(t, 350, subscription.AmountUsed)
+	assert.EqualValues(t, 1788600000, subscription.StartTime)
+	assert.EqualValues(t, 4102444800, subscription.EndTime)
+	assert.Equal(t, "active", subscription.Status)
+	assert.True(t, subscription.AllowWalletOverflow)
+	var subscriptionReceipt SubscriptionPreConsumeRecord
+	require.NoError(t, DB.Where("request_id = ?", "release-upgrade-subscription-request").First(&subscriptionReceipt).Error)
+	assert.Equal(t, subscription.Id, subscriptionReceipt.UserSubscriptionId)
+	assert.EqualValues(t, 200, subscriptionReceipt.PreConsumed)
+	assert.Equal(t, "consumed", subscriptionReceipt.Status)
+	// SQL reads keep this exact fixture compilable in the previous-release
+	// checkout. Old receipts stay unknown; a timestamp is not an allowance ID.
+	var subPeriod, receiptPeriod, reservedAmount, settledAmount sql.NullInt64
+	require.NoError(t, DB.Model(&UserSubscription{}).Select("quota_period").Where("id = ?", subscription.Id).Row().Scan(&subPeriod))
+	require.NoError(t, DB.Model(&SubscriptionPreConsumeRecord{}).Select("quota_period", "reserved_amount", "settled_amount").Where("id = ?", subscriptionReceipt.Id).Row().Scan(&receiptPeriod, &reservedAmount, &settledAmount))
+	assert.True(t, subPeriod.Valid)
+	assert.Zero(t, subPeriod.Int64)
+	assert.True(t, receiptPeriod.Valid)
+	assert.Zero(t, receiptPeriod.Int64)
+	assert.Zero(t, reservedAmount.Int64)
+	assert.Zero(t, settledAmount.Int64)
+	require.ErrorContains(t, RefundSubscriptionPreConsume(subscriptionReceipt.RequestId), "subscription allowance period is unknown")
+	freshReservation, err := PreConsumeUserSubscription("release-upgrade-new-subscription-request", user.Id, "release-upgrade-model", 0, 100)
+	require.NoError(t, err)
+	assert.Equal(t, subscription.Id, freshReservation.UserSubscriptionId)
+	require.ErrorContains(t, RefundSubscriptionPreConsume(subscriptionReceipt.RequestId), "subscription allowance period is unknown")
+	require.NoError(t, DB.First(&subscription, subscription.Id).Error)
+	assert.EqualValues(t, 450, subscription.AmountUsed, "unresolved old refund must not consume newly reserved allowance")
+	require.NoError(t, RefundSubscriptionPreConsume("release-upgrade-new-subscription-request"))
+	require.NoError(t, DB.First(&subscription, subscription.Id).Error)
+	assert.EqualValues(t, 350, subscription.AmountUsed)
 	// Read newly introduced fields through SQL so this same fixture still
 	// compiles against the exact previous release during its seed phase.
 	require.True(t, DB.Migrator().HasColumn("tokens", "allow_user_quota_query"))

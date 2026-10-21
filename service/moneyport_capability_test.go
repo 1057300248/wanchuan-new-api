@@ -199,6 +199,12 @@ func TestSubscriptionReserveUsesTargetDeltaWithoutDoubleCount(t *testing.T) {
 	seedBonusUser(t, userID, 0, 1_000)
 	// 订阅已预扣 2000，模拟 PreConsume 完成后的状态。
 	seedSubscription(t, subID, userID, 100_000, 2_000)
+	plan := &model.SubscriptionPlan{Title: "moneyport reserve", QuotaResetPeriod: model.SubscriptionResetNever}
+	require.NoError(t, model.DB.Create(plan).Error)
+	model.InvalidateSubscriptionPlanCache(plan.Id)
+	t.Cleanup(func() { model.InvalidateSubscriptionPlanCache(plan.Id) })
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", subID).Update("plan_id", plan.Id).Error)
+	require.NoError(t, model.DB.Create(&model.SubscriptionPreConsumeRecord{RequestId: "moneyport-sub-reserve-1", UserId: userID, UserSubscriptionId: subID, PreConsumed: 2000, ReservedAmount: 2000, QuotaPeriod: 1, Status: "consumed"}).Error)
 
 	funding := &SubscriptionFunding{
 		requestId:       "moneyport-sub-reserve-1",
@@ -243,6 +249,13 @@ func TestSubscriptionReserveUsesTargetDeltaWithoutDoubleCount(t *testing.T) {
 	assert.EqualValues(t, 8_000, relayInfo.SubscriptionAmountUsedAfterPreConsume)
 	assert.Equal(t, 8_000, relayInfo.FinalPreConsumedQuota)
 	assert.Equal(t, subID, relayInfo.SubscriptionId)
+	// Replaying the initial hold does not turn cumulative top-ups into a
+	// second initial baseline or lose the separately persisted total.
+	require.NoError(t, funding.PreConsume(2_000))
+	assert.EqualValues(t, 2_000, funding.preConsumed)
+	assert.Equal(t, 6_000, funding.reserveDelta)
+	assert.Equal(t, 8_000, funding.OutstandingReserve())
+	assert.EqualValues(t, 8_000, getSubscriptionUsed(t, subID))
 }
 
 // ---------------------------------------------------------------------------

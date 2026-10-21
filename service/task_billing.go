@@ -177,7 +177,16 @@ func taskAdjustFunding(task *model.Task, delta int, commit func(*gorm.DB, []mode
 func taskAdjustFundingTx(tx *gorm.DB, task *model.Task, delta int, key string, order []model.LedgerAccount) ([]model.LedgerShare, *model.LedgerResult, error) {
 	shares := append([]model.LedgerShare(nil), task.PrivateData.WalletDebit...)
 	if taskIsSubscription(task) {
-		err := model.PostConsumeUserSubscriptionDeltaTx(tx, task.PrivateData.SubscriptionId, int64(delta))
+		var err error
+		if pending := task.PrivateData.PendingSettlement; pending != nil && pending.Phase == "submit" {
+			var replayed bool
+			replayed, err = model.SettleSubscriptionPreConsumeTx(tx, task.PrivateData.EffectiveRequestID(), task.PrivateData.SubscriptionId, int64(pending.Quota))
+			if err == nil && replayed {
+				return nil, nil, errors.New("subscription settlement exists with pending task intent")
+			}
+		} else {
+			err = model.PostConsumeUserSubscriptionPeriodDeltaTx(tx, task.PrivateData.SubscriptionId, task.PrivateData.SubscriptionQuotaPeriod, int64(delta))
+		}
 		return shares, nil, err
 	}
 	if delta == 0 {
