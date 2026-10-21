@@ -461,6 +461,7 @@ func (s *BillingSession) syncRelayInfo() {
 
 	if sub, ok := s.funding.(*SubscriptionFunding); ok {
 		info.SubscriptionId = sub.subscriptionId
+		info.SubscriptionQuotaPeriod = sub.quotaPeriod
 		info.SubscriptionPreConsumed = sub.preConsumed + int64(s.extraReserved)
 		info.SubscriptionPostDelta = 0
 		info.SubscriptionAmountTotal = sub.AmountTotal
@@ -469,6 +470,7 @@ func (s *BillingSession) syncRelayInfo() {
 		info.SubscriptionPlanTitle = sub.PlanTitle
 	} else {
 		info.SubscriptionId = 0
+		info.SubscriptionQuotaPeriod = 0
 		info.SubscriptionPreConsumed = 0
 	}
 }
