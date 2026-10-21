@@ -271,7 +271,7 @@ elif name == "python3":
         inventory = json.loads((SCRIPT.parent / "billing_refund_followup_required_cases.json").read_text())
         suites = {suite["label"]: suite for suite in inventory["sqlite_only_suites"]}
         self.assertEqual({"refund-intent-process", "task-persistence-presenter", "refund-deadline-classifier"}, set(suites))
-        self.assertEqual([14, 11, 15], [suite["expected_passing_test_events"] for suite in suites.values()])
+        self.assertEqual([14, 11, 16], [suite["expected_passing_test_events"] for suite in suites.values()])
         for dialect in ("sqlite", "mysql", "postgres"):
             with self.subTest(dialect=dialect):
                 result, rows = self.run_script(dialect)

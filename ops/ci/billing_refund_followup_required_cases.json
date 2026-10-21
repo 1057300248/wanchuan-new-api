@@ -83,6 +83,7 @@
       "required_tests": [
         "TestBillingRefundDeadlineIncludesTokenFenceAndUserCache/postcommit_user_cache",
         "TestBillingRefundDeadlineIncludesTokenFenceAndUserCache/precommit_token_fence",
+        "TestBillingRefundDeadlineIncludesTokenFenceAndUserCache/expired_deadline_before_notification",
         "TestBillingRefundDeadlineIncludesTokenFenceAndUserCache",
         "TestBillingRefundContextPreservesTokenFence",
         "TestBillingRefundReplayInvalidatesUserCache",
@@ -97,7 +98,7 @@
         "TestBillingRefundRetryClassificationAndSchedule",
         "TestBillingRefundDueRecheckDoesNotBypassSchedule"
       ],
-      "expected_passing_test_events": 15
+      "expected_passing_test_events": 16
     }
   ]
 }

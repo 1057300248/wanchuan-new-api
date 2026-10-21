@@ -1,9 +1,11 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -435,9 +437,20 @@ func ApplyTokenQuotaDeltaTx(tx *gorm.DB, id int, key string, delta int) error {
 	if delta == 0 {
 		return nil
 	}
-	if err := invalidateTokenCacheForMutationContext(tx.Statement.Context, key); err != nil {
+	ctx := tx.Statement.Context
+	if err := invalidateTokenCacheForMutationContext(ctx, key); err != nil {
 		code, class := BillingRefundErrorCode(err)
 		common.SysLog(fmt.Sprintf("failed to invalidate token quota cache before transaction: code=%s class=%s", code, class))
+	}
+	// A Redis socket deadline can expire before the context timer publishes
+	// cancellation. Do not turn that elapsed transaction budget into a live
+	// cache error and proceed with SQL. Unexpired Redis failures retain the
+	// existing log-and-proceed policy.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
 	}
 	result := tx.Model(&Token{}).Where("id = ?", id).Updates(
 		map[string]any{

@@ -329,6 +329,7 @@ database)
     required=(
       'TestBillingRefundDeadlineIncludesTokenFenceAndUserCache/postcommit_user_cache'
       'TestBillingRefundDeadlineIncludesTokenFenceAndUserCache/precommit_token_fence'
+      'TestBillingRefundDeadlineIncludesTokenFenceAndUserCache/expired_deadline_before_notification'
       'TestBillingRefundDeadlineIncludesTokenFenceAndUserCache'
       'TestBillingRefundContextPreservesTokenFence'
       'TestBillingRefundReplayInvalidatesUserCache'

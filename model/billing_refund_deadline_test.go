@@ -121,6 +121,85 @@ func TestBillingRefundDeadlineIncludesTokenFenceAndUserCache(t *testing.T) {
 			}
 		})
 	}
+	t.Run("expired_deadline_before_notification", testBillingRefundExpiredDeadlineBeforeNotification)
+}
+
+// This synthetic context isolates the interval after an absolute deadline but
+// before its cancellation notification is delivered. It is not a substitute
+// for the real socket/deadline tests above, nor a claim about timer scheduling.
+type refundDelayedDeadlineContext struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c refundDelayedDeadlineContext) Deadline() (time.Time, bool) { return c.deadline, true }
+
+func testBillingRefundExpiredDeadlineBeforeNotification(t *testing.T) {
+	r := refundDeadlineFixture(t, 100)
+	useStalledRefundRedis(t)
+	base, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := refundDelayedDeadlineContext{Context: base, deadline: time.Now().Add(-time.Second)}
+	require.NoError(t, ctx.Err(), "synthetic cancellation notification has not been delivered")
+	done := make(chan error, 1)
+	joined := false
+	go func() { done <- RecoverBillingRefund(ctx, r.RequestID) }()
+	defer func() {
+		cancel()
+		if !joined {
+			_ = common.RDB.Close()
+			<-done // Join before restoring shared DB/cache globals.
+		}
+	}()
+	select {
+	case err := <-done:
+		joined = true
+		assert.ErrorIs(t, err, context.DeadlineExceeded, "an elapsed operation budget cannot be treated as a live Redis failure")
+	case <-time.After(2 * time.Second):
+		t.Fatal("synthetic deadline recovery ignored its watchdog")
+	}
+	require.NoError(t, ctx.Err(), "rollback must not depend on notification delivery")
+	common.RedisEnabled = false
+	var owner BillingFinalization
+	var user User
+	var token Token
+	require.NoError(t, DB.First(&owner, "request_id = ?", r.RequestID).Error)
+	require.NoError(t, DB.First(&user, r.UserID).Error)
+	require.NoError(t, DB.First(&token, r.TokenID).Error)
+	assert.Equal(t, BillingRefundPending, owner.State)
+	assert.Equal(t, r.UserID, owner.UserID)
+	assert.Equal(t, r.TokenID, owner.TokenID)
+	assert.Equal(t, r.TokenFingerprint, owner.TokenFingerprint)
+	assert.Equal(t, r.SourceHeld, owner.SourceHeld)
+	assert.Equal(t, r.TokenHeld, owner.TokenHeld)
+	assert.Equal(t, r.Shares(), owner.Shares())
+	assert.Equal(t, 900, user.Quota)
+	assert.Equal(t, 900, user.QuotaPaid)
+	assert.Equal(t, 900, token.RemainQuota)
+	assert.Equal(t, 100, token.UsedQuota)
+	assert.Equal(t, common.TokenStatusDisabled, token.Status)
+	var operations, entries int64
+	key := "billing:refund:" + r.RequestID
+	require.NoError(t, DB.Model(&BalanceLedgerOperation{}).Where("idempotency_key = ?", key).Count(&operations).Error)
+	require.NoError(t, DB.Model(&BalanceLedger{}).Where("idempotency_key = ?", key).Count(&entries).Error)
+	assert.Zero(t, operations, "source credit and its idempotency owner must roll back together")
+	assert.Zero(t, entries)
+
+	require.NoError(t, RecoverBillingRefund(context.Background(), r.RequestID))
+	require.NoError(t, RecoverBillingRefund(context.Background(), r.RequestID))
+	require.NoError(t, DB.First(&owner, "request_id = ?", r.RequestID).Error)
+	require.NoError(t, DB.First(&user, r.UserID).Error)
+	require.NoError(t, DB.First(&token, r.TokenID).Error)
+	assert.Equal(t, BillingRefunded, owner.State)
+	assert.Equal(t, 1000, user.Quota)
+	assert.Equal(t, 1000, user.QuotaPaid)
+	assert.Equal(t, 1000, token.RemainQuota)
+	assert.Zero(t, token.UsedQuota)
+	assert.Equal(t, common.TokenStatusDisabled, token.Status)
+	require.NoError(t, DB.Model(&BalanceLedgerOperation{}).Where("idempotency_key = ?", key).Count(&operations).Error)
+	require.NoError(t, DB.Model(&BalanceLedger{}).Where("idempotency_key = ?", key).Count(&entries).Error)
+	assert.EqualValues(t, 1, operations)
+	assert.EqualValues(t, 1, entries)
 }
 
 func TestBillingRefundContextPreservesTokenFence(t *testing.T) {
