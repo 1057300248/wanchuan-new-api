@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -69,6 +70,10 @@ func TestReleaseUpgradeBillingFinalization(t *testing.T) {
 	}
 
 	ctx := context.Background()
+	const pendingRequestID = "release-finalization-pending"
+	// A cross-dialect BIGINT sentinel, not a short timer that could expire
+	// between separate test processes. Only this fixture's schedule is changed.
+	const futureRetryAt = int64(math.MaxInt64)
 	if phase == "pending" {
 		for _, kind := range []string{"pending", "settled", "task"} {
 			requestID := "release-finalization-" + kind
@@ -111,9 +116,22 @@ func TestReleaseUpgradeBillingFinalization(t *testing.T) {
 				tx.AddError(errors.New("synthetic release recovery source failure"))
 			}
 		}))
-		err := RecoverBillingRefund(ctx, "release-finalization-pending")
+		err := RecoverBillingRefund(ctx, pendingRequestID)
 		require.NoError(t, DB.Callback().Update().Remove(callback))
 		require.ErrorContains(t, err, "synthetic release recovery source failure")
+		var failed BillingFinalization
+		require.NoError(t, DB.First(&failed, "request_id = ?", pendingRequestID).Error)
+		require.Equal(t, 1, failed.Attempts)
+		require.Greater(t, failed.NextRetryAt, failed.LastAttemptAt, "failed recovery must persist a future retry")
+		update := DB.Model(&BillingFinalization{}).
+			Where("request_id = ? AND state = ?", pendingRequestID, BillingRefundPending).
+			UpdateColumn("next_retry_at", futureRetryAt)
+		require.NoError(t, update.Error)
+		require.EqualValues(t, 1, update.RowsAffected)
+		var deferred BillingFinalization
+		require.NoError(t, DB.First(&deferred, "request_id = ?", pendingRequestID).Error)
+		failed.NextRetryAt = futureRetryAt
+		require.Equal(t, failed, deferred, "fixture scheduling must not erase failure history or alter ownership")
 	}
 
 	verify := func(pendingState string) {
@@ -129,14 +147,27 @@ func TestReleaseUpgradeBillingFinalization(t *testing.T) {
 			expected := BillingFinalization{RequestID: requestID, UserID: user.Id, Source: "wallet", TokenID: token.Id,
 				TokenFingerprint: BillingTokenFingerprint(strings.Repeat(string(kind[0]), 48)), SourceHeld: 100, TokenHeld: 100, PreConsumed: 100, Paid: 40, Bonus: 30, Reward: 30}
 			require.True(t, sameBillingIdentity(expected, owner))
-			require.Zero(t, owner.Attempts)
+			if kind != "pending" {
+				require.Zero(t, owner.Attempts)
+			}
 			quota, used, paid, bonus, reward := 900, 100, 0, 0, 900
 			switch kind {
 			case "pending":
 				require.Equal(t, pendingState, owner.State)
 				require.Zero(t, owner.ActualQuota)
+				require.Equal(t, 1, owner.Attempts, "successful recovery must retain the failed attempt")
+				require.Equal(t, "recovery_error", owner.FirstErrorCode)
+				require.Equal(t, billingRefundRetryable, owner.FirstErrorClass)
+				require.Equal(t, owner.FirstErrorCode, owner.LastErrorCode)
+				require.Equal(t, owner.FirstErrorClass, owner.LastErrorClass)
+				require.Positive(t, owner.FirstFailedAt)
+				require.GreaterOrEqual(t, owner.LastAttemptAt, owner.FirstFailedAt)
 				if pendingState == BillingRefunded {
 					quota, used, paid, bonus, reward = 1000, 0, 40, 30, 930
+					require.Zero(t, owner.NextRetryAt)
+				} else {
+					require.Equal(t, owner.FirstFailedAt, owner.LastAttemptAt)
+					require.Equal(t, futureRetryAt, owner.NextRetryAt)
 				}
 			case "settled":
 				require.Equal(t, BillingSettled, owner.State)
@@ -166,6 +197,26 @@ func TestReleaseUpgradeBillingFinalization(t *testing.T) {
 		verify(BillingRefundPending)
 	}
 	if phase != "pending" {
+		if phase == "recover" {
+			var deferred BillingFinalization
+			require.NoError(t, DB.First(&deferred, "request_id = ?", pendingRequestID).Error)
+			completed, err := RecoverPendingBillingRefunds(ctx, 100)
+			require.NoError(t, err)
+			require.Zero(t, completed, "a new process must respect the persisted future retry")
+			var unchanged BillingFinalization
+			require.NoError(t, DB.First(&unchanged, "request_id = ?", pendingRequestID).Error)
+			require.Equal(t, deferred, unchanged)
+			verify(BillingRefundPending)
+			update := DB.Model(&BillingFinalization{}).
+				Where("request_id = ? AND state = ?", pendingRequestID, BillingRefundPending).
+				UpdateColumn("next_retry_at", 0)
+			require.NoError(t, update.Error)
+			require.EqualValues(t, 1, update.RowsAffected)
+			var due BillingFinalization
+			require.NoError(t, DB.First(&due, "request_id = ?", pendingRequestID).Error)
+			deferred.NextRetryAt = 0
+			require.Equal(t, deferred, due, "only the exact owned fixture's retry time becomes due")
+		}
 		completed, err := RecoverPendingBillingRefunds(ctx, 100)
 		require.NoError(t, err)
 		if phase == "recover" {
@@ -173,13 +224,30 @@ func TestReleaseUpgradeBillingFinalization(t *testing.T) {
 		} else {
 			require.Zero(t, completed)
 		}
-		require.NoError(t, RecoverBillingRefund(ctx, "release-finalization-pending"))
+		var recovered BillingFinalization
+		require.NoError(t, DB.First(&recovered, "request_id = ?", pendingRequestID).Error)
+		completed, err = RecoverPendingBillingRefunds(ctx, 100)
+		require.NoError(t, err)
+		require.Zero(t, completed, "the recovered owner must leave the due queue exactly once")
+		require.NoError(t, RecoverBillingRefund(ctx, pendingRequestID))
+		var replayed BillingFinalization
+		require.NoError(t, DB.First(&replayed, "request_id = ?", pendingRequestID).Error)
+		require.Equal(t, recovered, replayed, "queue/direct replay must preserve the terminal tombstone and failure history")
 		verify(BillingRefunded)
 		for _, previous := range before {
-			if previous.State == BillingSettled || previous.State == BillingTaskOwned {
-				var current BillingFinalization
-				require.NoError(t, DB.First(&current, "request_id = ?", previous.RequestID).Error)
-				require.Equal(t, previous, current, "request worker must not mutate another terminal owner")
+			var current BillingFinalization
+			require.NoError(t, DB.First(&current, "request_id = ?", previous.RequestID).Error)
+			if previous.State != BillingRefundPending {
+				require.Equal(t, previous, current, "request worker must not mutate any existing terminal owner")
+			} else {
+				require.Equal(t, previous.Attempts, current.Attempts)
+				require.Equal(t, previous.FirstFailedAt, current.FirstFailedAt)
+				require.Equal(t, previous.FirstErrorCode, current.FirstErrorCode)
+				require.Equal(t, previous.FirstErrorClass, current.FirstErrorClass)
+				require.Equal(t, previous.LastErrorCode, current.LastErrorCode)
+				require.Equal(t, previous.LastErrorClass, current.LastErrorClass)
+				require.Equal(t, previous.EscalatedAt, current.EscalatedAt)
+				require.GreaterOrEqual(t, current.LastAttemptAt, previous.LastAttemptAt)
 			}
 		}
 	}
