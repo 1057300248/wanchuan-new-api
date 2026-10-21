@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -35,7 +36,8 @@ func StartRuntimeWorkers(group *lifecycle.Group) {
 	group.Go("billing-refund-recovery", func(schedule, work context.Context) {
 		lifecycle.Periodic(schedule, work, func() time.Duration { return 30 * time.Second }, true, func(ctx context.Context) {
 			if _, err := model.RecoverPendingBillingRefunds(ctx, 100); err != nil {
-				common.SysError("billing refund recovery: " + err.Error())
+				code, class := model.BillingRefundErrorCode(err)
+				common.SysError(fmt.Sprintf("billing refund recovery: code=%s class=%s; inspect pending refund operations", code, class))
 			}
 		})
 	})

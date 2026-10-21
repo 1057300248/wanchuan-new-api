@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
@@ -31,7 +32,7 @@ var ErrBillingFinalized = errors.New("request billing already has a different te
 // A crash before this row commits still requires source-ledger reconciliation.
 // Never delete terminal rows while their original financial receipts survive.
 type BillingFinalization struct {
-	RequestID string `gorm:"type:varchar(64);primaryKey"`
+	RequestID string `gorm:"type:varchar(64);primaryKey;index:idx_billing_refund_due,priority:3"`
 	UserID    int    `gorm:"not null;index"`
 	Source    string `gorm:"type:varchar(16);not null"`
 	TokenID   int    `gorm:"not null"`
@@ -47,13 +48,23 @@ type BillingFinalization struct {
 	Reward             int    `gorm:"type:bigint;not null"`
 	SubscriptionID     int    `gorm:"not null"`
 	SubscriptionPeriod int64  `gorm:"type:bigint;not null"`
-	State              string `gorm:"type:varchar(24);not null;index:idx_billing_refund_queue,priority:1"`
+	State              string `gorm:"type:varchar(24);not null;index:idx_billing_refund_queue,priority:1;index:idx_billing_refund_due,priority:1"`
 	ActualQuota        int    `gorm:"type:bigint;not null"`
 	TaskID             int64  `gorm:"not null"`
 	TaskPublicID       string `gorm:"type:varchar(191);not null"`
-	Attempts           int    `gorm:"not null"`
-	CreatedAt          int64  `gorm:"autoCreateTime"`
-	UpdatedAt          int64  `gorm:"autoUpdateTime;index:idx_billing_refund_queue,priority:2"`
+	// Operational metadata never changes refund eligibility or money ownership.
+	// Defaults keep pre-metadata pending rows eligible after an additive upgrade.
+	Attempts        int    `gorm:"not null"` // Failed recovery attempts, retained after recovery.
+	FirstErrorCode  string `gorm:"type:varchar(48);not null;default:''"`
+	FirstErrorClass string `gorm:"type:varchar(24);not null;default:''"`
+	LastErrorCode   string `gorm:"type:varchar(48);not null;default:''"`
+	LastErrorClass  string `gorm:"type:varchar(24);not null;default:''"`
+	FirstFailedAt   int64  `gorm:"not null;default:0"`
+	LastAttemptAt   int64  `gorm:"not null;default:0"`
+	NextRetryAt     int64  `gorm:"not null;default:0;index:idx_billing_refund_due,priority:2"`
+	EscalatedAt     int64  `gorm:"not null;default:0"`
+	CreatedAt       int64  `gorm:"autoCreateTime"`
+	UpdatedAt       int64  `gorm:"autoUpdateTime;index:idx_billing_refund_queue,priority:2"`
 }
 
 func BillingTokenFingerprint(key string) string {
@@ -76,27 +87,27 @@ func (r BillingFinalization) Shares() []LedgerShare {
 
 func (r BillingFinalization) validate() error {
 	if r.RequestID == "" || strings.TrimSpace(r.RequestID) != r.RequestID || len(r.RequestID) > 64 || r.UserID <= 0 {
-		return errors.New("invalid billing finalization identity")
+		return billingRefundReviewError("receipt_invalid", "invalid billing finalization identity")
 	}
 	for _, n := range []int{r.SourceHeld, r.TokenHeld, r.PreConsumed, r.Paid, r.Bonus, r.Reward} {
 		if n < 0 || n > common.MaxQuota {
-			return errors.New("invalid billing held amount")
+			return billingRefundReviewError("receipt_invalid", "invalid billing held amount")
 		}
 	}
 	if r.TokenID < 0 || r.TokenID == 0 && (r.TokenHeld != 0 || r.TokenFingerprint != "") || r.TokenID > 0 && len(r.TokenFingerprint) != 64 {
-		return errors.New("invalid original billing token identity")
+		return billingRefundReviewError("receipt_invalid", "invalid original billing token identity")
 	}
 	switch r.Source {
 	case "wallet":
 		if r.SourceHeld != r.Paid+r.Bonus+r.Reward || r.SubscriptionID != 0 || r.SubscriptionPeriod != 0 {
-			return errors.New("wallet reservation shares mismatch")
+			return billingRefundReviewError("receipt_invalid", "wallet reservation shares mismatch")
 		}
 	case "subscription":
 		if r.SubscriptionID <= 0 || r.SubscriptionPeriod <= 0 || r.Paid+r.Bonus+r.Reward != 0 {
-			return errors.New("invalid subscription reservation identity")
+			return billingRefundReviewError("receipt_invalid", "invalid subscription reservation identity")
 		}
 	default:
-		return errors.New("unsupported durable billing source")
+		return billingRefundReviewError("receipt_invalid", "unsupported durable billing source")
 	}
 	return nil
 }
@@ -119,6 +130,8 @@ func claimBillingFinalizationTx(tx *gorm.DB, receipt BillingFinalization) (*Bill
 	receipt.State = "b:" + hex.EncodeToString(nonce[:]) // private, never committed
 	receipt.ActualQuota, receipt.TaskID, receipt.Attempts = 0, 0, 0
 	receipt.TaskPublicID = ""
+	receipt.FirstErrorCode, receipt.FirstErrorClass, receipt.LastErrorCode, receipt.LastErrorClass = "", "", "", ""
+	receipt.FirstFailedAt, receipt.LastAttemptAt, receipt.NextRetryAt, receipt.EscalatedAt = 0, 0, 0, 0
 	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "request_id"}}, DoNothing: true}).Create(&receipt).Error; err != nil {
 		return nil, err
 	}
@@ -127,7 +140,7 @@ func claimBillingFinalizationTx(tx *gorm.DB, receipt BillingFinalization) (*Bill
 		return nil, err
 	}
 	if !sameBillingIdentity(stored, receipt) {
-		return nil, errors.New("billing finalization identity mismatch")
+		return nil, billingRefundReviewError("identity_mismatch", "billing finalization identity mismatch")
 	}
 	if stored.State == receipt.State {
 		stored.State = "building"
@@ -135,7 +148,7 @@ func claimBillingFinalizationTx(tx *gorm.DB, receipt BillingFinalization) (*Bill
 		switch stored.State {
 		case BillingRefundPending, BillingRefunded, BillingSettled, BillingTaskOwned:
 		default:
-			return nil, errors.New("invalid persisted billing finalization state")
+			return nil, billingRefundReviewError("receipt_invalid", "invalid persisted billing finalization state")
 		}
 	}
 	return &stored, nil
@@ -151,7 +164,7 @@ func validateBillingSourceTx(tx *gorm.DB, r *BillingFinalization) error {
 			return err
 		}
 		if record.UserId != r.UserID || record.ReservedAmount != int64(r.SourceHeld) || record.QuotaPeriod != r.SubscriptionPeriod || record.Status != "consumed" {
-			return errors.New("subscription held evidence mismatch")
+			return billingRefundReviewError("source_evidence", "subscription held evidence mismatch")
 		}
 		return nil
 	}
@@ -172,7 +185,7 @@ func validateBillingSourceTx(tx *gorm.DB, r *BillingFinalization) error {
 			continue
 		}
 		if row.RequestId != r.RequestID || row.Delta >= 0 || (row.Reason != LedgerReasonBillingPreConsume && row.Reason != LedgerReasonBillingReserve) {
-			return errors.New("wallet reservation already adjusted or inconsistent")
+			return billingRefundReviewError("source_evidence", "wallet reservation already adjusted or inconsistent")
 		}
 		if !checked[row.IdempotencyKey] {
 			op, details, err := loadLedgerOperation(lockForUpdate(tx), row.IdempotencyKey)
@@ -180,35 +193,35 @@ func validateBillingSourceTx(tx *gorm.DB, r *BillingFinalization) error {
 				return err
 			}
 			if op.UserId != r.UserID || op.Operation != "debit" || op.Id != row.OperationId || len(details) == 0 {
-				return errors.New("wallet reservation operation mismatch")
+				return billingRefundReviewError("source_evidence", "wallet reservation operation mismatch")
 			}
 			total := 0
 			for _, detail := range details {
 				if detail.UserId != r.UserID || detail.ReferenceType != "relay" || detail.ReferenceId != r.RequestID || detail.RequestId != r.RequestID || detail.IdempotencyKey != row.IdempotencyKey || detail.Delta >= 0 || detail.Delta < -common.MaxQuota || detail.Reason != row.Reason || !validAccount(LedgerAccount(detail.Account)) || detail.TotalBefore != op.TotalBefore || detail.TotalAfter != op.TotalAfter {
-					return errors.New("wallet reservation operation rows mismatch")
+					return billingRefundReviewError("source_evidence", "wallet reservation operation rows mismatch")
 				}
 				total -= detail.Delta
 				if total > common.MaxQuota {
-					return errors.New("wallet reservation amount invalid")
+					return billingRefundReviewError("source_evidence", "wallet reservation amount invalid")
 				}
 			}
 			if op.TotalBefore-op.TotalAfter != total {
-				return errors.New("wallet reservation operation amount mismatch")
+				return billingRefundReviewError("source_evidence", "wallet reservation operation amount mismatch")
 			}
 			expectedKey := "billing:preconsume:" + r.RequestID
 			if row.Reason == LedgerReasonBillingReserve {
 				prefix := "billing:reserve:" + r.RequestID + ":"
 				if !strings.HasPrefix(row.IdempotencyKey, prefix) {
-					return errors.New("wallet reserve key mismatch")
+					return billingRefundReviewError("source_evidence", "wallet reserve key mismatch")
 				}
 				target, err := strconv.ParseInt(strings.TrimPrefix(row.IdempotencyKey, prefix), 10, 64)
 				if err != nil || target <= 0 || target > common.MaxQuota {
-					return errors.New("invalid wallet reserve target")
+					return billingRefundReviewError("source_evidence", "invalid wallet reserve target")
 				}
 				expectedKey = fmt.Sprintf("%s%d", prefix, target)
 			}
 			if row.IdempotencyKey != expectedKey {
-				return errors.New("wallet reservation key mismatch")
+				return billingRefundReviewError("source_evidence", "wallet reservation key mismatch")
 			}
 			checked[row.IdempotencyKey] = true
 		}
@@ -220,11 +233,11 @@ func validateBillingSourceTx(tx *gorm.DB, r *BillingFinalization) error {
 		case AccountReward:
 			reward -= row.Delta
 		default:
-			return errors.New("unknown wallet reservation account")
+			return billingRefundReviewError("source_evidence", "unknown wallet reservation account")
 		}
 	}
 	if paid != r.Paid || bonus != r.Bonus || reward != r.Reward {
-		return errors.New("wallet held evidence mismatch")
+		return billingRefundReviewError("source_evidence", "wallet held evidence mismatch")
 	}
 	return nil
 }
@@ -250,7 +263,7 @@ func PersistBillingRefund(ctx context.Context, receipt BillingFinalization) (str
 			return err
 		}
 		state = BillingRefundPending
-		return tx.Model(r).Updates(map[string]any{"state": state}).Error
+		return tx.Model(r).Updates(map[string]any{"state": state, "next_retry_at": common.GetTimestamp()}).Error
 	})
 	return state, err
 }
@@ -274,23 +287,39 @@ func ApplyBillingTokenDeltaTx(tx *gorm.DB, r *BillingFinalization, delta int) er
 		return err
 	}
 	if token.UserId != r.UserID || subtle.ConstantTimeCompare([]byte(BillingTokenFingerprint(token.Key)), []byte(r.TokenFingerprint)) != 1 {
-		return errors.New("original billing token identity mismatch")
+		return billingRefundReviewError("identity_mismatch", "original billing token identity mismatch")
 	}
 	return ApplyTokenQuotaDeltaTx(tx.Unscoped(), token.Id, token.Key, delta)
 }
 
+// RecoverBillingRefund explicitly retries the exact existing pending owner. An
+// operator/service retry may bypass scheduling, but never financial validation.
 func RecoverBillingRefund(ctx context.Context, requestID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, err := recoverBillingRefund(ctx, requestID, false)
+	return err
+}
+
+func recoverBillingRefund(ctx context.Context, requestID string, dueOnly bool) (bool, error) {
 	var userID int
-	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	completed := false
+	// Keep time inside the outer attempt budget for persisting failure metadata.
+	workCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	err := DB.WithContext(workCtx).Transaction(func(tx *gorm.DB) error {
 		var r BillingFinalization
 		if err := lockForUpdate(tx).Where("request_id = ?", requestID).First(&r).Error; err != nil {
 			return err
+		}
+		if dueOnly && r.State == BillingRefundPending && r.NextRetryAt > common.GetTimestamp() {
+			return nil
 		}
 		if err := r.validate(); err != nil {
 			return err
 		}
 		userID = r.UserID
 		if r.State == BillingRefunded {
+			completed = true
 			return nil
 		}
 		if r.State != BillingRefundPending {
@@ -309,40 +338,57 @@ func RecoverBillingRefund(ctx context.Context, requestID string) error {
 				return err
 			}
 			if result.Replayed {
-				return errors.New("refund operation exists without committed finalization")
+				return billingRefundReviewError("refund_conflict", "refund operation exists without committed finalization")
 			}
 		}
 		if err := ApplyBillingTokenDeltaTx(tx, &r, r.TokenHeld); err != nil {
 			return err
 		}
-		return tx.Model(&r).Updates(map[string]any{"state": BillingRefunded}).Error
+		completed = true
+		return tx.Model(&r).Updates(map[string]any{"state": BillingRefunded, "next_retry_at": 0, "last_attempt_at": common.GetTimestamp()}).Error
 	})
-	// Cache invalidation is safe even with an uncertain COMMIT acknowledgement.
-	if userID > 0 {
-		RefreshUserQuotaCache(userID, 0)
+	cancel()
+	if err != nil {
+		noteCtx, stop := context.WithTimeout(ctx, 2*time.Second)
+		noteErr := recordBillingRefundFailure(noteCtx, requestID, err, common.GetTimestamp())
+		stop()
+		if noteErr != nil {
+			err = errors.Join(err, &billingRefundMetadataError{cause: noteErr})
+		}
 	}
-	return err
+	// Cache invalidation is safe even with an uncertain COMMIT acknowledgement;
+	// unlike the historical helper, it cannot outlive this recovery's deadline.
+	if userID > 0 {
+		RefreshUserQuotaCacheWithContext(ctx, userID)
+	}
+	return completed && err == nil, err
 }
 
-// RecoverPendingBillingRefunds never selects settled/task_owned receipts and
-// never infers refund eligibility from age. Bounded scans retain failed work.
+// RecoverPendingBillingRefunds selects only due, already-authorized intents.
+// Poison entries move out of the due prefix, never out of the monetary queue.
 func RecoverPendingBillingRefunds(ctx context.Context, limit int) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
 	var rows []BillingFinalization
-	if err := DB.WithContext(ctx).Where("state = ?", BillingRefundPending).Order("updated_at, request_id").Limit(limit).Find(&rows).Error; err != nil {
+	if err := DB.WithContext(ctx).Select("request_id").Where("state = ? AND next_retry_at <= ?", BillingRefundPending, common.GetTimestamp()).Order("next_retry_at, request_id").Limit(limit).Find(&rows).Error; err != nil {
 		return 0, err
 	}
 	completed := 0
 	var errs []error
 	for _, r := range rows {
-		if err := RecoverBillingRefund(ctx, r.RequestID); err != nil {
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
+			break
+		}
+		attemptCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+		done, err := recoverBillingRefund(attemptCtx, r.RequestID, true)
+		stop()
+		if err != nil {
 			errs = append(errs, fmt.Errorf("refund %s: %w", r.RequestID, err))
-			if noteErr := DB.WithContext(ctx).Model(&BillingFinalization{}).Where("request_id = ? AND state = ?", r.RequestID, BillingRefundPending).Updates(map[string]any{"attempts": gorm.Expr("attempts + 1"), "updated_at": common.GetTimestamp()}).Error; noteErr != nil {
-				errs = append(errs, noteErr)
-			}
-		} else {
+		} else if done {
 			completed++
 		}
 	}
@@ -521,12 +567,12 @@ func verifiedIndependentBillingDebitTx(tx *gorm.DB, r *BillingFinalization, row 
 		}
 		parts := strings.Split(strings.TrimPrefix(row.IdempotencyKey, prefix), ":")
 		if len(parts) != 2 {
-			return false, errors.New("invalid realtime debit identity")
+			return false, billingRefundReviewError("source_evidence", "invalid realtime debit identity")
 		}
 		var err error
 		sequence, err = strconv.ParseUint(parts[0], 10, 64)
 		if err != nil || sequence == 0 {
-			return false, errors.New("invalid realtime debit sequence")
+			return false, billingRefundReviewError("source_evidence", "invalid realtime debit sequence")
 		}
 	}
 	op, details, err := loadLedgerOperation(lockForUpdate(tx), row.IdempotencyKey)
@@ -534,17 +580,17 @@ func verifiedIndependentBillingDebitTx(tx *gorm.DB, r *BillingFinalization, row 
 		return false, err
 	}
 	if op.UserId != r.UserID || op.Operation != "debit" || op.Id != row.OperationId || len(details) == 0 {
-		return false, errors.New("independent billing operation mismatch")
+		return false, billingRefundReviewError("source_evidence", "independent billing operation mismatch")
 	}
 	total := 0
 	for _, d := range details {
 		validPurpose := fee && isFee(d.Metadata) || !fee && d.Metadata == ""
 		if d.UserId != r.UserID || d.RequestId != r.RequestID || d.ReferenceType != "relay" || d.ReferenceId != r.RequestID || d.Reason != LedgerReasonBillingSettle || d.IdempotencyKey != row.IdempotencyKey || d.TotalBefore != op.TotalBefore || d.TotalAfter != op.TotalAfter || d.Delta >= 0 || d.Delta < -common.MaxQuota || !validAccount(LedgerAccount(d.Account)) || !validPurpose {
-			return false, errors.New("independent billing rows mismatch")
+			return false, billingRefundReviewError("source_evidence", "independent billing rows mismatch")
 		}
 		total -= d.Delta
 		if total > common.MaxQuota {
-			return false, errors.New("independent billing amount invalid")
+			return false, billingRefundReviewError("source_evidence", "independent billing amount invalid")
 		}
 	}
 	expectedKey := fmt.Sprintf("billing:settle:%s:%d", r.RequestID, total)
@@ -552,7 +598,7 @@ func verifiedIndependentBillingDebitTx(tx *gorm.DB, r *BillingFinalization, row 
 		expectedKey = fmt.Sprintf("billing:settle:%s:wss:%d:%d", r.RequestID, sequence, total)
 	}
 	if row.IdempotencyKey != expectedKey || op.TotalBefore-op.TotalAfter != total {
-		return false, errors.New("independent billing key mismatch")
+		return false, billingRefundReviewError("source_evidence", "independent billing key mismatch")
 	}
 	return true, nil
 }

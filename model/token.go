@@ -435,8 +435,9 @@ func ApplyTokenQuotaDeltaTx(tx *gorm.DB, id int, key string, delta int) error {
 	if delta == 0 {
 		return nil
 	}
-	if err := invalidateTokenCacheForMutation(key); err != nil {
-		common.SysLog("failed to invalidate token quota cache before transaction: " + err.Error())
+	if err := invalidateTokenCacheForMutationContext(tx.Statement.Context, key); err != nil {
+		code, class := BillingRefundErrorCode(err)
+		common.SysLog(fmt.Sprintf("failed to invalidate token quota cache before transaction: code=%s class=%s", code, class))
 	}
 	result := tx.Model(&Token{}).Where("id = ?", id).Updates(
 		map[string]any{
