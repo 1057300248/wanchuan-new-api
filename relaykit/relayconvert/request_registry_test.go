@@ -14,6 +14,51 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestResponsesReasoningReplayRegistryRequiresOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		meta   convmeta.Meta
+		replay bool
+	}{
+		{name: "nil metadata"},
+		{name: "nil options", meta: &convmeta.Values{}},
+		{name: "zero options", meta: &convmeta.Values{Options: &convmeta.Options{}}},
+		{name: "explicit opt in", meta: &convmeta.Values{Options: &convmeta.Options{ReplayResponsesReasoning: true}}, replay: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const input = `[{"role":"user","content":"inspect"},{"type":"reasoning","summary":[{"type":"summary_text","text":"private reasoning"}]},{"role":"assistant","content":"checking"},{"role":"assistant","content":"both files"},{"type":"function_call","call_id":"a","name":"read","arguments":"{}"},{"type":"function_call_output","call_id":"a","output":"file contents"}]`
+			request := &dto.OpenAIResponsesRequest{Model: "test", Input: []byte(input)}
+			result, err := ConvertRequestByID(context.Background(), tc.meta, ConverterOpenAIResponsesToOpenAIChat, request)
+			require.NoError(t, err)
+			chat, ok := result.Value.(*dto.GeneralOpenAIRequest)
+			require.True(t, ok)
+			assert.Equal(t, input, string(request.Input), "conversion must not mutate the history for a later channel attempt")
+			if tc.replay {
+				require.Len(t, chat.Messages, 3)
+				assert.Equal(t, "private reasoning", chat.Messages[1].GetReasoningContent())
+				assert.Equal(t, "checking\n\nboth files", chat.Messages[1].Content)
+				require.Len(t, result.Diagnostics, 1)
+				assert.Equal(t, "reasoning_summary_replayed", result.Diagnostics[0].Code)
+				assert.Equal(t, "input.1.summary", result.Diagnostics[0].Path)
+				assert.Equal(t, types.ConversionDiagnosticWarning, result.Diagnostics[0].Severity)
+				assert.NotContains(t, result.Diagnostics[0].Message, "private reasoning")
+			} else {
+				require.Len(t, chat.Messages, 4)
+				assert.Equal(t, "checking", chat.Messages[1].Content)
+				assert.Equal(t, "both files", chat.Messages[2].Content)
+				assert.Empty(t, result.Diagnostics)
+				for _, message := range chat.Messages {
+					assert.Nil(t, message.ReasoningContent, "default Chat channels must not receive replayed reasoning")
+				}
+			}
+			assistant := chat.Messages[len(chat.Messages)-2]
+			require.Len(t, assistant.ParseToolCalls(), 1)
+			assert.Equal(t, "a", assistant.ParseToolCalls()[0].ID)
+			assert.Equal(t, dto.Message{Role: "tool", ToolCallId: "a", Content: "file contents"}, chat.Messages[len(chat.Messages)-1])
+		})
+	}
+}
+
 func TestClaudeMessagesToOpenAIChatPreservesAssistantTextWithToolCalls(t *testing.T) {
 	text := "I will look that up."
 	request := dto.ClaudeRequest{
@@ -346,6 +391,43 @@ func TestConvertRequestClaudeToResponsesPreservesMixedBlockOrder(t *testing.T) {
 	assert.Equal(t, "result", input[4]["output"])
 	assert.Equal(t, "user", input[5]["role"])
 	assert.Equal(t, "continue", inputContentText(t, input[5]))
+}
+
+func TestConvertRequestClaudeToResponsesDefaultsImageDetail(t *testing.T) {
+	const imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+Xoy8AAAAASUVORK5CYII="
+	req := &dto.ClaudeRequest{
+		Model: "gpt-test",
+		Messages: []dto.ClaudeMessage{
+			{Role: "user", Content: []dto.ClaudeMediaMessage{{
+				Type:   "image",
+				Source: &dto.ClaudeMessageSource{Type: "url", Url: "https://example.test/a.png"},
+			}}},
+			{Role: "assistant", Content: []dto.ClaudeMediaMessage{{
+				Type: "tool_use", Id: "call_1", Name: "screenshot", Input: map[string]any{},
+			}}},
+			{Role: "user", Content: []dto.ClaudeMediaMessage{{
+				Type: "tool_result", ToolUseId: "call_1",
+				Content: []dto.ClaudeMediaMessage{{
+					Type:   "image",
+					Source: &dto.ClaudeMessageSource{Type: "base64", MediaType: "image/png", Data: imageData},
+				}},
+			}}},
+		},
+	}
+
+	result, err := ConvertRequestByID(context.Background(), nil, ConverterClaudeMessagesToOpenAIResponses, req)
+	require.NoError(t, err)
+	responsesReq, ok := result.Value.(*dto.OpenAIResponsesRequest)
+	require.True(t, ok)
+	assert.JSONEq(t, `[
+		{"role":"user","content":[
+			{"type":"input_image","image_url":"https://example.test/a.png","detail":"auto"}
+		]},
+		{"type":"function_call","call_id":"call_1","name":"screenshot","arguments":"{}"},
+		{"type":"function_call_output","call_id":"call_1","output":[
+			{"type":"input_image","image_url":"data:image/png;base64,`+imageData+`","detail":"auto"}
+		]}
+	]`, string(responsesReq.Input))
 }
 
 func TestConvertRequestClaudeToResponsesDropsIncompatibleContextManagement(t *testing.T) {
