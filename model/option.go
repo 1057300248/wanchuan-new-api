@@ -240,6 +240,10 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if key == "QuotaRemindThreshold" {
+		_, err := operation_setting.ParseQuotaReminderThreshold(value)
+		return err
+	}
 	if key == legacyAccessTokenRetireAtKey {
 		return errLegacyRetireAtReadOnly
 	}
@@ -412,6 +416,13 @@ func UpdateOptionsBulk(values map[string]string) error {
 }
 
 func updateOptionMap(key string, value string) (err error) {
+	var reminderThreshold int
+	if key == "QuotaRemindThreshold" {
+		reminderThreshold, err = operation_setting.ParseQuotaReminderThreshold(value)
+		if err != nil {
+			return err // Preserve the last valid runtime/default and OptionMap on legacy bad rows.
+		}
+	}
 	if key == retiredThemeOptionKey || key == legacyAccessTokenRetireAtKey {
 		common.OptionMapRWMutex.Lock()
 		delete(common.OptionMap, key)
@@ -707,7 +718,7 @@ func updateOptionMap(key string, value string) (err error) {
 	case "AffiliateRewardRate":
 		common.AffiliateRewardRate, _ = strconv.ParseFloat(value, 64)
 	case "QuotaRemindThreshold":
-		common.QuotaRemindThreshold, _ = strconv.Atoi(value)
+		common.QuotaRemindThreshold = reminderThreshold
 	case "PreConsumedQuota":
 		common.PreConsumedQuota, _ = strconv.Atoi(value)
 	case "ModelRequestRateLimitCount":

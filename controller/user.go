@@ -1284,20 +1284,20 @@ func TopUp(c *gin.Context) {
 }
 
 type UpdateUserSettingRequest struct {
-	QuotaWarningType                 string  `json:"notify_type"`
-	QuotaWarningThreshold            float64 `json:"quota_warning_threshold"`
-	QuotaWarningEnabled              *bool   `json:"quota_warning_enabled,omitempty"`
-	WebhookUrl                       string  `json:"webhook_url,omitempty"`
-	WebhookSecret                    string  `json:"webhook_secret,omitempty"`
-	NotificationEmail                string  `json:"notification_email,omitempty"`
-	BarkUrl                          string  `json:"bark_url,omitempty"`
-	GotifyUrl                        string  `json:"gotify_url,omitempty"`
-	GotifyToken                      string  `json:"gotify_token,omitempty"`
-	GotifyPriority                   int     `json:"gotify_priority,omitempty"`
-	UpstreamModelUpdateNotifyEnabled *bool   `json:"upstream_model_update_notify_enabled,omitempty"`
-	ChannelNotifyEnabled             *bool   `json:"channel_notify_enabled,omitempty"`
-	AcceptUnsetModelRatioModel       bool    `json:"accept_unset_model_ratio_model"`
-	RecordIpLog                      bool    `json:"record_ip_log"`
+	QuotaWarningType                 string                      `json:"notify_type"`
+	QuotaWarningThreshold            quotaReminderThresholdInput `json:"quota_warning_threshold"`
+	QuotaWarningEnabled              *bool                       `json:"quota_warning_enabled,omitempty"`
+	WebhookUrl                       string                      `json:"webhook_url,omitempty"`
+	WebhookSecret                    string                      `json:"webhook_secret,omitempty"`
+	NotificationEmail                string                      `json:"notification_email,omitempty"`
+	BarkUrl                          string                      `json:"bark_url,omitempty"`
+	GotifyUrl                        string                      `json:"gotify_url,omitempty"`
+	GotifyToken                      string                      `json:"gotify_token,omitempty"`
+	GotifyPriority                   int                         `json:"gotify_priority,omitempty"`
+	UpstreamModelUpdateNotifyEnabled *bool                       `json:"upstream_model_update_notify_enabled,omitempty"`
+	ChannelNotifyEnabled             *bool                       `json:"channel_notify_enabled,omitempty"`
+	AcceptUnsetModelRatioModel       bool                        `json:"accept_unset_model_ratio_model"`
+	RecordIpLog                      bool                        `json:"record_ip_log"`
 }
 
 func UpdateUserSetting(c *gin.Context) {
@@ -1310,12 +1310,6 @@ func UpdateUserSetting(c *gin.Context) {
 	// 验证预警类型
 	if req.QuotaWarningType != dto.NotifyTypeEmail && req.QuotaWarningType != dto.NotifyTypeWebhook && req.QuotaWarningType != dto.NotifyTypeBark && req.QuotaWarningType != dto.NotifyTypeGotify {
 		common.ApiErrorT(c, "Invalid warning type")
-		return
-	}
-
-	// 验证预警阈值，0 表示使用系统默认阈值
-	if req.QuotaWarningThreshold < 0 {
-		common.ApiErrorT(c, "Reminder threshold cannot be negative")
 		return
 	}
 
@@ -1391,7 +1385,11 @@ func UpdateUserSetting(c *gin.Context) {
 	// 请求未携带的开关也保持原值
 	settings := user.GetSetting()
 	settings.NotifyType = req.QuotaWarningType
-	settings.QuotaWarningThreshold = req.QuotaWarningThreshold
+	// Explicit zero uses the site default; an older partial request preserves
+	// the exact saved value, including finite legacy fractional thresholds.
+	if req.QuotaWarningThreshold.present {
+		settings.QuotaWarningThreshold = req.QuotaWarningThreshold.value
+	}
 	settings.AcceptUnsetRatioModel = req.AcceptUnsetModelRatioModel
 	settings.RecordIpLog = req.RecordIpLog
 	if req.QuotaWarningEnabled != nil {
