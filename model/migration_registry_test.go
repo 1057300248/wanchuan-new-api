@@ -65,6 +65,7 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 		&CasbinRule{},
 		&AuthzRole{},
 		&UserAccessToken{},
+		&BillingFinalization{},
 		&BalanceLedgerOperation{},
 		&BalanceLedger{},
 		&ModelBonusEligibleAudit{},
@@ -79,7 +80,7 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 
 func TestMainAutoMigrateModelsWithoutRegistryKeepsCoreModels(t *testing.T) {
 	models := mainAutoMigrateModels(nil)
-	require.Len(t, models, 36)
+	require.Len(t, models, 37)
 	assert.IsType(t, &Channel{}, models[0])
-	assert.IsType(t, &UserAccessToken{}, models[len(models)-1])
+	assert.IsType(t, &BillingFinalization{}, models[len(models)-1])
 }

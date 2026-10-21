@@ -64,7 +64,7 @@ func TestTaskWalletReceiptsDatabaseMatrix(t *testing.T) {
 				common.SetDatabaseTypes(oldMainType, oldLogType)
 				model.InvalidateModelBonusEligibleCache()
 			})
-			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.Option{}, &model.Task{}, &model.Midjourney{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionPreConsumeRecord{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}))
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.Option{}, &model.Task{}, &model.Midjourney{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionPreConsumeRecord{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}))
 			require.NoError(t, logDB.AutoMigrate(&model.Log{}))
 			query := "SELECT version()"
 			if dialect.name == common.DatabaseTypeSQLite {

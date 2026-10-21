@@ -43,6 +43,8 @@ type SubscriptionFunding struct {
 	PlanTitle       string
 }
 
+func (s *SubscriptionFunding) UsesHostBillingFinalization() bool { return true }
+
 func (s *SubscriptionFunding) Source() string { return BillingSourceSubscription }
 
 func (s *SubscriptionFunding) PreConsume(amount int) error {

@@ -470,6 +470,7 @@ func mainAutoMigrateModels(registry *extension.Registry) []any {
 		&CasbinRule{},
 		&AuthzRole{},
 		&UserAccessToken{},
+		&BillingFinalization{},
 	}
 	if registry == nil {
 		return coreModels

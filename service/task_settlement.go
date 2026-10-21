@@ -63,6 +63,7 @@ func SettleSubmittedTaskBilling(c *gin.Context, info *relaycommon.RelayInfo, tas
 	session := info.Billing.(*BillingSession)
 	session.mu.Lock()
 	session.settled = true
+	session.actualSettled = actualQuota
 	session.fundingSettled = true
 	preConsumed := session.preConsumedQuota
 	session.mu.Unlock()

@@ -39,6 +39,8 @@ func (w *WalletFunding) ensure() *walletmodule.Funding {
 	return funding
 }
 
+func (w *WalletFunding) UsesHostBillingFinalization() bool { return true }
+
 func (w *WalletFunding) Source() string { return moneyport.SourceWallet }
 
 func (w *WalletFunding) PreConsume(amount int) error {

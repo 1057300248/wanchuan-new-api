@@ -466,6 +466,16 @@ func postConsumeQuotaWithOperation(relayInfo *relaycommon.RelayInfo, quota int, 
 // commit persists a task's refund receipt inside the wallet/token transaction.
 // It runs for replays too, so callers can recover the already committed state.
 func postConsumeQuotaWithWalletCommit(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool, operationSuffix string, commit func(*gorm.DB, *model.LedgerResult) error) (result postConsumeQuotaResult, err error) {
+	return postConsumeQuotaWithWalletCommitPurpose(relayInfo, quota, preConsumedQuota, sendEmail, operationSuffix, "", commit)
+}
+
+// purpose only adds financial provenance. It does not change fee policy, amount,
+// timing, reason, idempotency key or signature. Unmarked historical operations
+// are never retroactively inferred to be independent fees.
+func postConsumeQuotaWithWalletCommitPurpose(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool, operationSuffix, purpose string, commit func(*gorm.DB, *model.LedgerResult) error) (result postConsumeQuotaResult, err error) {
+	if purpose != "" && (purpose != "violation_fee" || quota <= 0 || preConsumedQuota != 0 || commit != nil) {
+		return result, errors.New("invalid independent billing purpose")
+	}
 
 	// 1) Consume from wallet quota OR subscription item
 	if relayInfo != nil && relayInfo.BillingSource == BillingSourceSubscription {
@@ -512,6 +522,9 @@ func postConsumeQuotaWithWalletCommit(relayInfo *relaycommon.RelayInfo, quota in
 			ReferenceType: "relay",
 			ReferenceId:   relayInfo.RequestId,
 			RequestId:     relayInfo.RequestId,
+		}
+		if purpose == "violation_fee" {
+			entry.SetMetadata(map[string]interface{}{"independent_fee": "violation_fee"})
 		}
 		operationPart := ""
 		if operationSuffix != "" {

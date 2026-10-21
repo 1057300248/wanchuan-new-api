@@ -17,10 +17,12 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// HTTP/WS handler completion does not join the legacy asynchronous refund.
-// Force the exact CI observation window: the wallet is restored, but the token
-// credit is paused. The first accounting read releases the credit only AFTER
-// reading the old token row, so a one-shot assertion deterministically fails.
+// HTTP/WS handler completion does not join the asynchronous refund. The host
+// finalization transaction now keeps BOTH wallet and token held until commit,
+// unlike the historical source-first window reproduced before F7. Pause the
+// token credit and require that no partial refund is externally visible. The
+// first accounting read releases credit only AFTER reading the old token row,
+// so a one-shot assertion still deterministically fails.
 func TestResponsesAccountingWaitsForAsynchronousTokenRefund(t *testing.T) {
 	fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(*websocket.Conn, *http.Request) {})
 	oldRetry := common.RetryTimes
@@ -103,7 +105,15 @@ func TestResponsesAccountingWaitsForAsynchronousTokenRefund(t *testing.T) {
 	require.NoError(t, model.DB.First(&user, fixture.user.Id).Error)
 	require.Equal(t, 2000, token.RemainQuota, "handler completion precedes token refund")
 	require.Equal(t, 1000, token.UsedQuota)
-	require.Equal(t, 100000, user.Quota, "wallet refund already committed")
+	require.Equal(t, 99000, user.Quota, "wallet refund must not publish before the token transaction commits")
+	require.Equal(t, 99000, user.QuotaPaid)
+	require.Zero(t, user.QuotaBonus)
+	require.Zero(t, user.QuotaReward)
+	var owner model.BillingFinalization
+	require.NoError(t, model.DB.Where("user_id = ?", fixture.user.Id).First(&owner).Error)
+	require.Equal(t, model.BillingRefundPending, owner.State, "scheduled recovery is not committed refund completion")
+	require.Equal(t, 1000, owner.SourceHeld)
+	require.Equal(t, 1000, owner.TokenHeld)
 	accountingRead.Store(true)
 	assertResponsesWSAccounting(t, fixture, nil)
 }

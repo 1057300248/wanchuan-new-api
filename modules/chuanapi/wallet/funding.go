@@ -53,6 +53,8 @@ func RegisterFundingFactory(reg *moneyport.FactoryRegistry) error {
 	}))
 }
 
+func (w *Funding) UsesHostBillingFinalization() bool { return true }
+
 func (w *Funding) Source() string { return moneyport.SourceWallet }
 
 func (w *Funding) PreConsume(amount int) error {

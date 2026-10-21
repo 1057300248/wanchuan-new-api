@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/lifecycle"
 	"github.com/bytedance/gopkg/util/gopool"
 )
@@ -30,6 +31,13 @@ func DrainBillingBackground(ctx context.Context) error {
 func StartRuntimeWorkers(group *lifecycle.Group) {
 	group.Go("system-instance-reporter", func(schedule, work context.Context) {
 		lifecycle.Periodic(schedule, work, func() time.Duration { return systemInstanceReportInterval }, true, func(context.Context) { reportSystemInstanceWithLog() })
+	})
+	group.Go("billing-refund-recovery", func(schedule, work context.Context) {
+		lifecycle.Periodic(schedule, work, func() time.Duration { return 30 * time.Second }, true, func(ctx context.Context) {
+			if _, err := model.RecoverPendingBillingRefunds(ctx, 100); err != nil {
+				common.SysError("billing refund recovery: " + err.Error())
+			}
+		})
 	})
 	if !common.IsMasterNode {
 		return

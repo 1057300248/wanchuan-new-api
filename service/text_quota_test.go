@@ -85,7 +85,7 @@ func TestFixedPriceBillingDatabaseMatrix(t *testing.T) {
 				&model.Token{},
 				&model.Channel{},
 				&model.Model{},
-				&model.BalanceLedgerOperation{},
+				&model.BalanceLedgerOperation{}, &model.BillingFinalization{},
 				&model.BalanceLedger{},
 			))
 			require.NoError(t, logDB.AutoMigrate(&model.Log{}))
