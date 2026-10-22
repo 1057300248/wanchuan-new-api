@@ -56,7 +56,7 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 				common.SetDatabaseTypes(oldMain, oldLog)
 				model.InvalidateModelBonusEligibleCache()
 			})
-			require.NoError(t, db.AutoMigrate(&model.Option{}, &model.BillingFinalization{}, &model.Task{}, &model.User{}, &model.Token{}, &model.Log{}, &model.Channel{}, &model.Midjourney{}, &model.TopUp{}, &model.UserSubscription{}, &model.SystemTask{}, &model.SystemTaskLock{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Model{}, &model.Vendor{}, &model.ModelBonusEligibleAudit{}, &model.ReferralCommission{}, &model.Redemption{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.SubscriptionPreConsumeRecord{}))
+			require.NoError(t, db.AutoMigrate(&model.Option{}, &model.BillingFinalization{}, &model.Task{}, &model.User{}, &model.Token{}, &model.Log{}, &model.Channel{}, &model.Ability{}, &model.Midjourney{}, &model.TopUp{}, &model.UserSubscription{}, &model.SystemTask{}, &model.SystemTaskLock{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Model{}, &model.Vendor{}, &model.ModelBonusEligibleAudit{}, &model.ReferralCommission{}, &model.Redemption{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.SubscriptionPreConsumeRecord{}))
 			var version string
 			q := "SELECT version()"
 			if dialect.name == common.DatabaseTypeSQLite {
@@ -75,6 +75,13 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 			t.Run("intent_retry_terminal_owner", TestBillingRefundIntentRetryHonorsCommittedTerminalOwner)
 			t.Run("intent_released_session", TestBillingRefundIntentOutlivesReleasedSessionWithoutRetainingRequest)
 			t.Run("commit_boundaries", TestPolicyPreservingTerminalCommitBoundaries)
+			t.Run("settlement_deadline_driver_pool", TestBillingSettlementDeadlineDriverAndConnectionWait)
+			if dialect.name != common.DatabaseTypeSQLite {
+				t.Run("settlement_deadline_row_lock", TestBillingSettlementDeadlineNativeRowLock)
+			}
+			t.Run("settlement_deadline_commit_evidence", TestBillingSettlementDeadlineCommitEvidence)
+			t.Run("settlement_deadline_redis", TestBillingSettlementDeadlineRedisBoundaries)
+			t.Run("settlement_cancelled_client", TestBillingSettlementSurvivesCancelledClient)
 			t.Run("task_commit_readback_outage", TestTaskPersistenceUncertainCommitAndReadbackOutage)
 			t.Run("task_reconciliation_identity", TestTaskPersistenceReconciliationRequiresOriginalIdentity)
 			t.Run("refund_commit_boundaries", TestPolicyPreservingRefundCommitBoundaries)

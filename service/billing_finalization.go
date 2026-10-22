@@ -96,7 +96,11 @@ func (s *BillingSession) settleDurableLocked(actual int) error {
 	}
 	delta := actual - s.preConsumedQuota
 	var result moneyport.SettlementResult
-	applied, err := model.SettleBillingFinalization(context.Background(), receipt, actual, func(tx *gorm.DB) error {
+	// Settlement survives a disconnected client, but its SQL waits and precommit
+	// Redis fence share one finite cooperative budget while the session is locked.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	applied, err := model.SettleBillingFinalization(ctx, receipt, actual, func(tx *gorm.DB) error {
 		// Wallet delta zero has no money operation; subscription delta zero MUST
 		// finalize its real source receipt, including when all token use is zero.
 		if delta != 0 || receipt.Source == BillingSourceSubscription {
@@ -111,10 +115,15 @@ func (s *BillingSession) settleDurableLocked(actual int) error {
 		}
 		return model.ApplyBillingTokenDeltaTx(tx, &receipt, -delta)
 	})
-	if receipt.Source == BillingSourceWallet {
-		model.RefreshUserQuotaCache(receipt.UserID, 0)
+	if receipt.Source == BillingSourceWallet && (err != nil || !applied || delta == 0) {
+		// Cache cleanup has its own bounded budget, including after a lost COMMIT
+		// acknowledgement; it cannot classify the financial result as a rollback.
+		// Applied nonzero wallet deltas instead clean up in ApplySettlementResult.
+		model.RefreshUserQuotaCacheAfterBillingFinalization(receipt.UserID)
 	}
 	if err != nil {
+		// A deadline (like a lost COMMIT ACK) is not proof of rollback. Preserve
+		// the frozen receipt for the existing terminal-owner reconciliation.
 		s.settlementUncertain = true
 		return err
 	}
