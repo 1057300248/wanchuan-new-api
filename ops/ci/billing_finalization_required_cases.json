@@ -117,10 +117,27 @@
         "task_reconciliation_identity/task_identity",
         "task_reconciliation_identity/unsafe_status",
         "task_reconciliation_identity/missing_destination",
-        "task_reconciliation_identity/other_terminal_owner"
+        "task_reconciliation_identity/other_terminal_owner",
+        "settlement_deadline_driver_pool/driver",
+        "settlement_deadline_driver_pool/connection",
+        "settlement_deadline_commit_evidence/wallet/rolled_back",
+        "settlement_deadline_commit_evidence/wallet/committed_lost_ack",
+        "settlement_deadline_commit_evidence/subscription/rolled_back",
+        "settlement_deadline_commit_evidence/subscription/committed_lost_ack",
+        "settlement_deadline_redis/precommit_fence",
+        "settlement_deadline_redis/postcommit_cache",
+        "settlement_deadline_redis/zero_delta_cache",
+        "settlement_deadline_redis/terminal_replay_cache",
+        "settlement_deadline_redis/live_redis_error",
+        "settlement_cancelled_client"
+      ],
+      "native_required_leaf_suffixes": [
+        "settlement_deadline_row_lock"
       ]
     }
   ],
   "followup_pin": "fc72d12bec2e4a2256158741c4ec40ed8586e29b",
-  "followup_tree": "d74335e27f96f88064d8c634ff2f89434d33b9cd"
+  "followup_tree": "d74335e27f96f88064d8c634ff2f89434d33b9cd",
+  "settlement_cache_pin": "81ceca02644931a9933aeaaaffbe7325ffc39725",
+  "settlement_cache_tree": "7439572f5f2db059afda2ae2ac160e60bba55455"
 }

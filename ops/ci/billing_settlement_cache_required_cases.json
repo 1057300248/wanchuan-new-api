@@ -1,0 +1,40 @@
+{
+  "pin": "81ceca02644931a9933aeaaaffbe7325ffc39725",
+  "tree": "7439572f5f2db059afda2ae2ac160e60bba55455",
+  "database_suite": {
+    "label": "finalization-cache",
+    "package": "model",
+    "top": "TestBillingFinalizationCacheDatabaseMatrix",
+    "dsn_env": {
+      "mysql": "TEST_FINALIZATION_CACHE_MYSQL_DSN",
+      "postgres": "TEST_FINALIZATION_CACHE_POSTGRES_DSN"
+    },
+    "database": "repair_finalization_cache",
+    "required_leaf_suffixes": [
+      "canceled_after_commit",
+      "deadline_after_commit",
+      "lost_commit_ack",
+      "transient_delete_failure",
+      "exhausted_then_terminal_replay"
+    ],
+    "expected_passing_test_events": 7
+  },
+  "sqlite_only_suite": {
+    "label": "finalization-cache-stalled-redis",
+    "package": "model",
+    "top": "TestBillingFinalizationCacheStalledRedisIsBounded",
+    "required_tests": [
+      "TestBillingFinalizationCacheStalledRedisIsBounded"
+    ]
+  },
+  "redis_suite": {
+    "label": "settlement-deadline-redis",
+    "package": "service",
+    "top": "TestBillingSettlementDeadlineNativeRedisFence",
+    "required_tests": [
+      "TestBillingSettlementDeadlineNativeRedisFence"
+    ],
+    "address_env": "TEST_SETTLEMENT_DEADLINE_REDIS_ADDR",
+    "disposable_env": "TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE"
+  }
+}

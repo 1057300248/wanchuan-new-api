@@ -11,6 +11,8 @@ go version > "$OUT/go-version.txt"
 status=0
 # Never inherit an operator database or pressure opt-in in unrelated reports.
 export TEST_REFUND_OPS_MYSQL_DSN= TEST_REFUND_OPS_POSTGRES_DSN= TEST_REFUND_QUEUE_PRESSURE=
+export TEST_FINALIZATION_CACHE_MYSQL_DSN= TEST_FINALIZATION_CACHE_POSTGRES_DSN=
+export TEST_SETTLEMENT_DEADLINE_REDIS_ADDR= TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE=
 
 report() {
   local label=$1 package=$2 pattern=$3
@@ -41,6 +43,7 @@ database)
   export TEST_FINALIZATION_SERVICE_MYSQL_DSN= TEST_FINALIZATION_SERVICE_POSTGRES_DSN=
   finalization_model_mysql_dsn= finalization_model_postgres_dsn=
   finalization_service_mysql_dsn= finalization_service_postgres_dsn=
+  finalization_cache_mysql_dsn= finalization_cache_postgres_dsn=
   refund_operations_mysql_dsn= refund_operations_postgres_dsn=
   case "$DIALECT" in
   mysql)
@@ -49,6 +52,8 @@ database)
     docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'SELECT VERSION(); ALTER DATABASE repair_compat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_compat_log CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_token_migration CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;' > "$OUT/database-version.txt"
     docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'CREATE DATABASE repair_finalization_model CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_finalization_service CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
     docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'CREATE DATABASE repair_refund_operations CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
+    docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'CREATE DATABASE repair_finalization_cache CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
+    finalization_cache_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_cache?charset=utf8mb4&parseTime=true&loc=UTC"
     refund_operations_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_refund_operations?charset=utf8mb4&parseTime=true&loc=UTC"
     finalization_model_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_model?charset=utf8mb4&parseTime=true&loc=UTC"
     finalization_service_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_service?charset=utf8mb4&parseTime=true&loc=UTC"
@@ -66,6 +71,8 @@ database)
     docker exec "$PG_ID" createdb -U postgres repair_finalization_model
     docker exec "$PG_ID" createdb -U postgres repair_finalization_service
     docker exec "$PG_ID" createdb -U postgres repair_refund_operations
+    docker exec "$PG_ID" createdb -U postgres repair_finalization_cache
+    finalization_cache_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_cache?sslmode=disable"
     refund_operations_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_refund_operations?sslmode=disable"
     finalization_model_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_model?sslmode=disable"
     finalization_service_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_service?sslmode=disable"
@@ -270,11 +277,36 @@ database)
     'task_reconciliation_identity/task_identity' \
     'task_reconciliation_identity/unsafe_status' \
     'task_reconciliation_identity/missing_destination' \
-    'task_reconciliation_identity/other_terminal_owner'; do
+    'task_reconciliation_identity/other_terminal_owner' \
+    'settlement_deadline_driver_pool/driver' \
+    'settlement_deadline_driver_pool/connection' \
+    'settlement_deadline_commit_evidence/wallet/rolled_back' \
+    'settlement_deadline_commit_evidence/wallet/committed_lost_ack' \
+    'settlement_deadline_commit_evidence/subscription/rolled_back' \
+    'settlement_deadline_commit_evidence/subscription/committed_lost_ack' \
+    'settlement_deadline_redis/precommit_fence' \
+    'settlement_deadline_redis/postcommit_cache' \
+    'settlement_deadline_redis/zero_delta_cache' \
+    'settlement_deadline_redis/terminal_replay_cache' \
+    'settlement_deadline_redis/live_redis_error' \
+    'settlement_cancelled_client'; do
     required+=("$prefix/$contract")
   done
+  if [ "$DIALECT" != sqlite ]; then
+    required+=("$prefix/settlement_deadline_row_lock")
+  fi
   TEST_FINALIZATION_SERVICE_MYSQL_DSN="$finalization_service_mysql_dsn" TEST_FINALIZATION_SERVICE_POSTGRES_DSN="$finalization_service_postgres_dsn" \
     report request-finalization-service ./service "^TestBillingFinalizationSessionDatabaseMatrix$/$DIALECT$" "${required[@]}"
+
+  # Cache compensation has separate fixture state and must never reuse the
+  # financial worker/model/service databases or inherit an operator target.
+  prefix="TestBillingFinalizationCacheDatabaseMatrix/$DIALECT"
+  required=(TestBillingFinalizationCacheDatabaseMatrix "$prefix")
+  for contract in canceled_after_commit deadline_after_commit lost_commit_ack transient_delete_failure exhausted_then_terminal_replay; do
+    required+=("$prefix/$contract")
+  done
+  TEST_FINALIZATION_CACHE_MYSQL_DSN="$finalization_cache_mysql_dsn" TEST_FINALIZATION_CACHE_POSTGRES_DSN="$finalization_cache_postgres_dsn" \
+    report finalization-cache ./model "^TestBillingFinalizationCacheDatabaseMatrix$/$DIALECT$" "${required[@]}"
 
   # The operations fixture refuses populated databases, upgrades the exact old
   # receipt schema, and retains every poison-row hold while healthy work advances.
@@ -294,6 +326,7 @@ database)
     report refund-operations ./model "^TestBillingRefundOperationsDatabaseMatrix$/$DIALECT$" "${required[@]}"
 
   if [ "$DIALECT" = sqlite ]; then
+    report finalization-cache-stalled-redis ./model '^TestBillingFinalizationCacheStalledRedisIsBounded$' TestBillingFinalizationCacheStalledRedisIsBounded
     # Enumerate intent tests: the subprocess-only helper must not run standalone.
     required=(
       'TestBillingRefundIntentDeadlineSurvivesRequestCancellation'
@@ -416,6 +449,10 @@ redis)
   export TEST_TASK_REDIS_ADDR="127.0.0.1:$REDIS_PORT"
   prefix=TestTaskBillingBatchReservationRestartRecovery
   report task-token-reservation ./service '^TestTaskBillingBatchReservationRestartRecovery$' "$prefix/limited_with_redis" "$prefix/unlimited_with_redis" "$prefix/limited_with_ordinary_request"
+  # The CI-owned Redis service was version-checked above. These opt-ins are
+  # scoped to the pause/unpause fixture, never inherited by other reports.
+  TEST_SETTLEMENT_DEADLINE_REDIS_ADDR="127.0.0.1:$REDIS_PORT" TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE=1 \
+    report settlement-deadline-redis ./service '^TestBillingSettlementDeadlineNativeRedisFence$' TestBillingSettlementDeadlineNativeRedisFence
   ;;
 *) echo 'Usage: verify_repair_services.sh database|redis' >&2; exit 1 ;;
 esac

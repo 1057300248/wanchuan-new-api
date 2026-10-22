@@ -18,7 +18,9 @@ DSN_KEYS = ("TEST_MYSQL_DSN", "TEST_MYSQL_LOG_DSN", "TEST_POSTGRES_DSN", "TEST_P
             "TEST_REDIS_DSN", "TEST_REDIS_ADDR", "TEST_TASK_REDIS_ADDR",
             "TEST_FINALIZATION_MODEL_MYSQL_DSN", "TEST_FINALIZATION_MODEL_POSTGRES_DSN",
             "TEST_FINALIZATION_SERVICE_MYSQL_DSN", "TEST_FINALIZATION_SERVICE_POSTGRES_DSN",
-            "TEST_REFUND_OPS_MYSQL_DSN", "TEST_REFUND_OPS_POSTGRES_DSN", "TEST_REFUND_QUEUE_PRESSURE")
+            "TEST_REFUND_OPS_MYSQL_DSN", "TEST_REFUND_OPS_POSTGRES_DSN", "TEST_REFUND_QUEUE_PRESSURE",
+            "TEST_FINALIZATION_CACHE_MYSQL_DSN", "TEST_FINALIZATION_CACHE_POSTGRES_DSN",
+            "TEST_SETTLEMENT_DEADLINE_REDIS_ADDR", "TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE")
 
 
 class RepairServiceEnvironmentTests(unittest.TestCase):
@@ -74,6 +76,10 @@ elif name == "python3":
                    "TEST_REFUND_OPS_MYSQL_DSN": "untrusted-ambient-fixture",
                    "TEST_REFUND_OPS_POSTGRES_DSN": "untrusted-ambient-fixture",
                    "TEST_REFUND_QUEUE_PRESSURE": "untrusted-ambient-fixture",
+                   "TEST_FINALIZATION_CACHE_MYSQL_DSN": "untrusted-ambient-fixture",
+                   "TEST_FINALIZATION_CACHE_POSTGRES_DSN": "untrusted-ambient-fixture",
+                   "TEST_SETTLEMENT_DEADLINE_REDIS_ADDR": "untrusted-ambient-fixture",
+                   "TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE": "untrusted-ambient-fixture",
                    "MOCK_REFUND_OPERATIONS_CREATE_FAIL": "1" if refund_operations_creation_fails else "0",
                    "MOCK_FINALIZATION_CREATE_FAIL": finalization_creation_fails,
                    "MOCK_TRACE": str(trace), "MOCK_REJECT_LABEL": reject_label,
@@ -93,7 +99,7 @@ elif name == "python3":
                 self.assertEqual(0, result.returncode, result.stderr)
                 tests = [row for row in rows if row["tool"] == "go" and row["args"] != ["version"]]
                 gates = [row for row in rows if row["tool"] == "python3"]
-                self.assertEqual(25, len(tests))
+                self.assertEqual(26, len(tests))
                 self.assertEqual(len(tests), len(gates), "every suite must retain its strict evidence gate")
                 self.assertEqual({"startup", "channel-priority", "audit-ordered-index", "setup-aff-code-index",
                                   "token-migration", "token-audit", "performance-aggregation", "performance-runtime-flush",
@@ -101,7 +107,8 @@ elif name == "python3":
                                   "wallet", "owner", "owner-group-settings", "monitor-visibility", "sensitive-group-rename",
                                   "converted-responses", "native-responses", "immediate-settlement",
                                   "subscription-period", "subscription-period-migration",
-                                  "request-finalization-model", "request-finalization-service", "refund-operations"},
+                                  "request-finalization-model", "request-finalization-service", "refund-operations",
+                                  "finalization-cache"},
                                  {Path(gate["args"][2]).stem for gate in gates})
                 for test, gate in zip(tests, gates):
                     label = Path(gate["args"][2]).stem
@@ -144,7 +151,7 @@ elif name == "python3":
 
     def test_required_rejection_fails_job_but_keeps_independent_evidence(self):
         for label in ("token-migration", "token-audit", "subscription-period", "subscription-period-migration",
-                      "request-finalization-model", "request-finalization-service", "refund-operations"):
+                      "request-finalization-model", "request-finalization-service", "refund-operations", "finalization-cache"):
             with self.subTest(label=label):
                 result, rows = self.run_script("postgres", reject_label=label)
                 self.assertNotEqual(0, result.returncode)
@@ -163,7 +170,8 @@ elif name == "python3":
         suites = {suite["package"]: suite for suite in inventory["suites"]}
         self.assertEqual({"model", "service"}, set(suites))
         self.assertEqual(28, len(suites["model"]["required_leaf_suffixes"]))
-        self.assertEqual(65, len(suites["service"]["required_leaf_suffixes"]))
+        self.assertEqual(77, len(suites["service"]["required_leaf_suffixes"]))
+        self.assertEqual(["settlement_deadline_row_lock"], suites["service"]["native_required_leaf_suffixes"])
         for suffix in ("legacy_final_more_less/Å", "legacy_final_more_less/ĕ"):
             self.assertIn(suffix, suites["service"]["required_leaf_suffixes"])
         for dialect in ("sqlite", "mysql", "postgres"):
@@ -172,7 +180,7 @@ elif name == "python3":
                 self.assertEqual(0, result.returncode, result.stderr)
                 tests = [row for row in rows if row["tool"] == "go" and row["args"] != ["version"]]
                 checks = [row for row in rows if row["tool"] == "python3"]
-                self.assertEqual(56 if dialect == "sqlite" else 25, len(tests))
+                self.assertEqual(58 if dialect == "sqlite" else 26, len(tests))
                 self.assertEqual(len(tests), len(checks))
                 for invocation, check in zip(tests, checks):
                     label = Path(check["args"][2]).stem
@@ -190,6 +198,8 @@ elif name == "python3":
                         if active:
                             prefix = suite["top"] + "/" + dialect
                             expected = [prefix] + [prefix + "/" + leaf for leaf in suite["required_leaf_suffixes"]]
+                            if dialect != "sqlite":
+                                expected += [prefix + "/" + leaf for leaf in suite.get("native_required_leaf_suffixes", [])]
                             self.assertEqual(expected, check["args"][3:])
                             self.assertEqual("./" + package, invocation["args"][4])
                             self.assertEqual(f"^{suite['top']}$/{dialect}$",
@@ -205,7 +215,7 @@ elif name == "python3":
 
     def test_finalization_database_creation_failure_stops_before_tests(self):
         for dialect in ("mysql", "postgres"):
-            for package in ("model", "service"):
+            for package in ("model", "service", "cache"):
                 with self.subTest(dialect=dialect, package=package):
                     result, rows = self.run_script(dialect, finalization_creation_fails=package)
                     self.assertNotEqual(0, result.returncode)
@@ -220,7 +230,7 @@ elif name == "python3":
                 self.assertEqual(0, result.returncode, result.stderr)
                 tests = [row for row in rows if row["tool"] == "go" and row["args"] != ["version"]]
                 checks = [row for row in rows if row["tool"] == "python3"]
-                self.assertEqual(56 if dialect == "sqlite" else 25, len(tests))
+                self.assertEqual(58 if dialect == "sqlite" else 26, len(tests))
                 for invocation, check in zip(tests, checks):
                     label = Path(check["args"][2]).stem
                     active = label == suite["label"]
@@ -267,6 +277,56 @@ elif name == "python3":
                 self.assertFalse(any(row["tool"] == "go" and row["args"] != ["version"] for row in rows))
                 self.assertFalse(any(row["tool"] == "python3" for row in rows))
 
+    def test_cache_matrix_has_fresh_separate_database_and_exact_required_leaves(self):
+        inventory = json.loads((SCRIPT.parent / "billing_settlement_cache_required_cases.json").read_text())
+        suite = inventory["database_suite"]
+        stalled = inventory["sqlite_only_suite"]
+        self.assertEqual(5, len(suite["required_leaf_suffixes"]))
+        for dialect in ("sqlite", "mysql", "postgres"):
+            with self.subTest(dialect=dialect):
+                result, rows = self.run_script(dialect)
+                self.assertEqual(0, result.returncode, result.stderr)
+                tests = [row for row in rows if row["tool"] == "go" and row["args"] != ["version"]]
+                checks = [row for row in rows if row["tool"] == "python3"]
+                seen = set()
+                for invocation, check in zip(tests, checks):
+                    label = Path(check["args"][2]).stem
+                    env = invocation["env"]
+                    active = label == suite["label"]
+                    self.assertEqual("", env["TEST_SETTLEMENT_DEADLINE_REDIS_ADDR"])
+                    self.assertEqual("", env["TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE"])
+                    for engine, key in suite["dsn_env"].items():
+                        if active and engine == dialect:
+                            self.assertIn("/" + suite["database"] + "?", env[key])
+                            self.assertIn("127.0.0.1:", env[key])
+                            for other in ("repair_compat", "repair_finalization_model", "repair_finalization_service", "repair_refund_operations"):
+                                self.assertNotIn("/" + other + "?", env[key])
+                        else:
+                            self.assertEqual("", env[key], (label, key))
+                    if active:
+                        seen.add(label)
+                        prefix = suite["top"] + "/" + dialect
+                        expected = [suite["top"], prefix] + [prefix + "/" + leaf for leaf in suite["required_leaf_suffixes"]]
+                        self.assertEqual(suite["expected_passing_test_events"], len(expected))
+                        self.assertEqual(expected, check["args"][3:])
+                        self.assertEqual("./" + suite["package"], invocation["args"][4])
+                        self.assertEqual(f"^{suite['top']}$/{dialect}$", invocation["args"][invocation["args"].index("-run") + 1])
+                    if label == stalled["label"]:
+                        seen.add(label)
+                        self.assertEqual(stalled["required_tests"], check["args"][3:])
+                        self.assertEqual("./" + stalled["package"], invocation["args"][4])
+                        self.assertEqual(f"^{stalled['top']}$", invocation["args"][invocation["args"].index("-run") + 1])
+                expected_seen = {suite["label"]}
+                if dialect == "sqlite":
+                    expected_seen.add(stalled["label"])
+                self.assertEqual(expected_seen, seen)
+                creation = [row for row in rows if row["tool"] == "docker" and any(suite["database"] in arg for arg in row["args"])]
+                self.assertEqual(0 if dialect == "sqlite" else 1, len(creation))
+                if creation:
+                    self.assertLess(rows.index(creation[0]), rows.index(tests[0]))
+                    self.assertNotIn("IF NOT EXISTS", " ".join(creation[0]["args"]))
+                    self.assertNotIn("DROP", " ".join(creation[0]["args"]))
+
     def test_sqlite_only_followups_require_exact_nonhelper_intent_presenter_and_deadline_tests(self):
         inventory = json.loads((SCRIPT.parent / "billing_refund_followup_required_cases.json").read_text())
         suites = {suite["label"]: suite for suite in inventory["sqlite_only_suites"]}
@@ -298,13 +358,14 @@ elif name == "python3":
                 self.assertEqual(set(suites) if dialect == "sqlite" else set(), selected)
 
     def test_followup_required_rejections_fail_but_retain_later_independent_reports(self):
-        for label in ("refund-operations", "refund-intent-process", "task-persistence-presenter", "refund-deadline-classifier"):
+        for label in ("refund-operations", "refund-intent-process", "task-persistence-presenter", "refund-deadline-classifier",
+                      "finalization-cache", "finalization-cache-stalled-redis"):
             with self.subTest(label=label):
                 result, rows = self.run_script("sqlite", reject_label=label)
                 self.assertNotEqual(0, result.returncode)
                 self.assertIn("Required repair contracts failed", result.stderr)
                 checks = [row for row in rows if row["tool"] == "python3"]
-                self.assertEqual(56, len(checks))
+                self.assertEqual(58, len(checks))
                 self.assertEqual("sensitive-task-selected-plugin", Path(checks[-1]["args"][2]).stem)
 
     def test_actual_strict_checker_rejects_each_missing_followup_required_path(self):
@@ -321,7 +382,8 @@ elif name == "python3":
                     continue
                 label = Path(row["args"][2]).stem
                 if label not in {"request-finalization-service", "refund-operations", "refund-intent-process",
-                                 "task-persistence-presenter", "refund-deadline-classifier"}:
+                                 "task-persistence-presenter", "refund-deadline-classifier",
+                                 "finalization-cache", "finalization-cache-stalled-redis"}:
                     continue
                 required = row["args"][3:]
                 with tempfile.TemporaryDirectory() as directory:
@@ -385,6 +447,7 @@ elif name == "python3":
             "task-token-reservation": ["TestTaskBillingBatchReservationRestartRecovery/limited_with_redis",
                                        "TestTaskBillingBatchReservationRestartRecovery/unlimited_with_redis",
                                        "TestTaskBillingBatchReservationRestartRecovery/limited_with_ordinary_request"],
+            "settlement-deadline-redis": ["TestBillingSettlementDeadlineNativeRedisFence"],
         }
         for version in ("7.2.16", "8.8.0"):
             with self.subTest(version=version):
@@ -393,8 +456,8 @@ elif name == "python3":
                 self.assertEqual(0, result.returncode, result.stderr)
                 tests = [row for row in rows if row["tool"] == "go" and row["args"] != ["version"]]
                 gates = [row for row in rows if row["tool"] == "python3"]
-                self.assertEqual(3, len(tests))
-                self.assertEqual(3, len(gates))
+                self.assertEqual(4, len(tests))
+                self.assertEqual(4, len(gates))
                 self.assertEqual(set(expected), {Path(row["args"][2]).stem for row in gates})
                 for test, gate in zip(tests, gates):
                     label = Path(gate["args"][2]).stem
@@ -403,6 +466,12 @@ elif name == "python3":
                     self.assertEqual("", test["env"]["TEST_REFUND_OPS_MYSQL_DSN"])
                     self.assertEqual("", test["env"]["TEST_REFUND_OPS_POSTGRES_DSN"])
                     self.assertEqual("", test["env"]["TEST_REFUND_QUEUE_PRESSURE"])
+                    self.assertEqual("", test["env"]["TEST_FINALIZATION_CACHE_MYSQL_DSN"])
+                    self.assertEqual("", test["env"]["TEST_FINALIZATION_CACHE_POSTGRES_DSN"])
+                    self.assertEqual("127.0.0.1:16379" if label == "settlement-deadline-redis" else "",
+                                     test["env"]["TEST_SETTLEMENT_DEADLINE_REDIS_ADDR"])
+                    self.assertEqual("1" if label == "settlement-deadline-redis" else "",
+                                     test["env"]["TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE"])
                     self.assertEqual("redis://127.0.0.1:16379/0", test["env"]["TEST_REDIS_DSN"])
                     self.assertEqual("127.0.0.1:16379", test["env"]["TEST_REDIS_ADDR"])
                     if label == "task-token-reservation":
@@ -421,18 +490,49 @@ elif name == "python3":
                 self.assertNotEqual(0, result.returncode)
                 self.assertFalse(any(row["tool"] == "go" and row["args"] != ["version"] for row in rows))
 
+    def test_native_redis_deadline_inventory_and_actual_strict_checker(self):
+        suite = json.loads((SCRIPT.parent / "billing_settlement_cache_required_cases.json").read_text())["redis_suite"]
+        result, rows = self.run_script("", mode="redis")
+        self.assertEqual(0, result.returncode, result.stderr)
+        tests = [row for row in rows if row["tool"] == "go" and row["args"] != ["version"]]
+        checks = [row for row in rows if row["tool"] == "python3"]
+        matches = [(test, check) for test, check in zip(tests, checks) if Path(check["args"][2]).stem == suite["label"]]
+        self.assertEqual(1, len(matches))
+        test, check = matches[0]
+        self.assertEqual(suite["required_tests"], check["args"][3:])
+        self.assertEqual("./" + suite["package"], test["args"][4])
+        self.assertEqual(f"^{suite['top']}$", test["args"][test["args"].index("-run") + 1])
+        self.assertEqual("127.0.0.1:16379", test["env"][suite["address_env"]])
+        self.assertEqual("1", test["env"][suite["disposable_env"]])
+        spec = importlib.util.spec_from_file_location("settlement_redis_report_checker", SCRIPT.parent / "check_go_test_report.py")
+        checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checker)
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "synthetic.jsonl"
+            events = [{"Action": "pass", "Package": "offline/fixture", "Test": suite["top"]},
+                      {"Action": "pass", "Package": "offline/fixture"}]
+            report.write_text("".join(json.dumps(event) + "\n" for event in events))
+            self.assertEqual(1, len(checker.validate_report(report, suite["required_tests"], True)))
+            report.write_text(json.dumps(events[1]) + "\n")
+            with self.assertRaisesRegex(ValueError, "required test did not pass"):
+                checker.validate_report(report, suite["required_tests"], True)
+            events[0]["Action"] = "skip"
+            report.write_text("".join(json.dumps(event) + "\n" for event in events))
+            with self.assertRaises(ValueError):
+                checker.validate_report(report, suite["required_tests"], True)
+
     def test_failed_redis_info_query_cannot_start_contracts(self):
         result, rows = self.run_script("", mode="redis", redis_info_fails=True)
         self.assertNotEqual(0, result.returncode)
         self.assertFalse(any(row["tool"] == "go" and row["args"] != ["version"] for row in rows))
 
     def test_redis_required_rejection_keeps_later_evidence_and_fails_job(self):
-        for label in ("model-script-flush", "token-bucket-script-flush", "task-token-reservation"):
+        for label in ("model-script-flush", "token-bucket-script-flush", "task-token-reservation", "settlement-deadline-redis"):
             with self.subTest(label=label):
                 result, rows = self.run_script("", mode="redis", reject_label=label)
                 self.assertNotEqual(0, result.returncode)
                 self.assertIn("Required repair contracts failed", result.stderr)
-                self.assertEqual(3, sum(row["tool"] == "python3" for row in rows))
+                self.assertEqual(4, sum(row["tool"] == "python3" for row in rows))
 
 
 if __name__ == "__main__":
