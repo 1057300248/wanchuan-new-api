@@ -54,12 +54,7 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 		if ctx != nil && ctx.Err() != nil {
 			return summary
 		}
-		// Status + the nonzero committed quota are the durable refund intent.
-		// Retry without needing a surviving channel or another provider call.
-		if task.Status == "FAILURE" && task.Quota > 0 {
-			service.RefundMidjourneyQuota(ctx, task, "Composition failed")
-			continue
-		}
+
 		if task.MjId == "" {
 			// 统计失败的未完成任务
 			nullTaskIds = append(nullTaskIds, task.Id)

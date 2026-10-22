@@ -20,7 +20,7 @@ type streamFailureFunding struct {
 	refunded    chan struct{}
 }
 
-func (f *streamFailureFunding) Source() string { return "stream_failure_test" }
+func (f *streamFailureFunding) Source() string       { return "stream_failure_test" }
 func (f *streamFailureFunding) PreConsume(int) error { return nil }
 func (f *streamFailureFunding) Settle(int) error {
 	f.mu.Lock()
@@ -55,10 +55,10 @@ func (f *streamFailureFunding) counts() (int, int) {
 func TestStreamFailurePartialUsageSettlesOnceAndNeverRefunds(t *testing.T) {
 	funding := &streamFailureFunding{outstanding: 100}
 	session := &BillingSession{
-		relayInfo: &relaycommon.RelayInfo{IsPlayground: true},
-		funding: funding,
+		relayInfo:        &relaycommon.RelayInfo{IsPlayground: true},
+		funding:          funding,
 		preConsumedQuota: 100,
-		tokenConsumed: 100,
+		tokenConsumed:    100,
 	}
 
 	require.NoError(t, session.Settle(60))
@@ -73,14 +73,21 @@ func TestStreamFailurePartialUsageSettlesOnceAndNeverRefunds(t *testing.T) {
 }
 
 func TestStreamFailureWithoutUsageRefundsReservationOnce(t *testing.T) {
+	if runRefundFixtureChild(t) {
+		return
+	}
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	funding := &streamFailureFunding{outstanding: 100, refunded: make(chan struct{}, 2)}
 	session := &BillingSession{
-		relayInfo: &relaycommon.RelayInfo{IsPlayground: true},
-		funding: funding,
+		relayInfo:        &relaycommon.RelayInfo{IsPlayground: true},
+		funding:          funding,
 		preConsumedQuota: 100,
+		// Unit state corresponding to an official reserved request. Playground
+		// deliberately skips actual token SQL; OutstandingReserve is not used.
+		tokenConsumed: 100,
 	}
+	t.Cleanup(func() { waitRefundCallback(t, session) })
 
 	require.True(t, session.NeedsRefund())
 	session.Refund(c)
@@ -91,10 +98,11 @@ func TestStreamFailureWithoutUsageRefundsReservationOnce(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("refund did not execute")
 	}
+	waitRefundCallback(t, session)
 	select {
 	case <-funding.refunded:
 		t.Fatal("refund executed more than once")
-	case <-time.After(50 * time.Millisecond):
+	default:
 	}
 
 	settleCalls, refundCalls := funding.counts()

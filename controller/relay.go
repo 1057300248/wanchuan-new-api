@@ -666,12 +666,7 @@ func executeTaskSubmissionWith(
 		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 	}
 
-	// A real host session persists its held amount and final quote before any
-	// post-acceptance adjustment. The durable transaction then updates funds,
-	// token and usage together; a larger quote cannot widen the pre-record
-	// failure window through a token-first compensating reservation. Alternate
-	// BillingSettler implementations retain their existing reserve contract.
-	if relayInfo.Billing != nil && !service.SupportsDurableTaskBilling(relayInfo) {
+	if relayInfo.Billing != nil {
 		stage = "reserve"
 		diagnostics.reserve("reserve_start", result.Quota)
 		if reserveErr := relayInfo.Billing.Reserve(result.Quota); reserveErr != nil {
@@ -755,7 +750,6 @@ func executeTaskSubmissionWith(
 			insertOmits = append(insertOmits, "data")
 		}
 	}
-	service.PrepareSubmittedTaskBilling(relayInfo, task, result.Quota)
 	diagnostics.insertStart(task)
 	if insertErr := task.InsertWithContext(c.Request.Context(), insertOmits...); insertErr != nil {
 		common.SysError(common.LogText("insert task error: %s", insertErr.Error()))
@@ -768,16 +762,9 @@ func executeTaskSubmissionWith(
 	diagnostics.durable(task)
 	diagnostics.settleStart(task, result.Quota)
 
-	settledNow, settleErr := service.SettleSubmittedTaskBilling(c, relayInfo, task, result.Quota)
-	if settleErr != nil {
+	if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
 		common.SysError(common.LogText("settle task billing error: %s", settleErr.Error()))
-
-		taskErr = service.TaskErrorWrapperLocal(fmt.Errorf("task %s was accepted; billing settlement is pending, keep this task ID and do not resubmit", task.TaskID), "task_billing_settlement_failed", http.StatusInternalServerError)
-		taskErr.NoRetry = true
-		taskErr.Data = map[string]any{"task_id": task.TaskID, "accepted": true, "settlement_pending": task.SettlementPending}
-		// Headers survive plugin/protocol-specific error presenters too.
-		c.Header("X-New-API-Task-ID", task.TaskID)
-		c.Header("X-New-API-Task-Accepted", "true")
+		taskErr = service.TaskErrorWrapperLocal(errors.New("failed to settle task billing"), "task_billing_settlement_failed", http.StatusInternalServerError)
 		diagnostics.failed("settle", "billing_error", taskErr, true)
 		return nil, taskErr
 	}
@@ -786,9 +773,7 @@ func executeTaskSubmissionWith(
 	} else {
 		policy.AddEvent(service.PolicyEvent{Decision: service.PolicyDecision{Action: "stop", Reason: "task_failed", Source: "upstream"}})
 	}
-	if settledNow {
-		service.LogTaskConsumption(c, relayInfo, task)
-	}
+	service.LogTaskConsumption(c, relayInfo, task)
 	diagnostics.complete(task, result.Quota)
 
 	return &taskSubmissionOutcome{Result: result, Task: task, RelayInfo: relayInfo}, nil

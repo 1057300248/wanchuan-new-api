@@ -87,7 +87,7 @@ func TestRealtimeFetchAppliesChannelHeaderOverrides(t *testing.T) {
 
 func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 	database := setupRelayChannelDB(t)
-	require.NoError(t, database.AutoMigrate(&model.Task{}, &model.User{}, &model.Token{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}))
+	require.NoError(t, database.AutoMigrate(&model.Task{}, &model.User{}, &model.Token{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}))
 	previousLogDB := model.LOG_DB
 	previousFactory := service.GetTaskAdaptorFunc
 	previousRedis := common.RedisEnabled

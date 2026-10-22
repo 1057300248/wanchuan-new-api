@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -866,6 +867,18 @@ func RefreshUserQuotaCache(userId int, _ int) {
 	}
 	if err := invalidateUserCache(userId); err != nil {
 		common.SysLog(fmt.Sprintf("failed to invalidate user quota cache after ledger change: user=%d err=%s", userId, err.Error()))
+	}
+}
+
+// RefreshUserQuotaCacheWithContext retains invalidation-only semantics while
+// letting bounded refund recovery include Redis in its operation deadline.
+func RefreshUserQuotaCacheWithContext(ctx context.Context, userId int) {
+	if !common.RedisEnabled || userId <= 0 {
+		return
+	}
+	if err := common.RDB.Del(ctx, getUserCacheKey(userId)).Err(); err != nil {
+		code, class := BillingRefundErrorCode(err)
+		common.SysLog(fmt.Sprintf("failed to invalidate user quota cache after refund: user=%d code=%s class=%s", userId, code, class))
 	}
 }
 

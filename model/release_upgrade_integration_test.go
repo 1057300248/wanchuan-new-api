@@ -13,6 +13,9 @@ import (
 
 // Run the seed phase from the previous release checkout and verify from the
 // candidate. Both phases require explicitly supplied disposable database DSNs.
+// The protocol is one seed -> one verify on a fresh fixture. Verify leaves its
+// new official 100 reservation intact and reopens the databases to prove that
+// it and the untouched historical receipt survive startup; it is not a refund.
 func TestReleaseUpgradePreservesWalletAndIdentity(t *testing.T) {
 	phase := os.Getenv("TEST_RELEASE_UPGRADE_PHASE")
 	if phase == "" {
@@ -39,6 +42,7 @@ func TestReleaseUpgradePreservesWalletAndIdentity(t *testing.T) {
 	require.NoError(t, InitLogDB())
 	t.Cleanup(func() { require.NoError(t, CloseDB()) })
 	if phase == "seed" {
+		require.False(t, DB.Migrator().HasTable("billing_finalizations"), "exact released schema must not already contain the candidate terminal table")
 		// Refuse to seed a nonempty fixture instead of overwriting existing data.
 		var count int64
 		require.NoError(t, DB.Model(&User{}).Count(&count).Error)
@@ -81,6 +85,7 @@ func TestReleaseUpgradePreservesWalletAndIdentity(t *testing.T) {
 		require.EqualValues(t, 2, count, "the released version must persist the audit fixture")
 		return
 	}
+	require.True(t, DB.Migrator().HasTable("billing_finalizations"), "candidate startup must add the terminal table")
 	var user User
 	require.NoError(t, DB.Where("username = ?", "release-upgrade-owner").First(&user).Error)
 	assert.Equal(t, 5000, user.Quota)
@@ -117,7 +122,7 @@ func TestReleaseUpgradePreservesWalletAndIdentity(t *testing.T) {
 	assert.EqualValues(t, 200, subscriptionReceipt.PreConsumed)
 	assert.Equal(t, "consumed", subscriptionReceipt.Status)
 	// SQL reads keep this exact fixture compilable in the previous-release
-	// checkout. Old receipts stay unknown; a timestamp is not an allowance ID.
+	// checkout. Retained metadata does not assign an old receipt to a new period.
 	var subPeriod, receiptPeriod, reservedAmount, settledAmount sql.NullInt64
 	require.NoError(t, DB.Model(&UserSubscription{}).Select("quota_period").Where("id = ?", subscription.Id).Row().Scan(&subPeriod))
 	require.NoError(t, DB.Model(&SubscriptionPreConsumeRecord{}).Select("quota_period", "reserved_amount", "settled_amount").Where("id = ?", subscriptionReceipt.Id).Row().Scan(&receiptPeriod, &reservedAmount, &settledAmount))
@@ -127,16 +132,51 @@ func TestReleaseUpgradePreservesWalletAndIdentity(t *testing.T) {
 	assert.Zero(t, receiptPeriod.Int64)
 	assert.Zero(t, reservedAmount.Int64)
 	assert.Zero(t, settledAmount.Int64)
-	require.ErrorContains(t, RefundSubscriptionPreConsume(subscriptionReceipt.RequestId), "subscription allowance period is unknown")
+	// Upgrade preservation is not an instruction to execute historical refunds.
+	// Official refund behavior is exercised separately, including its SQLite
+	// nested-transaction limitation; no private period guard is active here.
+	var freshReceiptCount int64
+	require.NoError(t, DB.Model(&SubscriptionPreConsumeRecord{}).Where("request_id = ?", "release-upgrade-new-subscription-request").Count(&freshReceiptCount).Error)
+	require.Zero(t, freshReceiptCount, "candidate verify runs once on its owned fresh seed")
 	freshReservation, err := PreConsumeUserSubscription("release-upgrade-new-subscription-request", user.Id, "release-upgrade-model", 0, 100)
 	require.NoError(t, err)
 	assert.Equal(t, subscription.Id, freshReservation.UserSubscriptionId)
-	require.ErrorContains(t, RefundSubscriptionPreConsume(subscriptionReceipt.RequestId), "subscription allowance period is unknown")
 	require.NoError(t, DB.First(&subscription, subscription.Id).Error)
-	assert.EqualValues(t, 450, subscription.AmountUsed, "unresolved old refund must not consume newly reserved allowance")
-	require.NoError(t, RefundSubscriptionPreConsume("release-upgrade-new-subscription-request"))
-	require.NoError(t, DB.First(&subscription, subscription.Id).Error)
-	assert.EqualValues(t, 350, subscription.AmountUsed)
+	assert.EqualValues(t, 450, subscription.AmountUsed, "official new reservation adds exactly 100 without refunding historical allowance")
+	var unchangedReceipt SubscriptionPreConsumeRecord
+	require.NoError(t, DB.First(&unchangedReceipt, subscriptionReceipt.Id).Error)
+	assert.Equal(t, subscriptionReceipt, unchangedReceipt, "all existing receipt fields must remain unchanged")
+	var freshReceipt SubscriptionPreConsumeRecord
+	require.NoError(t, DB.Where("request_id = ?", "release-upgrade-new-subscription-request").First(&freshReceipt).Error)
+	assert.Equal(t, user.Id, freshReceipt.UserId)
+	assert.Equal(t, subscription.Id, freshReceipt.UserSubscriptionId)
+	assert.EqualValues(t, 100, freshReceipt.PreConsumed)
+	assert.Equal(t, "consumed", freshReceipt.Status)
+	require.NoError(t, DB.Model(&SubscriptionPreConsumeRecord{}).Select("quota_period", "reserved_amount", "settled_amount").Where("id = ?", freshReceipt.Id).Row().Scan(&receiptPeriod, &reservedAmount, &settledAmount))
+	assert.True(t, receiptPeriod.Valid)
+	assert.True(t, reservedAmount.Valid)
+	assert.True(t, settledAmount.Valid)
+	assert.Zero(t, receiptPeriod.Int64)
+	assert.Zero(t, reservedAmount.Int64)
+	assert.Zero(t, settledAmount.Int64)
+	require.NoError(t, CloseDB())
+	require.NoError(t, InitDB())
+	require.NoError(t, InitLogDB())
+	var restartedOld, restartedFresh SubscriptionPreConsumeRecord
+	require.NoError(t, DB.First(&restartedOld, subscriptionReceipt.Id).Error)
+	require.NoError(t, DB.First(&restartedFresh, freshReceipt.Id).Error)
+	assert.Equal(t, subscriptionReceipt, restartedOld, "startup must not execute or rewrite historical receipts")
+	assert.Equal(t, freshReceipt, restartedFresh, "startup must retain the new official reservation without fabricating completion")
+	var restartedSubscription UserSubscription
+	require.NoError(t, DB.First(&restartedSubscription, subscription.Id).Error)
+	assert.Equal(t, subscription, restartedSubscription)
+	assert.EqualValues(t, 450, restartedSubscription.AmountUsed)
+	var restartedUser User
+	var restartedToken Token
+	require.NoError(t, DB.First(&restartedUser, user.Id).Error)
+	require.NoError(t, DB.First(&restartedToken, token.Id).Error)
+	assert.Equal(t, user, restartedUser, "subscription-only reservation must not change wallet or identity")
+	assert.Equal(t, token, restartedToken, "subscription-only reservation must not change token quota or identity")
 	// Read newly introduced fields through SQL so this same fixture still
 	// compiles against the exact previous release during its seed phase.
 	require.True(t, DB.Migrator().HasColumn("tokens", "allow_user_quota_query"))

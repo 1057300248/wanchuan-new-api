@@ -64,7 +64,7 @@ func TestTaskWalletReceiptsDatabaseMatrix(t *testing.T) {
 				common.SetDatabaseTypes(oldMainType, oldLogType)
 				model.InvalidateModelBonusEligibleCache()
 			})
-			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.Option{}, &model.Task{}, &model.Midjourney{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionPreConsumeRecord{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}))
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.Option{}, &model.Task{}, &model.Midjourney{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionPreConsumeRecord{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}))
 			require.NoError(t, logDB.AutoMigrate(&model.Log{}))
 			query := "SELECT version()"
 			if dialect.name == common.DatabaseTypeSQLite {
@@ -78,8 +78,6 @@ func TestTaskWalletReceiptsDatabaseMatrix(t *testing.T) {
 				require.NoError(t, db.Unscoped().Where("model_name = ?", "mj_imagine").Delete(&model.Model{}).Error)
 			})
 			runTaskWalletReceiptCases(t)
-			runDurableTaskSettlementCases(t)
-			runSubscriptionPeriodTaskCases(t)
 			runMidjourneyWalletReceiptCases(t)
 		})
 	}
@@ -150,6 +148,63 @@ func failReceiptUpdates(t *testing.T, table string) func() {
 	return func() { enabled.Store(false) }
 }
 
+const (
+	officialFailureBeforeSQL   = "before_sql"
+	officialFailureAfterCommit = "after_commit"
+)
+
+type officialUpdateFault struct {
+	table        string
+	boundary     string
+	enabled      atomic.Bool
+	hits         atomic.Int32
+	rowsAffected atomic.Int64
+	insideTx     atomic.Bool
+}
+
+// An After("gorm:update") callback registered after GORM's defaults is sorted
+// after their commit callback, not immediately after SQL. Keep failReceiptUpdates
+// for the existing explicit outer-transaction rollback proofs; independent
+// official writes need a separately defined before-SQL or after-commit boundary.
+func injectOfficialUpdateFault(t *testing.T, table, boundary string) *officialUpdateFault {
+	t.Helper()
+	require.Contains(t, []string{officialFailureBeforeSQL, officialFailureAfterCommit}, boundary)
+	fault := &officialUpdateFault{table: table, boundary: boundary}
+	fault.enabled.Store(true)
+	name := "test:official-update-fault:" + t.Name()
+	callback := func(tx *gorm.DB) {
+		if !fault.enabled.Load() || tx.Statement.Table != table || tx.Error != nil {
+			return
+		}
+		fault.hits.Add(1)
+		fault.rowsAffected.Store(tx.RowsAffected)
+		_, insideTx := tx.Statement.ConnPool.(gorm.TxCommitter)
+		fault.insideTx.Store(insideTx)
+		tx.AddError(errors.New("synthetic official " + table + " failure at " + boundary))
+	}
+	var err error
+	if boundary == officialFailureBeforeSQL {
+		err = model.DB.Callback().Update().Before("gorm:update").Register(name, callback)
+	} else {
+		err = model.DB.Callback().Update().After("gorm:commit_or_rollback_transaction").Register(name, callback)
+	}
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, model.DB.Callback().Update().Remove(name)) })
+	return fault
+}
+
+func (f *officialUpdateFault) disable() { f.enabled.Store(false) }
+
+func (f *officialUpdateFault) requireOneHit(t *testing.T) {
+	t.Helper()
+	require.EqualValues(t, 1, f.hits.Load(), "exactly one %s fault at %s must explain the result", f.table, f.boundary)
+	if f.boundary == officialFailureAfterCommit {
+		require.EqualValues(t, 1, f.rowsAffected.Load(), "the target SQL must have affected its row before the synthetic error")
+		require.False(t, f.insideTx.Load(), "default commit must have returned the connection before the synthetic error")
+	}
+	t.Logf("official fault table=%s boundary=%s hits=%d rows_affected=%d inside_tx=%t", f.table, f.boundary, f.hits.Load(), f.rowsAffected.Load(), f.insideTx.Load())
+}
+
 func runTaskWalletReceiptCases(t *testing.T) {
 	t.Run("settlement_falls_back_and_persists_cumulative_receipt", func(t *testing.T) {
 		user, token, channel := seedReceiptActors(t, 100, 40)
@@ -173,14 +228,14 @@ func runTaskWalletReceiptCases(t *testing.T) {
 		require.True(t, RefundTaskQuota(t.Context(), &persisted, "receipt refund"))
 		require.True(t, RefundTaskQuota(t.Context(), &stale, "stale refund replay"))
 		assertUserBalances(t, user.Id, 100, 1000, 40)
-		assert.Equal(t, 2000, getTokenRemainQuota(t, token.Id))
-		assert.Zero(t, getTokenUsedQuota(t, token.Id))
-		assert.EqualValues(t, 2, countReceiptLogs(t, user.Id))
+		assert.Equal(t, 2300, getTokenRemainQuota(t, token.Id), "official repeated caller refund repeats the independent token step")
+		assert.Equal(t, -300, getTokenUsedQuota(t, token.Id))
+		assert.EqualValues(t, 3, countReceiptLogs(t, user.Id))
 		require.NoError(t, model.DB.First(&persisted, task.ID).Error)
 		assert.Zero(t, persisted.Quota)
-		assert.Empty(t, persisted.PrivateData.WalletDebit)
+		assert.Equal(t, stale.PrivateData.WalletDebit, persisted.PrivateData.WalletDebit)
 		used, requests := getUserUsageAccounting(t, user.Id)
-		assert.Zero(t, used)
+		assert.Equal(t, -300, used)
 		assert.Equal(t, 1, requests)
 	})
 
@@ -244,28 +299,35 @@ func runTaskWalletReceiptCases(t *testing.T) {
 			assert.Equal(t, 300, task.Quota)
 			assert.Equal(t, 1700, getTokenRemainQuota(t, token.Id))
 		})
-		t.Run("refund_rolls_back_on_"+table+"_failure", func(t *testing.T) {
+		t.Run("official_refund_independent_"+table+"_failure", func(t *testing.T) {
 			user, token, channel := seedReceiptActors(t, 100, 40)
 			task := seedReceiptTask(t, user, token, channel, 300)
-			restore := failReceiptUpdates(t, table)
-			require.False(t, RefundTaskQuota(t.Context(), task, "failed task refund"))
-			assertUserBalances(t, user.Id, 0, 840, 0)
-			assert.Equal(t, 1700, getTokenRemainQuota(t, token.Id))
+			fault := injectOfficialUpdateFault(t, table, officialFailureBeforeSQL)
+			require.True(t, RefundTaskQuota(t.Context(), task, "official independent refund"))
+			fault.requireOneHit(t)
+			assertUserBalances(t, user.Id, 100, 1000, 40)
 			var persisted model.Task
 			require.NoError(t, model.DB.First(&persisted, task.ID).Error)
-			assert.Equal(t, 300, persisted.Quota)
 			assert.Equal(t, task.PrivateData.WalletDebit, persisted.PrivateData.WalletDebit)
 			var count int64
 			require.NoError(t, model.DB.Model(&model.BalanceLedgerOperation{}).Where("idempotency_key = ?", "task:refund:"+task.TaskID).Count(&count).Error)
-			assert.Zero(t, count)
-			restore()
-			require.True(t, RefundTaskQuota(t.Context(), task, "task refund retry"))
-			assertUserBalances(t, user.Id, 100, 1000, 40)
-			assert.Equal(t, 2000, getTokenRemainQuota(t, token.Id))
+			assert.EqualValues(t, 1, count)
+			if table == "tokens" {
+				assert.Equal(t, 1700, getTokenRemainQuota(t, token.Id))
+				assert.Zero(t, persisted.Quota)
+			} else {
+				assert.Equal(t, 2000, getTokenRemainQuota(t, token.Id))
+				assert.Equal(t, 300, persisted.Quota)
+				fault.disable()
+				require.True(t, RefundTaskQuota(t.Context(), &persisted, "explicit repeated call"))
+				fault.requireOneHit(t)
+				assert.Equal(t, 2300, getTokenRemainQuota(t, token.Id))
+				assertUserBalances(t, user.Id, 100, 1000, 40)
+			}
 		})
 	}
 
-	t.Run("subscription_and_token_rollback_together", func(t *testing.T) {
+	t.Run("official_subscription_settlement_survives_token_failure", func(t *testing.T) {
 		user, token, channel := seedReceiptActors(t, 0, 0)
 		sub := model.UserSubscription{UserId: user.Id, AmountTotal: 5000, AmountUsed: 100, Status: "active"}
 		require.NoError(t, model.DB.Create(&sub).Error)
@@ -274,9 +336,9 @@ func runTaskWalletReceiptCases(t *testing.T) {
 		restore := failReceiptUpdates(t, "tokens")
 		RecalculateTaskQuota(t.Context(), task, 300, common.NewMessage("subscription settlement"))
 		require.NoError(t, model.DB.First(&sub, sub.Id).Error)
-		assert.EqualValues(t, 100, sub.AmountUsed)
+		assert.EqualValues(t, 300, sub.AmountUsed)
 		assert.Equal(t, 2000, getTokenRemainQuota(t, token.Id))
-		assert.Equal(t, 100, task.Quota)
+		assert.Equal(t, 300, task.Quota)
 		restore()
 	})
 }
@@ -334,7 +396,7 @@ func runMidjourneyWalletReceiptCases(t *testing.T) {
 		assert.Equal(t, 2000, getTokenRemainQuota(t, token.Id))
 		assert.Zero(t, getTokenUsedQuota(t, token.Id))
 		assert.Zero(t, getMidjourneyTask(t, task.Id).Quota)
-		assert.Empty(t, getMidjourneyTask(t, task.Id).WalletDebit)
+		assert.Equal(t, persisted.WalletDebit, getMidjourneyTask(t, task.Id).WalletDebit)
 		var logs int64
 		require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("user_id = ?", user.Id).Count(&logs).Error)
 		assert.EqualValues(t, 1, logs)
@@ -366,7 +428,7 @@ func runMidjourneyWalletReceiptCases(t *testing.T) {
 	}
 
 	for _, table := range []string{"tokens", "midjourneys"} {
-		t.Run("midjourney_refund_rolls_back_on_"+table+"_failure", func(t *testing.T) {
+		t.Run("official_midjourney_refund_independent_"+table+"_failure", func(t *testing.T) {
 			user, token, channel := seedReceiptActors(t, 100, 50)
 			info := receiptMidjourneyInfo(user, token, channel)
 			task := prepareReceiptMidjourney(t, info)
@@ -376,20 +438,27 @@ func runMidjourneyWalletReceiptCases(t *testing.T) {
 			seedChargedAccounting(t, user.Id, channel.Id, token.Id, 300, 1)
 			receipt := append([]model.LedgerShare(nil), task.WalletDebit...)
 			require.NoError(t, model.DB.Model(task).Update("status", "FAILURE").Error)
-			restore := failReceiptUpdates(t, table)
-			assert.False(t, RefundMidjourneyQuota(t.Context(), task, "failed refund"))
-			assertUserBalances(t, user.Id, 0, 850, 0)
-			assert.Equal(t, 1700, getTokenRemainQuota(t, token.Id))
+			fault := injectOfficialUpdateFault(t, table, officialFailureBeforeSQL)
+			require.True(t, RefundMidjourneyQuota(t.Context(), task, "official independent failure"))
+			fault.requireOneHit(t)
+			assertUserBalances(t, user.Id, 100, 1000, 50)
 			persisted := getMidjourneyTask(t, task.Id)
-			assert.Equal(t, 300, persisted.Quota)
 			assert.Equal(t, receipt, persisted.WalletDebit)
 			var refunds int64
 			require.NoError(t, model.DB.Model(&model.BalanceLedgerOperation{}).Where("idempotency_key = ?", "midjourney:refund:"+task.MjId).Count(&refunds).Error)
-			assert.Zero(t, refunds)
-			restore()
-			require.True(t, RefundMidjourneyQuota(t.Context(), &persisted, "refund retry"))
-			assertUserBalances(t, user.Id, 100, 1000, 50)
-			assert.Equal(t, 2000, getTokenRemainQuota(t, token.Id))
+			assert.EqualValues(t, 1, refunds)
+			if table == "tokens" {
+				assert.Equal(t, 1700, getTokenRemainQuota(t, token.Id))
+				assert.Zero(t, persisted.Quota)
+			} else {
+				assert.Equal(t, 2000, getTokenRemainQuota(t, token.Id))
+				assert.Equal(t, 300, persisted.Quota)
+				fault.disable()
+				require.True(t, RefundMidjourneyQuota(t.Context(), &persisted, "explicit repeated call"))
+				fault.requireOneHit(t)
+				assert.Equal(t, 2300, getTokenRemainQuota(t, token.Id))
+				assertUserBalances(t, user.Id, 100, 1000, 50)
+			}
 		})
 	}
 

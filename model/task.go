@@ -148,15 +148,14 @@ type TaskPrivateData struct {
 	// and every retrieval surface treats the task as not found. The zero
 	// value keeps historical rows retained and retrievable.
 	ResultDiscarded bool `json:"result_discarded,omitempty"`
-	// PendingSettlement is frozen with the submit/terminal observation, not
-	// recomputed from a new plugin or new pricing after a restart.
+	// PendingSettlement is historical private-policy data. New official tasks
+	// never write it; compatibility guards keep old rows read-only.
 	PendingSettlement   *TaskSettlement `json:"pending_settlement,omitempty"`
 	SubmissionAccounted bool            `json:"submission_accounted,omitempty"`
 }
 
-// TaskSettlement is private durable financial intent. Phase separates the
-// submission adjustment from the later terminal adjustment of the same task.
-// No credentials or upstream payloads belong in this record.
+// TaskSettlement decodes historical private-policy intent only. No production
+// writer/recovery is connected; retain the schema without executing old intent.
 type TaskSettlement struct {
 	Phase     string             `json:"phase"`
 	Quota     int                `json:"quota"`
@@ -425,9 +424,25 @@ func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) []*
 	return tasks
 }
 
+// HasLegacyBillingIntent identifies historical custom settlement records.
+// It is a compatibility read guard, not a new official task state machine.
+func (t *Task) HasLegacyBillingIntent() bool {
+	return t.SettlementPending || t.PrivateData.PendingSettlement != nil
+}
+
+func excludeLegacyBillingTasks(tasks []*Task) []*Task {
+	out := tasks[:0]
+	for _, task := range tasks {
+		if !task.HasLegacyBillingIntent() {
+			out = append(out, task)
+		}
+	}
+	return out
+}
+
 func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {
 	var tasks []*Task
-	err := DB.Where("progress != ?", "100%").
+	err := DB.Where("settlement_pending = ? OR settlement_pending IS NULL", false).Where("progress != ?", "100%").
 		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess}).
 		Where("submit_time < ?", cutoffUnix).
 		Order("submit_time").
@@ -436,18 +451,18 @@ func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {
 	if err != nil {
 		return nil
 	}
-	return tasks
+	return excludeLegacyBillingTasks(tasks)
 }
 
 func GetAllUnFinishSyncTasks(limit int) []*Task {
 	var tasks []*Task
 	var err error
 	// get all tasks progress is not 100%
-	err = DB.Where("progress != ?", "100%").Where("status != ?", TaskStatusFailure).Where("status != ?", TaskStatusSuccess).Limit(limit).Order("id").Find(&tasks).Error
+	err = DB.Where("settlement_pending = ? OR settlement_pending IS NULL", false).Where("progress != ?", "100%").Where("status != ?", TaskStatusFailure).Where("status != ?", TaskStatusSuccess).Limit(limit).Order("id").Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
-	return tasks
+	return excludeLegacyBillingTasks(tasks)
 }
 
 // HasUnfinishedSyncTasks reports whether at least one async (Suno/video) task is
@@ -457,7 +472,10 @@ func GetAllUnFinishSyncTasks(limit int) []*Task {
 func HasUnfinishedSyncTasks() bool {
 	var id int64
 	err := DB.Model(&Task{}).
-		Where("settlement_pending = ? OR (progress != ? AND status NOT IN ?)", true, "100%", []TaskStatus{TaskStatusFailure, TaskStatusSuccess}).
+		Where("settlement_pending = ? OR settlement_pending IS NULL", false).
+		Where("progress != ?", "100%").
+		Where("status != ?", TaskStatusFailure).
+		Where("status != ?", TaskStatusSuccess).
 		Limit(1).
 		Pluck("id", &id).Error
 	return err == nil && id != 0
@@ -601,6 +619,10 @@ func (Task *Task) Update() error {
 	return err
 }
 
+func (t *Task) UpdateQuota() error {
+	return DB.Model(t).Update("quota", t.Quota).Error
+}
+
 // UpdateBillingStateTx commits the final quota and its wallet receipt together.
 // The previous quota guards against a stale observer applying the same token or
 // subscription adjustment twice. A failed update rolls back the caller's funds.
@@ -626,69 +648,14 @@ func (t *Task) UpdateBillingStateTx(tx *gorm.DB, previousQuota int) error {
 // falls back to INSERT ON CONFLICT when the WHERE-guarded UPDATE matches
 // zero rows, which silently bypasses the CAS guard.
 func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
-	won := false
-	err := DB.Transaction(func(tx *gorm.DB) error {
-		var stored Task
-		if err := lockForUpdate(tx).First(&stored, t.ID).Error; err != nil {
-			return err
-		}
-		if stored.Status != fromStatus {
-			return nil
-		}
-		pendingSubmission := stored.SettlementPending && stored.PrivateData.PendingSettlement != nil &&
-			stored.PrivateData.PendingSettlement.Phase == "submit" &&
-			stored.Status != TaskStatusSuccess && stored.Status != TaskStatusFailure
-		terminal := t.Status == TaskStatusSuccess || t.Status == TaskStatusFailure
-		replaceSubmission := pendingSubmission && terminal && t.SettlementPending && t.PrivateData.PendingSettlement != nil
-		if stored.SettlementPending && !replaceSubmission && !(pendingSubmission && !terminal) {
-			return nil
-		}
-		if (stored.Status == TaskStatusSuccess || stored.Status == TaskStatusFailure) && t.Status != stored.Status {
-			return nil
-		}
-		// A stale poll/query must not overwrite a submission adjustment's
-		// committed quota or receipt. Keep financial fields from the locked row.
-		updateSnapshot := *t
-		updateSnapshot.Quota = stored.Quota
-		updateSnapshot.PrivateData.WalletDebit = stored.PrivateData.WalletDebit
-		updateSnapshot.PrivateData.SubmissionAccounted = stored.PrivateData.SubmissionAccounted
-		updateSnapshot.SettlementAttemptedAt = stored.SettlementAttemptedAt
-		if !terminal {
-			// Progress/plugin state can advance while a provisional submit top-up
-			// is pending, but a stale observer cannot resurrect a cleared intent.
-			updateSnapshot.SettlementPending = stored.SettlementPending
-			updateSnapshot.PrivateData.PendingSettlement = stored.PrivateData.PendingSettlement
-		}
-		if replaceSubmission {
-			intent := *updateSnapshot.PrivateData.PendingSettlement
-			if !intent.SkipFunds {
-				intent.Phase = "submit"
-			}
-			updateSnapshot.PrivateData.PendingSettlement = &intent
-		}
-		guard := tx.Model(&Task{}).Where("id = ? AND status = ?", t.ID, fromStatus)
-		if stored.SettlementPending {
-			guard = guard.Where("settlement_pending = ?", true)
-		} else {
-			guard = guard.Where("settlement_pending = ? OR settlement_pending IS NULL", false)
-		}
-		result := guard.
-			Select("*").Updates(&updateSnapshot)
-		if result.Error != nil {
-			return result.Error
-		}
-		won = result.RowsAffected > 0
-		if won {
-			t.Quota = updateSnapshot.Quota
-			t.PrivateData.WalletDebit = updateSnapshot.PrivateData.WalletDebit
-			t.PrivateData.SubmissionAccounted = updateSnapshot.PrivateData.SubmissionAccounted
-			t.PrivateData.PendingSettlement = updateSnapshot.PrivateData.PendingSettlement
-			t.SettlementPending = updateSnapshot.SettlementPending
-			t.SettlementAttemptedAt = updateSnapshot.SettlementAttemptedAt
-		}
-		return nil
-	})
-	return won, err
+	if t.HasLegacyBillingIntent() {
+		return false, nil
+	}
+	result := DB.Model(t).Where("status = ?", fromStatus).Where("settlement_pending = ? OR settlement_pending IS NULL", false).Select("*").Updates(t)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
 }
 
 // TaskBulkUpdateByID performs an unconditional bulk UPDATE by primary key IDs.

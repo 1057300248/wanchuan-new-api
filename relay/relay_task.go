@@ -565,14 +565,8 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 		ChannelBaseUrl: baseURL, ApiKey: key, ChannelSetting: channelModel.GetSetting(),
 		HeadersOverride: channelModel.GetHeaderOverride(),
 	}})
-	if task.SettlementPending {
-		if err := service.RecoverTaskSettlement(context.Background(), task); err != nil {
-			logger.LogError(context.Background(), fmt.Sprintf("realtime task %s settlement remains pending: %v", task.TaskID, err))
-			pending := task.PrivateData.PendingSettlement
-			if pending == nil || pending.Phase != "submit" || task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
-				return nil
-			}
-		}
+	if task.HasLegacyBillingIntent() {
+		return nil // Historical custom pending records require operator reconciliation.
 	}
 
 	if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {

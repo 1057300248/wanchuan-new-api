@@ -466,6 +466,16 @@ func postConsumeQuotaWithOperation(relayInfo *relaycommon.RelayInfo, quota int, 
 // commit persists a task's refund receipt inside the wallet/token transaction.
 // It runs for replays too, so callers can recover the already committed state.
 func postConsumeQuotaWithWalletCommit(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool, operationSuffix string, commit func(*gorm.DB, *model.LedgerResult) error) (result postConsumeQuotaResult, err error) {
+	return postConsumeQuotaWithWalletCommitPurpose(relayInfo, quota, preConsumedQuota, sendEmail, operationSuffix, "", commit)
+}
+
+// purpose only adds financial provenance. It does not change fee policy, amount,
+// timing, reason, idempotency key or signature. Unmarked historical operations
+// are never retroactively inferred to be independent fees.
+func postConsumeQuotaWithWalletCommitPurpose(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool, operationSuffix, purpose string, commit func(*gorm.DB, *model.LedgerResult) error) (result postConsumeQuotaResult, err error) {
+	if purpose != "" && (purpose != "violation_fee" || quota <= 0 || preConsumedQuota != 0 || commit != nil) {
+		return result, errors.New("invalid independent billing purpose")
+	}
 
 	// 1) Consume from wallet quota OR subscription item
 	if relayInfo != nil && relayInfo.BillingSource == BillingSourceSubscription {
@@ -475,31 +485,24 @@ func postConsumeQuotaWithWalletCommit(relayInfo *relaycommon.RelayInfo, quota in
 		if relayInfo.SubscriptionId == 0 {
 			return result, errors.New("subscription id is missing")
 		}
-		replayed := false
-		err = model.DB.Transaction(func(tx *gorm.DB) error {
-			var sourceErr error
-			if preConsumedQuota > 0 {
-				replayed, sourceErr = model.SettleSubscriptionPreConsumeTx(tx, relayInfo.RequestId, relayInfo.SubscriptionId, int64(preConsumedQuota)+int64(quota))
-			} else {
-				// Independent legacy fees are not a reservation settlement,
-				// but still must never charge another allowance after reset.
-				sourceErr = model.PostConsumeUserSubscriptionPeriodDeltaTx(tx, relayInfo.SubscriptionId, relayInfo.SubscriptionQuotaPeriod, int64(quota))
+		delta := int64(quota)
+		if delta != 0 {
+			if err := model.PostConsumeUserSubscriptionDelta(relayInfo.SubscriptionId, delta); err != nil {
+				return result, err
 			}
-			if sourceErr != nil {
-				return sourceErr
-			}
-			if replayed || relayInfo.IsPlayground {
-				return nil
-			}
-			return model.SettleTokenQuotaDeltaTx(tx, relayInfo.TokenId, relayInfo.UserId, relayInfo.TokenKey, -quota)
-		})
-		if err != nil {
-			return result, err
+			relayInfo.SubscriptionPostDelta += delta
 		}
 		result.FundingApplied = true
-		result.TokenApplied = !relayInfo.IsPlayground
-		if !replayed {
-			relayInfo.SubscriptionPostDelta += int64(quota)
+		if !relayInfo.IsPlayground {
+			if quota > 0 {
+				err = model.DecreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, quota)
+			} else {
+				err = model.IncreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, -quota)
+			}
+			if err != nil {
+				return result, err
+			}
+			result.TokenApplied = true
 		}
 
 	} else {
@@ -512,6 +515,9 @@ func postConsumeQuotaWithWalletCommit(relayInfo *relaycommon.RelayInfo, quota in
 			ReferenceType: "relay",
 			ReferenceId:   relayInfo.RequestId,
 			RequestId:     relayInfo.RequestId,
+		}
+		if purpose == "violation_fee" {
+			entry.SetMetadata(map[string]interface{}{"independent_fee": "violation_fee"})
 		}
 		operationPart := ""
 		if operationSuffix != "" {

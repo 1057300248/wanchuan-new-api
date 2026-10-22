@@ -53,6 +53,8 @@ func RegisterFundingFactory(reg *moneyport.FactoryRegistry) error {
 	}))
 }
 
+func (w *Funding) UsesHostBillingFinalization() bool { return true }
+
 func (w *Funding) Source() string { return moneyport.SourceWallet }
 
 func (w *Funding) PreConsume(amount int) error {
@@ -137,7 +139,7 @@ func (w *Funding) SettleInTx(tx *gorm.DB, delta int) (moneyport.SettlementResult
 }
 
 func (w *Funding) ApplySettlementResult(delta int, result moneyport.SettlementResult) {
-	model.RefreshUserQuotaCache(w.userID, result.TotalAfter)
+	model.RefreshUserQuotaCacheAfterBillingFinalization(w.userID)
 	if delta > 0 {
 		w.recordMoneyportDebitOperation(fmt.Sprintf("billing:settle:%s:%d", w.requestID, delta), result.DebitShares)
 	}

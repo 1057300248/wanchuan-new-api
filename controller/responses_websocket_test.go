@@ -479,7 +479,7 @@ func newResponsesWSBillingTest(t *testing.T, expression string, handle func(*web
 	// which the extension registry normally contributes to AutoMigrate. Wallet
 	// pre-consume validates the split account columns directly, so fund paid
 	// alongside the legacy quota mirror.
-	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}))
 	require.NoError(t, model.DB.Model(user).Updates(map[string]any{"quota": 100000, "quota_paid": 100000, "setting": `{"billing_preference":"wallet_only"}`}).Error)
 	require.NoError(t, model.DB.Model(token).Update("remain_quota", 3000).Error)
 
@@ -642,11 +642,11 @@ func assertResponsesWSAccounting(t *testing.T, fixture *responsesWSBillingTest, 
 		assert.Equal(t, quota, logs[index].Quota)
 		charged += quota
 	}
-	// Joining the HTTP/WS handlers does not join BillingSession's legacy
-	// background refund. In particular, its wallet leg can commit before the
-	// token leg. Wait for BOTH authoritative rows, not a cache, fixed delay or
-	// source-only signal. On timeout CollectT reports the last exact counters;
-	// all original accounting/ledger assertions below remain unchanged.
+	// Joining the HTTP/WS handlers does not join BillingSession's background
+	// refund. Official refunds credit the source before the independent token
+	// leg, and scheduling is not completion. Wait for BOTH authoritative rows, not
+	// a cache, fixed delay or source-only signal. On timeout CollectT reports
+	// the last exact counters; original accounting/ledger assertions remain.
 	require.EventuallyWithT(t, func(collect *assert.CollectT) {
 		var token model.Token
 		var user model.User

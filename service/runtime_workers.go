@@ -6,26 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/lifecycle"
-	"github.com/bytedance/gopkg/util/gopool"
 )
-
-// The main request/task group is drained before this group is sealed. Refunds
-// admitted by already accepted work are therefore not dropped on SIGTERM or
-// client cancellation.
-var billingBackground = lifecycle.NewGroup()
-
-func runBillingBackground(fn func()) {
-	if !billingBackground.Submit("billing-refund", gopool.Go, func(_, _ context.Context) { fn() }) {
-		// Defensive compatibility for embedded hosts; main joins all producers
-		// before sealing this group, so a late producer cannot occur there.
-		fn()
-	}
-}
-
-func DrainBillingBackground(ctx context.Context) error {
-	billingBackground.BeginDrain()
-	return billingBackground.Wait(ctx)
-}
 
 func StartRuntimeWorkers(group *lifecycle.Group) {
 	group.Go("system-instance-reporter", func(schedule, work context.Context) {

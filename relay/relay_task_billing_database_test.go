@@ -17,16 +17,32 @@ import (
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
 	"github.com/QuantumNous/new-api/pkg/walletport"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// The token-update hook is evidence of accounting progress, not completion of
+// the enclosing refund transaction or its post-commit cache invalidation tail.
+func waitRelayTaskRefund(t *testing.T, refunded <-chan struct{}, billing relaycommon.BillingSettler) {
+	t.Helper()
+	select {
+	case <-refunded:
+	case <-time.After(5 * time.Second):
+		t.Fatal("real task refund did not reach token credit")
+	}
+	// Official refunded means scheduled, not financially completed. This serial
+	// fixture joins the actual gopool callbacks before restoring DB/cache globals.
+	require.Eventually(t, func() bool { return gopool.WorkerCount() == 0 }, 5*time.Second, time.Millisecond)
+}
 
 // Real BillingSession + three-account ledger + token rows. The upstream checks
 // committed balances itself, so reserving after the paid request cannot pass.
@@ -71,7 +87,7 @@ export function extractUsage(){return {seconds:2};}
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := setupRelayChannelDB(t)
-			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Model{}, &model.Ability{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}))
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Model{}, &model.Ability{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}))
 			eligible := !tc.ineligible
 			require.NoError(t, db.Create(&model.Model{ModelName: "declared-model", Status: 1, BonusEligible: &eligible}).Error)
 			model.InvalidateModelBonusEligibleCache()
@@ -166,7 +182,7 @@ export function extractUsage(){return {seconds:2};}
 				require.NotNil(t, info.TieredBillingSnapshot)
 				assert.Equal(t, expressions["retry-b::declared-model"], info.TieredBillingSnapshot.ExprString)
 			}
-			// Wait for the actual refund transaction, not an arbitrary sleep.
+			// Observe token-credit progress; join the full callback below before cleanup.
 			refunded := make(chan struct{}, 1)
 			callback := "test:task-retry-refund"
 			require.NoError(t, db.Callback().Update().After("gorm:commit_or_rollback_transaction").Register(callback, func(tx *gorm.DB) {
@@ -186,12 +202,12 @@ export function extractUsage(){return {seconds:2};}
 				}
 			}))
 			t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove(callback)) })
+			t.Cleanup(func() {
+				require.Eventually(t, func() bool { return gopool.WorkerCount() == 0 }, 5*time.Second, time.Millisecond)
+			})
 			info.Billing.Refund(c)
-			select {
-			case <-refunded:
-			case <-time.After(5 * time.Second):
-				t.Fatal("real task refund did not finish")
-			}
+			waitRelayTaskRefund(t, refunded, info.Billing)
+			require.False(t, info.Billing.NeedsRefund(), "official Refund closes the local flag when scheduled")
 			info.Billing.Refund(c)
 			var finalUser model.User
 			var finalToken model.Token

@@ -34,7 +34,7 @@ func setupWalletDatabase(t *testing.T, dialect, dsn string) *gorm.DB {
 	// Reuse the loopback-only fixture: every case gets a newly created database,
 	// never tables in the database named by the caller's DSN.
 	db, _ := newAuditTestDatabase(t, dialect, dsn)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.Setup{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.Setup{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.BalanceLedger{}))
 	var version string
 	query := "SELECT version()"
 	if dialect == "sqlite" {
@@ -209,7 +209,7 @@ func TestSetupWalletDatabaseMatrix(t *testing.T) {
 					t.Cleanup(func() { _ = db.Callback().Create().Remove(callback) })
 					assert.False(t, postWalletSetup(t, ""))
 					assert.False(t, constant.Setup)
-					for _, entity := range []any{&model.User{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.Setup{}} {
+					for _, entity := range []any{&model.User{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.Setup{}} {
 						var count int64
 						require.NoError(t, db.Model(entity).Count(&count).Error)
 						assert.Zero(t, count, "root and credit must roll back together")
@@ -288,7 +288,7 @@ func TestSetupWalletDatabaseMatrix(t *testing.T) {
 				for _, body := range []string{`{"username":"root","password":"short","confirmPassword":"short"}`, `{"username":"root","password":"synthetic-password","confirmPassword":"different-password"}`} {
 					assert.False(t, postWalletSetup(t, body))
 				}
-				for _, entity := range []any{&model.User{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.Setup{}} {
+				for _, entity := range []any{&model.User{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.Setup{}} {
 					var count int64
 					require.NoError(t, db.Model(entity).Count(&count).Error)
 					assert.Zero(t, count)

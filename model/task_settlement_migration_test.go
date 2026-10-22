@@ -200,33 +200,17 @@ func TestTaskSettlementMigrationDatabaseMatrix(t *testing.T) {
 					var loaded Task
 					require.NoError(t, db.First(&loaded, pendingTask.ID).Error)
 					assert.Equal(t, pendingTask.PrivateData, loaded.PrivateData)
-					assert.True(t, HasUnfinishedSyncTasks(), "terminal financial work remains discoverable")
+					assert.False(t, HasUnfinishedSyncTasks(), "historical terminal pending rows are not runnable official work")
 					pending, err := GetPendingTaskSettlements(t.Context(), 10)
 					require.NoError(t, err)
 					require.Len(t, pending, 1)
 					assert.Equal(t, pendingTask.ID, pending[0].ID)
-					require.NoError(t, NoteTaskSettlementAttempt(t.Context(), pendingTask.ID))
 					require.NoError(t, db.First(&loaded, pendingTask.ID).Error)
-					assert.Positive(t, loaded.SettlementAttemptedAt)
-					calls := 0
-					for range 2 {
-						_, _, err = CommitPendingTaskSettlement(t.Context(), pendingTask.ID, func(_ *gorm.DB, current *Task) error {
-							calls++
-							current.Quota = current.PrivateData.PendingSettlement.Quota
-							return nil
-						})
-						require.NoError(t, err)
-					}
-					assert.Equal(t, 1, calls, "reloaded durable intent is consumed only once")
-					require.NoError(t, db.First(&loaded, pendingTask.ID).Error)
-					assert.Equal(t, 123, loaded.Quota)
-					assert.False(t, loaded.SettlementPending)
-					assert.Nil(t, loaded.PrivateData.PendingSettlement, "reusing scan destination must clear missing JSON members")
-					assert.True(t, loaded.PrivateData.SubmissionAccounted)
+					assert.Equal(t, pendingTask.Quota, loaded.Quota)
+					assert.Equal(t, pendingTask.PrivateData, loaded.PrivateData)
+					assert.True(t, loaded.SettlementPending)
+					assert.Zero(t, loaded.SettlementAttemptedAt)
 					assert.False(t, HasUnfinishedSyncTasks())
-					pending, err = GetPendingTaskSettlements(t.Context(), 10)
-					require.NoError(t, err)
-					assert.Empty(t, pending)
 					duplicate := Task{ID: pendingTask.ID, TaskID: "duplicate-primary-key"}
 					assert.Error(t, db.Create(&duplicate).Error, "primary-key uniqueness survives migration")
 				})

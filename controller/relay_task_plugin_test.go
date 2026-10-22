@@ -23,6 +23,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -539,8 +540,8 @@ func openTaskDialectDatabase(t *testing.T, models ...any) (*gorm.DB, common.Data
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	require.NoError(t, db.AutoMigrate(models...))
-	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(models...)) })
+	require.NoError(t, db.AutoMigrate(append(models, &model.BillingFinalization{})...))
+	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(append(models, &model.BillingFinalization{})...)) })
 	var version string
 	if dialect == common.DatabaseTypeSQLite {
 		require.NoError(t, db.Raw("SELECT sqlite_version()").Scan(&version).Error)
@@ -593,8 +594,8 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 	}{
 		{"partial", "SUCCESS", 2, 2, false, false}, {"zero", "SUCCESS", 0, 0, false, false}, {"larger", "SUCCESS", 6, 6, false, false},
 		{"invalid usage", "SUCCESS", -1, 4, false, false}, {"expression failure", "SUCCESS", 7, 4, false, false}, {"negative result", "SUCCESS", 8, 4, false, false}, {"missing usage", "SUCCESS", nil, 4, false, false}, {"failed", "FAILURE", 9, 0, false, false},
-		{"accepted_settlement_failure_preserves_task_reference", "SUCCESS", 2, 2, true, false},
-		{"accepted_upward_shortage_persists_before_adjustment", "SUCCESS", 6, 6, true, true},
+		{"official_settlement_failure_after_insert", "SUCCESS", 2, 2, true, false},
+		{"official_upward_shortage_before_insert", "SUCCESS", 6, 6, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var upstreamCalls atomic.Int32
@@ -640,62 +641,91 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 			info.RequestId = fmt.Sprintf("task-request-%d", index)
 			c.Set(common.RequestIdKey, info.RequestId)
 			info.LockedChannel = &ch
-			var failSettlement atomic.Bool
-			if tc.settlementFailure && !tc.shortage {
-				failSettlement.Store(true)
-				const callback = "test:accepted-settlement-failure"
-				require.NoError(t, db.Callback().Update().After("gorm:update").Register(callback, func(tx *gorm.DB) {
-					if !failSettlement.Load() {
+			var settlementFaultHits atomic.Int32
+			if tc.settlementFailure {
+				statement := &gorm.Statement{DB: db}
+				require.NoError(t, statement.Parse(&model.BillingFinalization{}))
+				finalizationTable := statement.Schema.Table
+				const callback = "test:official-settlement-failure"
+				require.NoError(t, db.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
+					if tx.Error != nil || tx.Statement.Table != finalizationTable {
 						return
 					}
-					for _, field := range tx.Statement.Selects {
-						if field == "settlement_pending" {
-							tx.AddError(errors.New("forced accepted task settlement persistence failure"))
-							return
-						}
+					receipt, ok := tx.Statement.Dest.(*model.BillingFinalization)
+					if !ok || receipt.RequestID != info.RequestId || receipt.UserID != user.Id {
+						return
 					}
+					settlementFaultHits.Add(1)
+					tx.AddError(errors.New("forced official post-insert settlement failure"))
 				}))
-				t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove(callback)) })
+				t.Cleanup(func() { require.NoError(t, db.Callback().Create().Remove(callback)) })
 			}
+			// Join even on a fatal assertion, before removing the fault callback or
+			// restoring the parent fixture's DB/cache globals. The official flag
+			// marks scheduling, not completion of its asynchronous refund.
+			t.Cleanup(func() {
+				require.Eventually(t, func() bool { return gopool.WorkerCount() == 0 }, 5*time.Second, time.Millisecond)
+			})
 			outcome, taskErr := executeTaskSubmission(c, info)
+			require.Eventually(t, func() bool { return gopool.WorkerCount() == 0 }, 5*time.Second, time.Millisecond)
 			if tc.settlementFailure {
+				wantFaultHits := int32(1)
+				if tc.shortage {
+					wantFaultHits = 0
+				}
+				require.Equal(t, wantFaultHits, settlementFaultHits.Load(), "the exact owned settlement fault must be reached only after INSERT")
 				require.Nil(t, outcome)
 				require.NotNil(t, taskErr)
-				assert.True(t, taskErr.NoRetry)
-				assert.Equal(t, "stop", decideTaskRetry(c, taskErr, 3).Action)
-				assert.Contains(t, taskErr.Message, info.PublicTaskID)
-				assert.Equal(t, info.PublicTaskID, c.Writer.Header().Get("X-New-API-Task-ID"))
-				assert.Equal(t, "true", c.Writer.Header().Get("X-New-API-Task-Accepted"))
-				assert.Equal(t, map[string]any{"task_id": info.PublicTaskID, "accepted": true, "settlement_pending": true}, taskErr.Data)
-				var saved model.Task
-				require.NoError(t, db.Where("task_id = ?", info.PublicTaskID).First(&saved).Error)
-				require.True(t, saved.SettlementPending)
-				assert.Equal(t, common.QuotaRound(4*0.01*common.QuotaPerUnit), saved.Quota)
-				var heldUser model.User
-				require.NoError(t, db.First(&heldUser, user.Id).Error)
-				assert.Equal(t, initial-saved.Quota, heldUser.Quota, "accepted durable task is not refunded on local settlement error")
-				assert.Zero(t, heldUser.UsedQuota)
-				failSettlement.Store(false)
+				assert.False(t, taskErr.NoRetry, "official local errors do not claim accepted ownership")
+				assert.True(t, taskErr.LocalError)
+				assert.Empty(t, c.Writer.Header().Get("X-New-API-Task-Accepted"))
+				assert.Empty(t, c.Writer.Header().Get("X-New-API-Task-ID"))
+				assert.Nil(t, taskErr.Data)
+				assert.False(t, c.Writer.Written())
+				held := common.QuotaRound(4 * 0.01 * common.QuotaPerUnit)
+				require.NotNil(t, info.Billing)
+				assert.Equal(t, held, info.Billing.GetPreConsumedQuota())
+				grossShares := []model.LedgerShare{{Account: model.AccountPaid, Amount: held}}
+				assert.Equal(t, grossShares, service.WalletSessionDebitShares(info))
+				var saved []model.Task
+				require.NoError(t, db.Where("task_id = ?", info.PublicTaskID).Find(&saved).Error)
+				wantBalance := initial - held
 				if tc.shortage {
-					// No second paid submission: funding becomes available and the
-					// previously saved upward intent can now complete atomically.
-					topUp := common.QuotaRound(10 * 0.01 * common.QuotaPerUnit)
-					_, err := model.CreditQuota(model.LedgerEntry{UserId: user.Id, Account: model.AccountPaid, Delta: topUp, Reason: model.LedgerReasonBillingRefund, IdempotencyKey: fmt.Sprintf("test-shortage-topup-%d", user.Id)})
-					require.NoError(t, err)
-					initial += topUp
+					assert.Equal(t, http.StatusForbidden, taskErr.StatusCode)
+					assert.Equal(t, "insufficient_user_quota", taskErr.Code)
+					assert.Equal(t, service.PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "system"}, decideTaskRetry(c, taskErr, 3))
+					assert.Empty(t, saved, "official Reserve fails before INSERT")
+					assert.False(t, info.Billing.NeedsRefund())
+					wantBalance = initial
+				} else {
+					assert.Equal(t, http.StatusInternalServerError, taskErr.StatusCode)
+					assert.Equal(t, "task_billing_settlement_failed", taskErr.Code)
+					// This is a hypothetical classification, not a second submit:
+					// the official post-INSERT error returns outside the attempt loop.
+					assert.Equal(t, service.PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "system"}, decideTaskRetry(c, taskErr, 3))
+					require.Len(t, saved, 1)
+					assert.Equal(t, user.Id, saved[0].UserId)
+					assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), saved[0].Status)
+					assert.Positive(t, saved[0].FinishTime)
+					assert.False(t, saved[0].SettlementPending)
+					assert.Nil(t, saved[0].PrivateData.PendingSettlement)
+					assert.Equal(t, grossShares, saved[0].PrivateData.WalletDebit)
+					assert.Equal(t, common.QuotaRound(tc.count*0.01*common.QuotaPerUnit), saved[0].Quota)
+					assert.True(t, info.Billing.NeedsRefund(), "official durable INSERT prevents the deferred request refund")
 				}
-				require.NoError(t, service.RecoverTaskSettlement(t.Context(), &saved))
-				require.NoError(t, service.RecoverTaskSettlement(t.Context(), &saved))
-				assert.False(t, saved.SettlementPending)
-				assert.Equal(t, common.QuotaRound(tc.count*0.01*common.QuotaPerUnit), saved.Quota)
-				require.NoError(t, db.First(&heldUser, user.Id).Error)
-				assert.Equal(t, initial-saved.Quota, heldUser.Quota)
-				assert.Equal(t, saved.Quota, heldUser.UsedQuota)
-				assert.Equal(t, 1, heldUser.RequestCount)
-				assert.EqualValues(t, 1, upstreamCalls.Load(), "recovery must not submit paid work again")
-				var logs int64
-				require.NoError(t, db.Model(&model.Log{}).Where("user_id = ?", user.Id).Count(&logs).Error)
-				assert.EqualValues(t, 1, logs)
+				var updated model.User
+				require.NoError(t, db.First(&updated, user.Id).Error)
+				assert.Equal(t, wantBalance, updated.Quota)
+				assert.Equal(t, wantBalance, updated.QuotaPaid)
+				assert.Zero(t, updated.QuotaBonus)
+				assert.Zero(t, updated.QuotaReward)
+				assert.Zero(t, updated.UsedQuota)
+				var ownerCount, logCount int64
+				require.NoError(t, db.Model(&model.BillingFinalization{}).Where("request_id = ?", info.RequestId).Count(&ownerCount).Error)
+				require.NoError(t, db.Model(&model.Log{}).Where("user_id = ?", user.Id).Count(&logCount).Error)
+				assert.Zero(t, ownerCount, "failed/absent settlement must not leave a terminal owner")
+				assert.Zero(t, logCount, "failed/absent settlement must not create a consume log")
+				assert.EqualValues(t, 1, upstreamCalls.Load(), "no extra paid request after local failure")
 				return
 			}
 			require.Nil(t, taskErr)
@@ -722,7 +752,7 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 			assert.Equal(t, want, logs[0].Quota)
 			var other map[string]any
 			require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
-			assert.Equal(t, float64(want), other["wallet_quota_deducted"], "submit log includes durable task adjustment, not just the initial hold")
+			assert.Equal(t, float64(want), other["wallet_quota_deducted"], "submit log includes the final source adjustment, not just the initial hold")
 			if tc.status == "SUCCESS" {
 				assert.Equal(t, tc.count, other["usage_facts"].(map[string]any)["units"])
 			}

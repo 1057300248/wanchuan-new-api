@@ -106,7 +106,7 @@ func GetAllUnFinishTasks() []*Midjourney {
 	var tasks []*Midjourney
 	var err error
 	// get all tasks progress is not 100%
-	err = DB.Where("progress != ? OR (status = ? AND quota > 0)", "100%", "FAILURE").Find(&tasks).Error
+	err = DB.Where("progress != ?", "100%").Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
@@ -114,14 +114,13 @@ func GetAllUnFinishTasks() []*Midjourney {
 }
 
 // HasUnfinishedMidjourneyTasks reports whether at least one Midjourney task is
-// still in progress or has a failed-task refund pending. It is a cheap
-// existence check (LIMIT 1) used to decide
+// still in progress. It is a cheap existence check (LIMIT 1) used to decide
 // whether the midjourney_poll system task needs to run; when no task is pending
 // the scheduler skips creating a row entirely.
 func HasUnfinishedMidjourneyTasks() bool {
 	var id int
 	err := DB.Model(&Midjourney{}).
-		Where("progress != ? OR (status = ? AND quota > 0)", "100%", "FAILURE").
+		Where("progress != ?", "100%").
 		Limit(1).
 		Pluck("id", &id).Error
 	return err == nil && id != 0

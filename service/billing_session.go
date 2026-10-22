@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -29,17 +30,22 @@ import (
 // BillingSession 封装单次请求的预扣费/结算/退款生命周期。
 // 实现 relaycommon.BillingSettler 接口。
 type BillingSession struct {
-	relayInfo        *relaycommon.RelayInfo
-	funding          FundingSource
-	preConsumedQuota int    // 实际预扣额度（信任用户可能为 0）
-	tokenConsumed    int    // 令牌额度实际扣减量
-	extraReserved    int    // 发送前补充预扣的额度（订阅退款时需要单独回滚）
-	trusted          bool   // 是否命中信任额度旁路
-	fundingSettled   bool   // 资金结算已成功提交（钱包可能经事务能力而非 FundingSource.Settle）
-	settled          bool   // Settle 全部完成（资金 + 令牌）
-	refunded         bool   // Refund 已调用
-	lang             string // Request language; keep custom funding factories and atomic ledger settlement.
-	mu               sync.Mutex
+	relayInfo           *relaycommon.RelayInfo
+	funding             FundingSource
+	preConsumedQuota    int  // 实际预扣额度（信任用户可能为 0）
+	tokenConsumed       int  // 令牌额度实际扣减量
+	extraReserved       int  // 发送前补充预扣的额度（订阅退款时单独回滚）
+	trusted             bool // 是否命中信任额度旁路
+	fundingSettled      bool // 资金结算已成功提交（钱包可能经事务能力而非 FundingSource.Settle）
+	settled             bool // Settle 全部完成（资金 + 令牌）
+	refunded            bool // Refund has been called, as in official rc.46.
+	taskOwned           bool
+	actualSettled       int
+	billingIdentity     *model.BillingFinalization
+	terminalReceipt     *model.BillingFinalization
+	settlementUncertain bool
+	lang                string // Request language; keep custom funding factories and atomic ledger settlement.
+	mu                  sync.Mutex
 }
 
 // 编译期能力断言。会话把资金来源的扣减回执转发给异步任务持久化路径，
@@ -59,36 +65,51 @@ type transactionalSettlementFunding interface {
 	ApplySettlementResult(delta int, result moneyport.SettlementResult)
 }
 
-// Settle 根据实际消耗额度进行结算。
-// 钱包资金与 token quota 在同一数据库事务中提交；任一侧失败整体回滚。
-// 订阅资金仍由订阅模型自身事务结算，随后调整 token quota，因此这里不宣称
-// subscription + token 具备跨表原子性。
+// Settle preserves the original actual-minus-preconsume arithmetic. Built-in
+// wallets retain their atomic source/token terminal settlement. Subscriptions
+// use the official independent source/token steps.
 func (s *BillingSession) Settle(actualQuota int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.settled {
+		if s.actualSettled != actualQuota {
+			return errors.New("billing settlement replay amount mismatch")
+		}
 		return nil
 	}
+	if s.taskOwned {
+		return model.ErrBillingFinalized
+	}
+	if s.refunded {
+		return model.ErrBillingFinalized
+	}
+	if s.durableTerminalSource() {
+		return s.settleDurableLocked(actualQuota)
+	}
+	if s.funding.Source() == BillingSourceWallet {
+		delta := actualQuota - s.preConsumedQuota
+		if delta != 0 {
+			funding, ok := s.funding.(transactionalSettlementFunding)
+			if !ok {
+				return fmt.Errorf("wallet funding source %T does not support transactional settlement", s.funding)
+			}
+			if err := s.settleWalletAndToken(funding, delta); err != nil {
+				return err
+			}
+			s.fundingSettled = true
+		}
+		s.settled = true
+		s.actualSettled = actualQuota
+		return nil
+	}
+	// Official subscriptions and alternate funding retain their independent
+	// source/token contract; the normal atomic branch above is wallet-only.
 	delta := actualQuota - s.preConsumedQuota
 	if delta == 0 {
 		s.settled = true
+		s.actualSettled = actualQuota
 		return nil
 	}
-
-	if s.funding.Source() == BillingSourceWallet {
-		transactional, ok := s.funding.(transactionalSettlementFunding)
-		if !ok {
-			return fmt.Errorf("wallet funding source %T does not support transactional settlement", s.funding)
-		}
-		if err := s.settleWalletAndToken(transactional, delta); err != nil {
-			return err
-		}
-		s.fundingSettled = true
-		s.settled = true
-		return nil
-	}
-
-	// 非钱包资金来源保留原有顺序；目前主要是订阅。
 	if !s.fundingSettled {
 		if err := s.funding.Settle(delta); err != nil {
 			return err
@@ -103,14 +124,14 @@ func (s *BillingSession) Settle(actualQuota int) error {
 			tokenErr = model.IncreaseTokenQuota(s.relayInfo.TokenId, s.relayInfo.TokenKey, -delta)
 		}
 		if tokenErr != nil {
-			common.SysLog(fmt.Sprintf("error adjusting token quota after non-wallet funding settled (userId=%d, tokenId=%d, delta=%d): %s",
-				s.relayInfo.UserId, s.relayInfo.TokenId, delta, tokenErr.Error()))
+			common.SysLog(fmt.Sprintf("error adjusting token quota after custom funding settled (userId=%d, tokenId=%d, delta=%d): %s", s.relayInfo.UserId, s.relayInfo.TokenId, delta, tokenErr.Error()))
 		}
 	}
 	if s.funding.Source() == BillingSourceSubscription {
 		s.relayInfo.SubscriptionPostDelta += int64(delta)
 	}
 	s.settled = true
+	s.actualSettled = actualQuota
 	return tokenErr
 }
 
@@ -168,7 +189,7 @@ func (s *BillingSession) Refund(c *gin.Context) {
 	subscriptionId := s.relayInfo.SubscriptionId
 	funding := s.funding
 
-	runBillingBackground(func() {
+	gopool.Go(func() {
 		// 1) 退还资金来源
 		if err := funding.Refund(); err != nil {
 			common.SysLog(common.LogText("error refunding billing source: %s", err.Error()))
@@ -180,7 +201,7 @@ func (s *BillingSession) Refund(c *gin.Context) {
 		}
 		// 2) 退还令牌额度
 		if tokenConsumed > 0 && !isPlayground {
-			if err := model.IncreaseTokenQuota(tokenId, tokenKey, tokenConsumed); err != nil {
+			if err := model.IncreaseTokenQuotaForRefund(tokenId, tokenKey, tokenConsumed); err != nil {
 				common.SysLog(common.LogText("error refunding token quota: %s", err.Error()))
 			}
 		}
@@ -202,10 +223,9 @@ func (s *BillingSession) needsRefundLocked() bool {
 	if s.tokenConsumed > 0 {
 		return true
 	}
-	// 订阅可能在 tokenConsumed=0 时仍预扣了额度；不报告待退预扣的资金来源
-	//（如钱包，其预扣状态已由 tokenConsumed 反映）按 0 处理。
-	if reporter, ok := s.funding.(moneyport.OutstandingReserveReporter); ok {
-		return reporter.OutstandingReserve() > 0
+	// 订阅可能在 tokenConsumed=0 时仍预扣了额度
+	if sub, ok := s.funding.(*SubscriptionFunding); ok && sub.preConsumed > 0 {
+		return true
 	}
 	return false
 }
@@ -275,6 +295,14 @@ func (s *BillingSession) reserve(targetQuota int, requireAvailableQuota bool) er
 		_, imageRequest := s.relayInfo.Request.(*dto.ImageRequest)
 		requireAvailableQuota = requireAvailableQuota || imageRequest || s.relayInfo.ImageRequestCount > 0
 	}
+	if s.settlementUncertain {
+		if err := s.resolveSettlementBeforeReserveLocked(); err != nil {
+			return err
+		}
+	}
+	if s.taskOwned {
+		return model.ErrBillingFinalized
+	}
 	if s.settled || s.refunded || s.trusted && !requireAvailableQuota || targetQuota <= s.preConsumedQuota {
 		return nil
 	}
@@ -315,8 +343,9 @@ func (s *BillingSession) reserve(targetQuota int, requireAvailableQuota bool) er
 // ---------------------------------------------------------------------------
 
 // preConsume 执行预扣费：信任检查 -> 令牌预扣 -> 资金来源预扣。
-// 任一步骤失败时原子回滚已完成的步骤。
+// 资金失败时补偿令牌；补偿失败/提交 ACK 不确定仍需原有对账（非跨表原子预扣）。
 func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIError {
+	s.captureBillingIdentity()
 	effectiveQuota := quota
 
 	// ---- 信任额度旁路 ----
@@ -461,7 +490,7 @@ func (s *BillingSession) syncRelayInfo() {
 
 	if sub, ok := s.funding.(*SubscriptionFunding); ok {
 		info.SubscriptionId = sub.subscriptionId
-		info.SubscriptionQuotaPeriod = sub.quotaPeriod
+		info.SubscriptionQuotaPeriod = 0
 		info.SubscriptionPreConsumed = sub.preConsumed + int64(s.extraReserved)
 		info.SubscriptionPostDelta = 0
 		info.SubscriptionAmountTotal = sub.AmountTotal
