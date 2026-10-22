@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http/httptest"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/lifecycle"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -94,9 +96,10 @@ func awaitRefundSignal(t *testing.T, signal <-chan struct{}) {
 // waiting, so cancellation cannot destroy an in-memory database connection.
 type refundDeadlinePool struct {
 	gorm.ConnPool
-	first    atomic.Bool
-	entered  chan context.Context
-	released chan struct{}
+	committed *atomic.Bool // Optional test observer of a successful intent COMMIT.
+	first     atomic.Bool
+	entered   chan context.Context
+	released  chan struct{}
 }
 
 func (p *refundDeadlinePool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
@@ -106,7 +109,24 @@ func (p *refundDeadlinePool) BeginTx(ctx context.Context, opts *sql.TxOptions) (
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	return p.ConnPool.(gorm.TxBeginner).BeginTx(ctx, opts)
+	tx, err := p.ConnPool.(gorm.TxBeginner).BeginTx(ctx, opts)
+	if err != nil || p.committed == nil {
+		return tx, err
+	}
+	return &refundIntentCommitObserver{Tx: tx, committed: p.committed}, nil
+}
+
+type refundIntentCommitObserver struct {
+	*sql.Tx
+	committed *atomic.Bool
+}
+
+func (tx *refundIntentCommitObserver) Commit() error {
+	err := tx.Tx.Commit()
+	if err == nil {
+		tx.committed.Store(true)
+	}
+	return err
 }
 
 func TestBillingRefundIntentDeadlineSurvivesRequestCancellation(t *testing.T) {
@@ -197,19 +217,68 @@ func TestBillingRefundIntentSaturationAndSealedGroup(t *testing.T) {
 }
 
 func TestBillingRefundIntentActiveJobSaturatesWithoutExtraDatabaseWork(t *testing.T) {
-	first := legacyRefundSession(t, "active-intent-capacity", 100, 70)
+	// A cancelled transaction can discard SQLite's physical connection. This
+	// leaf must retain its evidence across replacement, not destroy :memory:
+	// and cascade missing-table failures into the surrounding matrix.
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+		db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "refund-capacity.db")), &gorm.Config{})
+		require.NoError(t, err)
+		sqlDB, err := db.DB()
+		require.NoError(t, err)
+		sqlDB.SetMaxOpenConns(1)
+		require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.BillingFinalization{}))
+		original := model.DB
+		model.DB = db
+		t.Cleanup(func() { model.DB = original; require.NoError(t, sqlDB.Close()) })
+	} else {
+		truncate(t) // Retain the existing dedicated native-matrix cleanup.
+	}
+	seedBonusUser(t, 31201, 0, 1000)
+	seedToken(t, 31202, 31201, "synthetic-original-refund-token", 1000)
+	firstFunding := &WalletFunding{userId: 31201, requestId: "active-intent-capacity", debitOrder: []model.LedgerAccount{model.AccountPaid}}
+	require.NoError(t, firstFunding.PreConsume(100))
+	require.NoError(t, model.DecreaseTokenQuota(31202, "synthetic-original-refund-token", 70))
+	first := &BillingSession{relayInfo: &relaycommon.RelayInfo{UserId: 31201, TokenId: 31202, TokenKey: "synthetic-original-refund-token", RequestId: firstFunding.requestId}, funding: firstFunding, preConsumedQuota: 100, tokenConsumed: 70}
 	funding := &WalletFunding{userId: 31201, requestId: "overflow-intent-capacity", debitOrder: []model.LedgerAccount{model.AccountPaid}}
 	require.NoError(t, funding.PreConsume(100))
 	require.NoError(t, model.DecreaseTokenQuota(31202, "synthetic-original-refund-token", 70))
 	second := &BillingSession{relayInfo: &relaycommon.RelayInfo{UserId: 31201, TokenId: 31202, TokenKey: "synthetic-original-refund-token", RequestId: funding.requestId}, funding: funding, preConsumedQuota: 100, tokenConsumed: 70}
+	requestIDs := []string{firstFunding.requestId, funding.requestId}
+	receipt, err := first.terminalReceiptLocked() // No worker exists yet.
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Model(&model.Token{}).Where("id = ?", 31202).Update("status", common.TokenStatusDisabled).Error)
 	original := model.DB
 	wrapped := original.Session(&gorm.Session{NewDB: true, Context: context.Background()})
 	config := *wrapped.Config
 	wrapped.Config = &config
-	pool := &refundDeadlinePool{ConnPool: original.ConnPool, entered: make(chan context.Context, 1), released: make(chan struct{})}
+	var intentCommitted atomic.Bool
+	pool := &refundDeadlinePool{ConnPool: original.ConnPool, committed: &intentCommitted, entered: make(chan context.Context, 1), released: make(chan struct{})}
 	wrapped.Config.ConnPool, wrapped.Statement.ConnPool = pool, pool
 	model.DB = wrapped
 	t.Cleanup(func() { model.DB = original })
+	var logs bytes.Buffer
+	common.LogWriterMu.Lock()
+	originalErrorWriter := gin.DefaultErrorWriter
+	gin.DefaultErrorWriter = &logs
+	common.LogWriterMu.Unlock()
+	t.Cleanup(func() {
+		common.LogWriterMu.Lock()
+		gin.DefaultErrorWriter = originalErrorWriter
+		common.LogWriterMu.Unlock()
+	})
+	// Force the allowed durable handoff after a confirmed intent COMMIT, not a
+	// timing assumption that all recovery SQL will fit this test's 20 ms budget.
+	const forcedQuery = "refund_capacity_recovery_deadline"
+	var forcedExpiry atomic.Bool
+	expiredRecovery := make(chan error, 1)
+	require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(forcedQuery, func(tx *gorm.DB) {
+		if tx.Statement.Table == "billing_finalizations" && intentCommitted.Load() && forcedExpiry.CompareAndSwap(false, true) {
+			<-tx.Statement.Context.Done()
+			expiredRecovery <- tx.Statement.Context.Err()
+			tx.AddError(tx.Statement.Context.Err())
+		}
+	}))
+	t.Cleanup(func() { model.DB.Callback().Query().Remove(forcedQuery) })
 	useRefundDispatcher(t, 1, 1, 20*time.Millisecond)
 	var release sync.Once
 	t.Cleanup(func() { release.Do(func() { close(pool.released) }) })
@@ -227,19 +296,81 @@ func TestBillingRefundIntentActiveJobSaturatesWithoutExtraDatabaseWork(t *testin
 	go func() { second.Refund(c); close(returned) }()
 	awaitRefundSignal(t, returned)
 	var count int64
-	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Count(&count).Error)
+	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Where("request_id IN ?", requestIDs).Count(&count).Error)
 	require.Zero(t, count)
 	require.True(t, first.NeedsRefund())
 	require.True(t, second.NeedsRefund())
 	assertUserBalances(t, 31201, 0, 800, 0)
 	release.Do(func() { close(pool.released) })
 	waitRefundCallback(t, first)
-	require.False(t, first.NeedsRefund())
+	require.True(t, intentCommitted.Load(), "observe the actual successful intent COMMIT")
+	require.True(t, forcedExpiry.Load(), "reach the first recovery read after the committed intent")
+	select {
+	case err := <-expiredRecovery:
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	default:
+		t.Fatal("recovery did not finish its controlled deadline boundary")
+	}
+	require.True(t, first.NeedsRefund(), "callback completion is not proof of monetary completion")
 	require.True(t, second.NeedsRefund(), "unpersisted overflow is explicitly unresolved, not a fictitious refund")
-	assertUserBalances(t, 31201, 0, 900, 0)
+	require.ErrorIs(t, first.Reserve(200), model.ErrBillingFinalized)
+	require.ErrorIs(t, second.Reserve(200), model.ErrBillingFinalized)
+	common.LogWriterMu.Lock()
+	recoveryLog := logs.String()
+	common.LogWriterMu.Unlock()
+	require.Contains(t, recoveryLog, `event=durable_recovery_unconfirmed request_id="active-intent-capacity"`)
+	require.Contains(t, recoveryLog, `code="metadata_write_failed"`)
+	var pending []model.BillingFinalization
+	require.NoError(t, model.DB.Where("request_id IN ?", requestIDs).Find(&pending).Error)
+	require.Len(t, pending, 1, "only the accepted original decision has durable ownership")
+	expected := receipt
+	expected.State = model.BillingRefundPending
+	expected.CreatedAt, expected.UpdatedAt, expected.NextRetryAt = pending[0].CreatedAt, pending[0].UpdatedAt, pending[0].NextRetryAt
+	require.Positive(t, expected.NextRetryAt)
+	require.LessOrEqual(t, expected.NextRetryAt, common.GetTimestamp())
+	require.Equal(t, expected, pending[0], "expired-parent metadata must not change original receipt, attempts or failure history")
+	assertUserBalances(t, 31201, 0, 800, 0)
 	var token model.Token
 	require.NoError(t, model.DB.First(&token, 31202).Error)
+	require.Equal(t, 860, token.RemainQuota)
+	require.Equal(t, 140, token.UsedQuota)
+	require.Equal(t, common.TokenStatusDisabled, token.Status)
+	require.NoError(t, model.DB.Model(&model.BalanceLedger{}).Where("request_id IN ? AND reason = ?", requestIDs, model.LedgerReasonBillingRefund).Count(&count).Error)
+	require.Zero(t, count, "expired immediate recovery must not leave a source-only credit")
+	// The persisted intent remains due because metadata inherited the expired
+	// parent. Run the real durable worker without another Refund or SQL reset.
+	completed, err := model.RecoverPendingBillingRefunds(context.Background(), 100)
+	require.NoError(t, err)
+	require.Equal(t, 1, completed)
+	var recovered model.BillingFinalization
+	require.NoError(t, model.DB.First(&recovered, "request_id = ?", receipt.RequestID).Error)
+	expected = pending[0]
+	expected.State, expected.NextRetryAt = model.BillingRefunded, 0
+	expected.LastAttemptAt, expected.UpdatedAt = recovered.LastAttemptAt, recovered.UpdatedAt
+	require.GreaterOrEqual(t, recovered.LastAttemptAt, pending[0].NextRetryAt)
+	require.GreaterOrEqual(t, recovered.UpdatedAt, pending[0].UpdatedAt)
+	require.Equal(t, expected, recovered)
+	completed, err = model.RecoverPendingBillingRefunds(context.Background(), 100)
+	require.NoError(t, err)
+	require.Zero(t, completed)
+	require.NoError(t, model.RecoverBillingRefund(context.Background(), receipt.RequestID))
+	var replayed model.BillingFinalization
+	require.NoError(t, model.DB.First(&replayed, "request_id = ?", receipt.RequestID).Error)
+	require.Equal(t, recovered, replayed, "worker and direct replay preserve the refunded tombstone")
+	assertUserBalances(t, 31201, 0, 900, 0)
+	require.NoError(t, model.DB.First(&token, 31202).Error)
 	require.Equal(t, 930, token.RemainQuota)
+	require.Equal(t, 70, token.UsedQuota)
+	require.Equal(t, common.TokenStatusDisabled, token.Status)
+	var credits []model.BalanceLedger
+	require.NoError(t, model.DB.Where("request_id IN ? AND reason = ?", requestIDs, model.LedgerReasonBillingRefund).Find(&credits).Error)
+	require.Len(t, credits, 1)
+	require.Equal(t, receipt.RequestID, credits[0].RequestId)
+	require.Equal(t, 100, credits[0].Delta)
+	require.Equal(t, string(model.AccountPaid), credits[0].Account)
+	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Where("request_id = ?", funding.requestId).Count(&count).Error)
+	require.Zero(t, count, "the worker must not infer a refund for the absent overflow decision")
+	require.True(t, second.NeedsRefund())
 }
 
 func TestBillingRefundIntentShutdownKeepsAbsentDecisionUnrecoverable(t *testing.T) {
