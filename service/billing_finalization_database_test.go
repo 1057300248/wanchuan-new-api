@@ -30,6 +30,10 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 			if dialect.env != "" && dsn == "" {
 				t.Skip(dialect.env + " not configured")
 			}
+			// The child exclusively opens this still-empty disposable database.
+			if runRefundFixtureChild(t) {
+				return
+			}
 			var driver gorm.Dialector = sqlite.Open(":memory:")
 			if dialect.name == common.DatabaseTypeMySQL {
 				driver = mysql.Open(dsn)

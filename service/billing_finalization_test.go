@@ -35,13 +35,16 @@ func legacyRefundSession(t *testing.T, request string, sourceHold, tokenHold int
 
 func waitRefundCallback(t *testing.T, _ *BillingSession) {
 	t.Helper()
-	// This serial package fixture starts no runtime worker. gopool decrements
-	// WorkerCount only after the queued callback has returned; unlike refunded,
-	// this joins source, independent token and any nested cache callbacks.
+	// These consumers run in an owned child containing no notification daemon.
+	// gopool decrements WorkerCount only after callbacks return, including nested
+	// token-cache work; refunded and final SQL are not callback-completion signals.
 	require.Eventually(t, func() bool { return gopool.WorkerCount() == 0 }, 5*time.Second, time.Millisecond)
 }
 
 func TestPolicyPreservingRefundSeparateHeldAmounts(t *testing.T) {
+	if runRefundFixtureChild(t) {
+		return
+	}
 	s := legacyRefundSession(t, "separate-source-token", 100, 70)
 	s.Refund(testGinContext(t))
 	waitRefundCallback(t, s)
@@ -70,6 +73,9 @@ func TestPolicyPreservingSettlementFinalMoreLessAndReplay(t *testing.T) {
 }
 
 func TestPolicyPreservingFailedSettlementCanReserveThenRefund(t *testing.T) {
+	if runRefundFixtureChild(t) {
+		return
+	}
 	s := legacyRefundSession(t, "failed-settle-then-reserve", 100, 100)
 	name := "fail_settle_token"
 	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(name, func(tx *gorm.DB) {
@@ -164,6 +170,9 @@ func TestPolicyPreservingExtensionCapabilityBoundary(t *testing.T) {
 }
 
 func TestPolicyPreservingRollbackProbeFailureDoesNotReserve(t *testing.T) {
+	if runRefundFixtureChild(t) {
+		return
+	}
 	s := legacyRefundSession(t, "probe-failure", 100, 100)
 	name := "fail_settlement_token_before_probe"
 	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(name, func(tx *gorm.DB) {
@@ -195,6 +204,9 @@ func TestPolicyPreservingRollbackProbeFailureDoesNotReserve(t *testing.T) {
 }
 
 func TestPolicyPreservingRefundIndependentViolationFee(t *testing.T) {
+	if runRefundFixtureChild(t) {
+		return
+	}
 	for _, order := range []string{"fee_before_refund", "refund_before_fee"} {
 		t.Run(order, func(t *testing.T) {
 			s := legacyRefundSession(t, "refund-independent-fee", 100, 100)
@@ -229,6 +241,9 @@ func TestPolicyPreservingRefundIndependentViolationFee(t *testing.T) {
 }
 
 func TestPolicyPreservingRealtimeIncrementAndTerminal(t *testing.T) {
+	if runRefundFixtureChild(t) {
+		return
+	}
 	// Initialize dialect quoting exactly as production startup, without opening a
 	// separate log DSN or changing the current disposable database.
 	t.Setenv("LOG_SQL_DSN", "")

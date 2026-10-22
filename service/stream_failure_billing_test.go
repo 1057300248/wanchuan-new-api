@@ -73,6 +73,9 @@ func TestStreamFailurePartialUsageSettlesOnceAndNeverRefunds(t *testing.T) {
 }
 
 func TestStreamFailureWithoutUsageRefundsReservationOnce(t *testing.T) {
+	if runRefundFixtureChild(t) {
+		return
+	}
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	funding := &streamFailureFunding{outstanding: 100, refunded: make(chan struct{}, 2)}

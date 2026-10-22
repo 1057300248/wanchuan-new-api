@@ -285,6 +285,9 @@ func TestBillingSettlementDeadlineNativeRowLock(t *testing.T) {
 }
 
 func TestBillingSettlementDeadlineCommitEvidence(t *testing.T) {
+	if runRefundFixtureChild(t) {
+		return
+	}
 	for _, source := range []string{BillingSourceWallet} {
 		t.Run(source, func(t *testing.T) {
 			for _, mode := range []string{"rolled_back", "committed_lost_ack"} {
@@ -533,6 +536,9 @@ func TestBillingSettlementDeadlineNativeRedisFence(t *testing.T) {
 // Official Refund deliberately does not consult a durable terminal owner.
 // Preserve this inherited partial-credit window, without changing normal Settle.
 func TestOfficialRefundBeforeLostACKReadbackKeepsOfficialSequence(t *testing.T) {
+	if runRefundFixtureChild(t) {
+		return
+	}
 	s, cancelClient := settlementDeadlineSession(t, "official-refund-before-readback", true, BillingSourceWallet)
 	cancelClient()
 	pool := installSettlementDeadlinePool(t, "committed_lost_ack")

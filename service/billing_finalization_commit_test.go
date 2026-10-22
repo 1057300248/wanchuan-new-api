@@ -65,6 +65,9 @@ func terminalCommitFault(t *testing.T, mode int32) *atomic.Int32 {
 }
 
 func TestPolicyPreservingTerminalCommitBoundaries(t *testing.T) {
+	if runRefundFixtureChild(t) {
+		return
+	}
 	for _, mode := range []int32{1, 2} {
 		t.Run(map[int32]string{1: "rollback", 2: "lost_ack"}[mode], func(t *testing.T) {
 			t.Run("settlement", func(t *testing.T) {

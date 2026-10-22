@@ -11,16 +11,16 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-// HTTP/WS handler completion does not join the asynchronous refund. The host
-// finalization transaction now keeps BOTH wallet and token held until commit,
-// unlike the historical source-first window reproduced before F7. Pause the
-// token credit and require that no partial refund is externally visible. The
+// HTTP/WS handler completion does not join the official asynchronous refund.
+// Source credit precedes independent token credit. Pause the token update and
+// prove that this source-first window is not mistaken for full completion. The
 // first accounting read releases credit only AFTER reading the old token row,
 // so a one-shot assertion still deterministically fails.
 func TestResponsesAccountingWaitsForAsynchronousTokenRefund(t *testing.T) {
@@ -43,7 +43,9 @@ func TestResponsesAccountingWaitsForAsynchronousTokenRefund(t *testing.T) {
 	t.Cleanup(func() { sqlDB.SetMaxOpenConns(1) })
 	entered, release := make(chan struct{}), make(chan struct{})
 	var enterOnce, releaseOnce sync.Once
-	var accountingRead atomic.Bool
+	var accountingRead, firstReadHeldToken atomic.Bool
+	var updateHits atomic.Int32
+	requestStarted, handlerJoined := false, false
 	releaseRefund := func() { releaseOnce.Do(func() { close(release) }) }
 	t.Cleanup(releaseRefund)
 	const updateHook = "test:pause-responses-token-refund"
@@ -60,20 +62,33 @@ func TestResponsesAccountingWaitsForAsynchronousTokenRefund(t *testing.T) {
 		if !ok || delta.SQL != "remain_quota + ?" || len(delta.Vars) != 1 || delta.Vars[0] != 1000 {
 			return
 		}
+		updateHits.Add(1)
 		enterOnce.Do(func() { close(entered) })
 		<-release
 	}))
 	require.NoError(t, model.DB.Callback().Query().After("gorm:query").Register(queryHook, func(tx *gorm.DB) {
 		if tx.Statement.Table == "tokens" && accountingRead.Load() {
+			if token, ok := tx.Statement.Dest.(*model.Token); ok && token.Id == fixture.token.Id && token.RemainQuota == 2000 && token.UsedQuota == 1000 {
+				firstReadHeldToken.Store(true)
+			}
 			releaseRefund()
 		}
 	}))
 	t.Cleanup(func() {
 		releaseRefund()
-		require.Eventually(t, func() bool {
-			var token model.Token
-			return model.DB.First(&token, fixture.token.Id).Error == nil && token.RemainQuota == 3000 && token.UsedQuota == 0
-		}, 3*time.Second, time.Millisecond, "refund must finish before restoring fixture globals")
+		if requestStarted && !handlerJoined {
+			select {
+			case <-fixture.httpDone:
+				handlerJoined = true
+			case <-time.After(3 * time.Second):
+				t.Error("HTTP handler did not join before refund cleanup")
+			}
+		}
+		fixture.closeAndWait(t)
+		// The handler has stopped producing work and Redis is disabled. Unlike
+		// balances or refunded=true, zero joins the actual finite pool callbacks.
+		require.Eventually(t, func() bool { return gopool.WorkerCount() == 0 }, 5*time.Second, time.Millisecond,
+			"refund callbacks must return before removing hooks or restoring fixture globals")
 		require.NoError(t, model.DB.Callback().Update().Remove(updateHook))
 		require.NoError(t, model.DB.Callback().Query().Remove(queryHook))
 	})
@@ -82,6 +97,7 @@ func TestResponsesAccountingWaitsForAsynchronousTokenRefund(t *testing.T) {
 	require.NoError(t, err)
 	request.Header.Set("Authorization", "Bearer sk-"+fixture.token.Key)
 	request.Header.Set("Content-Type", "application/json")
+	requestStarted = true
 	response, err := (&http.Client{Timeout: 3 * time.Second}).Do(request)
 	require.NoError(t, err)
 	_, err = io.Copy(io.Discard, response.Body)
@@ -90,6 +106,7 @@ func TestResponsesAccountingWaitsForAsynchronousTokenRefund(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, response.StatusCode)
 	select {
 	case <-fixture.httpDone:
+		handlerJoined = true
 	case <-time.After(3 * time.Second):
 		t.Fatal("HTTP request did not finish")
 	}
@@ -105,15 +122,17 @@ func TestResponsesAccountingWaitsForAsynchronousTokenRefund(t *testing.T) {
 	require.NoError(t, model.DB.First(&user, fixture.user.Id).Error)
 	require.Equal(t, 2000, token.RemainQuota, "handler completion precedes token refund")
 	require.Equal(t, 1000, token.UsedQuota)
-	require.Equal(t, 99000, user.Quota, "wallet refund must not publish before the token transaction commits")
-	require.Equal(t, 99000, user.QuotaPaid)
+	require.Equal(t, 100000, user.Quota, "official source credit precedes the independently paused token credit")
+	require.Equal(t, 100000, user.QuotaPaid)
 	require.Zero(t, user.QuotaBonus)
 	require.Zero(t, user.QuotaReward)
-	var owner model.BillingFinalization
-	require.NoError(t, model.DB.Where("user_id = ?", fixture.user.Id).First(&owner).Error)
-	require.Equal(t, model.BillingRefundPending, owner.State, "scheduled recovery is not committed refund completion")
-	require.Equal(t, 1000, owner.SourceHeld)
-	require.Equal(t, 1000, owner.TokenHeld)
+	var owners int64
+	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).
+		Where("user_id = ? AND request_id = ?", fixture.user.Id, "responses-http-billing").Count(&owners).Error)
+	require.Zero(t, owners, "official request Refund does not create a durable finalization owner")
 	accountingRead.Store(true)
 	assertResponsesWSAccounting(t, fixture, nil)
+	require.True(t, firstReadHeldToken.Load(), "the first accounting read must observe the paused original token row")
+	require.Equal(t, int32(1), updateHits.Load())
+	require.Eventually(t, func() bool { return gopool.WorkerCount() == 0 }, 5*time.Second, time.Millisecond)
 }

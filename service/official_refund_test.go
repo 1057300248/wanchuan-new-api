@@ -34,6 +34,9 @@ func (f *officialBlockedRefund) Refund() error {
 }
 
 func TestOfficialRequestRefundMarksBeforeSourceAndDoesNotRetry(t *testing.T) {
+	if runRefundFixtureChild(t) {
+		return
+	}
 	s := legacyRefundSession(t, "official-source-failure", 100, 70)
 	funding := &officialBlockedRefund{FundingSource: s.funding, entered: make(chan struct{}), release: make(chan struct{})}
 	s.funding = funding
@@ -67,6 +70,9 @@ func TestOfficialRequestRefundMarksBeforeSourceAndDoesNotRetry(t *testing.T) {
 }
 
 func TestOfficialRequestRefundTokenFailureKeepsSourceCredit(t *testing.T) {
+	if runRefundFixtureChild(t) {
+		return
+	}
 	s := legacyRefundSession(t, "official-token-failure", 100, 100)
 	fault := injectOfficialUpdateFault(t, "tokens", officialFailureBeforeSQL)
 	t.Cleanup(func() { waitRefundCallback(t, s); fault.disable() })
@@ -84,6 +90,9 @@ func TestOfficialRequestRefundTokenFailureKeepsSourceCredit(t *testing.T) {
 }
 
 func TestOfficialSubscriptionBaseFailureStillReturnsExtraAndToken(t *testing.T) {
+	if runRefundFixtureChild(t) {
+		return
+	}
 	truncate(t)
 	seedBonusUser(t, 31201, 0, 1000)
 	seedToken(t, 31202, 31201, "synthetic-original-refund-token", 850)
@@ -166,6 +175,9 @@ func TestOfficialTaskRefundIndependentStages(t *testing.T) {
 }
 
 func TestOfficialRefundPostCommitErrorsDoNotRollBack(t *testing.T) {
+	if runRefundFixtureChild(t) {
+		return
+	}
 	t.Run("request_token", func(t *testing.T) {
 		s := legacyRefundSession(t, "official-token-post-commit-error", 100, 100)
 		fault := injectOfficialUpdateFault(t, "tokens", officialFailureAfterCommit)

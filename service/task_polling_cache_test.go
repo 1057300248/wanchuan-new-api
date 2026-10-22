@@ -119,25 +119,34 @@ func TestTaskPollingDefersStaleChannelCache(t *testing.T) {
 						require.NoError(t, db.First(&persisted, task.ID).Error)
 						assert.Equal(t, model.TaskStatus(model.TaskStatusInProgress), persisted.Status)
 						assert.Equal(t, reserved, persisted.Quota)
-						// A genuinely deleted channel still fails and refunds once.
+						// Official handling of a genuinely deleted channel updates
+						// task status only. It does not refund precharged accounting.
+						privateBeforeMissing := persisted.PrivateData
 						replay := *task
 						require.NoError(t, db.Delete(&model.Channel{}, channelID).Error)
-						require.Error(t, poll())
-						task = &replay
-						require.Error(t, poll())
+						for range 2 {
+							err := poll()
+							if batch {
+								require.NoError(t, err, "batch returns the successful bulk status update result")
+							} else {
+								require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+							}
+							assertPollingFailureAccountingUnchanged(t, userID, tokenID, channelID, balance, tokenRemain, reserved, false)
+							task = &replay
+						}
 						require.NoError(t, db.First(&persisted, task.ID).Error)
 						assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), persisted.Status)
-						assert.Zero(t, persisted.Quota)
-						assert.Equal(t, tokenRemain+reserved, getTokenRemainQuota(t, tokenID))
+						assert.Equal(t, reserved, persisted.Quota)
+						assert.Equal(t, "100%", persisted.Progress)
+						assert.Equal(t, "Failed to get the channel information. Please contact the administrator", persisted.FailReason)
+						assert.Equal(t, privateBeforeMissing, persisted.PrivateData)
+						assert.Zero(t, persisted.FinishTime)
 						require.NoError(t, db.First(&subscription, subscriptionID).Error)
-						if funding == BillingSourceWallet {
-							assert.Equal(t, balance+reserved, getUserQuota(t, userID))
-							assert.EqualValues(t, reserved, subscription.AmountUsed)
-							require.NoError(t, db.Model(&model.BalanceLedger{}).Count(&ledgerRows).Error)
-							assert.EqualValues(t, 1, ledgerRows)
+						assert.Equal(t, int64(reserved), subscription.AmountUsed)
+						if batch {
+							assert.Equal(t, 1, adaptor.batchCalls)
 						} else {
-							assert.Equal(t, balance, getUserQuota(t, userID))
-							assert.Zero(t, subscription.AmountUsed)
+							assert.Equal(t, []string{upstreamID}, adaptor.fetchedTaskIDs())
 						}
 					})
 				}
