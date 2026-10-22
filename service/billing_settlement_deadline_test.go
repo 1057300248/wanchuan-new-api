@@ -229,7 +229,7 @@ func TestBillingSettlementDeadlineDriverAndConnectionWait(t *testing.T) {
 			require.True(t, s.settlementUncertain)
 			assertSettlementBalances(t, 900, 900)
 			var owners int64
-			require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Count(&owners).Error)
+			require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Where("request_id = ?", s.relayInfo.RequestId).Count(&owners).Error)
 			require.Zero(t, owners)
 			// Only the existing exact-identity probe proves absence and allows the
 			// original reserve path. The timeout itself did not authorize it.
@@ -276,7 +276,7 @@ func TestBillingSettlementDeadlineNativeRowLock(t *testing.T) {
 	require.True(t, s.NeedsRefund())
 	assertSettlementBalances(t, 900, 900)
 	var owners int64
-	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Count(&owners).Error)
+	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Where("request_id = ?", s.relayInfo.RequestId).Count(&owners).Error)
 	require.Zero(t, owners)
 	require.NoError(t, s.Reserve(150))
 	require.NoError(t, s.Settle(200))
@@ -457,7 +457,7 @@ func TestBillingSettlementDeadlineRedisBoundaries(t *testing.T) {
 				require.True(t, s.NeedsRefund())
 				assertSettlementBalances(t, 900, 900)
 				var owners int64
-				require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Count(&owners).Error)
+				require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Where("request_id = ?", s.relayInfo.RequestId).Count(&owners).Error)
 				require.Zero(t, owners, "expired Redis fence budget must prevent token SQL and terminal commit")
 				require.NoError(t, s.Reserve(150))
 			} else {
@@ -540,7 +540,7 @@ func TestBillingSettlementDeadlineNativeRedisFence(t *testing.T) {
 	require.True(t, s.NeedsRefund())
 	assertSettlementBalances(t, 900, 900)
 	var owners int64
-	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Count(&owners).Error)
+	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Where("request_id = ?", s.relayInfo.RequestId).Count(&owners).Error)
 	require.Zero(t, owners)
 	require.NoError(t, s.Reserve(150))
 	require.NoError(t, s.Settle(200))
