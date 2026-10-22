@@ -356,10 +356,10 @@ func recoverBillingRefund(ctx context.Context, requestID string, dueOnly bool) (
 			err = errors.Join(err, &billingRefundMetadataError{cause: noteErr})
 		}
 	}
-	// Cache invalidation is safe even with an uncertain COMMIT acknowledgement;
-	// unlike the historical helper, it cannot outlive this recovery's deadline.
+	// An independent bounded cache-only tail also covers an expired caller or
+	// uncertain COMMIT acknowledgement without changing the financial result.
 	if userID > 0 {
-		RefreshUserQuotaCacheWithContext(ctx, userID)
+		RefreshUserQuotaCacheAfterBillingFinalization(userID)
 	}
 	return completed && err == nil, err
 }

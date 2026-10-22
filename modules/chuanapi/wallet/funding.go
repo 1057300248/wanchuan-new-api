@@ -139,7 +139,7 @@ func (w *Funding) SettleInTx(tx *gorm.DB, delta int) (moneyport.SettlementResult
 }
 
 func (w *Funding) ApplySettlementResult(delta int, result moneyport.SettlementResult) {
-	model.RefreshUserQuotaCache(w.userID, result.TotalAfter)
+	model.RefreshUserQuotaCacheAfterBillingFinalization(w.userID)
 	if delta > 0 {
 		w.recordMoneyportDebitOperation(fmt.Sprintf("billing:settle:%s:%d", w.requestID, delta), result.DebitShares)
 	}
