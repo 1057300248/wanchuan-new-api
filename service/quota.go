@@ -485,31 +485,24 @@ func postConsumeQuotaWithWalletCommitPurpose(relayInfo *relaycommon.RelayInfo, q
 		if relayInfo.SubscriptionId == 0 {
 			return result, errors.New("subscription id is missing")
 		}
-		replayed := false
-		err = model.DB.Transaction(func(tx *gorm.DB) error {
-			var sourceErr error
-			if preConsumedQuota > 0 {
-				replayed, sourceErr = model.SettleSubscriptionPreConsumeTx(tx, relayInfo.RequestId, relayInfo.SubscriptionId, int64(preConsumedQuota)+int64(quota))
-			} else {
-				// Independent legacy fees are not a reservation settlement,
-				// but still must never charge another allowance after reset.
-				sourceErr = model.PostConsumeUserSubscriptionPeriodDeltaTx(tx, relayInfo.SubscriptionId, relayInfo.SubscriptionQuotaPeriod, int64(quota))
+		delta := int64(quota)
+		if delta != 0 {
+			if err := model.PostConsumeUserSubscriptionDelta(relayInfo.SubscriptionId, delta); err != nil {
+				return result, err
 			}
-			if sourceErr != nil {
-				return sourceErr
-			}
-			if replayed || relayInfo.IsPlayground {
-				return nil
-			}
-			return model.SettleTokenQuotaDeltaTx(tx, relayInfo.TokenId, relayInfo.UserId, relayInfo.TokenKey, -quota)
-		})
-		if err != nil {
-			return result, err
+			relayInfo.SubscriptionPostDelta += delta
 		}
 		result.FundingApplied = true
-		result.TokenApplied = !relayInfo.IsPlayground
-		if !replayed {
-			relayInfo.SubscriptionPostDelta += int64(quota)
+		if !relayInfo.IsPlayground {
+			if quota > 0 {
+				err = model.DecreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, quota)
+			} else {
+				err = model.IncreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, -quota)
+			}
+			if err != nil {
+				return result, err
+			}
+			result.TokenApplied = true
 		}
 
 	} else {

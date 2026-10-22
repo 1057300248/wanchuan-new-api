@@ -4,18 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
-	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"gorm.io/gorm"
 )
 
 func (s *BillingSession) durableTerminalSource() bool {
 	capability, ok := s.funding.(moneyport.HostBillingFinalizationSource)
-	return ok && capability.UsesHostBillingFinalization() && (s.funding.Source() == BillingSourceWallet || s.funding.Source() == BillingSourceSubscription)
+	return ok && capability.UsesHostBillingFinalization() && s.funding.Source() == BillingSourceWallet
 }
 
 // Authorization identity is captured before preconsume. The lazy initialization
@@ -68,22 +66,14 @@ func (s *BillingSession) terminalReceiptLocked() (model.BillingFinalization, err
 		}
 		r.SourceHeld = r.Paid + r.Bonus + r.Reward
 	} else {
-		// SubscriptionFunding owns the exact original receipt/period. Do not guess a
-		// period from today's subscription or mutable request metadata.
-		sub, ok := s.funding.(*SubscriptionFunding)
-		if !ok {
-			return r, fmt.Errorf("subscription source %T lacks original receipt", s.funding)
-		}
-		r.SourceHeld = sub.OutstandingReserve()
-		r.SubscriptionID = sub.subscriptionId
-		r.SubscriptionPeriod = sub.quotaPeriod
+		return r, errors.New("durable settlement is only used by wallet funding")
 	}
 	s.terminalReceipt = &r
 	return r, nil
 }
 
 func (s *BillingSession) settleDurableLocked(actual int) error {
-	if s.refundRequested || s.taskOwned {
+	if s.refunded || s.taskOwned {
 		return model.ErrBillingFinalized
 	}
 	receipt, err := s.terminalReceiptLocked()
@@ -101,9 +91,8 @@ func (s *BillingSession) settleDurableLocked(actual int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	applied, err := model.SettleBillingFinalization(ctx, receipt, actual, func(tx *gorm.DB) error {
-		// Wallet delta zero has no money operation; subscription delta zero MUST
-		// finalize its real source receipt, including when all token use is zero.
-		if delta != 0 || receipt.Source == BillingSourceSubscription {
+		// Wallet delta zero has no money operation.
+		if delta != 0 {
 			var err error
 			result, err = funding.SettleInTx(tx, delta)
 			if err != nil {
@@ -131,85 +120,8 @@ func (s *BillingSession) settleDurableLocked(actual int) error {
 	if applied && delta != 0 {
 		funding.ApplySettlementResult(delta, result)
 	}
-	if receipt.Source == BillingSourceSubscription {
-		s.relayInfo.SubscriptionPostDelta += int64(delta)
-	}
 	s.settled, s.fundingSettled = true, true
 	s.actualSettled = actual
-	return nil
-}
-
-func (s *BillingSession) requestDurableRefundLocked() (model.BillingFinalization, error) {
-	// Close admission at the pre-existing Refund decision even if the pending
-	// write's ACK is uncertain. This is NOT a successful-refund flag.
-	s.refundRequested = true
-	receipt, err := s.terminalReceiptLocked()
-	if err != nil {
-		return receipt, err
-	}
-	if receipt.RequestID == "" || len(receipt.RequestID) > 64 || strings.TrimSpace(receipt.RequestID) != receipt.RequestID {
-		return receipt, errors.New("invalid billing refund request identity")
-	}
-	// Do not let a short ID sliced from a large request buffer retain that
-	// buffer throughout an outage. The worker owns only this exact compact ID.
-	receipt.RequestID = strings.Clone(receipt.RequestID)
-	s.refundInFlight = true
-	// Freeze the original receipt before unlocking. No persistence, semaphore
-	// wait or background submission is allowed under the request mutex.
-	return receipt, nil
-}
-
-func (s *BillingSession) finishDurableRefund(state string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.refundInFlight = false
-	switch state {
-	case model.BillingRefunded:
-		s.refunded = true
-	case model.BillingTaskOwned:
-		s.taskOwned = true
-	case model.BillingSettled:
-		s.fundingSettled = true
-	}
-}
-
-// PersistTaskWithBillingOwner changes only the successful INSERT seam. Custom
-// BillingSettler implementations keep their original persistence contract, and
-// omitted result columns remain omitted without discarding inline response data.
-func PersistTaskWithBillingOwner(ctx context.Context, info *relaycommon.RelayInfo, task *model.Task, omitColumns ...string) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	s, ok := info.Billing.(*BillingSession)
-	if !ok || !s.durableTerminalSource() {
-		return task.InsertWithContext(ctx, omitColumns...)
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.refundRequested || s.refunded || s.settled && !s.taskOwned {
-		return model.ErrBillingFinalized
-	}
-	receipt, err := s.terminalReceiptLocked()
-	if err != nil {
-		return err
-	}
-	err = model.InsertTaskWithBillingFinalization(ctx, receipt, task, omitColumns...)
-	if err != nil {
-		// Read back only the original destination. Never insert another task or
-		// infer upstream success merely because the first COMMIT ACK was lost.
-		readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		if readErr := model.ReadCommittedBillingTask(readCtx, receipt, task); readErr != nil {
-			if !errors.Is(readErr, model.ErrBillingFinalized) {
-				// Preserve the existing failure/refund policy. This is correlation
-				// evidence, not an accepted task or a decision about another submit.
-				return &TaskPersistenceUncertainError{receipt: receipt, taskPublicID: task.TaskID, cause: err}
-			}
-			return err
-		}
-	}
-
-	s.taskOwned = true
 	return nil
 }
 
@@ -237,9 +149,7 @@ func (s *BillingSession) resolveSettlementBeforeReserveLocked() error {
 		s.taskOwned = true
 	case model.BillingRefunded:
 		s.refunded = true
-		s.refundRequested = true
 	case model.BillingRefundPending:
-		s.refundRequested = true
 	default:
 		return errors.New("unknown billing terminal owner")
 	}

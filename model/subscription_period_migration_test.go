@@ -128,8 +128,7 @@ ORDER BY n`, subTable, "idx_user_sub_active").Scan(&columns).Error)
 						_, sub := subscriptionPeriodSeed(t, db)
 						reserve, err := PreConsumeUserSubscription("fresh-period", sub.UserId, "fixture", 0, 100)
 						require.NoError(t, err)
-						assert.Positive(t, reserve.QuotaPeriod)
-						require.NoError(t, RefundSubscriptionPreConsume("fresh-period"))
+						assert.Zero(t, reserve.QuotaPeriod, "official receipts do not claim a private period")
 						return
 					}
 					var sub UserSubscription
@@ -147,12 +146,9 @@ ORDER BY n`, subTable, "idx_user_sub_active").Scan(&columns).Error)
 					assert.EqualValues(t, 200, record.PreConsumed)
 					assert.Equal(t, "consumed", record.Status)
 					assert.EqualValues(t, now-50, record.CreatedAt)
-					require.ErrorIs(t, RefundSubscriptionPreConsume("legacy-period"), ErrSubscriptionPeriodUnknown)
-					require.ErrorIs(t, SettleSubscriptionPreConsume("legacy-period", sub.Id, 100), ErrSubscriptionPeriodUnknown)
 					fresh, err := PreConsumeUserSubscription("after-upgrade", sub.UserId, "fixture", 0, 100)
 					require.NoError(t, err)
-					assert.Positive(t, fresh.QuotaPeriod)
-					require.ErrorIs(t, RefundSubscriptionPreConsume("legacy-period"), ErrSubscriptionPeriodUnknown)
+					assert.Zero(t, fresh.QuotaPeriod, "official receipts do not claim a private period")
 					require.NoError(t, db.First(&sub, 92).Error)
 					assert.EqualValues(t, 450, sub.AmountUsed)
 					// Repeated startup never guesses legacy ownership, nor rewinds a new epoch.
@@ -164,9 +160,9 @@ ORDER BY n`, subTable, "idx_user_sub_active").Scan(&columns).Error)
 					assert.Zero(t, record.QuotaPeriod)
 					duplicate := SubscriptionPreConsumeRecord{RequestId: "legacy-period", UserId: 93, UserSubscriptionId: 92}
 					require.Error(t, db.Create(&duplicate).Error, "request uniqueness must survive the upgrade")
-					require.NoError(t, RefundSubscriptionPreConsume("after-upgrade"))
+					// No automatic refund/migration is applied to historical receipts.
 					require.NoError(t, db.First(&sub, 92).Error)
-					assert.EqualValues(t, 350, sub.AmountUsed)
+					assert.EqualValues(t, 450, sub.AmountUsed)
 				})
 			}
 		})

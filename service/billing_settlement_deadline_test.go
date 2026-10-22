@@ -285,7 +285,7 @@ func TestBillingSettlementDeadlineNativeRowLock(t *testing.T) {
 }
 
 func TestBillingSettlementDeadlineCommitEvidence(t *testing.T) {
-	for _, source := range []string{BillingSourceWallet, BillingSourceSubscription} {
+	for _, source := range []string{BillingSourceWallet} {
 		t.Run(source, func(t *testing.T) {
 			for _, mode := range []string{"rolled_back", "committed_lost_ack"} {
 				t.Run(mode, func(t *testing.T) {
@@ -310,24 +310,19 @@ func TestBillingSettlementDeadlineCommitEvidence(t *testing.T) {
 					if mode == "rolled_back" {
 						expectedWallet = 900
 					}
-					if source == BillingSourceSubscription {
-						expectedWallet = 1000
-					}
+
 					if mode == "rolled_back" {
 						assertSettlementBalances(t, expectedWallet, 900)
-						if source == BillingSourceSubscription {
-							require.EqualValues(t, 600, getSubscriptionUsed(t, 93203))
-						}
+
 						require.NoError(t, s.Reserve(150), "the probe, not the timeout, proves no terminal owner")
 						require.NoError(t, s.Settle(200))
 					} else {
 						assertSettlementBalances(t, expectedWallet, 800)
-						useRefundDispatcher(t, 2, 1, time.Second)
+						require.ErrorIs(t, s.Reserve(250), model.ErrBillingFinalized, "normal settlement readback, not Refund, proves the committed owner")
+						require.Equal(t, 200, s.actualSettled)
 						s.Refund(testGinContext(t))
 						waitRefundCallback(t, s)
-						require.False(t, s.NeedsRefund(), "existing settled owner forbids a refund")
-						require.ErrorIs(t, s.Reserve(250), model.ErrBillingFinalized)
-						require.Equal(t, 200, s.actualSettled)
+						require.False(t, s.NeedsRefund(), "successful normal settlement has now been proved locally")
 					}
 					require.NoError(t, s.Settle(200))
 					require.Error(t, s.Settle(201))
@@ -336,17 +331,7 @@ func TestBillingSettlementDeadlineCommitEvidence(t *testing.T) {
 						expectedHeld = 150
 					}
 					expectedWallet = 800
-					if source == BillingSourceSubscription {
-						expectedWallet = 1000
-						require.EqualValues(t, 700, getSubscriptionUsed(t, 93203))
-						var receipt model.SubscriptionPreConsumeRecord
-						require.NoError(t, model.DB.First(&receipt, "request_id = ?", s.relayInfo.RequestId).Error)
-						require.Equal(t, "settled", receipt.Status)
-						require.EqualValues(t, 1, receipt.QuotaPeriod)
-						require.EqualValues(t, 100, receipt.PreConsumed)
-						require.EqualValues(t, expectedHeld, receipt.ReservedAmount)
-						require.EqualValues(t, 200, receipt.SettledAmount)
-					}
+
 					assertSettlementBalances(t, expectedWallet, 800)
 					var owner model.BillingFinalization
 					require.NoError(t, model.DB.First(&owner, "request_id = ?", s.relayInfo.RequestId).Error)
@@ -359,10 +344,7 @@ func TestBillingSettlementDeadlineCommitEvidence(t *testing.T) {
 					require.Equal(t, expectedHeld, owner.TokenHeld)
 					require.Equal(t, expectedHeld, owner.PreConsumed)
 					require.Equal(t, model.BillingTokenFingerprint("synthetic-settlement-deadline-token"), owner.TokenFingerprint)
-					if source == BillingSourceSubscription {
-						require.Equal(t, 93203, owner.SubscriptionID)
-						require.EqualValues(t, 1, owner.SubscriptionPeriod)
-					}
+
 				})
 			}
 		})
@@ -546,4 +528,41 @@ func TestBillingSettlementDeadlineNativeRedisFence(t *testing.T) {
 	require.NoError(t, s.Settle(200))
 	require.NoError(t, s.Settle(200))
 	assertSettlementBalances(t, 800, 800)
+}
+
+// Official Refund deliberately does not consult a durable terminal owner.
+// Preserve this inherited partial-credit window, without changing normal Settle.
+func TestOfficialRefundBeforeLostACKReadbackKeepsOfficialSequence(t *testing.T) {
+	s, cancelClient := settlementDeadlineSession(t, "official-refund-before-readback", true, BillingSourceWallet)
+	cancelClient()
+	pool := installSettlementDeadlinePool(t, "committed_lost_ack")
+	result := make(chan error, 1)
+	joined := false
+	go func() { result <- s.Settle(200) }()
+	defer func() {
+		close(pool.released)
+		if !joined {
+			<-result
+		}
+		waitRefundCallback(t, s)
+	}()
+	err := awaitSettlementResult(t, result)
+	joined = true
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.True(t, s.settlementUncertain)
+	require.True(t, s.NeedsRefund())
+	assertSettlementBalances(t, 800, 800)
+	var before model.BillingFinalization
+	require.NoError(t, model.DB.Where("request_id = ?", s.relayInfo.RequestId).First(&before).Error)
+	require.Equal(t, model.BillingSettled, before.State)
+	require.Equal(t, 200, before.ActualQuota)
+	s.Refund(testGinContext(t))
+	waitRefundCallback(t, s)
+	require.False(t, s.NeedsRefund(), "official flag closes after scheduling regardless of readback")
+	assertSettlementBalances(t, 900, 900)
+	var after model.BillingFinalization
+	require.NoError(t, model.DB.Where("request_id = ?", before.RequestID).First(&after).Error)
+	require.Equal(t, before, after, "official Refund does not rewrite the normal settlement evidence")
+	require.ErrorIs(t, s.Settle(200), model.ErrBillingFinalized)
+	t.Log("KNOWN OFFICIAL SEQUENCE LIMITATION: successful lost-ACK settlement can be followed by returning the initial100 hold; durable normal owner is not a refund guard")
 }

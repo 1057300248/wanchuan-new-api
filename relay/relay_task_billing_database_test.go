@@ -1,14 +1,11 @@
 package relay
 
 import (
-	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,6 +23,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -41,60 +39,9 @@ func waitRelayTaskRefund(t *testing.T, refunded <-chan struct{}, billing relayco
 	case <-time.After(5 * time.Second):
 		t.Fatal("real task refund did not reach token credit")
 	}
-	// This concrete built-in session stays pending until RecoverBillingRefund
-	// returns, including its post-commit cache invalidation. The mutex-protected
-	// state supplies the happens-before edge missing from database observations.
-	require.Eventually(t, func() bool { return !billing.NeedsRefund() }, 5*time.Second, time.Millisecond, "real task refund callback did not finish")
-}
-
-// Pause the actual second SQL COMMIT acknowledgement: the first commits the
-// refund intent, the second commits source+token+terminal state. This exposes
-// committed balances while the asynchronous callback has not completed yet.
-type taskRefundCommitPool struct {
-	gorm.ConnPool
-	commits   atomic.Int32
-	committed chan struct{}
-	release   <-chan struct{}
-}
-
-func (p *taskRefundCommitPool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
-	tx, err := p.ConnPool.(gorm.TxBeginner).BeginTx(ctx, opts)
-	if err != nil {
-		return nil, err
-	}
-	return &taskRefundCommitTx{Tx: tx, pool: p}, nil
-}
-
-type taskRefundCommitTx struct {
-	*sql.Tx
-	pool *taskRefundCommitPool
-}
-
-func (tx *taskRefundCommitTx) Commit() error {
-	if err := tx.Tx.Commit(); err != nil {
-		return err
-	}
-	if tx.pool.commits.Add(1) == 2 {
-		close(tx.pool.committed)
-		<-tx.pool.release
-	}
-	return nil
-}
-
-// Release the controlled post-COMMIT window only when the completion wait
-// actually observes the still-pending session. A token/counter-only wait cannot
-// release this barrier and deterministically returns before session completion.
-type taskRefundCompletionProbe struct {
-	relaycommon.BillingSettler
-	release func()
-}
-
-func (p taskRefundCompletionProbe) NeedsRefund() bool {
-	pending := p.BillingSettler.NeedsRefund()
-	if pending {
-		p.release()
-	}
-	return pending
+	// Official refunded means scheduled, not financially completed. This serial
+	// fixture joins the actual gopool callbacks before restoring DB/cache globals.
+	require.Eventually(t, func() bool { return gopool.WorkerCount() == 0 }, 5*time.Second, time.Millisecond)
 }
 
 // Real BillingSession + three-account ledger + token rows. The upstream checks
@@ -255,51 +202,12 @@ export function extractUsage(){return {seconds:2};}
 				}
 			}))
 			t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove(callback)) })
-			billing := info.Billing
-			release := func() {}
-			var committed <-chan struct{}
-			if tc.perCall {
-				original := model.DB
-				gate, reached := make(chan struct{}), make(chan struct{})
-				var once sync.Once
-				release = func() { once.Do(func() { close(gate) }) }
-				pool := &taskRefundCommitPool{ConnPool: original.ConnPool, committed: reached, release: gate}
-				wrapped := original.Session(&gorm.Session{NewDB: true, Context: context.Background()})
-				config := *wrapped.Config
-				wrapped.Config = &config
-				wrapped.Config.ConnPool, wrapped.Statement.ConnPool = pool, pool
-				model.DB = wrapped
-				t.Cleanup(func() { model.DB = original })
-				committed = reached
-				billing = taskRefundCompletionProbe{BillingSettler: info.Billing, release: release}
-			}
-			// Registered last: join the successful callback before removing hooks,
-			// restoring globals/DB, or closing the SQL pool, including Fatal paths.
 			t.Cleanup(func() {
-				release()
-				require.Eventually(t, func() bool { return !info.Billing.NeedsRefund() }, 5*time.Second, time.Millisecond, "refund callback must finish before fixture cleanup")
+				require.Eventually(t, func() bool { return gopool.WorkerCount() == 0 }, 5*time.Second, time.Millisecond)
 			})
 			info.Billing.Refund(c)
-			if committed != nil {
-				select {
-				case <-committed:
-				case <-time.After(5 * time.Second):
-					t.Fatal("controlled refund COMMIT did not finish")
-				}
-				var visibleUser model.User
-				var visibleToken model.Token
-				var owner model.BillingFinalization
-				require.NoError(t, db.First(&visibleUser, user.Id).Error)
-				require.NoError(t, db.First(&visibleToken, token.Id).Error)
-				require.NoError(t, db.First(&owner, "request_id = ?", info.RequestId).Error)
-				require.Equal(t, user.Quota, visibleUser.Quota)
-				require.Equal(t, tc.token, visibleToken.RemainQuota)
-				require.Zero(t, visibleToken.UsedQuota)
-				require.Equal(t, model.BillingRefunded, owner.State)
-				require.True(t, info.Billing.NeedsRefund(), "committed counters/receipt do not join the post-commit callback")
-			}
-			waitRelayTaskRefund(t, refunded, billing)
-			require.False(t, info.Billing.NeedsRefund(), "refund completion wait must join the callback, not only observe counters")
+			waitRelayTaskRefund(t, refunded, info.Billing)
+			require.False(t, info.Billing.NeedsRefund(), "official Refund closes the local flag when scheduled")
 			info.Billing.Refund(c)
 			var finalUser model.User
 			var finalToken model.Token

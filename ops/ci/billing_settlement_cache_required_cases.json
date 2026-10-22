@@ -1,30 +1,33 @@
 {
-  "pin": "81ceca02644931a9933aeaaaffbe7325ffc39725",
-  "tree": "7439572f5f2db059afda2ae2ac160e60bba55455",
-  "database_suite": {
-    "label": "finalization-cache",
-    "package": "model",
-    "top": "TestBillingFinalizationCacheDatabaseMatrix",
-    "dsn_env": {
-      "mysql": "TEST_FINALIZATION_CACHE_MYSQL_DSN",
-      "postgres": "TEST_FINALIZATION_CACHE_POSTGRES_DSN"
-    },
-    "database": "repair_finalization_cache",
+  "pin": "efd192eb7caf2b0eec7243334ef4aba29c11aa44",
+  "tree": "01d413d8bcb789bed923b9cbb68eb192bbd0c3df",
+  "policy": "official-rc46-refund-with-released-093-wallet-adapter",
+  "normal_database_suite": {
+    "label": "request-finalization-service",
+    "inventory": "billing_finalization_required_cases.json",
     "required_leaf_suffixes": [
-      "canceled_after_commit",
-      "deadline_after_commit",
-      "lost_commit_ack",
-      "transient_delete_failure",
-      "exhausted_then_terminal_replay"
+      "settlement_deadline_driver_pool/driver",
+      "settlement_deadline_driver_pool/connection",
+      "settlement_deadline_commit_evidence/wallet/rolled_back",
+      "settlement_deadline_commit_evidence/wallet/committed_lost_ack",
+      "settlement_deadline_redis/precommit_fence",
+      "settlement_deadline_redis/postcommit_cache",
+      "settlement_deadline_redis/zero_delta_cache",
+      "settlement_deadline_redis/terminal_replay_cache",
+      "settlement_deadline_redis/live_redis_error",
+      "settlement_cancelled_client"
     ],
-    "expected_passing_test_events": 7
+    "native_required_leaf_suffixes": [
+      "settlement_deadline_row_lock"
+    ]
   },
-  "sqlite_only_suite": {
-    "label": "finalization-cache-stalled-redis",
-    "package": "model",
-    "top": "TestBillingFinalizationCacheStalledRedisIsBounded",
+  "normal_token_suite": {
+    "label": "official-token-refund",
+    "inventory": "billing_refund_followup_required_cases.json",
     "required_tests": [
-      "TestBillingFinalizationCacheStalledRedisIsBounded"
+      "TestBillingTokenContextPreservesFence",
+      "TestBillingTokenRedisErrorRetainsLegacyLiveContextPolicy",
+      "TestBillingTokenExpiredDeadlineBeforeNotificationRollsBackSource"
     ]
   },
   "redis_suite": {
@@ -36,5 +39,6 @@
     ],
     "address_env": "TEST_SETTLEMENT_DEADLINE_REDIS_ADDR",
     "disposable_env": "TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE"
-  }
+  },
+  "scope": "Retain normal settlement driver/pool/row-lock, commit evidence, cache tails and actual Redis fence. Retire canceled durable-refund cache compensation reports and their dedicated database, not these normal settlement contracts."
 }

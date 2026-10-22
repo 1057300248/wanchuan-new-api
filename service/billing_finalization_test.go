@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -33,85 +33,17 @@ func legacyRefundSession(t *testing.T, request string, sourceHold, tokenHold int
 	return &BillingSession{relayInfo: &relaycommon.RelayInfo{UserId: 31201, TokenId: 31202, TokenKey: "synthetic-original-refund-token", RequestId: request}, funding: funding, preConsumedQuota: sourceHold, tokenConsumed: tokenHold}
 }
 
-func waitRefundCallback(t *testing.T, s *BillingSession) {
+func waitRefundCallback(t *testing.T, _ *BillingSession) {
 	t.Helper()
-	require.Eventually(t, func() bool { s.mu.Lock(); defer s.mu.Unlock(); return !s.refundInFlight }, time.Second*3, time.Millisecond)
-}
-
-func TestPolicyPreservingRefundSourceFailureNeverRestoresTokenAlone(t *testing.T) {
-	s := legacyRefundSession(t, "original-refund-fault", 100, 100)
-	reached := make(chan struct{})
-	var once sync.Once
-	name := "fail_original_refund_source"
-	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(name, func(tx *gorm.DB) {
-		if tx.Statement.Table == "users" {
-			once.Do(func() { close(reached) })
-			tx.AddError(errors.New("synthetic wallet refund failure"))
-		}
-	}))
-	t.Cleanup(func() { model.DB.Callback().Update().Remove(name) })
-	s.Refund(testGinContext(t))
-	select {
-	case <-reached:
-	case <-time.After(3 * time.Second):
-		t.Fatal("source failure not reached")
-	}
-	require.True(t, s.NeedsRefund(), "a failed source refund is not successful completion")
-	waitRefundCallback(t, s)
-	assertUserBalances(t, 31201, 0, 900, 0)
-	var token model.Token
-	require.NoError(t, model.DB.First(&token, 31202).Error)
-	require.Equal(t, 900, token.RemainQuota)
-	require.NoError(t, model.DB.Callback().Update().Remove(name))
-	// Discard the live session: only committed intent drives restart recovery.
-	// Make this failed receipt due explicitly; operational backoff must not be
-	// bypassed merely because the underlying source has recovered.
-	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Where("request_id = ?", "original-refund-fault").Update("next_retry_at", 0).Error)
-	n, err := model.RecoverPendingBillingRefunds(context.Background(), 100)
-	require.NoError(t, err)
-	require.Equal(t, 1, n)
-	require.NoError(t, model.RecoverBillingRefund(context.Background(), "original-refund-fault"))
-	s.Refund(testGinContext(t))
-	waitRefundCallback(t, s)
-	require.False(t, s.NeedsRefund())
-	assertUserBalances(t, 31201, 0, 1000, 0)
-	require.NoError(t, model.DB.First(&token, 31202).Error)
-	require.Equal(t, 1000, token.RemainQuota)
+	// This serial package fixture starts no runtime worker. gopool decrements
+	// WorkerCount only after the queued callback has returned; unlike refunded,
+	// this joins source, independent token and any nested cache callbacks.
+	require.Eventually(t, func() bool { return gopool.WorkerCount() == 0 }, 5*time.Second, time.Millisecond)
 }
 
 func TestPolicyPreservingRefundSeparateHeldAmounts(t *testing.T) {
 	s := legacyRefundSession(t, "separate-source-token", 100, 70)
 	s.Refund(testGinContext(t))
-	waitRefundCallback(t, s)
-	require.False(t, s.NeedsRefund())
-	assertUserBalances(t, 31201, 0, 1000, 0)
-	var token model.Token
-	require.NoError(t, model.DB.First(&token, 31202).Error)
-	require.Equal(t, 1000, token.RemainQuota)
-}
-
-func TestPolicyPreservingRefundIntentFailureClosesLocalAdmission(t *testing.T) {
-	s := legacyRefundSession(t, "pending-write-fails", 100, 100)
-	name := "fail_pending_intent"
-	var failOnce sync.Once
-	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(name, func(tx *gorm.DB) {
-		if tx.Statement.Table == "billing_finalizations" {
-			failOnce.Do(func() { tx.AddError(errors.New("pending write failed")) })
-		}
-	}))
-	t.Cleanup(func() { model.DB.Callback().Update().Remove(name) })
-	retrying, releaseRetry := pauseRefundIntentRetry(t)
-	useRefundDispatcher(t, 2, 1, time.Second)
-	s.Refund(testGinContext(t))
-	awaitRefundSignal(t, retrying)
-	require.True(t, s.NeedsRefund())
-	require.ErrorIs(t, s.Reserve(200), model.ErrBillingFinalized)
-	require.ErrorIs(t, s.Settle(100), model.ErrBillingFinalized)
-	var n int64
-	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Count(&n).Error)
-	require.Zero(t, n)
-	assertUserBalances(t, 31201, 0, 900, 0)
-	releaseRetry()
 	waitRefundCallback(t, s)
 	require.False(t, s.NeedsRefund())
 	assertUserBalances(t, 31201, 0, 1000, 0)
@@ -206,8 +138,7 @@ func TestPolicyPreservingExtensionCapabilityBoundary(t *testing.T) {
 	t.Run("custom_billing_settler_insert", func(t *testing.T) {
 		truncate(t)
 		task := &model.Task{TaskID: "custom-settler-task", UserId: 991, Data: []byte(`{"inline":true}`)}
-		info := &relaycommon.RelayInfo{Billing: alternateBillingSettler{}}
-		require.NoError(t, PersistTaskWithBillingOwner(context.Background(), info, task, "data"))
+		require.NoError(t, task.InsertWithContext(context.Background(), "data"))
 		require.Positive(t, task.ID)
 		require.NotEmpty(t, task.Data)
 		var stored model.Task
@@ -264,7 +195,7 @@ func TestPolicyPreservingRollbackProbeFailureDoesNotReserve(t *testing.T) {
 }
 
 func TestPolicyPreservingRefundIndependentViolationFee(t *testing.T) {
-	for _, order := range []string{"fee_before_worker", "worker_before_fee", "unmarked_same_key_replay", "contradictory_marker"} {
+	for _, order := range []string{"fee_before_refund", "refund_before_fee"} {
 		t.Run(order, func(t *testing.T) {
 			s := legacyRefundSession(t, "refund-independent-fee", 100, 100)
 			s.relayInfo.Billing = s
@@ -279,32 +210,15 @@ func TestPolicyPreservingRefundIndependentViolationFee(t *testing.T) {
 			settings.ViolationDeductionEnabled = true
 			settings.ViolationDeductionAmount = 50 / common.QuotaPerUnit
 			t.Cleanup(func() { settings.ViolationDeductionEnabled = oldEnabled; settings.ViolationDeductionAmount = oldAmount })
-			s.mu.Lock()
-			receipt, err := s.terminalReceiptLocked()
-			s.mu.Unlock()
-			require.NoError(t, err)
-			_, err = model.PersistBillingRefund(context.Background(), receipt)
-			require.NoError(t, err)
-			if order == "worker_before_fee" {
-				require.NoError(t, model.RecoverBillingRefund(context.Background(), receipt.RequestID))
-			}
-			if order == "unmarked_same_key_replay" {
-				require.NoError(t, PostConsumeQuota(s.relayInfo, 50, 0, false))
+			if order == "refund_before_fee" {
+				s.Refund(testGinContext(t))
+				waitRefundCallback(t, s)
 			}
 			feeErr := types.NewErrorWithStatusCode(errors.New("synthetic fee condition"), types.ErrorCodeViolationFeeGrokCSAM, 400)
 			require.True(t, ChargeViolationFeeIfNeeded(testGinContext(t), s.relayInfo, feeErr))
-			if order == "contradictory_marker" {
-				require.NoError(t, model.DB.Model(&model.BalanceLedger{}).Where("idempotency_key = ?", "billing:settle:"+receipt.RequestID+":50").Update("metadata", `{"independent_fee":"other"}`).Error)
-			}
-			err = model.RecoverBillingRefund(context.Background(), receipt.RequestID)
+			s.Refund(testGinContext(t))
+			waitRefundCallback(t, s)
 			expected := 950
-			if order == "unmarked_same_key_replay" || order == "contradictory_marker" {
-				require.Error(t, err)
-				expected = 850
-			} else {
-				require.NoError(t, err)
-				require.NoError(t, model.RecoverBillingRefund(context.Background(), receipt.RequestID))
-			}
 			assertUserBalances(t, 31201, 0, expected, 0)
 			var token model.Token
 			require.NoError(t, model.DB.First(&token, 31202).Error)
@@ -376,9 +290,7 @@ func TestPolicyPreservingRealtimeIncrementAndTerminal(t *testing.T) {
 				waitRefundCallback(t, s)
 			}
 			require.False(t, s.NeedsRefund())
-			if terminal != "final_settle" {
-				require.NoError(t, model.RecoverBillingRefund(context.Background(), info.RequestId))
-			}
+
 			assertUserBalances(t, 31201, 0, expected, 0)
 			var token model.Token
 			require.NoError(t, model.DB.First(&token, 31202).Error)

@@ -115,16 +115,12 @@ func (app *applicationRuntime) Shutdown(server *http.Server) bool {
 		}
 	}
 
-	// Client/root cancellation must not preempt refunds or the final metric
-	// flush. Each phase is bounded and completed before closing its resources.
+	// Client/root cancellation must not preempt the final metric flush.
+	// Official gopool refunds have no custom durable drain/retry group.
 	cleanup, finish := context.WithTimeout(context.Background(), 30*time.Second)
 	defer finish()
 	done := make(chan error, 1)
 	go func() {
-		if err := service.DrainBillingBackground(cleanup); err != nil {
-			done <- err
-			return
-		}
 		if err := perfmetrics.Drain(cleanup); err != nil {
 			done <- err
 			return

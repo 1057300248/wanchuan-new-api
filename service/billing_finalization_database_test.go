@@ -1,8 +1,6 @@
 package service
 
 import (
-	"context"
-	"fmt"
 	"os"
 	"testing"
 
@@ -18,8 +16,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// Dedicated fresh databases only, separate from the model matrix. The worker
-// selects all pending intents, so a shared generic test DSN is NOT safe.
+// Dedicated fresh databases only, separate from the model matrix.
+// This matrix covers retained normal settlement and official refund sequencing.
 func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 	for _, dialect := range []struct {
 		name common.DatabaseType
@@ -64,27 +62,23 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 			}
 			require.NoError(t, db.Raw(q).Scan(&version).Error)
 			t.Logf("terminal session matrix: %s %s", dialect.name, version)
-			t.Run("source_failure_restart", TestPolicyPreservingRefundSourceFailureNeverRestoresTokenAlone)
 			t.Run("separate_held_amounts", TestPolicyPreservingRefundSeparateHeldAmounts)
-			t.Run("intent_failure_admission", TestPolicyPreservingRefundIntentFailureClosesLocalAdmission)
-			t.Run("intent_deadline_cancelled_request", TestBillingRefundIntentDeadlineSurvivesRequestCancellation)
-			t.Run("intent_bounded_admission", TestBillingRefundIntentSaturationAndSealedGroup)
-			t.Run("intent_active_job_capacity", TestBillingRefundIntentActiveJobSaturatesWithoutExtraDatabaseWork)
-			t.Run("intent_shutdown_gap", TestBillingRefundIntentShutdownKeepsAbsentDecisionUnrecoverable)
-			t.Run("intent_drain_retry", TestBillingRefundIntentDrainFinishesAcceptedRetry)
-			t.Run("intent_retry_terminal_owner", TestBillingRefundIntentRetryHonorsCommittedTerminalOwner)
-			t.Run("intent_released_session", TestBillingRefundIntentOutlivesReleasedSessionWithoutRetainingRequest)
+			t.Run("official_request_source_failure", TestOfficialRequestRefundMarksBeforeSourceAndDoesNotRetry)
+			t.Run("official_request_token_failure", TestOfficialRequestRefundTokenFailureKeepsSourceCredit)
+			t.Run("official_subscription_three_attempts", TestOfficialSubscriptionBaseFailureStillReturnsExtraAndToken)
+			t.Run("official_task_independent_steps", TestOfficialTaskRefundIndependentStages)
+			t.Run("official_post_commit_errors", TestOfficialRefundPostCommitErrorsDoNotRollBack)
+			t.Run("historical_pending_read_only", TestOfficialTaskHistoricalPendingIsReadOnly)
+			t.Run("inherited_093_allocation_limits", TestOfficial093WalletSnapshotLimitationsRemainExplicit)
 			t.Run("commit_boundaries", TestPolicyPreservingTerminalCommitBoundaries)
 			t.Run("settlement_deadline_driver_pool", TestBillingSettlementDeadlineDriverAndConnectionWait)
 			if dialect.name != common.DatabaseTypeSQLite {
 				t.Run("settlement_deadline_row_lock", TestBillingSettlementDeadlineNativeRowLock)
 			}
 			t.Run("settlement_deadline_commit_evidence", TestBillingSettlementDeadlineCommitEvidence)
+			t.Run("official_refund_before_lost_ack_readback", TestOfficialRefundBeforeLostACKReadbackKeepsOfficialSequence)
 			t.Run("settlement_deadline_redis", TestBillingSettlementDeadlineRedisBoundaries)
 			t.Run("settlement_cancelled_client", TestBillingSettlementSurvivesCancelledClient)
-			t.Run("task_commit_readback_outage", TestTaskPersistenceUncertainCommitAndReadbackOutage)
-			t.Run("task_reconciliation_identity", TestTaskPersistenceReconciliationRequiresOriginalIdentity)
-			t.Run("refund_commit_boundaries", TestPolicyPreservingRefundCommitBoundaries)
 			t.Run("extension_capability", TestPolicyPreservingExtensionCapabilityBoundary)
 			t.Run("zero_delta_replacement", TestPolicyPreservingZeroTokenDeltaRetainsReplacementCounter)
 			t.Run("probe_failure", TestPolicyPreservingRollbackProbeFailureDoesNotReserve)
@@ -92,7 +86,7 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 			t.Run("realtime_increment_terminal", TestPolicyPreservingRealtimeIncrementAndTerminal)
 			t.Run("failed_settle_reserve_refund", TestPolicyPreservingFailedSettlementCanReserveThenRefund)
 			t.Run("legacy_final_more_less", TestPolicyPreservingSettlementFinalMoreLessAndReplay)
-			for _, scenario := range []string{"partial_more", "partial_less", "trusted", "playground", "unlimited", "subscription_zero_delta", "subscription_zero_delta_replaced_token", "subscription_refund", "subscription_reset_refund", "task_handoff", "subscription_task_handoff"} {
+			for _, scenario := range []string{"partial_more", "partial_less", "trusted", "playground", "unlimited", "subscription_zero_delta", "subscription_zero_delta_replaced_token"} {
 				t.Run("real_session_"+scenario, func(t *testing.T) {
 					truncate(t)
 					seedBonusEligibleModel(t, "terminal-real-model", boolPtr(true))
@@ -113,7 +107,7 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 						info.TokenUnlimited = true
 						require.NoError(t, db.Model(&model.Token{}).Where("id = ?", 31202).Update("unlimited_quota", true).Error)
 					}
-					isSub := scenario == "subscription_zero_delta" || scenario == "subscription_zero_delta_replaced_token" || scenario == "subscription_refund" || scenario == "subscription_reset_refund" || scenario == "subscription_task_handoff"
+					isSub := scenario == "subscription_zero_delta" || scenario == "subscription_zero_delta_replaced_token" || scenario == "subscription_refund" || scenario == "subscription_reset_refund"
 					if isSub {
 						plan := &model.SubscriptionPlan{Title: "terminal session plan", TotalAmount: 1000, QuotaResetPeriod: model.SubscriptionResetNever}
 						require.NoError(t, db.Session(&gorm.Session{SkipHooks: true}).Create(plan).Error)
@@ -143,35 +137,11 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 					if scenario == "subscription_zero_delta_replaced_token" {
 						require.NoError(t, db.Model(&model.Token{}).Where("id = ?", 31202).Updates(map[string]any{"key": "synthetic-replaced-zero-delta", "remain_quota": 777, "used_quota": 23}).Error)
 					}
-					if scenario == "subscription_refund" || scenario == "subscription_reset_refund" {
-						require.NoError(t, s.Reserve(200))
-						if scenario == "subscription_reset_refund" {
-							require.NoError(t, db.Model(&model.UserSubscription{}).Where("id = ?", 31203).Updates(map[string]any{"quota_period": 2, "amount_used": 100}).Error)
-						}
-						s.Refund(c)
-						waitRefundCallback(t, s)
-						require.False(t, s.NeedsRefund())
-						expected := int64(500)
-						if scenario == "subscription_reset_refund" {
-							expected = 100
-						}
-						require.Equal(t, expected, getSubscriptionUsed(t, 31203))
-						return
-					}
-					if scenario == "task_handoff" || scenario == "subscription_task_handoff" {
-						task := &model.Task{TaskID: fmt.Sprintf("task-%s", scenario), UserId: 31201, PrivateData: model.TaskPrivateData{RequestId: info.RequestId, BillingSource: info.BillingSource, TokenId: 31202, SubscriptionId: info.SubscriptionId, SubscriptionQuotaPeriod: info.SubscriptionQuotaPeriod, WalletDebit: s.WalletDebitShares()}}
-						PrepareSubmittedTaskBilling(info, task, actual)
-						require.NoError(t, PersistTaskWithBillingOwner(context.Background(), info, task))
-						s.Refund(c)
-						require.False(t, s.NeedsRefund())
-						require.NoError(t, RecoverTaskSettlement(context.Background(), task))
-						require.NoError(t, RecoverTaskSettlement(context.Background(), task))
-					} else {
-						require.NoError(t, s.Settle(actual))
-						require.NoError(t, s.Settle(actual))
-						s.Refund(c)
-						require.False(t, s.NeedsRefund())
-					}
+
+					require.NoError(t, s.Settle(actual))
+					require.NoError(t, s.Settle(actual))
+					s.Refund(c)
+					require.False(t, s.NeedsRefund())
 					var token model.Token
 					require.NoError(t, db.First(&token, 31202).Error)
 					expectedToken := 1000 - actual
@@ -186,7 +156,7 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 						require.Equal(t, int64(500+actual), getSubscriptionUsed(t, 31203))
 						var r model.SubscriptionPreConsumeRecord
 						require.NoError(t, db.First(&r, "request_id = ?", info.RequestId).Error)
-						require.Equal(t, "settled", r.Status)
+						require.Equal(t, "consumed", r.Status, "official normal settlement does not close the base preconsume receipt")
 					} else {
 						var u model.User
 						require.NoError(t, db.First(&u, 31201).Error)

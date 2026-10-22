@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
@@ -26,11 +25,10 @@ const (
 
 var ErrBillingFinalized = errors.New("request billing already has a different terminal owner")
 
-// BillingFinalization is created at the EXISTING refund/settlement/task-insert
-// decision, not before upstream work. It does not change refund eligibility,
-// reservation policy, pricing or retries. Only refund_pending is recoverable.
-// A crash before this row commits still requires source-ledger reconciliation.
-// Never delete terminal rows while their original financial receipts survive.
+// BillingFinalization remains the normal wallet-settlement receipt. Historical
+// refund/task ownership rows and columns are retained for read-only inspection;
+// no refund or task-owner writer/recovery loop consumes them in the official path.
+// Never delete historical rows while their original financial receipts survive.
 type BillingFinalization struct {
 	RequestID string `gorm:"type:varchar(64);primaryKey;index:idx_billing_refund_due,priority:3"`
 	UserID    int    `gorm:"not null;index"`
@@ -53,7 +51,7 @@ type BillingFinalization struct {
 	TaskID             int64  `gorm:"not null"`
 	TaskPublicID       string `gorm:"type:varchar(191);not null"`
 	// Operational metadata never changes refund eligibility or money ownership.
-	// Defaults keep pre-metadata pending rows eligible after an additive upgrade.
+	// Historical retry fields remain readable; no current worker schedules them.
 	Attempts        int    `gorm:"not null"` // Failed recovery attempts, retained after recovery.
 	FirstErrorCode  string `gorm:"type:varchar(48);not null;default:''"`
 	FirstErrorClass string `gorm:"type:varchar(24);not null;default:''"`
@@ -158,15 +156,8 @@ func claimBillingFinalizationTx(tx *gorm.DB, receipt BillingFinalization) (*Bill
 // source locks, never from a current balance. Terminal-owner replays bypass it:
 // successful settlement/task processing legitimately changes the source later.
 func validateBillingSourceTx(tx *gorm.DB, r *BillingFinalization) error {
-	if r.Source == "subscription" {
-		record, _, err := lockSubscriptionReservationTx(tx, r.RequestID, r.SubscriptionID)
-		if err != nil {
-			return err
-		}
-		if record.UserId != r.UserID || record.ReservedAmount != int64(r.SourceHeld) || record.QuotaPeriod != r.SubscriptionPeriod || record.Status != "consumed" {
-			return billingRefundReviewError("source_evidence", "subscription held evidence mismatch")
-		}
-		return nil
+	if r.Source != "wallet" {
+		return billingRefundReviewError("source_evidence", "only wallet normal settlement uses billing finalization")
 	}
 	var user User
 	if err := lockForUpdate(tx).First(&user, r.UserID).Error; err != nil {
@@ -242,32 +233,6 @@ func validateBillingSourceTx(tx *gorm.DB, r *BillingFinalization) error {
 	return nil
 }
 
-// PersistBillingRefund records an already-made refund decision. A failed return
-// may be a lost commit ACK: callers must keep their local admission closed and
-// retry this exact identity, not permit another reserve/settlement.
-func PersistBillingRefund(ctx context.Context, receipt BillingFinalization) (string, error) {
-	var state string
-	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		r, err := claimBillingFinalizationTx(tx, receipt)
-		if err != nil {
-			return err
-		}
-		state = r.State
-		if state == BillingRefundPending || state == BillingRefunded {
-			return nil
-		}
-		if state != "building" {
-			return ErrBillingFinalized
-		}
-		if err = validateBillingSourceTx(tx, r); err != nil {
-			return err
-		}
-		state = BillingRefundPending
-		return tx.Model(r).Updates(map[string]any{"state": state, "next_retry_at": common.GetTimestamp()}).Error
-	})
-	return state, err
-}
-
 // ApplyBillingTokenDeltaTx restores/debits ONLY the original authorized token.
 // Soft deletion does not revive authentication; hard deletion leaves no counter.
 func ApplyBillingTokenDeltaTx(tx *gorm.DB, r *BillingFinalization, delta int) error {
@@ -290,109 +255,6 @@ func ApplyBillingTokenDeltaTx(tx *gorm.DB, r *BillingFinalization, delta int) er
 		return billingRefundReviewError("identity_mismatch", "original billing token identity mismatch")
 	}
 	return ApplyTokenQuotaDeltaTx(tx.Unscoped(), token.Id, token.Key, delta)
-}
-
-// RecoverBillingRefund explicitly retries the exact existing pending owner. An
-// operator/service retry may bypass scheduling, but never financial validation.
-func RecoverBillingRefund(ctx context.Context, requestID string) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	_, err := recoverBillingRefund(ctx, requestID, false)
-	return err
-}
-
-func recoverBillingRefund(ctx context.Context, requestID string, dueOnly bool) (bool, error) {
-	var userID int
-	completed := false
-	// Keep time inside the outer attempt budget for persisting failure metadata.
-	workCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	err := DB.WithContext(workCtx).Transaction(func(tx *gorm.DB) error {
-		var r BillingFinalization
-		if err := lockForUpdate(tx).Where("request_id = ?", requestID).First(&r).Error; err != nil {
-			return err
-		}
-		if dueOnly && r.State == BillingRefundPending && r.NextRetryAt > common.GetTimestamp() {
-			return nil
-		}
-		if err := r.validate(); err != nil {
-			return err
-		}
-		userID = r.UserID
-		if r.State == BillingRefunded {
-			completed = true
-			return nil
-		}
-		if r.State != BillingRefundPending {
-			return ErrBillingFinalized
-		}
-		if err := validateBillingSourceTx(tx, &r); err != nil {
-			return err
-		}
-		if r.Source == "subscription" {
-			if err := RefundSubscriptionPreConsumeForRequestTx(tx, r.RequestID, r.UserID, r.SubscriptionID, int64(r.SourceHeld)); err != nil {
-				return err
-			}
-		} else if r.SourceHeld > 0 {
-			result, err := CreditQuotaSharesTx(tx, LedgerEntry{UserId: r.UserID, Delta: r.SourceHeld, Reason: LedgerReasonBillingRefund, ReferenceType: "relay", ReferenceId: r.RequestID, RequestId: r.RequestID, IdempotencyKey: "billing:refund:" + r.RequestID}, r.Shares())
-			if err != nil {
-				return err
-			}
-			if result.Replayed {
-				return billingRefundReviewError("refund_conflict", "refund operation exists without committed finalization")
-			}
-		}
-		if err := ApplyBillingTokenDeltaTx(tx, &r, r.TokenHeld); err != nil {
-			return err
-		}
-		completed = true
-		return tx.Model(&r).Updates(map[string]any{"state": BillingRefunded, "next_retry_at": 0, "last_attempt_at": common.GetTimestamp()}).Error
-	})
-	cancel()
-	if err != nil {
-		noteCtx, stop := context.WithTimeout(ctx, 2*time.Second)
-		noteErr := recordBillingRefundFailure(noteCtx, requestID, err, common.GetTimestamp())
-		stop()
-		if noteErr != nil {
-			err = errors.Join(err, &billingRefundMetadataError{cause: noteErr})
-		}
-	}
-	// An independent bounded cache-only tail also covers an expired caller or
-	// uncertain COMMIT acknowledgement without changing the financial result.
-	if userID > 0 {
-		RefreshUserQuotaCacheAfterBillingFinalization(userID)
-	}
-	return completed && err == nil, err
-}
-
-// RecoverPendingBillingRefunds selects only due, already-authorized intents.
-// Poison entries move out of the due prefix, never out of the monetary queue.
-func RecoverPendingBillingRefunds(ctx context.Context, limit int) (int, error) {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	if limit <= 0 || limit > 1000 {
-		limit = 100
-	}
-	var rows []BillingFinalization
-	if err := DB.WithContext(ctx).Select("request_id").Where("state = ? AND next_retry_at <= ?", BillingRefundPending, common.GetTimestamp()).Order("next_retry_at, request_id").Limit(limit).Find(&rows).Error; err != nil {
-		return 0, err
-	}
-	completed := 0
-	var errs []error
-	for _, r := range rows {
-		if err := ctx.Err(); err != nil {
-			errs = append(errs, err)
-			break
-		}
-		attemptCtx, stop := context.WithTimeout(ctx, 5*time.Second)
-		done, err := recoverBillingRefund(attemptCtx, r.RequestID, true)
-		stop()
-		if err != nil {
-			errs = append(errs, fmt.Errorf("refund %s: %w", r.RequestID, err))
-		} else if done {
-			completed++
-		}
-	}
-	return completed, errors.Join(errs...)
 }
 
 // SettleBillingFinalization runs the existing source/token arithmetic under one
@@ -429,68 +291,6 @@ func SettleBillingFinalization(ctx context.Context, receipt BillingFinalization,
 	return applied && err == nil, err
 }
 
-// InsertTaskWithBillingFinalization transfers ownership, not money. The task
-// INSERT and destination-bound owner commit together. Task workers subsequently
-// use their existing task/source/token order and never lock this row.
-func InsertTaskWithBillingFinalization(ctx context.Context, receipt BillingFinalization, task *Task, omitColumns ...string) error {
-	if task == nil || task.TaskID == "" || len(task.TaskID) > 191 {
-		return errors.New("invalid billing task destination")
-	}
-	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		r, err := claimBillingFinalizationTx(tx, receipt)
-		if err != nil {
-			return err
-		}
-		if r.State == BillingTaskOwned {
-			if r.TaskPublicID != task.TaskID || task.ID != 0 && task.ID != r.TaskID {
-				return errors.New("billing task destination mismatch")
-			}
-			var stored Task
-			if err = lockForUpdate(tx).First(&stored, r.TaskID).Error; err != nil {
-				return err
-			}
-			if !billingTaskIdentityMatches(r, &stored) {
-				return errors.New("billing task identity mismatch")
-			}
-			// Do not replace inline Data with the omitted persisted value. Quota may
-			// already have evolved in a worker; it is not original-held evidence.
-			task.ID = stored.ID
-			return nil
-		}
-		if r.State != "building" {
-			return ErrBillingFinalized
-		}
-		if !billingTaskIdentityMatches(r, task) || task.Quota != r.PreConsumed || !task.SettlementPending || task.PrivateData.PendingSettlement == nil || task.PrivateData.PendingSettlement.Phase != "submit" {
-			return errors.New("billing task initial receipt mismatch")
-		}
-		if r.Source == "wallet" {
-			var paid, bonus, reward int
-			for _, s := range task.PrivateData.WalletDebit {
-				switch s.Account {
-				case AccountPaid:
-					paid += s.Amount
-				case AccountBonus:
-					bonus += s.Amount
-				case AccountReward:
-					reward += s.Amount
-				default:
-					return errors.New("invalid task wallet account")
-				}
-			}
-			if paid != r.Paid || bonus != r.Bonus || reward != r.Reward {
-				return errors.New("billing task wallet shares mismatch")
-			}
-		}
-		if err = validateBillingSourceTx(tx, r); err != nil {
-			return err
-		}
-		if err = tx.Omit(omitColumns...).Create(task).Error; err != nil {
-			return err
-		}
-		return tx.Model(r).Updates(map[string]any{"state": BillingTaskOwned, "task_id": task.ID, "task_public_id": task.TaskID}).Error
-	})
-}
-
 func billingTaskIdentityMatches(r *BillingFinalization, t *Task) bool {
 	return t.TaskID != "" && t.UserId == r.UserID && t.PrivateData.EffectiveRequestID() == r.RequestID && t.PrivateData.BillingSource == r.Source && t.PrivateData.TokenId == r.TokenID && t.PrivateData.SubscriptionId == r.SubscriptionID && t.PrivateData.SubscriptionQuotaPeriod == r.SubscriptionPeriod
 }
@@ -517,32 +317,6 @@ func ProbeBillingFinalization(ctx context.Context, receipt BillingFinalization) 
 		return nil, nil
 	}
 	return stored, err
-}
-
-// ReadCommittedBillingTask proves the SAME destination after lost INSERT ACK.
-// An absent owner rolls back its private probe; it must not insert a second task.
-func ReadCommittedBillingTask(ctx context.Context, receipt BillingFinalization, task *Task) error {
-	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		r, err := claimBillingFinalizationTx(tx, receipt)
-		if err != nil {
-			return err
-		}
-		if r.State != BillingTaskOwned {
-			return ErrBillingFinalized
-		}
-		if r.TaskPublicID != task.TaskID || task.ID != 0 && task.ID != r.TaskID {
-			return errors.New("billing task destination mismatch")
-		}
-		var stored Task
-		if err = lockForUpdate(tx).First(&stored, r.TaskID).Error; err != nil {
-			return err
-		}
-		if !billingTaskIdentityMatches(r, &stored) {
-			return errors.New("billing task identity mismatch")
-		}
-		task.ID = stored.ID
-		return nil
-	})
 }
 
 // Independent fees retain their legacy key/signature and carry explicit new
