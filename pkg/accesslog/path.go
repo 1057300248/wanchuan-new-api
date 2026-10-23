@@ -46,16 +46,28 @@ func credentialQuery(rawQuery string) string {
 		if err != nil {
 			return "[REDACTED]"
 		}
-		normalizedName := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(decodedName, "-", ""), "_", ""))
-		switch normalizedName {
-		case "key", "apikey", "xapikey", "xgoogapikey", "mjapisecret",
-			"token", "apitoken", "accesstoken", "refreshtoken", "bearertoken",
-			"authorization", "auth", "bearer", "password", "passwd",
-			"secret", "secretkey", "clientsecret", "apisecret",
-			"session", "sessionid", "sid", "signature", "sig", "sign",
-			"xamzsignature", "xamzcredential", "xamzsecuritytoken":
+		if IsSensitiveURLQueryKey(decodedName) {
 			fields[i] = name + "=[REDACTED]"
 		}
 	}
 	return strings.Join(fields, "&")
+}
+
+// IsSensitiveURLQueryKey classifies decoded query names for access and relay logs.
+// Callers sanitize a log copy; this must not change the original request.
+func IsSensitiveURLQueryKey(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	normalized = strings.ReplaceAll(strings.ReplaceAll(normalized, "-", ""), "_", "")
+	switch normalized {
+	case "key", "apikey", "xapikey", "xgoogapikey", "mjapisecret",
+		"token", "apitoken", "accesstoken", "refreshtoken", "bearertoken",
+		"authorization", "auth", "bearer", "password", "passwd",
+		"secret", "secretkey", "clientsecret", "apisecret",
+		"session", "sessionid", "sid", "signature", "sig", "sign",
+		"awsaccesskeyid", "xamzsignature", "xamzcredential", "xamzsecuritytoken":
+		return true
+	}
+	return strings.Contains(normalized, "token") ||
+		strings.Contains(normalized, "secret") ||
+		strings.Contains(normalized, "signature")
 }

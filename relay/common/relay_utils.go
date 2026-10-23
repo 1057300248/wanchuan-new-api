@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/pkg/accesslog"
 
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
@@ -54,7 +55,7 @@ func SanitizeURLForLog(rawURL string) string {
 
 	changed := false
 	for key := range query {
-		if isSensitiveURLQueryKey(key) {
+		if IsSensitiveURLQueryKey(key) {
 			query.Set(key, "***masked***")
 			changed = true
 		}
@@ -67,35 +68,14 @@ func SanitizeURLForLog(rawURL string) string {
 	return parsedURL.String()
 }
 
+// IsSensitiveURLQueryKey shares the pure access-log credential-name policy.
+func IsSensitiveURLQueryKey(key string) bool {
+	return accesslog.IsSensitiveURLQueryKey(key)
+}
+
+// Retain the original package-local declaration as a compatibility wrapper.
 func isSensitiveURLQueryKey(key string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(key))
-	switch normalized {
-	case "key",
-		"api_key",
-		"api-key",
-		"apikey",
-		"x-api-key",
-		"access_token",
-		"refresh_token",
-		"id_token",
-		"token",
-		"authorization",
-		"auth",
-		"client_secret",
-		"secret",
-		"password",
-		"passwd",
-		"signature",
-		"sig",
-		"awsaccesskeyid",
-		"x-amz-credential",
-		"x-amz-security-token",
-		"x-amz-signature":
-		return true
-	}
-	return strings.Contains(normalized, "token") ||
-		strings.Contains(normalized, "secret") ||
-		strings.Contains(normalized, "signature")
+	return IsSensitiveURLQueryKey(key)
 }
 
 func GetAPIVersion(c *gin.Context) string {
