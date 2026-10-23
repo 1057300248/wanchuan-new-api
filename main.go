@@ -65,6 +65,11 @@ func main() {
 	requests := lifecycle.NewGate()
 	requestContext, cancelRequests := context.WithCancel(context.Background())
 	defer cancelRequests()
+	// Capture shutdown signals before any owned worker can claim work. The
+	// buffered signal is handled by the existing shutdown select below.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(quit)
 	customDrainProven := false
 	startTime := time.Now()
 	kitutil.SetLogging(common.SysLog, func(message string) {
@@ -178,7 +183,11 @@ func main() {
 	// schedules and executes them. Master-only execution and the UpdateTask
 	// switch are enforced inside the runner and each handler's Enabled().
 	controller.RegisterScheduledSystemTasks()
-	service.StartSystemTaskRunner()
+	if !customWorkers.Go("system-task-runner", service.RunSystemTaskRunner) {
+		exitCode = 1
+		common.SysError("system task runner admission failed")
+		return
+	}
 
 	if os.Getenv("BATCH_UPDATE_ENABLED") == "true" {
 		common.BatchUpdateEnabled = true
@@ -243,11 +252,6 @@ func main() {
 			return requestContext
 		},
 	}
-
-	// Install shutdown handling before the listener can admit any request.
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(quit)
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

@@ -13,8 +13,10 @@ import (
 )
 
 // drainCustomRuntime owns only HTTP admissions and the explicitly registered
-// custom workers. Existing upstream background services retain their upstream
-// startup/lifetime contracts; this must not be presented as joining those jobs.
+// workers, including the system-task runner and its handler/heartbeat children.
+// Other upstream background services retain their upstream startup/lifetime
+// contracts; this must not be presented as joining those jobs. A blocked
+// global-DB call can outlive cancellation and must keep the join unproven.
 // A true result proves these two owned domains can no longer use SQL pools.
 func drainCustomRuntime(ctx context.Context, forceTimeout time.Duration, server *http.Server, requests *lifecycle.Gate, workers *lifecycle.Group, cancelRequests context.CancelFunc) (bool, error) {
 	requests.BeginDrain()

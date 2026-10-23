@@ -2,14 +2,17 @@ package service
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/lifecycle"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // withSystemTaskRegistry swaps the package registry for the given handlers for
@@ -231,4 +234,207 @@ func TestEnqueueSystemTaskReportsCreatedAndExistingActive(t *testing.T) {
 	require.True(t, created)
 	require.NotNil(t, second)
 	assert.NotEqual(t, first.TaskID, second.TaskID)
+}
+
+func TestOwnedSystemTaskRunnerCanceledBeforeStartDoesNotClaim(t *testing.T) {
+	truncate(t)
+	wasMaster := common.IsMasterNode
+	common.IsMasterNode = true
+	t.Cleanup(func() { common.IsMasterNode = wasMaster })
+	handler := &stubScheduledHandler{taskType: "owned_precanceled"}
+	withSystemTaskRegistry(t, handler)
+	task, err := model.CreateSystemTask(handler.Type(), nil, nil)
+	require.NoError(t, err)
+	schedule, stop := context.WithCancel(context.Background())
+	stop()
+	RunSystemTaskRunner(schedule, context.Background())
+	reloaded, err := model.GetSystemTaskByTaskID(task.TaskID)
+	require.NoError(t, err)
+	require.NotNil(t, reloaded)
+	assert.Equal(t, model.SystemTaskStatusPending, reloaded.Status)
+	var locks int64
+	require.NoError(t, model.DB.Model(&model.SystemTaskLock{}).Count(&locks).Error)
+	assert.Zero(t, locks)
+}
+
+func TestOwnedSystemTaskRunnerCancellationAndTerminalJoin(t *testing.T) {
+	for _, mode := range []string{"graceful", "forced", "panic"} {
+		t.Run(mode, func(t *testing.T) {
+			truncate(t)
+			wasMaster := common.IsMasterNode
+			common.IsMasterNode = true
+			t.Cleanup(func() { common.IsMasterNode = wasMaster })
+			started := make(chan context.Context, 1)
+			finished := make(chan error, 1)
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			handler := &stubScheduledHandler{
+				taskType: "owned_" + mode,
+				onRun: func(ctx context.Context, task *model.SystemTask, runnerID string) {
+					started <- ctx
+					select {
+					case <-release:
+					case <-ctx.Done():
+					}
+					if mode == "panic" {
+						panic("private value must not enter terminal error")
+					}
+					status := model.SystemTaskStatusSucceeded
+					if ctx.Err() != nil {
+						status = model.SystemTaskStatusFailed
+					}
+					finished <- model.FinishSystemTask(task.TaskID, runnerID, status, nil, "")
+				},
+			}
+			withSystemTaskRegistry(t, handler)
+			first, err := model.CreateSystemTask(handler.Type(), nil, nil)
+			require.NoError(t, err)
+			laterID, err := model.GenerateSystemTaskID()
+			require.NoError(t, err)
+			later := &model.SystemTask{TaskID: laterID, Type: handler.Type(), Status: model.SystemTaskStatusPending}
+			require.NoError(t, model.DB.Create(later).Error)
+			workers := lifecycle.NewGroup()
+			t.Cleanup(func() {
+				workers.BeginDrain()
+				workers.ForceCancel()
+				releaseOnce.Do(func() { close(release) })
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				require.NoError(t, workers.Wait(ctx), "fixture must join before restoring the registry or database")
+			})
+			require.True(t, workers.Go("system-task-runner", RunSystemTaskRunner))
+			var handlerContext context.Context
+			select {
+			case handlerContext = <-started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("owned runner did not dispatch the pending task")
+			}
+			workers.BeginDrain()
+			assert.NoError(t, handlerContext.Err(), "quiescing must not cancel accepted work")
+			waitCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			assert.ErrorIs(t, workers.Wait(waitCtx), context.DeadlineExceeded, "an active handler is not a completed join")
+			cancel()
+			if mode == "forced" {
+				workers.ForceCancel()
+			} else {
+				releaseOnce.Do(func() { close(release) })
+			}
+			joinCtx, joinCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer joinCancel()
+			require.NoError(t, workers.Wait(joinCtx))
+			if mode != "panic" {
+				require.NoError(t, <-finished, "handler terminal write must succeed independently of the runner join")
+			}
+			reloaded, err := model.GetSystemTaskByTaskID(first.TaskID)
+			require.NoError(t, err)
+			require.NotNil(t, reloaded)
+			if mode == "graceful" {
+				assert.Equal(t, model.SystemTaskStatusSucceeded, reloaded.Status)
+			} else {
+				assert.Equal(t, model.SystemTaskStatusFailed, reloaded.Status)
+			}
+			if mode == "panic" {
+				assert.Equal(t, "system task handler panicked", reloaded.Error)
+			}
+			pending, err := model.GetSystemTaskByTaskID(later.TaskID)
+			require.NoError(t, err)
+			require.NotNil(t, pending)
+			assert.Equal(t, model.SystemTaskStatusPending, pending.Status, "draining must not claim the next task")
+			var locks int64
+			require.NoError(t, model.DB.Model(&model.SystemTaskLock{}).Where("task_id = ?", first.TaskID).Count(&locks).Error)
+			assert.Zero(t, locks, "terminal handler must release its lease")
+		})
+	}
+}
+
+func TestOwnedSystemTaskRunnerWaitsForInFlightHeartbeatReturn(t *testing.T) {
+	truncate(t)
+	wasMaster := common.IsMasterNode
+	common.IsMasterNode = true
+	t.Cleanup(func() { common.IsMasterNode = wasMaster })
+	started := make(chan context.Context, 1)
+	finished := make(chan error, 1)
+	releaseHandler, releaseHeartbeat := make(chan struct{}), make(chan struct{})
+	heartbeatEntered := make(chan struct{})
+	var handlerOnce, heartbeatOnce, enteredOnce sync.Once
+	handler := &stubScheduledHandler{
+		taskType: "owned_heartbeat_join",
+		onRun: func(ctx context.Context, task *model.SystemTask, runnerID string) {
+			started <- ctx
+			select {
+			case <-releaseHandler:
+			case <-ctx.Done():
+			}
+			finished <- model.FinishSystemTask(task.TaskID, runnerID, model.SystemTaskStatusSucceeded, nil, "")
+		},
+	}
+	withSystemTaskRegistry(t, handler)
+	task, err := model.CreateSystemTask(handler.Type(), nil, nil)
+	require.NoError(t, err)
+	workers := lifecycle.NewGroup()
+	const callback = "owned_runtime_heartbeat_return"
+	t.Cleanup(func() {
+		workers.BeginDrain()
+		workers.ForceCancel()
+		handlerOnce.Do(func() { close(releaseHandler) })
+		heartbeatOnce.Do(func() { close(releaseHeartbeat) })
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		require.NoError(t, workers.Wait(ctx), "release and join before removing the callback or restoring database state")
+		require.NoError(t, model.DB.Callback().Update().Remove(callback))
+	})
+	// Run the real 20-second heartbeat. Block after its SQL transaction releases
+	// the fixture's only connection, but before RenewSystemTaskLock returns.
+	// This models a global-DB call that cancellation cannot itself join.
+	require.NoError(t, model.DB.Callback().Update().After("gorm:commit_or_rollback_transaction").Register(callback, func(tx *gorm.DB) {
+		if tx.Statement.Table == "system_task_locks" && tx.Error == nil && tx.RowsAffected == 1 {
+			enteredOnce.Do(func() { close(heartbeatEntered) })
+			<-releaseHeartbeat
+		}
+	}))
+	require.True(t, workers.Go("system-task-runner", RunSystemTaskRunner))
+	var handlerContext context.Context
+	select {
+	case handlerContext = <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("owned runner did not dispatch heartbeat fixture")
+	}
+	var originalLock model.SystemTaskLock
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&originalLock).Error)
+	workers.BeginDrain()
+	select {
+	case <-heartbeatEntered:
+	case <-time.After(30 * time.Second):
+		t.Fatal("real lease heartbeat did not renew while accepted work was draining")
+	}
+	assert.NoError(t, handlerContext.Err())
+	var renewedLock model.SystemTaskLock
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&renewedLock).Error)
+	assert.Greater(t, renewedLock.LockedUntil, originalLock.LockedUntil)
+	handlerOnce.Do(func() { close(releaseHandler) })
+	select {
+	case err := <-finished:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler terminal write did not finish")
+	}
+	for _, force := range []bool{false, true} {
+		if force {
+			workers.ForceCancel()
+		}
+		waitCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		assert.ErrorIs(t, workers.Wait(waitCtx), context.DeadlineExceeded, "even a terminal handler cannot prove join while its heartbeat call is still in flight")
+		cancel()
+	}
+	heartbeatOnce.Do(func() { close(releaseHeartbeat) })
+	joinCtx, joinCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer joinCancel()
+	require.NoError(t, workers.Wait(joinCtx))
+	reloaded, err := model.GetSystemTaskByTaskID(task.TaskID)
+	require.NoError(t, err)
+	require.NotNil(t, reloaded)
+	assert.Equal(t, model.SystemTaskStatusSucceeded, reloaded.Status)
+	var locks int64
+	require.NoError(t, model.DB.Model(&model.SystemTaskLock{}).Where("task_id = ?", task.TaskID).Count(&locks).Error)
+	assert.Zero(t, locks)
 }
