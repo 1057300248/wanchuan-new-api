@@ -116,6 +116,7 @@ func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 	require.NoError(t, database.Create(&model.User{Id: 7, Username: "realtime-owner", Quota: 100, QuotaPaid: 100, UsedQuota: 1000, RequestCount: 1}).Error)
 	token := &model.Token{UserId: 7, Key: "realtime-token", RemainQuota: 1000, UsedQuota: 1000}
 	require.NoError(t, database.Create(token).Error)
+	// Known already-accounted synthetic charge, with its original source receipt.
 	task := &model.Task{
 		TaskID: "public-task", Platform: constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeGemini)),
 		UserId: 7, ChannelId: channel.Id, Quota: 1000,
@@ -123,7 +124,9 @@ func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 		PrivateData: model.TaskPrivateData{
 			Key: "channel-key", UpstreamTaskID: base64.RawURLEncoding.EncodeToString([]byte("operations/task-1")),
 			TokenId: token.Id, BillingSource: service.BillingSourceWallet,
-			WalletDebit: []model.LedgerShare{{Account: model.AccountBonus, Amount: 70}, {Account: model.AccountReward, Amount: 30}, {Account: model.AccountPaid, Amount: 900}},
+			RequestId: "realtime-refund-request", FinancialVersion: 2, SubmissionAccounted: true,
+			TokenFingerprint: model.BillingTokenFingerprint(token.Key),
+			WalletDebit:      []model.LedgerShare{{Account: model.AccountBonus, Amount: 70}, {Account: model.AccountReward, Amount: 30}, {Account: model.AccountPaid, Amount: 900}},
 		},
 	}
 	require.NoError(t, database.Create(task).Error)
@@ -135,6 +138,9 @@ func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), stored.Status)
 	assert.Equal(t, "blocked by safety", stored.FailReason)
 	assert.Zero(t, stored.Quota, "the failed task is refunded")
+	assert.Empty(t, stored.PrivateData.FinancialReviewReason)
+	assert.Nil(t, stored.PrivateData.FinancialIntent)
+	assert.NotEmpty(t, stored.PrivateData.FinancialOperationID)
 	var user model.User
 	require.NoError(t, database.First(&user, 7).Error)
 	assert.Equal(t, 1100, user.Quota)

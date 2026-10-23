@@ -242,12 +242,13 @@ func (f *initialReservationHTTPFixture) requireRestored(t *testing.T, refunded b
 func TestRelayInitialReservationCommitACKRecoveryHTTP(t *testing.T) {
 	for _, source := range []string{service.BillingSourceWallet, service.BillingSourceSubscription} {
 		t.Run(source, func(t *testing.T) {
+			sourceNode := t.Name()
 			for _, rollback := range []bool{false, true} {
 				t.Run(fmt.Sprintf("rollback=%t", rollback), func(t *testing.T) {
 					if os.Getenv("TEST_POSTGRES_DSN") == "" {
 						t.Skip("TEST_POSTGRES_DSN not configured; isolated PostgreSQL required")
 					}
-					if runStalePaymentFixtureChild(t) {
+					if runStalePaymentFixtureChild(t, sourceNode) {
 						return
 					}
 					f := newInitialReservationHTTPFixture(t, source)

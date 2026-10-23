@@ -250,6 +250,7 @@ func TestUpdateWithStatus_Win(t *testing.T) {
 
 	task := &Task{
 		TaskID:   "task_cas_win",
+		UserId:   7,
 		Status:   TaskStatusInProgress,
 		Progress: "50%",
 		Data:     json.RawMessage(`{}`),
@@ -273,6 +274,7 @@ func TestUpdateWithStatus_Lose(t *testing.T) {
 
 	task := &Task{
 		TaskID: "task_cas_lose",
+		UserId: 7,
 		Status: TaskStatusFailure,
 		Data:   json.RawMessage(`{}`),
 	}
@@ -293,6 +295,7 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 
 	task := &Task{
 		TaskID: "task_cas_race",
+		UserId: 7,
 		Status: TaskStatusInProgress,
 		Quota:  1000,
 		Data:   json.RawMessage(`{}`),
@@ -301,6 +304,7 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 
 	const goroutines = 5
 	wins := make([]bool, goroutines)
+	errs := make([]error, goroutines)
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 
@@ -311,6 +315,7 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 			*t = Task{
 				ID:       task.ID,
 				TaskID:   task.TaskID,
+				UserId:   task.UserId,
 				Status:   TaskStatusSuccess,
 				Progress: "100%",
 				Quota:    task.Quota,
@@ -319,12 +324,16 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 			t.CreatedAt = task.CreatedAt
 			t.UpdatedAt = time.Now().Unix()
 			won, err := t.UpdateWithStatus(TaskStatusInProgress)
+			errs[idx] = err
 			if err == nil {
 				wins[idx] = won
 			}
 		}(i)
 	}
 	wg.Wait()
+	for i, err := range errs {
+		require.NoError(t, err, "CAS candidate %d", i)
+	}
 
 	winCount := 0
 	for _, w := range wins {
@@ -340,6 +349,7 @@ func TestUpdateWithStatus_PersistsPluginStateAndPollFailures(t *testing.T) {
 
 	task := &Task{
 		TaskID: "task_cas_plugin_state",
+		UserId: 7,
 		Status: TaskStatusInProgress,
 		Data:   json.RawMessage(`{}`),
 		PrivateData: TaskPrivateData{

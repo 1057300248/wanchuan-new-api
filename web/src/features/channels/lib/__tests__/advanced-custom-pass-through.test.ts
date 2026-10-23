@@ -163,92 +163,71 @@ describe('advanced custom per-route pass-through', () => {
     )
   })
 
-  test('a legacy channel-level flag moves onto native routes and survives an unrelated edit', () => {
-    const channel = createChannelFixture({
-      setting: JSON.stringify({ pass_through_body_enabled: true }),
-      settings: JSON.stringify({
-        advanced_custom: {
-          advanced_routes: [
-            nativeChatRoute,
-            nativeEmbeddingsRoute,
-            claudeConverterRoute,
-            modelListRoute,
-          ],
-        },
-      }),
-    })
+  test.each([undefined, false, true])(
+    'keeps route flag %s independent across a global enable, save, reopen and disable',
+    (routeFlag) => {
+      const channel = createChannelFixture({
+        setting: JSON.stringify({
+          pass_through_body_enabled: true,
+          model_owned_by: 'fixture-owner',
+        }),
+        settings: JSON.stringify({
+          advanced_custom: {
+            advanced_routes: [
+              { ...nativeChatRoute, pass_through_body_enabled: routeFlag },
+              { ...nativeEmbeddingsRoute, pass_through_body_enabled: true },
+              claudeConverterRoute,
+              modelListRoute,
+            ],
+          },
+        }),
+      })
 
-    const values = transformChannelToFormDefaults(channel)
-    const mapped = parseAdvancedCustomConfig(values.advanced_custom)
-    expect(mapped?.advanced_routes?.[0].pass_through_body_enabled).toBe(true)
-    expect(mapped?.advanced_routes?.[1].pass_through_body_enabled).toBe(true)
-    expect(mapped?.advanced_routes?.[2]).not.toHaveProperty(
-      'pass_through_body_enabled'
-    )
-    expect(mapped?.advanced_routes?.[3]).not.toHaveProperty(
-      'pass_through_body_enabled'
-    )
-    expect(validateAdvancedCustomConfig(mapped)).toBeNull()
+      const values = transformChannelToFormDefaults(channel)
+      const editable = parseAdvancedCustomConfig(values.advanced_custom)
+      expect(editable?.advanced_routes?.[0].pass_through_body_enabled).toBe(
+        routeFlag === true ? true : undefined
+      )
+      expect(editable?.advanced_routes?.[1].pass_through_body_enabled).toBe(
+        true
+      )
+      expect(editable?.advanced_routes?.[2]).not.toHaveProperty(
+        'pass_through_body_enabled'
+      )
+      expect(editable?.advanced_routes?.[3]).not.toHaveProperty(
+        'pass_through_body_enabled'
+      )
+      expect(validateAdvancedCustomConfig(editable)).toBeNull()
 
-    values.name = 'Renamed advanced custom channel'
-    const payload = transformFormDataToUpdatePayload(values, 42)
-    const saved = readSavedSettings(payload)
-    expect(saved.advanced_routes?.[0].pass_through_body_enabled).toBe(true)
-    expect(saved.advanced_routes?.[1].pass_through_body_enabled).toBe(true)
-    expect(saved.advanced_routes?.[2]).not.toHaveProperty(
-      'pass_through_body_enabled'
-    )
-    expect(saved.advanced_routes?.[3]).not.toHaveProperty(
-      'pass_through_body_enabled'
-    )
-    expect(JSON.parse(String(payload.setting)).pass_through_body_enabled).toBe(
-      false
-    )
-  })
+      values.name = 'Renamed advanced custom channel'
+      const enabledPayload = transformFormDataToUpdatePayload(values, 42)
+      const enabledRoutes = readSavedSettings(enabledPayload)
+      expect(enabledRoutes).toEqual(editable)
+      expect(JSON.parse(String(enabledPayload.setting))).toMatchObject({
+        pass_through_body_enabled: true,
+        model_owned_by: 'fixture-owner',
+      })
 
-  test('a migrated legacy route can be switched off individually afterwards', () => {
-    const channel = createChannelFixture({
-      setting: JSON.stringify({ pass_through_body_enabled: true }),
-      settings: JSON.stringify({
-        advanced_custom: { advanced_routes: [nativeChatRoute] },
-      }),
-    })
-
-    const values = transformChannelToFormDefaults(channel)
-    const editable = parseAdvancedCustomConfig(values.advanced_custom)
-    expect(editable?.advanced_routes?.[0].pass_through_body_enabled).toBe(true)
-
-    if (!editable?.advanced_routes) throw new Error('expected editable routes')
-    editable.advanced_routes[0].pass_through_body_enabled = false
-    values.advanced_custom = stringifyAdvancedCustomConfig(editable)
-    const payload = transformFormDataToUpdatePayload(values, 42)
-
-    expect(readSavedSettings(payload).advanced_routes?.[0]).not.toHaveProperty(
-      'pass_through_body_enabled'
-    )
-  })
-
-  test('a legacy flag never enables converters or management routes', () => {
-    const channel = createChannelFixture({
-      setting: JSON.stringify({ pass_through_body_enabled: true }),
-      settings: JSON.stringify({
-        advanced_custom: {
-          advanced_routes: [claudeConverterRoute, modelListRoute],
-        },
-      }),
-    })
-
-    const values = transformChannelToFormDefaults(channel)
-    const mapped = parseAdvancedCustomConfig(values.advanced_custom)
-
-    expect(mapped?.advanced_routes?.[0]).not.toHaveProperty(
-      'pass_through_body_enabled'
-    )
-    expect(mapped?.advanced_routes?.[1]).not.toHaveProperty(
-      'pass_through_body_enabled'
-    )
-    expect(validateAdvancedCustomConfig(mapped)).toBeNull()
-  })
+      const reopened = transformChannelToFormDefaults({
+        ...channel,
+        ...enabledPayload,
+      })
+      expect(reopened.pass_through_body_enabled).toBe(true)
+      reopened.pass_through_body_enabled = false
+      const disabledPayload = transformFormDataToUpdatePayload(reopened, 42)
+      expect(JSON.parse(String(disabledPayload.setting))).toMatchObject({
+        pass_through_body_enabled: false,
+        model_owned_by: 'fixture-owner',
+      })
+      // Historical explicit true may come from a user or an older migration.
+      // Global-off must not guess its origin or erase that route decision.
+      expect(readSavedSettings(disabledPayload)).toEqual(enabledRoutes)
+      expect(
+        transformChannelToFormDefaults({ ...channel, ...disabledPayload })
+          .pass_through_body_enabled
+      ).toBe(false)
+    }
+  )
 
   test('normal channels keep the channel-level pass-through setting', () => {
     const channel = createChannelFixture({
