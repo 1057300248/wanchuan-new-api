@@ -1081,7 +1081,7 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 
 func TestAcceptedSubmitStreamNeverRetries(t *testing.T) {
 	c := taskSubmissionTestContext()
-	assert.Equal(t, service.PolicyDecision{Action: "stop", Reason: "task_accepted", Source: "system"}, decideTaskRetry(c, &dto.TaskError{StatusCode: 502, LocalError: true, NoRetry: true}, 3))
+	assert.Equal(t, service.PolicyDecision{Action: "stop", Reason: "no_retry", Source: "system"}, decideTaskRetry(c, &dto.TaskError{StatusCode: 502, LocalError: true, NoRetry: true}, 3))
 }
 
 // Local task rejections carry a message but no cause; the response and the

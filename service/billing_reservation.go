@@ -3,10 +3,13 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
+	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
 )
 
@@ -35,7 +38,7 @@ func (s *BillingSession) reserveDurableLocked(target int, initial bool) error {
 	}
 	var result moneyport.SettlementResult
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	stored, _, err := model.ReserveBillingFinalization(ctx, *s.billingIdentity, previous, target, func(tx *gorm.DB, receipt *model.BillingFinalization) error {
+	stored, attempt, err := model.ReserveBillingFinalization(ctx, *s.billingIdentity, previous, target, func(tx *gorm.DB, receipt *model.BillingFinalization) error {
 		var sourceErr error
 		if initial {
 			result, sourceErr = funding.PreConsumeInTx(tx, target)
@@ -89,7 +92,13 @@ func (s *BillingSession) reserveDurableLocked(target int, initial bool) error {
 	model.RefreshUserQuotaCacheAfterBillingFinalization(s.relayInfo.UserId)
 	if err != nil {
 		s.reservationUncertain = true
-		return err
+		if initial && attempt.FreshInitialPrepared {
+			// No caller has received this new session, hence this attempt cannot
+			// have dispatched upstream. Do not use this authority for a replayed
+			// held owner or a later reserve on an already live session.
+			s.refundFailedInitialReservation(stored)
+		}
+		return err // Preserve the original failure; never dispatch after recovery.
 	}
 	funding.ApplyReservationResult(stored.PreConsumed, result)
 	s.applyHeldReceipt(stored)
@@ -170,4 +179,49 @@ func (s *BillingSession) resolveReservationLocked() error {
 	funding.ApplyReservationResult(r.PreConsumed, result)
 	s.applyHeldReceipt(*r)
 	return nil
+}
+
+// refundFailedInitialReservation crosses the unique-owner barrier directly.
+// A separate SELECT could miss an in-flight INSERT; RequestBillingRefund instead
+// waits for its outcome, checks the exact receipt/source and atomically admits
+// the existing queue. No balance, replacement token or source-only row is used
+// to infer a refund. This also closes zero-held trusted reservations.
+func (s *BillingSession) refundFailedInitialReservation(receipt model.BillingFinalization) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	owner, err := model.RequestBillingRefund(ctx, receipt)
+	cancel()
+	if err == nil {
+		if owner.State == model.BillingRefundReady {
+			gopool.Go(func() { executeBillingRefund(context.Background(), receipt.RequestID) })
+		}
+		return
+	}
+	code, _ := model.BillingRefundErrorCode(err)
+	// owner_missing proves the initial transaction rolled back, through the
+	// unique-key barrier's private claim which was itself rolled back.
+	if code == "owner_missing" {
+		return
+	}
+	logInitialReservationRefundFailure(receipt.RequestID, "refund_admission", err)
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if recordErr := model.RecordInitialReservationRefundFailure(ctx, receipt); recordErr != nil {
+		logInitialReservationRefundFailure(receipt.RequestID, "review_metadata", recordErr)
+	}
+}
+
+func logInitialReservationRefundFailure(requestID, stage string, failure error) {
+	// Preserve the frozen server-generated identity or explicitly report its
+	// absence; never export arbitrary internal text, credentials or raw errors.
+	if len(requestID) > 64 {
+		requestID = ""
+	}
+	for _, char := range requestID {
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '-' || char == '_') {
+			requestID = ""
+			break
+		}
+	}
+	code, class := model.BillingRefundErrorCode(failure)
+	logger.LogError(context.Background(), fmt.Sprintf("event=billing_initial_reservation_refund_unresolved priority=high request_id=%q request_id_unavailable=%t stage=%s code=%s class=%s action=manual_reconciliation", requestID, requestID == "", stage, code, class))
 }

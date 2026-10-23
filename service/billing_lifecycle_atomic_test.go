@@ -329,6 +329,17 @@ func TestBillingLifecycleReservationCommitAckRecovery(t *testing.T) {
 						require.Nil(t, failed)
 						require.NotNil(t, apiErr)
 						require.ErrorContains(t, apiErr.Err, "synthetic committed ACK lost")
+						waitRefundCallback(t, nil)
+						require.Zero(t, flag.Load())
+						requireLifecycleAccounting(t, source, 100)
+						owner := lifecycleOwner(t, info.RequestId)
+						require.Equal(t, model.BillingRefunded, owner.State, "failed fresh initial request schedules recovery without same-ID retry")
+						require.Equal(t, 100, owner.SourceHeld)
+						require.Equal(t, 100, owner.TokenHeld)
+						stable := captureLifecycleAccounting(t)
+						executeBillingRefund(t.Context(), info.RequestId)
+						require.Equal(t, stable, captureLifecycleAccounting(t))
+						return
 					} else {
 						require.ErrorContains(t, s.Reserve(200), "synthetic committed ACK lost")
 						require.True(t, s.reservationUncertain)
@@ -340,9 +351,6 @@ func TestBillingLifecycleReservationCommitAckRecovery(t *testing.T) {
 					stored := lifecycleOwner(t, info.RequestId)
 					require.Equal(t, model.BillingHeld, stored.State)
 					expectedHeld := 200
-					if phase == "initial" {
-						expectedHeld = 100
-					}
 					require.Equal(t, expectedHeld, stored.SourceHeld)
 					require.Equal(t, expectedHeld, stored.TokenHeld)
 					ready, err := model.GetReadyBillingRefunds(t.Context(), 100)
@@ -351,14 +359,7 @@ func TestBillingLifecycleReservationCommitAckRecovery(t *testing.T) {
 					committed := captureLifecycleAccounting(t)
 					executeBillingRefund(t.Context(), info.RequestId)
 					require.Equal(t, committed, captureLifecycleAccounting(t))
-					if phase == "initial" {
-						recovered, newAPIError := NewBillingSession(c, info, 100)
-						require.Nil(t, newAPIError)
-						require.NotNil(t, recovered)
-						s = recovered
-					} else {
-						require.NoError(t, s.Reserve(200), "the frozen hold, not an inferred rollback, determines the recovered amount")
-					}
+					require.NoError(t, s.Reserve(200), "the frozen hold, not an inferred rollback, determines the recovered amount")
 					require.False(t, s.reservationUncertain)
 					if source == BillingSourceSubscription {
 						var allowance model.UserSubscription
