@@ -100,9 +100,13 @@ func runStalePaymentFixtureChild(t *testing.T) bool {
 		joined = true
 		exitCode = cmd.ProcessState.ExitCode()
 	}
-	expected := []string{strings.SplitN(t.Name(), "/", 2)[0]}
-	if expected[0] != t.Name() {
-		expected = append(expected, t.Name())
+	// Retain every actual ancestor node, including deeper HTTP fixtures that
+	// reuse this same-binary isolation. Existing two-level payment scopes keep
+	// exactly the same root + leaf expectation and strict result validation.
+	ancestry := strings.Split(t.Name(), "/")
+	expected := make([]string, 0, len(ancestry))
+	for i := range ancestry {
+		expected = append(expected, strings.Join(ancestry[:i+1], "/"))
 	}
 	runs, passes, fails, skips := map[string]int{}, map[string]int{}, map[string]int{}, map[string]int{}
 	packagePasses, packageFails := 0, 0

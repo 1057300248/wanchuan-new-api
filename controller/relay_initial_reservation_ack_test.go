@@ -16,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
@@ -28,6 +29,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -106,6 +108,15 @@ func newInitialReservationHTTPFixture(t *testing.T, source string) *initialReser
 	oldPrices, oldGroups := ratio_setting.ModelPrice2JSONString(), ratio_setting.GroupRatio2JSONString()
 	model.DB, model.LOG_DB = db, db
 	common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
+	// Quoted-column caches and i18n's once-owned bundle are private process
+	// state. Only the isolated same-binary leaf may initialize them.
+	require.Equal(t, t.Name(), os.Getenv("PAYMENT_STALE_FIXTURE_CHILD"))
+	t.Setenv("LOG_SQL_DSN", "")
+	oldMaster := common.IsMasterNode
+	common.IsMasterNode = false
+	require.NoError(t, model.InitLogDB())
+	common.IsMasterNode = oldMaster
+	require.NoError(t, i18n.Init())
 	common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled = false, false, false, false, false
 	constant.CountToken = false
 	common.RetryTimes = 2
@@ -233,6 +244,12 @@ func TestRelayInitialReservationCommitACKRecoveryHTTP(t *testing.T) {
 		t.Run(source, func(t *testing.T) {
 			for _, rollback := range []bool{false, true} {
 				t.Run(fmt.Sprintf("rollback=%t", rollback), func(t *testing.T) {
+					if os.Getenv("TEST_POSTGRES_DSN") == "" {
+						t.Skip("TEST_POSTGRES_DSN not configured; isolated PostgreSQL required")
+					}
+					if runStalePaymentFixtureChild(t) {
+						return
+					}
 					f := newInitialReservationHTTPFixture(t, source)
 					pool := f.fault(t, rollback)
 					engine := gin.New()
@@ -260,10 +277,18 @@ func TestRelayInitialReservationCommitACKRecoveryHTTP(t *testing.T) {
 					body, err := io.ReadAll(response.Body)
 					response.Body.Close()
 					require.NoError(t, err)
-					require.Equal(t, http.StatusInternalServerError, response.StatusCode, string(body))
-					require.Contains(t, string(body), errInitialReservationACK.Error())
 					require.Equal(t, !rollback, pool.firstCommitted.Load())
-					require.Zero(t, f.upstreamCalls.Load(), "failed initial preconsume cannot dispatch upstream")
+					require.Positive(t, pool.commits.Load(), "the driver COMMIT boundary must be reached even for actual rollback")
+					var result struct {
+						Error types.OpenAIError `json:"error"`
+					}
+					require.NoError(t, common.Unmarshal(body, &result))
+					assert.Equal(t, http.StatusInternalServerError, response.StatusCode, string(body))
+					assert.Equal(t, string(types.ErrorCodeUpdateDataError), result.Error.Code)
+					assert.Equal(t, "new_api_error", result.Error.Type)
+					assert.Equal(t, common.MessageWithRequestId("upstream request failed", f.requestID), result.Error.Message)
+					assert.NotContains(t, string(body), errInitialReservationACK.Error(), "normal Relay keeps its existing public error redaction")
+					assert.Zero(t, f.upstreamCalls.Load(), "failed initial preconsume cannot dispatch upstream")
 					// This joins the actual recovery worker scheduled by the failed
 					// HTTP call. No same-request NewBillingSession/Reserve is retried.
 					waitTaskSubmissionFixtureQuiescence(t)
@@ -283,6 +308,12 @@ func TestRelayInitialReservationCommitACKRecoveryHTTP(t *testing.T) {
 func TestTaskInitialReservationCommitACKRecoveryHTTP(t *testing.T) {
 	for _, source := range []string{service.BillingSourceWallet, service.BillingSourceSubscription} {
 		t.Run(source, func(t *testing.T) {
+			if os.Getenv("TEST_POSTGRES_DSN") == "" {
+				t.Skip("TEST_POSTGRES_DSN not configured; isolated PostgreSQL required")
+			}
+			if runStalePaymentFixtureChild(t) {
+				return
+			}
 			f := newInitialReservationHTTPFixture(t, source)
 			f.channel.Type = constant.ChannelTypeTaskPlugin
 			require.NoError(t, f.db.Save(&f.channel).Error)
@@ -324,10 +355,19 @@ export function parseTaskResult(){return {status:"UNKNOWN"};}
 			body, err := io.ReadAll(response.Body)
 			response.Body.Close()
 			require.NoError(t, err)
-			require.Equal(t, http.StatusInternalServerError, response.StatusCode, string(body))
-			require.Contains(t, string(body), errInitialReservationACK.Error())
 			require.True(t, pool.firstCommitted.Load())
-			require.Zero(t, f.upstreamCalls.Load())
+			var result struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			}
+			require.NoError(t, common.Unmarshal(body, &result))
+			assert.Equal(t, http.StatusInternalServerError, response.StatusCode, string(body))
+			assert.Equal(t, string(types.ErrorCodeUpdateDataError), result.Code)
+			// The existing generic Task presenter preserves this message; unlike
+			// normal Relay it does not promise public error redaction. This test
+			// must not silently substitute the native route's different contract.
+			assert.Equal(t, errInitialReservationACK.Error(), result.Message)
+			assert.Zero(t, f.upstreamCalls.Load())
 			waitTaskSubmissionFixtureQuiescence(t)
 			f.requireRestored(t, true)
 			var tasks int64
