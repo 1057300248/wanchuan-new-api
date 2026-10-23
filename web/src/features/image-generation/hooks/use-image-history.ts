@@ -268,6 +268,54 @@ export function useImageHistory() {
     ]
   )
 
+  const recordDimensions = useCallback(
+    (
+      entryId: string,
+      resultId: string,
+      source: string,
+      width: number,
+      height: number
+    ) => {
+      if (
+        !isCurrentOwner() ||
+        !Number.isSafeInteger(width) ||
+        !Number.isSafeInteger(height) ||
+        width <= 0 ||
+        height <= 0
+      ) {
+        return
+      }
+      const entry = entriesRef.current.find((item) => item.id === entryId)
+      const result = entry?.results.find((item) => item.id === resultId)
+      if (
+        !result ||
+        (blobUrlsRef.current[resultId] ?? result.source) !== source
+      ) {
+        return
+      }
+      if (
+        result.dimensionsVerified &&
+        result.width === width &&
+        result.height === height
+      ) {
+        return
+      }
+      commitEntries(
+        entriesRef.current.map((item) => {
+          if (item.id !== entryId) return item
+          return {
+            ...item,
+            results: item.results.map((image) => {
+              if (image.id !== resultId) return image
+              return { ...image, width, height, dimensionsVerified: true }
+            }),
+          }
+        })
+      )
+    },
+    [commitEntries, isCurrentOwner]
+  )
+
   const removeEntry = useCallback(
     (id: string) => {
       if (!isCurrentOwner()) return
@@ -524,6 +572,7 @@ export function useImageHistory() {
     setOrientation,
     pushEntry,
     removeEntry,
+    recordDimensions,
     clearAll,
     keepLocally,
     resolveResultUrl,

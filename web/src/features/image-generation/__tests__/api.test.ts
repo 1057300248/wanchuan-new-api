@@ -407,11 +407,9 @@ describe('requestImageGeneration selects the synchronous image endpoint', () => 
       skipAuthRefresh: true,
       preserveAuthorization: true,
     })
-    expect(images[0]).toMatchObject({
-      source: 'b64',
-      width: 1024,
-      height: 1024,
-    })
+    expect(images[0].source).toBe('b64')
+    expect(images[0].width).toBeUndefined()
+    expect(images[0].height).toBeUndefined()
   })
 })
 

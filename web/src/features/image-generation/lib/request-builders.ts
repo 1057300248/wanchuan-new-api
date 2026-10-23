@@ -25,7 +25,6 @@ import {
 } from './managed-object-urls'
 import {
   getModelCapability,
-  parseSizeDimensions,
   resolveSettingsForModel,
 } from './model-capabilities'
 
@@ -180,11 +179,6 @@ export function normalizeImageResponse(params: {
     items = [raw.data]
   }
   const now = Date.now()
-  const parsedSize = parseSizeDimensions(params.size)
-  const dimensions =
-    parsedSize.width !== undefined && parsedSize.height !== undefined
-      ? { width: parsedSize.width, height: parsedSize.height }
-      : {}
 
   return items
     .map((item, index): GeneratedImage | null => {
@@ -198,7 +192,6 @@ export function normalizeImageResponse(params: {
           source: isDataUrl ? ('b64' as const) : ('url' as const),
           prompt: params.prompt,
           model: params.model,
-          ...dimensions,
           createdAt: now,
         }
       }
@@ -211,7 +204,6 @@ export function normalizeImageResponse(params: {
           source: 'b64' as const,
           prompt: params.prompt,
           model: params.model,
-          ...dimensions,
           createdAt: now,
         }
       }

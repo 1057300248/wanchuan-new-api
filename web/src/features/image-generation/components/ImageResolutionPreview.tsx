@@ -21,7 +21,12 @@ import { useTranslation } from 'react-i18next'
 
 import { parseSizeDimensions } from '../lib/model-capabilities'
 
-type Props = { url: string; prompt: string; requestedSize: string }
+type Props = {
+  url: string
+  prompt: string
+  requestedSize: string
+  onDimensions?: (width: number, height: number) => void
+}
 
 export function ImageResolutionPreview(props: Props) {
   const { t } = useTranslation()
@@ -47,6 +52,7 @@ export function ImageResolutionPreview(props: Props) {
         onLoad={(event) => {
           const image = event.currentTarget
           if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+            props.onDimensions?.(image.naturalWidth, image.naturalHeight)
             setDecoded({
               url: props.url,
               width: image.naturalWidth,

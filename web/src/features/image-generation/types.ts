@@ -64,6 +64,8 @@ export type HistoryResultRecord = {
   source: string
   width?: number
   height?: number
+  // Older records inferred dimensions from the request, not decoded pixels.
+  dimensionsVerified?: true
   blobKey?: string
   keptLocally: boolean
   createdAt: number

@@ -173,9 +173,7 @@ describe('normalizeImageResponse handles url and b64_json payloads', () => {
         size: '1024x1024',
       })
 
-      expect(images).toEqual([
-        expect.objectContaining({ url, source, width: 1024, height: 1024 }),
-      ])
+      expect(images).toEqual([expect.objectContaining({ url, source })])
     }
   )
 
@@ -239,7 +237,7 @@ describe('normalizeImageResponse handles url and b64_json payloads', () => {
     ).toEqual([])
   })
 
-  test('writes WxH sizes to width/height for url and b64 results', () => {
+  test('does not claim requested WxH values are actual image dimensions', () => {
     const images = normalizeImageResponse({
       data: {
         data: [{ url: 'https://cdn.example/a.png' }, { b64_json: 'aGVsbG8=' }],
@@ -249,8 +247,10 @@ describe('normalizeImageResponse handles url and b64_json payloads', () => {
       size: '1792x1024',
     })
     expect(images).toHaveLength(2)
-    expect(images[0]).toMatchObject({ width: 1792, height: 1024 })
-    expect(images[1]).toMatchObject({ width: 1792, height: 1024 })
+    expect(images[0].width).toBeUndefined()
+    expect(images[0].height).toBeUndefined()
+    expect(images[1].width).toBeUndefined()
+    expect(images[1].height).toBeUndefined()
   })
 
   test('leaves width/height undefined for auto or empty sizes', () => {

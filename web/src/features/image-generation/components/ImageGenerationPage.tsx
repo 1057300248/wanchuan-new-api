@@ -354,6 +354,7 @@ function ImageGenerationWorkspace() {
             onQueryChange={history.setQuery}
             orientation={history.orientation}
             onOrientationChange={history.setOrientation}
+            onDimensions={history.recordDimensions}
             onRemove={history.removeEntry}
             onClear={history.clearAll}
             onKeepLocally={history.keepLocally}

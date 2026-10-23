@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { IMAGE_HISTORY_MAX_ENTRIES, IMAGE_HISTORY_TTL_MS } from '../constants'
 import type { ImageHistoryEntry } from '../types'
 import { isBlobSchemeUrl, isHttpSchemeUrl } from './managed-object-urls'
-import { getImageOrientation, parseSizeDimensions } from './model-capabilities'
+import { getImageOrientation } from './model-capabilities'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -85,6 +85,19 @@ function isValidResult(value: unknown): boolean {
     return false
   }
   if (value.height !== undefined && !isFinitePositiveNumber(value.height)) {
+    return false
+  }
+  if (
+    value.dimensionsVerified !== undefined &&
+    value.dimensionsVerified !== true
+  ) {
+    return false
+  }
+  if (
+    value.dimensionsVerified &&
+    (!isFinitePositiveNumber(value.width) ||
+      !isFinitePositiveNumber(value.height))
+  ) {
     return false
   }
   if (value.type === 'blob') {
@@ -183,15 +196,8 @@ export function filterHistoryEntries(
     }
     if (orientation === 'all') return true
     return entry.results.some((result) => {
-      let width = result.width
-      let height = result.height
-      if (width === undefined || height === undefined) {
-        const fallback = parseSizeDimensions(entry.settings.size)
-        width = fallback.width
-        height = fallback.height
-      }
-      if (width === undefined || height === undefined) return false
-      return getImageOrientation(width, height) === orientation
+      if (!result.dimensionsVerified) return false
+      return getImageOrientation(result.width, result.height) === orientation
     })
   })
 }
@@ -200,9 +206,9 @@ export function resolveEntryOrientation(
   entry: ImageHistoryEntry
 ): 'square' | 'landscape' | 'portrait' | 'unknown' {
   for (const result of entry.results) {
+    if (!result.dimensionsVerified) continue
     const orientation = getImageOrientation(result.width, result.height)
     if (orientation !== 'unknown') return orientation
   }
-  const dims = parseSizeDimensions(entry.settings.size)
-  return getImageOrientation(dims.width, dims.height)
+  return 'unknown'
 }

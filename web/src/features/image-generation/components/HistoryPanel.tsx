@@ -54,6 +54,13 @@ type HistoryPanelProps = {
   onOrientationChange: (
     value: 'all' | 'square' | 'landscape' | 'portrait'
   ) => void
+  onDimensions?: (
+    entryId: string,
+    resultId: string,
+    source: string,
+    width: number,
+    height: number
+  ) => void
   onRemove: (id: string) => void
   onClear: () => void
   onKeepLocally: (entryId: string, resultId: string) => Promise<void>
@@ -214,6 +221,18 @@ export function HistoryPanel(props: HistoryPanelProps) {
                       src={url}
                       alt={entry.prompt}
                       loading='lazy'
+                      onLoad={(event) => {
+                        const image = event.currentTarget
+                        if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+                          props.onDimensions?.(
+                            entry.id,
+                            result.id,
+                            url,
+                            image.naturalWidth,
+                            image.naturalHeight
+                          )
+                        }
+                      }}
                       className='bg-muted/30 aspect-square w-full object-contain'
                     />
                   </Button>
@@ -228,7 +247,14 @@ export function HistoryPanel(props: HistoryPanelProps) {
                       className='text-muted-foreground truncate text-xs'
                       title={entry.model}
                     >
-                      {entry.model} · {entry.settings.size || t('Default size')}
+                      {entry.model} · {t('Requested image size')}:{' '}
+                      {entry.settings.size || t('Default size')}
+                    </p>
+                    <p className='text-muted-foreground text-xs'>
+                      {t('Actual image size')}:{' '}
+                      {result.dimensionsVerified
+                        ? `${result.width}×${result.height}`
+                        : t('Not yet verified')}
                     </p>
                     <div className='flex flex-wrap gap-1'>
                       <Button
@@ -315,6 +341,15 @@ export function HistoryPanel(props: HistoryPanelProps) {
               url={props.resolveUrl(previewResult.id, previewResult.source)}
               prompt={previewEntry.prompt}
               requestedSize={previewEntry.settings.size}
+              onDimensions={(width, height) =>
+                props.onDimensions?.(
+                  previewEntry.id,
+                  previewResult.id,
+                  props.resolveUrl(previewResult.id, previewResult.source),
+                  width,
+                  height
+                )
+              }
             />
             <p className='text-sm break-words whitespace-pre-wrap'>
               {previewEntry.prompt}

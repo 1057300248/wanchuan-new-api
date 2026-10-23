@@ -202,3 +202,32 @@ test('old keep rollback remains bound to A and cannot delete a newer keep after 
   expect(deleteImageBlob).not.toHaveBeenCalledWith(newKey, 101)
   expect(result.current.entries[0].results[0].blobKey).toBe(newKey)
 })
+
+test('a stale decoded-image callback cannot update a different owner or a later session', () => {
+  saveHistoryEntries([entry('shared')], 101)
+  saveHistoryEntries([entry('shared')], 202)
+  const { result } = renderHook(() => useImageHistory())
+  const staleRecord = result.current.recordDimensions
+  act(() => signInHistoryOwner(202))
+  act(() =>
+    staleRecord(
+      'shared',
+      'shared-r',
+      'https://images.example.invalid/shared.png',
+      768,
+      1344
+    )
+  )
+  expect(result.current.entries[0].results[0].width).toBeUndefined()
+  act(() => signInHistoryOwner(101))
+  act(() =>
+    staleRecord(
+      'shared',
+      'shared-r',
+      'https://images.example.invalid/shared.png',
+      768,
+      1344
+    )
+  )
+  expect(result.current.entries[0].results[0].width).toBeUndefined()
+})

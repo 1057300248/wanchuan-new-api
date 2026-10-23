@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 
@@ -154,4 +154,37 @@ test('deleting one image confirms removal of its entire batch', async () => {
     })
   )
   expect(props.onRemove).toHaveBeenCalledWith('old')
+})
+
+test('records decoded pixel dimensions without stretching to the requested size', () => {
+  const onDimensions = vi.fn()
+  renderPanel({ entries: [makeEntry('geometry')], totalCount: 1, onDimensions })
+  const image = screen.getByAltText('prompt geometry')
+  Object.defineProperties(image, {
+    naturalWidth: { configurable: true, value: 768 },
+    naturalHeight: { configurable: true, value: 1344 },
+  })
+  fireEvent.load(image)
+  expect(onDimensions).toHaveBeenCalledWith(
+    'geometry',
+    'geometry-r',
+    'https://cdn.example/a.png',
+    768,
+    1344
+  )
+  expect(image).toHaveClass('object-contain')
+  expect(image).not.toHaveAttribute('width')
+  expect(image).not.toHaveAttribute('height')
+})
+
+test('a failed or undecodable thumbnail stays unverified', () => {
+  const onDimensions = vi.fn()
+  renderPanel({ entries: [makeEntry('broken')], totalCount: 1, onDimensions })
+  const image = screen.getByAltText('prompt broken')
+  fireEvent.load(image)
+  fireEvent.error(image)
+  expect(onDimensions).not.toHaveBeenCalled()
+  expect(
+    screen.getByText(/Actual image size.*Not yet verified/)
+  ).toBeInTheDocument()
 })

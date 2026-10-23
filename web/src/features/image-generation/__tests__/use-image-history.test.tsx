@@ -214,3 +214,63 @@ describe('useImageHistory keeps blob storage free of orphans', () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:kept-url')
   })
 })
+
+test('decoded dimensions replace legacy requested dimensions and drive persisted orientation', () => {
+  const entry = makeStoredEntry('geometry', Date.now())
+  seedStorage([
+    { ...entry, results: [{ ...entry.results[0], width: 1024, height: 1024 }] },
+  ])
+  const { result } = renderHook(() => useImageHistory())
+  act(() => result.current.setOrientation('square'))
+  expect(result.current.visibleEntries).toEqual([])
+  act(() =>
+    result.current.recordDimensions(
+      'geometry',
+      'geometry-r',
+      'https://cdn.example/a.png',
+      768,
+      1344
+    )
+  )
+  act(() => result.current.setOrientation('portrait'))
+  expect(result.current.visibleEntries).toHaveLength(1)
+  expect(result.current.entries[0].settings.size).toBe('1024x1024')
+  expect(
+    JSON.parse(localStorage.getItem(HISTORY_OWNER_KEY) ?? '[]')[0].results[0]
+  ).toMatchObject({ width: 768, height: 1344, dimensionsVerified: true })
+})
+
+test('stale and invalid decoded image dimensions cannot alter history', () => {
+  seedStorage([makeStoredEntry('geometry', Date.now())])
+  const { result } = renderHook(() => useImageHistory())
+  act(() =>
+    result.current.recordDimensions(
+      'geometry',
+      'geometry-r',
+      'https://cdn.example/stale.png',
+      768,
+      1344
+    )
+  )
+  act(() =>
+    result.current.recordDimensions(
+      'geometry',
+      'geometry-r',
+      'https://cdn.example/a.png',
+      0,
+      1344
+    )
+  )
+  expect(result.current.entries[0].results[0].width).toBeUndefined()
+  act(() => result.current.removeEntry('geometry'))
+  act(() =>
+    result.current.recordDimensions(
+      'geometry',
+      'geometry-r',
+      'https://cdn.example/a.png',
+      768,
+      1344
+    )
+  )
+  expect(result.current.entries).toEqual([])
+})

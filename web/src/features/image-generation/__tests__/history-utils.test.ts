@@ -307,6 +307,7 @@ describe('filterHistoryEntries supports search and orientation filters', () => {
           source: 'u',
           width: 1024,
           height: 1024,
+          dimensionsVerified: true,
           keptLocally: false,
           createdAt: Date.now(),
         },
@@ -323,6 +324,7 @@ describe('filterHistoryEntries supports search and orientation filters', () => {
           source: 'u',
           width: 1536,
           height: 1024,
+          dimensionsVerified: true,
           keptLocally: false,
           createdAt: Date.now(),
         },
@@ -344,7 +346,7 @@ describe('filterHistoryEntries supports search and orientation filters', () => {
     )
   })
 
-  test('falls back to the entry settings size when results lack dimensions', () => {
+  test('does not filter by requested size when actual dimensions are unknown', () => {
     const sized = makeEntry({
       id: 'sized-fallback',
       settings: {
@@ -380,7 +382,7 @@ describe('filterHistoryEntries supports search and orientation filters', () => {
       filterHistoryEntries([sized, unsized], '', 'landscape').map(
         (entry) => entry.id
       )
-    ).toEqual(['sized-fallback'])
+    ).toEqual([])
     expect(filterHistoryEntries([sized, unsized], '', 'square')).toEqual([])
   })
 })
