@@ -37,6 +37,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // The native HTTP handler and WebSocket event accumulator share settlement.
@@ -359,19 +360,23 @@ func assertNativeResponsesBillingBalance(t *testing.T, db *gorm.DB, user model.U
 // cache work finish. Observe the real driver's result and the request-owned
 // refund context instead; unrelated default-pool workers are not join evidence.
 type nativeResponsesRefundCompletion struct {
-	requestID string
-	db        *gorm.DB
-	expect    bool
-	mu        sync.Mutex
-	records   map[context.Context]*nativeResponsesRefundTransaction
-	next      string
-	admitted  bool
-	invalid   error
-	refund    chan *nativeResponsesRefundTransaction
-	metadata  chan *nativeResponsesRefundTransaction
-	once      sync.Once
-	joined    bool
-	err       error
+	requestID  string
+	db         *gorm.DB
+	expect     bool
+	budget     time.Duration
+	deadline   time.Time
+	token      *model.Token
+	driverWait chan *nativeResponsesRefundTransaction
+	mu         sync.Mutex
+	records    map[context.Context]*nativeResponsesRefundTransaction
+	next       string
+	admitted   bool
+	invalid    error
+	refund     chan *nativeResponsesRefundTransaction
+	metadata   chan *nativeResponsesRefundTransaction
+	once       sync.Once
+	joined     bool
+	err        error
 }
 
 type nativeResponsesRefundPool struct {
@@ -381,13 +386,15 @@ type nativeResponsesRefundPool struct {
 
 type nativeResponsesRefundTransaction struct {
 	*sql.Tx
-	completion *nativeResponsesRefundCompletion
-	ctx        context.Context
-	role       string
-	finished   chan struct{}
-	once       sync.Once
-	committed  bool
-	err        error
+	completion   *nativeResponsesRefundCompletion
+	ctx          context.Context
+	role         string
+	finished     chan struct{}
+	once         sync.Once
+	committed    bool
+	matchesToken bool
+	tokenDelta   int
+	err          error
 }
 
 func (p *nativeResponsesRefundPool) GetDBConn() (*sql.DB, error) { return p.DB, nil }
@@ -435,9 +442,19 @@ func (r *nativeResponsesRefundTransaction) finish(committed bool, err error) {
 
 func observeNativeResponsesRefund(t *testing.T, db *gorm.DB, requestID string, expect bool) *nativeResponsesRefundCompletion {
 	t.Helper()
+	return observeNativeResponsesRefundWithin(t, db, requestID, expect, 8*time.Second, nil)
+}
+
+func observeNativeResponsesRefundWithin(t *testing.T, db *gorm.DB, requestID string, expect bool, budget time.Duration, token *model.Token) *nativeResponsesRefundCompletion {
+	t.Helper()
+	require.Positive(t, budget, "refund completion budget must be positive")
+	if token != nil {
+		copy := *token
+		token = &copy
+	}
 	driver, err := db.DB()
 	require.NoError(t, err)
-	m := &nativeResponsesRefundCompletion{requestID: requestID, db: db, expect: expect,
+	m := &nativeResponsesRefundCompletion{requestID: requestID, db: db, expect: expect, budget: budget, token: token,
 		records: make(map[context.Context]*nativeResponsesRefundTransaction),
 		refund:  make(chan *nativeResponsesRefundTransaction, 1), metadata: make(chan *nativeResponsesRefundTransaction, 1)}
 	previous := model.DB
@@ -449,6 +466,15 @@ func observeNativeResponsesRefund(t *testing.T, db *gorm.DB, requestID string, e
 	model.DB = observed
 	callback := "native_refund_completion_" + requestID
 	require.NoError(t, db.Callback().Update().After("gorm:update").Register(callback, func(tx *gorm.DB) {
+		if m.token != nil {
+			if delta, ok := nativeResponsesTokenQuotaDelta(tx, m.token.Id); ok && delta > 0 {
+				m.mu.Lock()
+				if r := m.records[tx.Statement.Context]; r != nil && r.role == "refund" && r.matchesToken {
+					r.tokenDelta = delta
+				}
+				m.mu.Unlock()
+			}
+		}
 		owner, ok := tx.Statement.Model.(*model.BillingFinalization)
 		values, mapped := tx.Statement.Dest.(map[string]any)
 		if !ok || owner.RequestID != requestID || !mapped || values["state"] != model.BillingRefundReady || tx.Error != nil || tx.RowsAffected != 1 {
@@ -477,10 +503,14 @@ func observeNativeResponsesRefund(t *testing.T, db *gorm.DB, requestID string, e
 		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		r := m.records[tx.Statement.Context]
+		if m.token != nil && r != nil && tx.Error == nil && tx.RowsAffected == 1 {
+			owner, ok := tx.Statement.Dest.(*model.BillingFinalization)
+			r.matchesToken = ok && owner.RequestID == requestID && owner.UserID == m.token.UserId && owner.TokenID == m.token.Id && owner.TokenFingerprint == model.BillingTokenFingerprint(m.token.Key)
+		}
 		if m.next == "" {
 			return
 		}
-		r := m.records[tx.Statement.Context]
 		if r == nil {
 			m.invalid = errors.New("refund request query bypassed the observed real transaction")
 			return
@@ -516,7 +546,11 @@ func (m *nativeResponsesRefundCompletion) wait() (bool, error) {
 	// Production has a 5 s refund transaction, at most 500 ms post-commit
 	// compensation, then a separate 1 s error-metadata transaction. No sleep or
 	// SQL-visible balance is treated as callback completion.
-	budget, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	deadline := m.deadline
+	if deadline.IsZero() {
+		deadline = time.Now().Add(m.budget)
+	}
+	budget, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	phase := "refund"
 	for channel := m.refund; ; channel = m.metadata {
@@ -525,6 +559,9 @@ func (m *nativeResponsesRefundCompletion) wait() (bool, error) {
 		case r = <-channel:
 		case <-budget.Done():
 			return false, fmt.Errorf("%s transaction observation: %w", phase, budget.Err())
+		}
+		if m.driverWait != nil && phase == "refund" {
+			m.driverWait <- r // The barrier test observes this exact driver wait, not goroutine startup.
 		}
 		select {
 		case <-r.finished:
@@ -555,8 +592,11 @@ func (m *nativeResponsesRefundCompletion) wait() (bool, error) {
 			return true, fmt.Errorf("refund transaction failed; its error-metadata tail finished (commit=%t error=%v)", r.committed, r.err)
 		}
 		var owner model.BillingFinalization
-		if err := m.db.Where("request_id = ?", m.requestID).First(&owner).Error; err != nil {
+		if err := m.db.WithContext(budget).Where("request_id = ?", m.requestID).First(&owner).Error; err != nil {
 			return true, err
+		}
+		if m.token != nil && (!r.matchesToken || r.tokenDelta <= 0 || r.tokenDelta != owner.TokenHeld || owner.TokenID != m.token.Id || owner.UserID != m.token.UserId || owner.TokenFingerprint != model.BillingTokenFingerprint(m.token.Key)) {
+			return true, errors.New("completed refund did not credit the original request token")
 		}
 		if owner.State != model.BillingRefunded {
 			return true, fmt.Errorf("completed transaction did not refund this owner: %s", owner.State)
@@ -576,4 +616,34 @@ func (m *nativeResponsesRefundCompletion) join(t *testing.T) {
 		os.Exit(1)
 	}
 	assert.NoError(t, m.err)
+}
+
+// Match the original token's actual UPDATE, including the signed bound value.
+// The caller must additionally bind this statement to its request transaction.
+func nativeResponsesTokenQuotaDelta(tx *gorm.DB, tokenID int) (int, bool) {
+	if tx.Error != nil || tx.RowsAffected != 1 || tx.Statement.Table != "tokens" {
+		return 0, false
+	}
+	updates, ok := tx.Statement.Dest.(map[string]any)
+	if !ok {
+		return 0, false
+	}
+	expression, ok := updates["remain_quota"].(clause.Expr)
+	if !ok || expression.SQL != "remain_quota + ?" || len(expression.Vars) != 1 {
+		return 0, false
+	}
+	delta, ok := expression.Vars[0].(int)
+	if !ok {
+		return 0, false
+	}
+	where, ok := tx.Statement.Clauses["WHERE"].Expression.(clause.Where)
+	if !ok {
+		return 0, false
+	}
+	for _, condition := range where.Exprs {
+		if id, ok := condition.(clause.Expr); ok && id.SQL == "id = ?" && len(id.Vars) == 1 && id.Vars[0] == tokenID {
+			return delta, true
+		}
+	}
+	return 0, false
 }

@@ -36,7 +36,6 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
@@ -217,35 +216,11 @@ func runConvertedStreamAccountingCase(t *testing.T, db, logDB *gorm.DB, format t
 	c.Set("username", user.Username)
 	c.Set("token_quota", paid)
 	require.Nil(t, middleware.SetupContextForSelectedChannel(c, &channel, requestedModel))
-	refunded := make(chan struct{}, 1)
-	callback := "converted_stream_refund_" + identity
-	require.NoError(t, db.Callback().Update().After("gorm:commit_or_rollback_transaction").Register(callback, func(tx *gorm.DB) {
-		if tx.Statement.Table != "tokens" || tx.Error != nil {
-			return
-		}
-		updates, ok := tx.Statement.Dest.(map[string]any)
-		if !ok {
-			return
-		}
-		expression, ok := updates["remain_quota"].(clause.Expr)
-		if !ok || expression.SQL != "remain_quota + ?" {
-			return
-		}
-		select {
-		case refunded <- struct{}{}:
-		default:
-		}
-	}))
-	t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove(callback)) })
+	completion := observeNativeResponsesRefundWithin(t, db, identity, refundable, 5*time.Second, &token)
 
 	controller.Relay(c, format)
-	if refundable {
-		select {
-		case <-refunded:
-		case <-time.After(5 * time.Second):
-			t.Fatal("controller failure did not finish refunding the real pre-consume")
-		}
-	}
+	completion.join(t)
+
 	require.Equal(t, int32(1), calls.Load(), "retry budget is enabled, but a handled stream must not start another upstream attempt: %s", recorder.Body.String())
 	assert.Equal(t, 1, service.RequestPolicy(c).Attempts)
 	assert.False(t, service.RequestPolicy(c).Successful, "settling generated usage must not mark a failed response successful")

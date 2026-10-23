@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,7 +28,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // Called by the existing real-database Responses accounting matrix so the
@@ -131,35 +131,18 @@ func runBufferedResponsesAccountingCase(t *testing.T, db, logDB *gorm.DB, format
 	c.Set("username", user.Username)
 	c.Set("token_quota", paid)
 	require.Nil(t, middleware.SetupContextForSelectedChannel(c, &channel, requestedModel))
-	refunded := make(chan struct{}, 1)
-	callback := "buffered_refund_" + identity
-	require.NoError(t, db.Callback().Update().After("gorm:commit_or_rollback_transaction").Register(callback, func(tx *gorm.DB) {
-		if tx.Statement.Table != "tokens" || tx.Error != nil {
-			return
-		}
-		updates, ok := tx.Statement.Dest.(map[string]any)
-		if !ok {
-			return
-		}
-		expression, ok := updates["remain_quota"].(clause.Expr)
-		if !ok || expression.SQL != "remain_quota + ?" {
-			return
-		}
-		select {
-		case refunded <- struct{}{}:
-		default:
-		}
-	}))
-	t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove(callback)) })
+	completion := observeNativeResponsesRefundWithin(t, db, identity, wantCharge == 0, 5*time.Second, &token)
+	var verifyBarrier func()
+	if format == types.RelayFormatGemini && outcome == "empty_eof" {
+		verifyBarrier = observeBufferedRefundCommitBarrier(t, db, completion, token.Id)
+	}
 
 	controller.Relay(c, format)
-	if wantCharge == 0 {
-		select {
-		case <-refunded:
-		case <-time.After(5 * time.Second):
-			require.FailNow(t, "buffered failure did not finish refunding the real reservation")
-		}
+	if verifyBarrier != nil {
+		verifyBarrier()
 	}
+	completion.join(t)
+
 	require.Equal(t, int32(1), calls.Load(), "a buffered failure must not repeat a potentially billable upstream request")
 	assert.Equal(t, 1, service.RequestPolicy(c).Attempts)
 	assert.Equal(t, success && outcome != "incomplete", service.RequestPolicy(c).Successful, "partial billing must never publish a success outcome for failed or truncated upstream work")
@@ -224,4 +207,102 @@ func runBufferedResponsesAccountingCase(t *testing.T, db, logDB *gorm.DB, format
 	assert.Equal(t, -rewardCharge, accountNet[string(model.AccountReward)])
 	assert.Equal(t, -paidCharge, accountNet[string(model.AccountPaid)])
 	assert.Zero(t, accountNet[string(model.AccountBonus)])
+}
+
+// Keep the mandatory Gemini empty-EOF case at the original 5 s budget while
+// deterministically exposing the old pre-debit signal and uncommitted refund.
+func observeBufferedRefundCommitBarrier(t *testing.T, db *gorm.DB, completion *nativeResponsesRefundCompletion, tokenID int) func() {
+	t.Helper()
+	oldSignal := make(chan int, 1)
+	blocked := make(chan *nativeResponsesRefundTransaction, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	completion.driverWait = make(chan *nativeResponsesRefundTransaction, 1)
+	waitDone := make(chan struct{})
+	waitStarted := false
+	callback := "buffered_refund_commit_barrier_" + completion.requestID
+	require.NoError(t, db.Callback().Update().After("native_refund_completion_"+completion.requestID).Register(callback, func(tx *gorm.DB) {
+		delta, ok := nativeResponsesTokenQuotaDelta(tx, tokenID)
+		if !ok {
+			return
+		}
+		completion.mu.Lock()
+		r := completion.records[tx.Statement.Context]
+		matches := r != nil && r.matchesToken
+		refund := matches && r.role == "refund"
+		completion.mu.Unlock()
+		if delta < 0 && matches {
+			// The removed SQL-only predicate accepted this actual reservation.
+			select {
+			case oldSignal <- delta:
+			default:
+			}
+		}
+		if delta > 0 && refund {
+			blocked <- r
+			select {
+			case <-release:
+			case <-tx.Statement.Context.Done():
+			}
+		}
+	}))
+	// LIFO: release even on Fatal, join the once-owned wait, then remove hooks.
+	// The observer's own cleanup subsequently restores model.DB and its hooks.
+	t.Cleanup(func() {
+		unblock()
+		completion.join(t)
+		if waitStarted {
+			<-waitDone
+		}
+		require.NoError(t, db.Callback().Update().Remove(callback))
+	})
+	return func() {
+		t.Helper()
+		// The controller-return wait, barrier and final owner query share one deadline.
+		completion.deadline = time.Now().Add(completion.budget)
+		budget := time.NewTimer(time.Until(completion.deadline))
+		defer budget.Stop()
+		select {
+		case delta := <-oldSignal:
+			require.Negative(t, delta, "the old waiter accepted this request's pre-debit")
+			t.Log("refund_barrier: initial_negative_observed")
+		default:
+			require.FailNow(t, "the original token reservation did not exercise the old false signal")
+		}
+		waitStarted = true
+		go func() {
+			completion.once.Do(func() { completion.joined, completion.err = completion.wait() })
+			close(waitDone)
+		}()
+		var refund *nativeResponsesRefundTransaction
+		select {
+		case refund = <-blocked:
+			t.Log("refund_barrier: same_owned_refund_precommit")
+		case <-budget.C:
+			require.FailNow(t, "the original token refund did not reach the pre-commit barrier")
+		}
+		select {
+		case observed := <-completion.driverWait:
+			require.Same(t, refund, observed, "wait must select this request's real refund transaction")
+		case <-budget.C:
+			require.FailNow(t, "completion did not reach the real driver wait")
+		}
+		select {
+		case <-refund.finished:
+			require.FailNow(t, "refund completed before the commit barrier was released")
+		default:
+		}
+		select {
+		case <-waitDone:
+			require.FailNow(t, "the old reservation signal released the refund completion wait")
+		default:
+		}
+		t.Log("refund_barrier: wait_selected_same_tx_not_finished")
+		unblock()
+		completion.join(t)
+		<-waitDone
+		require.NoError(t, completion.err)
+		t.Log("refund_barrier: released_and_owned_tail_joined")
+	}
 }
