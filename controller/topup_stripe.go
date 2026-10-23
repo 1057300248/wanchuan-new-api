@@ -273,8 +273,11 @@ func sessionAsyncPaymentFailed(ctx context.Context, event stripe.Event, callerIp
 		return
 	}
 
-	topUp.Status = common.TopUpStatusFailed
-	if err := topUp.Update(); err != nil {
+	if err := model.UpdatePendingTopUpStatus(referenceId, model.PaymentProviderStripe, common.TopUpStatusFailed); err != nil {
+		if errors.Is(err, model.ErrTopUpStatusInvalid) {
+			logger.LogInfo(ctx, common.LogText("Stripe async payment failed but order is no longer pending, ignored trade_no=%s client_ip=%s", referenceId, callerIp))
+			return
+		}
 		logger.LogError(ctx, common.LogText("Stripe failed to mark top-up order as failed trade_no=%s client_ip=%s error=%q", referenceId, callerIp, err.Error()))
 		return
 	}

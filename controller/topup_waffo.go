@@ -146,6 +146,10 @@ func RequestWaffoAmount(c *gin.Context) {
 
 // RequestWaffoPay 创建 Waffo 支付订单
 func RequestWaffoPay(c *gin.Context) {
+	requestWaffoPay(c, getWaffoSDK)
+}
+
+func requestWaffoPay(c *gin.Context, sdkFactory func() (*waffo.Waffo, error)) {
 	if !paymentcore.RequireCompliance(c) {
 		return
 	}
@@ -250,11 +254,12 @@ func RequestWaffoPay(c *gin.Context) {
 		return
 	}
 
-	sdk, err := getWaffoSDK()
+	sdk, err := sdkFactory()
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Waffo SDK initialization failed user_id=%d trade_no=%s error=%q", id, merchantOrderId, err.Error()))
-		topUp.Status = common.TopUpStatusFailed
-		_ = topUp.Update()
+		if statusErr := model.UpdatePendingTopUpStatus(merchantOrderId, model.PaymentProviderWaffo, common.TopUpStatusFailed); statusErr != nil && !errors.Is(statusErr, model.ErrTopUpStatusInvalid) {
+			logger.LogError(c.Request.Context(), common.LogText("Failed to mark pending payment order as failed trade_no=%s error=%q", merchantOrderId, statusErr.Error()))
+		}
 		paymentError(c, common.NewMessage("Payment configuration error"))
 		return
 	}
@@ -298,15 +303,17 @@ func RequestWaffoPay(c *gin.Context) {
 	resp, err := sdk.Order().Create(c.Request.Context(), createParams, nil)
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Waffo failed to create order user_id=%d trade_no=%s error=%q", id, merchantOrderId, err.Error()))
-		topUp.Status = common.TopUpStatusFailed
-		_ = topUp.Update()
+		if statusErr := model.UpdatePendingTopUpStatus(merchantOrderId, model.PaymentProviderWaffo, common.TopUpStatusFailed); statusErr != nil && !errors.Is(statusErr, model.ErrTopUpStatusInvalid) {
+			logger.LogError(c.Request.Context(), common.LogText("Failed to mark pending payment order as failed trade_no=%s error=%q", merchantOrderId, statusErr.Error()))
+		}
 		paymentError(c, common.NewMessage("Failed to start payment"))
 		return
 	}
 	if !resp.IsSuccess() {
 		logger.LogWarn(c.Request.Context(), common.LogText("Waffo order creation rejected user_id=%d trade_no=%s code=%s message=%q response=%q", id, merchantOrderId, resp.Code, resp.Message, common.GetJsonString(resp)))
-		topUp.Status = common.TopUpStatusFailed
-		_ = topUp.Update()
+		if statusErr := model.UpdatePendingTopUpStatus(merchantOrderId, model.PaymentProviderWaffo, common.TopUpStatusFailed); statusErr != nil && !errors.Is(statusErr, model.ErrTopUpStatusInvalid) {
+			logger.LogError(c.Request.Context(), common.LogText("Failed to mark pending payment order as failed trade_no=%s error=%q", merchantOrderId, statusErr.Error()))
+		}
 		paymentError(c, common.NewMessage("Failed to start payment"))
 		return
 	}
@@ -315,16 +322,18 @@ func RequestWaffoPay(c *gin.Context) {
 	if orderData.PaymentRequestID == "" || orderData.PaymentRequestID != paymentRequestId ||
 		orderData.MerchantOrderID == "" || orderData.MerchantOrderID != merchantOrderId {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo 创建订单身份不匹配 trade_no=%s payment_request_id=%q merchant_order_id=%q", merchantOrderId, orderData.PaymentRequestID, orderData.MerchantOrderID))
-		topUp.Status = common.TopUpStatusFailed
-		_ = topUp.Update()
+		if statusErr := model.UpdatePendingTopUpStatus(merchantOrderId, model.PaymentProviderWaffo, common.TopUpStatusFailed); statusErr != nil && !errors.Is(statusErr, model.ErrTopUpStatusInvalid) {
+			logger.LogError(c.Request.Context(), common.LogText("Failed to mark pending payment order as failed trade_no=%s error=%q", merchantOrderId, statusErr.Error()))
+		}
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "上游支付订单身份异常"})
 		return
 	}
 	if strings.TrimSpace(orderData.AcquiringOrderID) != "" {
 		if err := paymentcore.BindProviderOrderID(merchantOrderId, orderData.AcquiringOrderID); err != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo 保存上游订单身份失败 trade_no=%s acquiring_order_id=%q error=%q", merchantOrderId, orderData.AcquiringOrderID, err.Error()))
-			topUp.Status = common.TopUpStatusFailed
-			_ = topUp.Update()
+			if statusErr := model.UpdatePendingTopUpStatus(merchantOrderId, model.PaymentProviderWaffo, common.TopUpStatusFailed); statusErr != nil && !errors.Is(statusErr, model.ErrTopUpStatusInvalid) {
+				logger.LogError(c.Request.Context(), common.LogText("Failed to mark pending payment order as failed trade_no=%s error=%q", merchantOrderId, statusErr.Error()))
+			}
 			c.JSON(http.StatusOK, gin.H{"message": "error", "data": "支付订单绑定失败"})
 			return
 		}

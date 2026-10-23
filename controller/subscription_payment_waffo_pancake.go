@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -123,15 +124,17 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 	})
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake failed to create subscription checkout session user_id=%d plan_id=%d trade_no=%s error=%q", userId, plan.Id, tradeNo, err.Error()))
-		order.Status = common.TopUpStatusFailed
-		_ = order.Update()
+		if statusErr := model.FailPendingSubscriptionOrder(tradeNo, model.PaymentProviderWaffoPancake); statusErr != nil && !errors.Is(statusErr, model.ErrSubscriptionOrderStatusInvalid) {
+			logger.LogError(c.Request.Context(), common.LogText("Failed to mark pending payment order as failed trade_no=%s error=%q", tradeNo, statusErr.Error()))
+		}
 		paymentError(c, common.NewMessage("Failed to start payment"))
 		return
 	}
 	if err := paymentcore.BindProviderSessionID(tradeNo, session.SessionID); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅保存上游会话失败 user_id=%d plan_id=%d trade_no=%s session_id=%s error=%q", userId, plan.Id, tradeNo, session.SessionID, err.Error()))
-		order.Status = common.TopUpStatusFailed
-		_ = order.Update()
+		if statusErr := model.FailPendingSubscriptionOrder(tradeNo, model.PaymentProviderWaffoPancake); statusErr != nil && !errors.Is(statusErr, model.ErrSubscriptionOrderStatusInvalid) {
+			logger.LogError(c.Request.Context(), common.LogText("Failed to mark pending payment order as failed trade_no=%s error=%q", tradeNo, statusErr.Error()))
+		}
 		common.ApiErrorMsg(c, "支付订单绑定失败")
 		return
 	}
