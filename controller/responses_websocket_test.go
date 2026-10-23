@@ -970,7 +970,11 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 				require.Len(t, logs, len(quotas))
 				var other map[string]any
 				require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
-				stream := other["stream_status"].(map[string]any)
+				adminInfo, ok := other["admin_info"].(map[string]any)
+				require.True(t, ok)
+				stream, ok := adminInfo["stream_status"].(map[string]any)
+				require.True(t, ok)
+				assert.NotContains(t, other, "stream_status")
 				if tc.failed {
 					assert.Equal(t, "error", stream["status"])
 					assert.Equal(t, "failed", stream["response_status"])
@@ -1379,7 +1383,11 @@ func TestResponsesWebSocketForwardsErrorForOtherResponseWithoutEndingRequest(t *
 	require.Len(t, logs, 1)
 	var other map[string]any
 	require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
-	stream, _ := other["stream_status"].(map[string]any)
+	adminInfo, ok := other["admin_info"].(map[string]any)
+	require.True(t, ok)
+	stream, ok := adminInfo["stream_status"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, other, "stream_status")
 	assert.Equal(t, "ok", stream["status"])
 	assert.Equal(t, "completed", stream["response_status"])
 }

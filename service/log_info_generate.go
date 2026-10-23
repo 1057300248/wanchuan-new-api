@@ -113,7 +113,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	}
 	if relayInfo.IsModelMapped {
 		other.SetPublic("is_model_mapped", true)
-		other.SetPublic("upstream_model_name", relayInfo.UpstreamModelName)
+		other.SetAdmin("upstream_model_name", relayInfo.UpstreamModelName)
 	}
 
 	isSystemPromptOverwritten := common.GetContextKeyBool(ctx, constant.ContextKeySystemPromptOverride)
@@ -142,14 +142,14 @@ func AppendResponseModelLogInfo(relayInfo *relaycommon.RelayInfo, other *model.L
 		(relayInfo.ChannelMeta == nil || !relayInfo.IsModelMapped) {
 		return
 	}
-	other.SetPublic("response_model", *observation)
+	other.SetAdmin("response_model", *observation)
 }
 
 func appendParamOverrideInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
 	if relayInfo == nil || other == nil || len(relayInfo.ParamOverrideAudit) == 0 {
 		return
 	}
-	other.SetPublic("po", relayInfo.ParamOverrideAudit)
+	other.SetAdmin("po", relayInfo.ParamOverrideAudit)
 }
 
 func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
@@ -179,7 +179,7 @@ func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other *model.LogOther)
 		}
 		streamInfo["errors"] = messages
 	}
-	other.SetPublic("stream_status", streamInfo)
+	other.SetAdmin("stream_status", streamInfo)
 }
 
 func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
@@ -260,7 +260,7 @@ func appendRequestConversionChain(relayInfo *relaycommon.RelayInfo, other *model
 	if len(chain) == 0 {
 		return
 	}
-	other.SetPublic("request_conversion", chain)
+	other.SetAdmin("request_conversion", chain)
 }
 
 func appendFinalRequestFormat(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
