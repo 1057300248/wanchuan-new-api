@@ -21,6 +21,13 @@ const refundFixtureChecked = "refund-fixture-cleanups-complete:"
 // Fixed original RUN topology, independently checked against the source and
 // the retained 324f full-package report. Never infer completeness from child output.
 var refundFixtureTopology = map[string][]string{
+	"TestBillingRecoveryMixedLegacyPageProgress": {""},
+	"TestBillingRecoveryCursorWriteFailureThenResume": {
+		"",
+		"history_page=true",
+		"history_page=false",
+	},
+	"TestBillingRecoverySchedulerCreationFailureThenResume": {""},
 	"TestBillingUnknownDeliveryObservability": {
 		"",
 		"wallet",
@@ -98,6 +105,11 @@ var refundFixtureTopology = map[string][]string{
 	},
 	"TestBillingFinalizationSessionDatabaseMatrix": {
 		"",
+		"recovery_mixed_legacy_progress",
+		"recovery_cursor_write_resume",
+		"recovery_cursor_write_resume/history_page=true",
+		"recovery_cursor_write_resume/history_page=false",
+		"recovery_scheduler_create_resume",
 		"unknown_delivery_observability",
 		"unknown_delivery_observability/wallet",
 		"unknown_delivery_observability/wallet/write_failure",
