@@ -96,7 +96,7 @@ func TestWebCacheHeadersBeforeStaticFileReturn(t *testing.T) {
 	t.Cleanup(func() { gin.SetMode(previousMode) })
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		for _, tc := range []struct {
-			path string
+			path  string
 			cache string
 		}{
 			{"/?cache=probe", "no-store"},

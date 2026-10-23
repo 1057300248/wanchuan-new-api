@@ -137,6 +137,9 @@ func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), stored.Status)
 	assert.Equal(t, "blocked by safety", stored.FailReason)
 	assert.Zero(t, stored.Quota, "the failed task is refunded")
+	assert.Empty(t, stored.PrivateData.FinancialReviewReason)
+	assert.Nil(t, stored.PrivateData.FinancialIntent)
+	assert.NotEmpty(t, stored.PrivateData.FinancialOperationID)
 	var user model.User
 	require.NoError(t, database.First(&user, 7).Error)
 	assert.Equal(t, 1100, user.Quota)

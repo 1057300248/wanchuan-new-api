@@ -994,6 +994,114 @@ func TestBuildTieredTokenParams_ClaudeUnsplitCacheWrites(t *testing.T) {
 	}
 }
 
+// The four core Claude cases follow upstream #7965. Costs below are raw
+// expression outputs, not USD; len and upstream usage keep unweighted counts.
+func TestBuildTieredTokenParams_ClaudeUnpricedLongTTLCacheWrites(t *testing.T) {
+	claude := func(split5m, split1h int) dto.Usage {
+		return dto.Usage{PromptTokens: 100, UsageSemantic: "anthropic",
+			ClaudeCacheCreation5mTokens: split5m, ClaudeCacheCreation1hTokens: split1h,
+			PromptTokensDetails: dto.InputTokenDetails{CachedCreationTokens: split5m + split1h}}
+	}
+	partial := claude(6000, 4000)
+	partial.ClaudeCacheCreation5mTokens = 0
+	unsplit := claude(10000, 0)
+	unsplit.ClaudeCacheCreation5mTokens = 0
+	withRead := claude(2000, 10000)
+	withRead.PromptTokensDetails.CachedTokens = 300
+	for _, tc := range []struct {
+		name        string
+		usage       dto.Usage
+		expr        string
+		p, cc, cc1h float64
+		cost        float64
+	}{
+		{"1h joins cc at 1.6x", claude(0, 10000), `tier("base", p * 3 + c * 15 + cr * 0.3 + cc * 3.75)`, 100, 16000, 0, 60300},
+		{"5m bills as input", claude(10000, 0), `tier("base", p * 3 + c * 15)`, 10100, 0, 0, 30300},
+		{"5m bills as input beside priced 1h", claude(2000, 10000), `tier("base", p * 3 + cc1h * 6)`, 2100, 0, 10000, 66300},
+		{"1h bills as input at 1.6x", claude(2000, 10000), `tier("base", p * 3)`, 18100, 0, 0, 54300},
+		{"both TTL prices stay explicit", claude(2000, 10000), `tier("base", p * 3 + cc * 3.75 + cc1h * 6)`, 100, 2000, 10000, 67800},
+		{"mixed TTLs join cc", claude(2000, 10000), `tier("base", p * 3 + cc * 3.75)`, 100, 18000, 0, 67800},
+		{"explicit zero short price stays free", claude(2000, 10000), `tier("base", p * 3 + cc * 0)`, 100, 18000, 0, 300},
+		{"explicit zero 1h price stays free", claude(2000, 10000), `tier("base", p * 3 + cc1h * 0)`, 2100, 0, 10000, 6300},
+		{"unsplit short writes stay unweighted", unsplit, `tier("base", p * 3)`, 10100, 0, 0, 30300},
+		{"partial split weighted once", partial, `tier("base", p * 3)`, 12500, 0, 0, 37500},
+		{"equivalent complete split", claude(6000, 4000), `tier("base", p * 3)`, 12500, 0, 0, 37500},
+		{"omitted reads remain unweighted", withRead, `tier("base", p * 3)`, 18400, 0, 0, 55200},
+		{"tier uses raw context length", claude(2000, 10000), `len <= 12100 ? tier("base", p * 3) : tier("weighted_context", p * 6)`, 18100, 0, 0, 54300},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before, err := common.Marshal(tc.usage)
+			require.NoError(t, err)
+			params := BuildTieredTokenParams(&tc.usage, true, billingexpr.UsedVars(tc.expr))
+			assert.Equal(t, tc.p, params.P)
+			assert.Equal(t, tc.cc, params.CC)
+			assert.Equal(t, tc.cc1h, params.CC1h)
+			wantLen := float64(tc.usage.PromptTokens + tc.usage.PromptTokensDetails.CachedTokens + tc.usage.PromptTokensDetails.CacheCreationTokensTotal())
+			assert.Equal(t, wantLen, params.Len, "len keeps unweighted counts")
+			cost, trace, err := billingexpr.RunExpr(tc.expr, params)
+			require.NoError(t, err)
+			assert.Equal(t, tc.cost, cost)
+			assert.Equal(t, "base", trace.MatchedTier)
+			after, err := common.Marshal(tc.usage)
+			require.NoError(t, err)
+			assert.Equal(t, before, after, "normalization must not rewrite upstream usage")
+		})
+	}
+}
+
+func TestBuildTieredTokenParams_ClaudeFallbackLeavesNonClaudeUnchanged(t *testing.T) {
+	usage := &dto.Usage{PromptTokens: 12100,
+		PromptTokensDetails: dto.InputTokenDetails{CachedCreationTokens: 12000}}
+	for _, tc := range []struct {
+		name string
+		expr string
+		p    float64
+		cost float64
+	}{
+		{"omitted writes remain in prompt total", `tier("base", p * 3)`, 12100, 36300},
+		{"explicit writes subtract once", `tier("base", p * 3 + cc * 3.75)`, 100, 45300},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params := BuildTieredTokenParams(usage, false, billingexpr.UsedVars(tc.expr))
+			assert.Equal(t, tc.p, params.P)
+			assert.Equal(t, float64(12000), params.CC)
+			assert.Zero(t, params.CC1h)
+			assert.Equal(t, float64(12100), params.Len)
+			cost, _, err := billingexpr.RunExpr(tc.expr, params)
+			require.NoError(t, err)
+			assert.Equal(t, tc.cost, cost)
+		})
+	}
+}
+
+func TestTryTieredSettle_ClaudeFallbackUsesFrozenInputs(t *testing.T) {
+	const expr = `param("service_tier") == "fast" ? tier("fast", p * 3 + cc * 3.75) : tier("normal", p * 2)`
+	info := makeRelayInfo(expr, 1.25, 100, 0)
+	info.BillingRequestInput = &billingexpr.RequestInput{Body: []byte(`{"service_tier":"fast"}`)}
+	// Unrelated mutable legacy prices must not replace the captured expression
+	// or the group ratio already frozen for this settlement.
+	info.PriceData.ModelRatio = 999
+	info.PriceData.CacheCreation1hRatio = 999
+	info.PriceData.GroupRatioInfo.GroupRatio = 9
+	snapshotBefore := *info.TieredBillingSnapshot
+	requestBefore, err := common.Marshal(info.BillingRequestInput)
+	require.NoError(t, err)
+	usage := &dto.Usage{PromptTokens: 100, UsageSemantic: "anthropic",
+		ClaudeCacheCreation5mTokens: 2000, ClaudeCacheCreation1hTokens: 10000,
+		PromptTokensDetails: dto.InputTokenDetails{CachedCreationTokens: 12000}}
+	params := BuildTieredTokenParams(usage, true, billingexpr.UsedVars(snapshotBefore.ExprString))
+	ok, quota, result := TryTieredSettle(info, params)
+	require.True(t, ok)
+	require.NotNil(t, result)
+	assert.Equal(t, "fast", result.MatchedTier)
+	assert.Equal(t, 33900.0, result.ActualQuotaBeforeGroup)
+	assert.Equal(t, 42375, quota, "67800 raw cost / 1M * 500000 quota units * frozen 1.25 group")
+	assert.Equal(t, snapshotBefore, *info.TieredBillingSnapshot)
+	requestAfter, err := common.Marshal(info.BillingRequestInput)
+	require.NoError(t, err)
+	assert.Equal(t, requestBefore, requestAfter)
+}
+
 func TestBuildTieredTokenParams_Len_TierCondition(t *testing.T) {
 	// Test that len-based tier conditions work correctly when p is reduced by cache
 	usage := &dto.Usage{

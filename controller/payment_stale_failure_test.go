@@ -55,7 +55,7 @@ func (f stalePancakeTransport) RoundTrip(request *http.Request) (*http.Response,
 // The model's quoted-column caches are private process globals. Keep their
 // initialization inside a same-binary child, including when the whole controller
 // package is run: the parent retains only the original test-node topology.
-func runStalePaymentFixtureChild(t *testing.T) bool {
+func runStalePaymentFixtureChild(t *testing.T, intermediateAncestors ...string) bool {
 	t.Helper()
 	const childEnv = "PAYMENT_STALE_FIXTURE_CHILD"
 	if target := os.Getenv(childEnv); target != "" {
@@ -100,13 +100,18 @@ func runStalePaymentFixtureChild(t *testing.T) bool {
 		joined = true
 		exitCode = cmd.ProcessState.ExitCode()
 	}
-	// Retain every actual ancestor node, including deeper HTTP fixtures that
-	// reuse this same-binary isolation. Existing two-level payment scopes keep
-	// exactly the same root + leaf expectation and strict result validation.
-	ancestry := strings.Split(t.Name(), "/")
-	expected := make([]string, 0, len(ancestry))
-	for i := range ancestry {
-		expected = append(expected, strings.Join(ancestry[:i+1], "/"))
+	// A slash inside one t.Run name is not a separate ancestor. Callers with
+	// genuinely nested t.Run scopes explicitly supply their intermediate nodes.
+	root := strings.SplitN(t.Name(), "/", 2)[0]
+	expected := []string{root}
+	for _, ancestor := range intermediateAncestors {
+		require.True(t, strings.HasPrefix(ancestor, root+"/"))
+		require.True(t, strings.HasPrefix(t.Name(), ancestor+"/"))
+		require.NotContains(t, expected, ancestor)
+		expected = append(expected, ancestor)
+	}
+	if t.Name() != root {
+		expected = append(expected, t.Name())
 	}
 	runs, passes, fails, skips := map[string]int{}, map[string]int{}, map[string]int{}, map[string]int{}
 	packagePasses, packageFails := 0, 0
