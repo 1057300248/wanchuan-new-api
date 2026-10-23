@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
@@ -1621,6 +1622,7 @@ export const protocols = {openai_image: {
 
 func imageProtocolTestEndpoint(t *testing.T) pluginruntime.PinnedEndpoint {
 	t.Helper()
+	require.NoError(t, i18n.Init())
 	engine, err := pluginruntime.Compile(imageProtocolTestPlugin, pluginruntime.Options{Key: "image-bridge", Version: "1.0.0", Concurrency: 1})
 	require.NoError(t, err)
 	return pluginruntime.PinnedEndpoint{
@@ -1655,7 +1657,7 @@ func newImageProtocolTestContext(responseFormat string) (*gin.Context, *httptest
 }
 
 func imageProtocolTestOutcome(info *relaycommon.RelayInfo, status model.TaskStatus, images ...string) *taskSubmissionOutcome {
-	task := &model.Task{TaskID: "task_image", Platform: constant.TaskPlatform("image-bridge"), UserId: info.UserId, ChannelId: 3, Status: status, CreatedAt: 1_710_000_000}
+	task := &model.Task{ID: 1, TaskID: "task_image", Platform: constant.TaskPlatform("image-bridge"), UserId: info.UserId, ChannelId: 3, Status: status, CreatedAt: 1_710_000_000}
 	task.PrivateData.UpstreamTaskID = "vendor"
 	if len(images) > 0 {
 		task.SetData(map[string]any{"images": images})
@@ -1729,7 +1731,7 @@ func TestServeTaskPluginImageProtocolWaitsForAsynchronousTask(t *testing.T) {
 	}{
 		{"success", model.TaskStatusSuccess, http.StatusOK, "", ""},
 		{"failure", model.TaskStatusFailure, http.StatusBadRequest, "image_generation_failed", "invalid request"},
-		{"timeout", "", http.StatusGatewayTimeout, "task_timeout", "upstream request failed"},
+		{"timeout", "", http.StatusGatewayTimeout, "task_timeout", "Image generation is still processing. Do not submit it again; query the existing task for its status."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pinned := imageProtocolTestEndpoint(t)
@@ -1768,6 +1770,14 @@ func TestServeTaskPluginImageProtocolWaitsForAsynchronousTask(t *testing.T) {
 			assert.Equal(t, tc.wantCode, errorBody["code"])
 			assert.Contains(t, errorBody["message"], tc.wantMessage)
 			assert.NotContains(t, errorBody["message"], "private.example.com")
+			if tc.name == "timeout" {
+				assert.Equal(t, "false", recorder.Header().Get("X-Should-Retry"))
+				assert.Equal(t, "task_image", response["task_id"])
+				assert.Equal(t, "/v1/tasks/task_image", response["status_url"])
+				assert.Equal(t, false, response["retryable"])
+			} else {
+				assert.NotContains(t, response, "task_id")
+			}
 		})
 	}
 }
@@ -1791,6 +1801,28 @@ func TestServeTaskPluginImageProtocolSubmissionErrorUsesOpenAIEnvelope(t *testin
 	assert.Equal(t, "invalid request", errorBody["message"])
 	assert.NotContains(t, recorder.Body.String(), "InvalidParameter")
 	assert.NotContains(t, errorBody["message"], "request_id")
+	assert.NotContains(t, response, "task_id")
+	assert.NotContains(t, response, "status_url")
+}
+
+func TestServeTaskPluginImageProtocolUnpersistedTimeoutDoesNotClaimAcceptedTask(t *testing.T) {
+	pinned := imageProtocolTestEndpoint(t)
+	c, recorder := newImageProtocolTestContext("")
+	deps := pluginProtocolTestDeps()
+	deps.submissionTimeout = time.Nanosecond
+	deps.imagePollInterval = time.Hour
+	deps.submit = func(_ *gin.Context, info *relaycommon.RelayInfo) (*taskSubmissionOutcome, *dto.TaskError) {
+		outcome := imageProtocolTestOutcome(info, model.TaskStatusSubmitted)
+		outcome.Task.ID = 0
+		return outcome, nil
+	}
+	serveTaskPluginImageProtocol(c, pinned, deps)
+	require.Equal(t, http.StatusGatewayTimeout, recorder.Code)
+	var response map[string]any
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.NotContains(t, response, "task_id")
+	assert.NotContains(t, response, "status_url")
+	assert.NotContains(t, recorder.Body.String(), "still processing")
 }
 
 // A synchronous image submission is billable the moment DashScope accepts it.

@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
@@ -98,7 +100,11 @@ func serveTaskPluginImageProtocol(c *gin.Context, pinned pluginruntime.PinnedEnd
 	if task.Status != model.TaskStatusSuccess && task.Status != model.TaskStatusFailure {
 		if taskErr = waitTaskPluginImageTask(c, task, deps); taskErr != nil {
 			if c.Request.Context().Err() == nil {
-				respondTaskPluginImageError(c, taskErr)
+				if taskErr.Code == "task_timeout" && taskErr.LocalError && task.ID > 0 && task.TaskID != "" {
+					respondTaskPluginImagePending(c, taskErr, task)
+				} else {
+					respondTaskPluginImageError(c, taskErr)
+				}
 			}
 			return
 		}
@@ -172,6 +178,30 @@ func serveTaskPluginImageProtocol(c *gin.Context, pinned pluginruntime.PinnedEnd
 		return
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", privacy.SanitizeClientPayload(c, payloadJSON))
+}
+
+// Only the post-persistence waiting path may emit this recovery hint. An
+// upstream acknowledgement or an unknown delivery outcome is not proof of a
+// durable local task and must never be presented as accepted work.
+func respondTaskPluginImagePending(c *gin.Context, taskErr *dto.TaskError, task *model.Task) {
+	service.RecordRequestPolicyTermination(c, taskSubmissionAPIError(taskErr))
+	message := i18n.T(c, i18n.MsgImageTaskStillProcessing)
+	if requestID := c.GetString(common.RequestIdKey); requestID != "" {
+		message = common.MessageWithRequestId(message, requestID)
+	}
+	c.Header("Cache-Control", "private, no-store")
+	// OpenAI SDKs honor this advisory header before their default 5xx retry.
+	c.Header("X-Should-Retry", "false")
+	c.JSON(http.StatusGatewayTimeout, gin.H{
+		"error": types.OpenAIError{
+			Message: message,
+			Type:    "server_error",
+			Code:    "task_timeout",
+		},
+		"task_id":    task.TaskID,
+		"status_url": "/v1/tasks/" + url.PathEscape(task.TaskID),
+		"retryable":  false,
+	})
 }
 
 // waitTaskPluginImageTask polls an asynchronous image task inside the client

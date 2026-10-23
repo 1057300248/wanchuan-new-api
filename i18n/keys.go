@@ -6,12 +6,13 @@ package i18n
 
 // Errors returned to AI clients
 const (
-	MsgDatabaseError          = "common.database_error"
-	MsgAuthUserBanned         = "auth.user_banned"
-	MsgTokenGetInfoFailed     = "token.get_info_failed"
-	MsgTokenInvalid           = "token.invalid"
-	MsgTokenNotProvided       = "token.not_provided"
-	MsgTokenStatusUnavailable = "token.status_unavailable"
+	MsgImageTaskStillProcessing = "task.image_still_processing"
+	MsgDatabaseError            = "common.database_error"
+	MsgAuthUserBanned           = "auth.user_banned"
+	MsgTokenGetInfoFailed       = "token.get_info_failed"
+	MsgTokenInvalid             = "token.invalid"
+	MsgTokenNotProvided         = "token.not_provided"
+	MsgTokenStatusUnavailable   = "token.status_unavailable"
 
 	MsgAuthClientIPUnresolved     = "auth.client_ip_unresolved"
 	MsgAuthTokenIPNotAllowed      = "auth.token_ip_not_allowed"
