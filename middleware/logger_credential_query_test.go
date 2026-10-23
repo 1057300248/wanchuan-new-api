@@ -23,6 +23,19 @@ func TestAccessLogRedactsCredentialQueryWithoutChangingRequest(t *testing.T) {
 		{name: "supported Gemini key", query: "key=fixture-secret&page=2", want: "key=[REDACTED]&page=2"},
 		{name: "duplicates and encoded name", query: "key=fixture-secret&%6b%65%79=fixture-secret&KEY=fixture-secret", want: "key=[REDACTED]&%6b%65%79=[REDACTED]&KEY=[REDACTED]"},
 		{name: "credential aliases", query: "api_key=fixture-secret&x-goog-api-key=fixture-secret&mj-api-secret=fixture-secret&access_token=fixture-secret&client_secret=fixture-secret", want: "api_key=[REDACTED]&x-goog-api-key=[REDACTED]&mj-api-secret=[REDACTED]&access_token=[REDACTED]&client_secret=[REDACTED]"},
+		{name: "session identity and AWS aliases", query: "session_token=fixture-secret&id_token=fixture-secret&AWSAccessKeyId=fixture-secret&api-version=2024-02-01", want: "session_token=[REDACTED]&id_token=[REDACTED]&AWSAccessKeyId=[REDACTED]&api-version=2024-02-01"},
+		{name: "mixed encoded duplicate aliases", query: "%20Session_Token%20=fixture-secret&SESSION-TOKEN=fixture-secret&%61wsaccesskeyid=fixture-secret&id_token=fixture-secret&id_token=fixture-secret", want: "%20Session_Token%20=[REDACTED]&SESSION-TOKEN=[REDACTED]&%61wsaccesskeyid=[REDACTED]&id_token=[REDACTED]&id_token=[REDACTED]"},
+		{name: "provider credential patterns", query: "vendor_token=fixture-secret&upstream_secret=fixture-secret&request_signature=fixture-secret&apikey_hint=visible", want: "vendor_token=[REDACTED]&upstream_secret=[REDACTED]&request_signature=[REDACTED]&apikey_hint=visible"},
+		{name: "encoded path delimiters with credentials", path: "/v1/models%3Fpart%23section", query: "id_token=fixture-secret&alt=sse", want: "id_token=[REDACTED]&alt=sse"},
+		{name: "OAuth query fully suppressed", path: "/%61pi/oauth/test", query: "code=fixture-secret&state=fixture-secret&custom=fixture-secret"},
+		{name: "OAuth encoded separator query fully suppressed", path: "/oauth%2Fcallback", query: "code=fixture-secret&custom=fixture-secret"},
+		{name: "Stripe query fully suppressed", path: "/api/stripe/webhook", query: "event=fixture-secret&custom=fixture-secret"},
+		{name: "Creem query fully suppressed", path: "/api/creem/webhook", query: "event=fixture-secret&custom=fixture-secret"},
+		{name: "Waffo query fully suppressed", path: "/api/waffo/webhook", query: "event=fixture-secret&custom=fixture-secret"},
+		{name: "Waffo pancake query fully suppressed", path: "/api/waffo-pancake/webhook/test", query: "event=fixture-secret&custom=fixture-secret"},
+		{name: "Epay notify query fully suppressed", path: "/api/user/epay/notify", query: "order=fixture-secret&custom=fixture-secret"},
+		{name: "subscription notify query fully suppressed", path: "/api/subscription/epay/notify", query: "order=fixture-secret&custom=fixture-secret"},
+		{name: "subscription return query fully suppressed", path: "/api/subscription/epay/return", query: "order=fixture-secret&custom=fixture-secret"},
 		{name: "encoded credential value", query: "key=fixture%2Dsecret&model=demo%2Fmodel", want: "key=[REDACTED]&model=demo%2Fmodel"},
 		{name: "empty credential", query: "key&key=&page=1", want: "key=[REDACTED]&key=[REDACTED]&page=1"},
 		{name: "malformed query fails closed", query: "key=fixture-secret&bad=%ZZ", want: "[REDACTED]"},
@@ -63,8 +76,14 @@ func TestAccessLogRedactsCredentialQueryWithoutChangingRequest(t *testing.T) {
 				c.Status(http.StatusNoContent)
 			})
 			response := httptest.NewRecorder()
-			server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, target, nil))
+			request := httptest.NewRequest(http.MethodGet, target, nil)
+			originalURL := *request.URL
+			server.ServeHTTP(response, request)
 			require.Equal(t, http.StatusNoContent, response.Code)
+			require.Equal(t, target, request.RequestURI)
+			if !test.mutateRequest {
+				require.Equal(t, originalURL, *request.URL, "logging must not rewrite the signed request")
+			}
 			wantPath := path
 			if test.want != "" {
 				wantPath += "?" + test.want

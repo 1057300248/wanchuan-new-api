@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 )
 
@@ -90,14 +91,7 @@ func redactCredentialAccessLogQuery(rawQuery string) string {
 		if err != nil {
 			return "[REDACTED]"
 		}
-		normalizedName := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(decodedName, "-", ""), "_", ""))
-		switch normalizedName {
-		case "key", "apikey", "xapikey", "xgoogapikey", "mjapisecret",
-			"token", "apitoken", "accesstoken", "refreshtoken", "bearertoken",
-			"authorization", "auth", "bearer", "password", "passwd",
-			"secret", "secretkey", "clientsecret", "apisecret",
-			"session", "sessionid", "sid", "signature", "sig", "sign",
-			"xamzsignature", "xamzcredential", "xamzsecuritytoken":
+		if relaycommon.IsSensitiveURLQueryKey(decodedName) {
 			fields[i] = name + "=[REDACTED]"
 		}
 	}

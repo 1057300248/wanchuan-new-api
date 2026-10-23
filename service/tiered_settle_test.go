@@ -948,6 +948,44 @@ func TestBuildTieredTokenParams_Len_Claude(t *testing.T) {
 	}
 }
 
+func TestBuildTieredTokenParams_ClaudeUnsplitCacheWrites(t *testing.T) {
+	expr := `tier("base", p * 3 + c * 15 + cr * 0.3 + cc * 3.75 + cc1h * 6)`
+	for _, tc := range []struct {
+		name             string
+		split5m, split1h int
+		wantCC, wantCC1h float64
+		wantCost         float64
+	}{
+		{"total without split", 0, 0, 10000, 0, 38550},
+		{"split missing part of total", 0, 4000, 6000, 4000, 47550},
+		{"equivalent complete split", 6000, 4000, 6000, 4000, 47550},
+		{"all writes explicitly one hour", 0, 10000, 0, 10000, 61050},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			usage := &dto.Usage{
+				PromptTokens:                100,
+				CompletionTokens:            50,
+				UsageSemantic:               "anthropic",
+				PromptTokensDetails:         dto.InputTokenDetails{CachedCreationTokens: 10000},
+				ClaudeCacheCreation5mTokens: tc.split5m,
+				ClaudeCacheCreation1hTokens: tc.split1h,
+			}
+			before, err := common.Marshal(usage)
+			require.NoError(t, err)
+			params := BuildTieredTokenParams(usage, true, billingexpr.UsedVars(expr))
+			assert.Equal(t, tc.wantCC, params.CC)
+			assert.Equal(t, tc.wantCC1h, params.CC1h)
+			assert.Equal(t, float64(100+10000), params.Len, "len counts every cache write")
+			cost, _, err := billingexpr.RunExpr(expr, params)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantCost, cost, "response split completeness must not change the billable quantity")
+			after, err := common.Marshal(usage)
+			require.NoError(t, err)
+			assert.Equal(t, before, after, "billing normalization must not rewrite upstream usage")
+		})
+	}
+}
+
 func TestBuildTieredTokenParams_Len_TierCondition(t *testing.T) {
 	// Test that len-based tier conditions work correctly when p is reduced by cache
 	usage := &dto.Usage{
