@@ -5,7 +5,8 @@ import (
 )
 
 type TaskError struct {
-	// NoRetry prevents duplicate upstream work after a response has been accepted.
+	// NoRetry preserves an explicit stop, including failed preconsume and
+	// prevention of duplicate upstream work after a response was accepted.
 	NoRetry bool `json:"-"`
 	// DeliveryUnknown is not a refund authorization: the upstream may have
 	// accepted work even though no usable acknowledgement reached the gateway.

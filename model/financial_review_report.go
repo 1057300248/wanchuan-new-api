@@ -92,7 +92,7 @@ func ReadFinancialReviewReport(ctx context.Context, db *gorm.DB, opts FinancialR
 	switch opts.Entity {
 	case FinancialReviewBilling:
 		model, key = &BillingFinalization{}, "request_id"
-		wanted = []string{"request_id", "user_id", "source", "source_held", "token_held", "pre_consumed", "subscription_id", "subscription_period", "state", "actual_quota"}
+		wanted = []string{"request_id", "user_id", "source", "source_held", "token_held", "pre_consumed", "subscription_id", "subscription_period", "state", "actual_quota", "last_error_code"}
 	case FinancialReviewSubscription:
 		model, key = &SubscriptionPreConsumeRecord{}, "id"
 		wanted = []string{"id", "request_id", "user_id", "user_subscription_id", "pre_consumed", "quota_period", "reserved_amount", "settled_amount", "status"}
@@ -219,7 +219,7 @@ func financialReviewColumns(ctx context.Context, db *gorm.DB, table string) (map
 // historical JSON row locally instead of losing the whole report page.
 type financialReviewRow struct {
 	ID, UserSubscriptionID, SubscriptionID, SubscriptionPeriod, QuotaPeriod int64
-	RequestID, Source, State, Status, PrivateData                           string
+	RequestID, Source, State, Status, PrivateData, LastErrorCode            string
 	UserID, TokenID                                                         int
 	SourceHeld, TokenHeld, PreConsumed, ActualQuota                         int64
 	ReservedAmount, SettledAmount, Quota, BillingOriginalQuota              int64
@@ -247,6 +247,9 @@ func (row *financialReviewRow) review(entity FinancialReviewEntity, columns map[
 			item.Issues = append(item.Issues, "legacy_refund_pending")
 		case BillingHeld:
 			item.Issues = append(item.Issues, "held_not_refund_authorization")
+			if row.LastErrorCode == "initial_refund_unconfirmed" {
+				item.Issues = append(item.Issues, "initial_reservation_refund_requires_review")
+			}
 		case BillingDeliveryUnknown, "held_unknown", "unknown":
 			item.Issues = append(item.Issues, "delivery_evidence_unknown")
 		case BillingRefundReview:

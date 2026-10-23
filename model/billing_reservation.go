@@ -21,16 +21,28 @@ func sameBillingAuthorization(a, b BillingFinalization) bool {
 	return a.RequestID == b.RequestID && a.UserID == b.UserID && a.Source == b.Source && a.TokenID == b.TokenID && subtle.ConstantTimeCompare([]byte(a.TokenFingerprint), []byte(b.TokenFingerprint)) == 1
 }
 
+// BillingReservationAttempt distinguishes the acknowledged result from the
+// candidate prepared by this invocation. FreshInitialPrepared is not evidence
+// of COMMIT: only the unique owner can decide whether its debit exists.
+type BillingReservationAttempt struct {
+	Applied              bool
+	FreshInitialPrepared bool
+}
+
 // ReserveBillingFinalization creates/extends only a live v2 hold. The callback
 // must apply the source and original token and fill the exact resulting held
 // amounts in this SAME transaction. A zero trusted hold still saves identity.
 // Held/unknown rows are evidence for review, never a refund recovery queue.
-func ReserveBillingFinalization(ctx context.Context, authorization BillingFinalization, previous *BillingFinalization, target int, apply func(*gorm.DB, *BillingFinalization) error, inspect ...func(*gorm.DB, BillingFinalization) error) (BillingFinalization, bool, error) {
+// The attempt reports a fully prepared FRESH initial candidate before COMMIT,
+// not a committed debit. It remains true on an uncertain COMMIT so that only
+// this never-dispatched attempt may request a refund through the owner barrier.
+// Replaying an existing owner never grants that failed-initial authority.
+func ReserveBillingFinalization(ctx context.Context, authorization BillingFinalization, previous *BillingFinalization, target int, apply func(*gorm.DB, *BillingFinalization) error, inspect ...func(*gorm.DB, BillingFinalization) error) (BillingFinalization, BillingReservationAttempt, error) {
 	var result BillingFinalization
 	if authorization.RequestID == "" || authorization.UserID <= 0 || target < 0 || target > common.MaxQuota || apply == nil {
-		return result, false, errors.New("invalid billing reservation")
+		return result, BillingReservationAttempt{}, errors.New("invalid billing reservation")
 	}
-	applied := false
+	attempt := BillingReservationAttempt{}
 	publish := func(tx *gorm.DB, stored BillingFinalization) error {
 		for _, read := range inspect {
 			if read != nil {
@@ -96,10 +108,15 @@ func ReserveBillingFinalization(ctx context.Context, authorization BillingFinali
 		if err := tx.Save(&stored).Error; err != nil {
 			return err
 		}
-		applied = true
-		return publish(tx, stored)
+		if err := publish(tx, stored); err != nil {
+			return err
+		}
+		attempt.Applied = true
+		attempt.FreshInitialPrepared = fresh && previous == nil
+		return nil
 	})
-	return result, applied && err == nil, err
+	attempt.Applied = attempt.Applied && err == nil
+	return result, attempt, err
 }
 
 // ReserveBillingTokenTx uses the original authorized token identity, and keeps
@@ -178,4 +195,34 @@ func ReadBillingReservation(ctx context.Context, authorization BillingFinalizati
 		return nil, err
 	}
 	return &stored, nil
+}
+
+// RecordInitialReservationRefundFailure records review metadata only. It never
+// authorizes a refund, changes a terminal owner, or turns all held rows into a
+// recovery queue. If the database is unavailable, the caller must also emit the
+// request-correlated error; process death before this write remains a review gap.
+func RecordInitialReservationRefundFailure(ctx context.Context, receipt BillingFinalization) error {
+	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var stored BillingFinalization
+		if err := lockForUpdate(tx).Where("request_id = ?", receipt.RequestID).First(&stored).Error; err != nil {
+			return err
+		}
+		if !sameBillingIdentity(stored, receipt) {
+			return billingRefundReviewError("identity_mismatch", "failed initial reservation receipt mismatch")
+		}
+		if stored.State != BillingHeld {
+			return nil
+		}
+		now := common.GetTimestamp()
+		updates := map[string]any{
+			"last_error_code": "initial_refund_unconfirmed", "last_error_class": billingRefundReview,
+			"last_attempt_at": now, "escalated_at": now, "attempts": stored.Attempts + 1,
+		}
+		if stored.FirstFailedAt == 0 {
+			updates["first_failed_at"] = now
+			updates["first_error_code"] = "initial_refund_unconfirmed"
+			updates["first_error_class"] = billingRefundReview
+		}
+		return tx.Model(&stored).Updates(updates).Error
+	})
 }

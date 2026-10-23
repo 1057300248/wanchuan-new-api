@@ -92,7 +92,7 @@ func TestBillingFinalizationDatabaseMatrix(t *testing.T) {
 				require.NoError(t, db.Create(&User{Id: id, Username: request, AffCode: request, Quota: 1000, QuotaPaid: 500, QuotaBonus: 300, QuotaReward: 200}).Error)
 				require.NoError(t, db.Create(&Token{Id: id, UserId: id, Key: key, RemainQuota: 1000}).Error)
 				authorization := BillingFinalization{RequestID: request, UserID: id, Source: "wallet", TokenID: id, TokenFingerprint: BillingTokenFingerprint(key)}
-				r, applied, err := ReserveBillingFinalization(t.Context(), authorization, nil, amount, func(tx *gorm.DB, held *BillingFinalization) error {
+				r, attempt, err := ReserveBillingFinalization(t.Context(), authorization, nil, amount, func(tx *gorm.DB, held *BillingFinalization) error {
 					result, err := DebitQuotaTx(tx, LedgerEntry{UserId: id, Delta: amount, Reason: LedgerReasonBillingPreConsume, ReferenceType: "relay", ReferenceId: request, RequestId: request, IdempotencyKey: "billing:preconsume:" + request}, AccountPaid, AccountBonus, AccountReward)
 					if err != nil {
 						return err
@@ -114,7 +114,8 @@ func TestBillingFinalizationDatabaseMatrix(t *testing.T) {
 					return nil
 				})
 				require.NoError(t, err)
-				require.True(t, applied)
+				require.True(t, attempt.Applied)
+				require.True(t, attempt.FreshInitialPrepared)
 				require.Equal(t, BillingHeld, r.State)
 				return r
 			}
