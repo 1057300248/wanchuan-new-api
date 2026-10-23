@@ -81,6 +81,7 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 			t.Run("lifecycle_admission_failure", TestBillingLifecycleRefundAdmissionFailurePreservesHeld)
 			t.Run("lifecycle_ready_recovery", TestBillingLifecycleReadyRefundRecoversWithoutRequestWorker)
 			t.Run("lifecycle_unknown_delivery", TestBillingLifecycleUnknownDeliveryNeverAdmitsRefund)
+			t.Run("unknown_delivery_observability", TestBillingUnknownDeliveryObservability)
 			t.Run("lifecycle_trusted_zero", TestBillingLifecycleTrustedZeroHasDurableHeldReceipt)
 			t.Run("lifecycle_reservation_ack", TestBillingLifecycleReservationCommitAckRecovery)
 			t.Run("mj_request_owner", TestMidjourneyFinancialRequestOwner)

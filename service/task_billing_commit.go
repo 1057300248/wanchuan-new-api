@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -128,18 +130,50 @@ func PreserveUnknownBillingDelivery(info *relaycommon.RelayInfo) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.taskOwned = true // prohibits an in-process fallback even when SQL is down
+	// Capture only an already frozen identity, never a later RelayInfo value.
+	requestID := ""
+	if s.terminalReceipt != nil {
+		requestID = s.terminalReceipt.RequestID
+	} else if s.billingIdentity != nil {
+		requestID = s.billingIdentity.RequestID
+	}
+	stage := "reservation_probe"
+	var unresolved error
+	defer func() {
+		s.mu.Unlock()
+		if unresolved == nil {
+			return
+		}
+		// Request IDs are server-generated. Reject malformed internal identities
+		// instead of exporting arbitrary text or a truncated, ambiguous key.
+		if len(requestID) > 64 {
+			requestID = ""
+		}
+		for _, c := range requestID {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+				requestID = ""
+				break
+			}
+		}
+		code, class := model.BillingRefundErrorCode(unresolved)
+		// An error, including a lost COMMIT ACK, does not prove rollback. The
+		// existing owner must be read before any independently authorized action.
+		logger.LogError(context.Background(), fmt.Sprintf("event=billing_delivery_unknown_unresolved priority=high request_id=%q request_id_unavailable=%t stage=%s code=%s class=%s action=manual_reconciliation", requestID, requestID == "", stage, code, class))
+	}()
 	if s.reservationUncertain {
-		if err := s.resolveReservationLocked(); err != nil {
+		if unresolved = s.resolveReservationLocked(); unresolved != nil {
 			return
 		}
 	}
-	receipt, err := s.terminalReceiptLocked()
-	if err != nil {
+	stage = "receipt"
+	var receipt model.BillingFinalization
+	receipt, unresolved = s.terminalReceiptLocked()
+	if unresolved != nil {
 		return
 	}
+	stage = "mark_unknown"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = model.MarkBillingDeliveryUnknown(ctx, receipt)
+	unresolved = model.MarkBillingDeliveryUnknown(ctx, receipt)
 }
