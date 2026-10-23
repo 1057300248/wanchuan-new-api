@@ -23,8 +23,16 @@ import { toast } from 'sonner'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import { updateAffiliateRewardOptions, updatePasskeyDomains, updateSystemOption } from '../api'
-import type { UpdateAffiliateRewardRequest, UpdateOptionRequest, UpdatePasskeyDomainsRequest } from '../types'
+import {
+  updateAffiliateRewardOptions,
+  updatePasskeyDomains,
+  updateSystemOption,
+} from '../api'
+import type {
+  UpdateAffiliateRewardRequest,
+  UpdateOptionRequest,
+  UpdatePasskeyDomainsRequest,
+} from '../types'
 
 // Configuration keys that require status refresh
 const STATUS_RELATED_KEYS = new Set([

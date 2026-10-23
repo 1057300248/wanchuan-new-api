@@ -48,7 +48,10 @@ import {
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useSettingsForm } from '../hooks/use-settings-form'
-import { useUpdateAffiliateReward, useUpdateOption } from '../hooks/use-update-option'
+import {
+  useUpdateAffiliateReward,
+  useUpdateOption,
+} from '../hooks/use-update-option'
 
 const quotaSchema = z.object({
   AffiliateRewardEnabled: z.boolean(),
@@ -111,7 +114,10 @@ export function QuotaSettingsSection({
           })
         }
         for (const [key, value] of Object.entries(changedFields)) {
-          if (key === 'AffiliateRewardEnabled' || key === 'AffiliateRewardRate') {
+          if (
+            key === 'AffiliateRewardEnabled' ||
+            key === 'AffiliateRewardRate'
+          ) {
             continue
           }
           await updateOption.mutateAsync({
@@ -140,7 +146,11 @@ export function QuotaSettingsSection({
         <SettingsForm onSubmit={submit}>
           <SettingsPageFormActions
             onSave={submit}
-            isSaving={updateOption.isPending || updateAffiliateReward.isPending || isSubmitting}
+            isSaving={
+              updateOption.isPending ||
+              updateAffiliateReward.isPending ||
+              isSubmitting
+            }
           />
           <FormDirtyIndicator isDirty={isDirty} />
           <SettingsFormGrid>
