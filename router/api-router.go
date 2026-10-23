@@ -17,6 +17,11 @@ import (
 
 func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 	scopes := extension.RouteScopes{Engine: router}
+	// Probes are independent of the Redis-backed API limiter and caches.
+	for _, method := range []string{"GET", "HEAD"} {
+		router.Handle(method, "/api/healthz", middleware.DisableCache(), controller.GetHealthz)
+		router.Handle(method, "/api/readyz", middleware.DisableCache(), controller.GetReadyz)
+	}
 	// Keep the read-only browser identity probe inside the refresh cookie path.
 	// Cache protection precedes every rejecting middleware, including the
 	// limiter. The console module attaches the handler to this scope.

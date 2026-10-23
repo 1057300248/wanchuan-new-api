@@ -6,8 +6,10 @@ import (
 
 func Cache() func(c *gin.Context) {
 	return func(c *gin.Context) {
-		if c.Request.RequestURI == "/" {
-			c.Header("Cache-Control", "no-cache")
+		requestPath := c.Request.URL.Path
+		c.Header("X-Content-Type-Options", "nosniff")
+		if requestPath == "/" || requestPath == "/index.html" {
+			c.Header("Cache-Control", "no-store")
 		} else {
 			c.Header("Cache-Control", "max-age=604800") // one week
 		}

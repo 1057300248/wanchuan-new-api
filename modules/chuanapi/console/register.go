@@ -55,6 +55,10 @@ func registerPublicRoutes(scopes extension.RouteScopes) error {
 		return fmt.Errorf("chuanapi console: required host API route scopes are unavailable")
 	}
 	scopes.BrowserSession.GET("/session", GetAuthSession)
+	scopes.API.GET("/chuanapi/public-config", GetPublicConfig)
+	scopes.API.HEAD("/chuanapi/public-config", GetPublicConfig)
+	scopes.PublicAPI.GET("/status", GetPublicConfig)
+	scopes.PublicAPI.HEAD("/status", GetPublicConfig)
 	scopes.PublicAPI.GET("/pricing", GetPublicPricing)
 	scopes.PublicAPI.HEAD("/pricing", GetPublicPricing)
 	monitorService := monitor.New(os.Getenv("MODEL_MONITOR_ENABLED") != "false")
