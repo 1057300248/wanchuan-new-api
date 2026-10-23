@@ -18,10 +18,17 @@ export TEST_FINALIZATION_REALTIME_MYSQL_DSN= TEST_FINALIZATION_REALTIME_POSTGRES
 export TEST_BILLING_RECOVERY_MYSQL_DSN= TEST_BILLING_RECOVERY_POSTGRES_DSN=
 export NEW_API_TEST_RECOVERY_RESTART_FILE= NEW_API_TEST_RECOVERY_RESTART_PHASE=
 export NEW_API_TEST_RECOVERY_NATIVE_CLAIM=
+# Only the callback parent may supply its own temporary SQLite file to its child.
+export PAYMENT_STALE_STRIPE_DSN=
+export TEST_BONUS_AUDIT_MYSQL_DSN= TEST_BONUS_AUDIT_POSTGRES_DSN=
 
 report() {
   local label=$1 package=$2 pattern=$3
   shift 3
+  local checker_options=()
+  case "$label" in
+    payment-pending-status|bonus-audit-race|payment-stale-callback|financial-bonus-cache) checker_options+=(--require-run) ;;
+  esac
   # Retain compiler stderr separately so it cannot masquerade as Go test JSON.
   # Continue collecting independent suites, but any failed suite fails the job.
   if ! go test -race -p 2 "$package" -run "$pattern" -count=1 -timeout=12m -json > "$OUT/$label.jsonl" 2> "$OUT/$label.stderr.log"; then
@@ -29,7 +36,7 @@ report() {
     cat "$OUT/$label.jsonl"
     status=1
   fi
-  if ! python3 ops/ci/check_go_test_report.py --reject-skipped-descendants "$OUT/$label.jsonl" "$@"; then
+  if ! python3 ops/ci/check_go_test_report.py --reject-skipped-descendants "$OUT/$label.jsonl" "$@" "${checker_options[@]}"; then
     status=1
   fi
 }
@@ -44,6 +51,7 @@ database)
   token_migration_mysql_dsn= token_migration_postgres_dsn=
   task_submission_mysql_dsn= task_submission_postgres_dsn=
   billing_recovery_mysql_dsn= billing_recovery_postgres_dsn=
+  bonus_audit_mysql_dsn= bonus_audit_postgres_dsn=
   # Retained model/service matrices still refuse nonempty fixture databases.
   # Never share those fixtures or inherit an ambient database DSN.
   export TEST_FINALIZATION_MODEL_MYSQL_DSN= TEST_FINALIZATION_MODEL_POSTGRES_DSN=
@@ -57,6 +65,7 @@ database)
     docker inspect --format '{{.Config.Image}} {{.Image}}' "$MYSQL_ID" > "$OUT/database-image.txt"
     docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'SELECT VERSION(); ALTER DATABASE repair_compat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_compat_log CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_token_migration CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;' > "$OUT/database-version.txt"
     docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'CREATE DATABASE repair_finalization_model CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_finalization_service CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_finalization_realtime CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_task_submission CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_billing_recovery CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
+    docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'CREATE DATABASE repair_bonus_audit CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
     finalization_model_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_model?charset=utf8mb4&parseTime=true&loc=UTC"
     finalization_service_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_service?charset=utf8mb4&parseTime=true&loc=UTC"
     finalization_realtime_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_realtime?charset=utf8mb4&parseTime=true&loc=UTC"
@@ -66,6 +75,7 @@ database)
     token_migration_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_token_migration?charset=utf8mb4&parseTime=true&loc=UTC"
     task_submission_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_task_submission?charset=utf8mb4&parseTime=true&loc=UTC"
     billing_recovery_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_billing_recovery?charset=utf8mb4&parseTime=true&loc=UTC"
+    bonus_audit_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_bonus_audit?charset=utf8mb4&parseTime=true&loc=UTC"
     ;;
   postgres)
     : "${PG_ID:?a real PostgreSQL service is required}" "${PG_PORT:?a real PostgreSQL port is required}"
@@ -78,6 +88,7 @@ database)
     docker exec "$PG_ID" createdb -U postgres repair_finalization_realtime
     docker exec "$PG_ID" createdb -U postgres repair_task_submission
     docker exec "$PG_ID" createdb -U postgres repair_billing_recovery
+    docker exec "$PG_ID" createdb -U postgres repair_bonus_audit
     finalization_model_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_model?sslmode=disable"
     finalization_service_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_service?sslmode=disable"
     finalization_realtime_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_realtime?sslmode=disable"
@@ -87,6 +98,7 @@ database)
     token_migration_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_token_migration?sslmode=disable"
     task_submission_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_task_submission?sslmode=disable"
     billing_recovery_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_billing_recovery?sslmode=disable"
+    bonus_audit_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_bonus_audit?sslmode=disable"
     ;;
   sqlite) ;;
   *) echo "Unsupported database dialect: $DIALECT" >&2; exit 1 ;;
@@ -494,10 +506,83 @@ database)
   for contract in 'financial/multiple_response_done' 'financial/segment_sql_failure_observed_once' 'financial/tiered_audio_and_cache_facts' 'financial/tiered_image_cache_presence' 'financial/tiered_mixed_cache_presence/known_first' 'financial/tiered_mixed_cache_presence/missing_first' 'termination/request_cancel' 'termination/upstream_close' 'termination/client_close'; do required+=("$prefix/$contract"); done
   TEST_FINALIZATION_REALTIME_MYSQL_DSN="$finalization_realtime_mysql_dsn" TEST_FINALIZATION_REALTIME_POSTGRES_DSN="$finalization_realtime_postgres_dsn" \
     report realtime-financial ./relay/channel/openai "^TestRealtimeFinancialConsistencyDatabaseMatrix$/$DIALECT$" "${required[@]}"
+
+  # Native profiles must never turn a missing fixture DSN into skipped evidence.
+  case "$DIALECT" in
+    mysql) : "${TEST_MYSQL_DSN:?payment model requires its owned native DSN}" "${bonus_audit_mysql_dsn:?bonus audit requires its new empty database}" ;;
+    postgres) : "${TEST_POSTGRES_DSN:?payment model requires its owned native DSN}" "${bonus_audit_postgres_dsn:?bonus audit requires its new empty database}" ;;
+  esac
+  top=TestPaymentPendingStatusDatabaseMatrix
+  prefix="$top/$DIALECT"
+  required=("$top" "$prefix")
+  for provider in waffo waffo_pancake stripe subscription; do
+    required+=("$prefix/$provider")
+    for contract in pending_changes_only_status preserve_success preserve_failed preserve_expired identity_guards read write zero_rows commit_rollback commit_lost_ack; do
+      required+=("$prefix/$provider/$contract")
+    done
+    if [ "$provider" = stripe ]; then required+=("$prefix/$provider/existing_expiry_contract"); fi
+    if [ "$DIALECT" != sqlite ]; then
+      # Controlled commit ordering is not an observed native database lock wait.
+      required+=("$prefix/$provider/native_controlled_success_commit_before_failure_result")
+    fi
+  done
+  report payment-pending-status ./model "^$top$/$DIALECT$" "${required[@]}"
+
+  top=TestModelBonusEligibleAuditDatabaseMatrix
+  prefix="$top/$DIALECT"
+  required=("$top" "$prefix")
+  for contract in no_op_and_missing_model_remain_unclaimed mixed_replay_applies_every_unclaimed_item audit_model_identity_must_match later_conflict_rolls_back_prior_item_even_if_current_matches later_audit_insert_rolls_back_entire_batch later_actual_duplicate_rolls_back_entire_batch later_model_update_rolls_back_entire_batch real_commit_lost_ack_preserves_audit_and_invalidates; do
+    required+=("$prefix/$contract")
+  done
+  case "$DIALECT" in
+    sqlite) isolations=(Default) ;;
+    mysql) isolations=(Read_Committed Repeatable_Read) ;;
+    postgres) isolations=(Read_Committed) ;;
+  esac
+  for isolation in "${isolations[@]}"; do
+    required+=("$prefix/$isolation")
+    for contract in false_then_true_conflict true_then_false_conflict true_then_null_conflict same_target_replay; do
+      required+=("$prefix/$isolation/$contract")
+    done
+    if [ "$DIALECT" != sqlite ]; then
+      required+=("$prefix/$isolation/overlapping_batch_replay_applies_unclaimed_item" "$prefix/$isolation/overlapping_batch_conflict_rolls_back_unclaimed_item")
+    fi
+    required+=("$prefix/$isolation/different_keys_preserve_actual_before")
+    if [ "$DIALECT" != sqlite ]; then required+=("$prefix/$isolation/reverse_input_batches"); fi
+  done
+  selector="^$top$/$DIALECT$"
   if [ "$DIALECT" = sqlite ]; then
+    # This pre-existing serial regression owns SQLite; never count it as native.
+    standalone=TestBatchUpdateModelBonusEligibleWithAudit
+    required+=("$standalone")
+    selector="^($top|$standalone)$/$DIALECT$"
+  fi
+  # The fixed audit TableName bypasses table prefixes. Only this report receives
+  # the freshly created empty DB; disposable service teardown owns its removal.
+  TEST_BONUS_AUDIT_MYSQL_DSN="$bonus_audit_mysql_dsn" TEST_BONUS_AUDIT_POSTGRES_DSN="$bonus_audit_postgres_dsn" \
+    report bonus-audit-race ./model "$selector" "${required[@]}"
+
+  if [ "$DIALECT" = sqlite ]; then
+    # Actual signed callbacks and the cross-process Stripe child are SQLite-only.
+    # Pancake's slash-bearing t.Run name has no separate topup/subscription node.
+    required=(
+      'TestWaffoCreationFailurePreservesSuccessfulWebhook'
+      'TestWaffoCreationFailurePreservesSuccessfulWebhook/transport'
+      'TestWaffoCreationFailurePreservesSuccessfulWebhook/rejected_response'
+      'TestWaffoCreationFailurePreservesSuccessfulWebhook/response_identity'
+      'TestWaffoCreationFailurePreservesSuccessfulWebhook/provider_order_binding'
+      'TestPancakeCreationFailurePreservesSuccessfulWebhook'
+      'TestPancakeCreationFailurePreservesSuccessfulWebhook/topup/transport'
+      'TestPancakeCreationFailurePreservesSuccessfulWebhook/topup/provider_session_binding'
+      'TestPancakeCreationFailurePreservesSuccessfulWebhook/subscription/transport'
+      'TestPancakeCreationFailurePreservesSuccessfulWebhook/subscription/provider_session_binding'
+      'TestWaffoSDKFailureBeforeRequestMarksPendingFailed'
+      'TestStripeDelayedFailurePreservesSuccessAcrossProcesses'
+    )
+    report payment-stale-callback ./controller '^(TestWaffoCreationFailurePreservesSuccessfulWebhook|TestWaffoSDKFailureBeforeRequestMarksPendingFailed|TestPancakeCreationFailurePreservesSuccessfulWebhook|TestStripeDelayedFailurePreservesSuccessAcrossProcesses)$' "${required[@]}"
     required=('TestPrepareFreeRealtimeBilling/wallet_only/model' 'TestPrepareFreeRealtimeBilling/wallet_only/group' 'TestPrepareFreeRealtimeBilling/subscription_only/model' 'TestPrepareFreeRealtimeBilling/subscription_only/group')
     report realtime-free-entry ./relay '^(TestPrepareFreeRealtimeBilling)$' "${required[@]}"
-    required=('TestBonusEligibilityExpiresPreviouslyTrueCache' 'TestBonusEligibilityDoesNotRepublishInvalidatedSnapshot' 'TestBonusEligibilityCommittedMetadataRefreshControls/update' 'TestBonusEligibilityCommittedMetadataRefreshControls/sync' 'TestBonusEligibilityCommittedMetadataRefreshControls/delete' 'TestBonusEligibilityDoesNotExtendPricingSnapshotLifetime' 'TestBonusEligibilityModelUpdateInvalidatesAfterCommit' 'TestBonusEligibilityRejectedMutationKeepsEligibility' 'TestBonusEligibilityCommitACKLossInvalidates' 'TestBonusEligibilityMutationCommitBoundaries/batch_commit' 'TestBonusEligibilityMutationCommitBoundaries/batch_lost_ack' 'TestBonusEligibilityMutationCommitBoundaries/delete_lost_ack' 'TestBonusEligibilityMutationCommitBoundaries/delete_pricing_lost_ack' 'TestBonusEligibilityMutationCommitBoundaries/sync_bonus_lost_ack' 'TestBonusEligibilityMutationCommitBoundaries/sync_name_rule_lost_ack')
+    required=('TestBonusEligibilityExpiresPreviouslyTrueCache' 'TestBonusEligibilityDoesNotRepublishInvalidatedSnapshot' 'TestBonusEligibilityCommittedMetadataRefreshControls' 'TestBonusEligibilityCommittedMetadataRefreshControls/update' 'TestBonusEligibilityCommittedMetadataRefreshControls/sync' 'TestBonusEligibilityCommittedMetadataRefreshControls/delete' 'TestBonusEligibilityDoesNotExtendPricingSnapshotLifetime' 'TestBonusEligibilityModelUpdateInvalidatesAfterCommit' 'TestBonusEligibilityRejectedMutationKeepsEligibility' 'TestBonusEligibilityCommitACKLossInvalidates' 'TestBonusEligibilityMutationCommitBoundaries' 'TestBonusEligibilityMutationCommitBoundaries/batch_commit' 'TestBonusEligibilityMutationCommitBoundaries/batch_lost_ack' 'TestBonusEligibilityMutationCommitBoundaries/delete_lost_ack' 'TestBonusEligibilityMutationCommitBoundaries/delete_pricing_lost_ack' 'TestBonusEligibilityMutationCommitBoundaries/sync_bonus_lost_ack' 'TestBonusEligibilityMutationCommitBoundaries/sync_name_rule_lost_ack')
     report financial-bonus-cache ./model '^(TestBonusEligibilityExpiresPreviouslyTrueCache|TestBonusEligibilityDoesNotRepublishInvalidatedSnapshot|TestBonusEligibilityCommittedMetadataRefreshControls|TestBonusEligibilityDoesNotExtendPricingSnapshotLifetime|TestBonusEligibilityModelUpdateInvalidatesAfterCommit|TestBonusEligibilityRejectedMutationKeepsEligibility|TestBonusEligibilityCommitACKLossInvalidates|TestBonusEligibilityMutationCommitBoundaries)$' "${required[@]}"
     report financial-bonus-cache-status ./controller '^TestModelBonusCacheStatusOnlyCommitACKLoss$' TestModelBonusCacheStatusOnlyCommitACKLoss
     required=('TestManageUserQuotaInputPresenceAndType/missing_override' 'TestManageUserQuotaInputPresenceAndType/null_override' 'TestManageUserQuotaInputPresenceAndType/explicit_zero_override' 'TestManageUserQuotaInputPresenceAndType/fractional_override' 'TestManageUserQuotaInputPresenceAndType/nonfinite_exponent_override' 'TestManageUserQuotaInputPresenceAndType/unsafe_integer_override' 'TestManageUserQuotaInputPresenceAndType/numeric_string_override' 'TestManageUserQuotaInputPresenceAndType/missing_nonquota' 'TestManageUserQuotaInputPresenceAndType/null_nonquota')

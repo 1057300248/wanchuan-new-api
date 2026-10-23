@@ -3,7 +3,7 @@
   "official_source": "7d8b91268dab69d7150f345c448b5e250163146a",
   "released_wallet_adapter": "093c7197d5eac50787971fd5ff7553a414142fc7",
   "historical_acceptance_not_reused": true,
-  "checker_sha256": "1ac3f787544e70e8c2c4ab6a04fb2b96701385ac8264bc3078716032bd3a2197",
+  "checker_sha256": "6d142f231ec24c2dabca04e640c58b0dc8da08bc4d0ac042f0558a660ff5d6ab",
   "previous_inventory_sha256": {
     "billing_finalization_required_cases.json": "c117ff9c216fa7b4bd0cb100be0eace517c1392df3c94159470e1484b9d81eb0",
     "billing_refund_followup_required_cases.json": "2340a3f958397e51886ff59859352a846a5f850b17171ccc5742a12863f6e0dd",
@@ -779,7 +779,9 @@
     "billing_finalization_required_cases.json",
     "billing_refund_followup_required_cases.json",
     "financial_consistency_required_cases.json",
-    "billing_settlement_cache_required_cases.json"
+    "billing_settlement_cache_required_cases.json",
+    "payment_stale_order_required_cases.json",
+    "bonus_audit_required_cases.json"
   ],
   "acceptance_requirements": [
     "Financial source, original token, durable terminal owner and main-DB accounting must commit together; lost ACK requires authoritative replay, not assumed rollback.",
@@ -826,7 +828,9 @@
       "immediate-settlement",
       "request-finalization-model",
       "request-finalization-service",
-      "realtime-financial"
+      "realtime-financial",
+      "payment-pending-status",
+      "bonus-audit-race"
     ],
     "postgres": [
       "startup",
@@ -857,7 +861,9 @@
       "immediate-settlement",
       "request-finalization-model",
       "request-finalization-service",
-      "realtime-financial"
+      "realtime-financial",
+      "payment-pending-status",
+      "bonus-audit-race"
     ],
     "sqlite": [
       "startup",
@@ -890,6 +896,9 @@
       "request-finalization-model",
       "request-finalization-service",
       "realtime-financial",
+      "payment-pending-status",
+      "bonus-audit-race",
+      "payment-stale-callback",
       "realtime-free-entry",
       "financial-bonus-cache",
       "financial-bonus-cache-status",
@@ -931,5 +940,12 @@
       "token-bucket-script-flush",
       "settlement-deadline-redis"
     ]
-  }
+  },
+  "strict_run_reports": [
+    "payment-pending-status",
+    "bonus-audit-race",
+    "payment-stale-callback",
+    "financial-bonus-cache"
+  ],
+  "strict_run_semantics": "Exactly one RUN and one PASS for every required node, including actual ancestors. Old PASS-only evidence is not strict-mode evidence; all existing failure/package/skipped-descendant gates remain."
 }

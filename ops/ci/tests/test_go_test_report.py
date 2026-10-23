@@ -20,11 +20,11 @@ def event(action, test=None):
 
 
 class GoTestReportTests(unittest.TestCase):
-    def check(self, events, required=None, reject_skipped_descendants=False):
+    def check(self, events, required=None, reject_skipped_descendants=False, require_run=False):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "go.jsonl"
             path.write_text("".join(json.dumps(item) + "\n" for item in events), encoding="utf-8")
-            return MODULE.validate_report(path, required or ["TestRealDatabase"], reject_skipped_descendants)
+            return MODULE.validate_report(path, required or ["TestRealDatabase"], reject_skipped_descendants, require_run)
 
     def test_accepts_executed_required_test_and_completed_package(self):
         self.assertEqual(
@@ -35,6 +35,33 @@ class GoTestReportTests(unittest.TestCase):
     def test_rejects_empty_report(self):
         with self.assertRaises(ValueError):
             self.check([])
+
+    def test_run_mode_requires_exactly_one_run_and_pass_for_each_node(self):
+        required = ["TestMatrix", "TestMatrix/sqlite", "TestMatrix/sqlite/leaf"]
+        events = [event(action, name) for name in required for action in ("run", "pass")]
+        events.append(event("pass"))
+        self.assertEqual(dict.fromkeys(required, "pass"), self.check(events, required, True, True))
+        for name in required:
+            for action in ("run", "pass"):
+                with self.subTest(name=name, action=action, defect="duplicate"):
+                    with self.assertRaisesRegex(ValueError, "exactly one RUN and PASS"):
+                        self.check(events + [event(action, name)], required, True, True)
+                with self.subTest(name=name, action=action, defect="missing"):
+                    filtered = [item for item in events if item != event(action, name)]
+                    with self.assertRaises(ValueError):
+                        self.check(filtered, required, True, True)
+
+    def test_default_mode_preserves_historical_pass_only_semantics(self):
+        self.assertEqual({"TestRealDatabase": "pass"}, self.check([
+            event("pass", "TestRealDatabase"), event("pass", "TestRealDatabase"), event("pass")]))
+
+    def test_run_mode_keeps_failed_and_skipped_descendants_rejected(self):
+        complete = [event("run", "TestRealDatabase"), event("pass", "TestRealDatabase"), event("pass")]
+        for action in ("fail", "skip"):
+            with self.subTest(action=action):
+                with self.assertRaises(ValueError):
+                    self.check(complete + [event(action, "TestRealDatabase/descendant")],
+                               reject_skipped_descendants=True, require_run=True)
 
     def test_rejects_successful_package_without_required_test(self):
         with self.assertRaises(ValueError):

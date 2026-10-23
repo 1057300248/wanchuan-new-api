@@ -470,6 +470,7 @@
       "required_tests": [
         "TestBonusEligibilityExpiresPreviouslyTrueCache",
         "TestBonusEligibilityDoesNotRepublishInvalidatedSnapshot",
+        "TestBonusEligibilityCommittedMetadataRefreshControls",
         "TestBonusEligibilityCommittedMetadataRefreshControls/update",
         "TestBonusEligibilityCommittedMetadataRefreshControls/sync",
         "TestBonusEligibilityCommittedMetadataRefreshControls/delete",
@@ -477,6 +478,7 @@
         "TestBonusEligibilityModelUpdateInvalidatesAfterCommit",
         "TestBonusEligibilityRejectedMutationKeepsEligibility",
         "TestBonusEligibilityCommitACKLossInvalidates",
+        "TestBonusEligibilityMutationCommitBoundaries",
         "TestBonusEligibilityMutationCommitBoundaries/batch_commit",
         "TestBonusEligibilityMutationCommitBoundaries/batch_lost_ack",
         "TestBonusEligibilityMutationCommitBoundaries/delete_lost_ack",
@@ -484,7 +486,8 @@
         "TestBonusEligibilityMutationCommitBoundaries/sync_bonus_lost_ack",
         "TestBonusEligibilityMutationCommitBoundaries/sync_name_rule_lost_ack"
       ],
-      "scope": "TTL/inflight/commit control with the package-owned SQLite fixture."
+      "scope": "TTL/inflight/commit control with the package-owned SQLite fixture.",
+      "require_run": true
     },
     {
       "label": "financial-bonus-cache-status",
