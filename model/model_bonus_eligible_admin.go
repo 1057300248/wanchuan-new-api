@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"gorm.io/gorm"
@@ -13,7 +14,8 @@ import (
 //
 // 批量调整写入独立审计表 model_bonus_eligible_audits，记录操作者、模型、
 // 变更前后值、请求幂等键与时间。审计行以 (请求幂等键 + 模型) 唯一约束保证
-// 重复请求幂等：同键同目标值重放无副作用；同键不同目标值视为冲突拒绝。
+// 已记录变更的重复请求幂等：同键同目标值重放无副作用；同键不同目标值
+// 视为冲突拒绝。首次无变更或模型不存在时不写审计、不占用幂等键。
 // ---------------------------------------------------------------------------
 
 // ModelBonusEligibleAudit 模型 bonus_eligible 变更的独立审计记录。
@@ -41,7 +43,7 @@ var (
 // BatchUpdateModelBonusEligible 批量调整模型 bonus_eligible 并写独立审计。
 // target 为 nil 表示清除资格（回到未配置状态）。
 // idempotencyKey 由调用方提供（前端 crypto.randomUUID 或后端生成），
-// 同一请求重复提交不重复变更；同键但目标值不同的请求返回冲突错误。
+// 已记录变更的同键请求不重复变更；同键但目标值不同的请求返回冲突错误。
 // 返回实际变更（before != after）的模型数。
 func BatchUpdateModelBonusEligible(modelIDs []int, target *bool, operatorId int, operatorName string, idempotencyKey string) (int, error) {
 	if len(modelIDs) == 0 {
@@ -51,9 +53,24 @@ func BatchUpdateModelBonusEligible(modelIDs []int, target *bool, operatorId int,
 		return 0, fmt.Errorf("idempotency key is required")
 	}
 	modelIDs = dedupeInts(modelIDs)
+	slices.Sort(modelIDs)
 
 	var changed int
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		// Lock every model before the first ordinary audit read. MySQL RR must
+		// not establish its read view before waiting for an overlapping batch.
+		// Individual sorted PK reads give this writer a consistent lock order.
+		models := make(map[int]Model, len(modelIDs))
+		for _, modelID := range modelIDs {
+			var model Model
+			if err := lockForUpdate(tx).Select("id", "model_name", "bonus_eligible").Where("id = ?", modelID).First(&model).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					continue
+				}
+				return err
+			}
+			models[modelID] = model
+		}
 		for _, modelID := range modelIDs {
 			auditKey := idempotencyKey + ":" + fmt.Sprintf("%d", modelID)
 			// 先核对幂等操作参数，再查看当前模型状态。这样即使模型后来被其他
@@ -64,30 +81,17 @@ func BatchUpdateModelBonusEligible(modelIDs []int, target *bool, operatorId int,
 				return findErr
 			}
 			if existing.Id > 0 {
-				if boolPtrEqual(existing.After, target) {
+				if existing.ModelId == modelID && boolPtrEqual(existing.After, target) {
 					continue
 				}
 				return ErrModelAuditConflict
 			}
 
-			var model Model
-			if err := tx.Select("id", "model_name", "bonus_eligible").Where("id = ?", modelID).First(&model).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					continue
-				}
-				return err
-			}
-			if boolPtrEqual(model.BonusEligible, target) {
+			model, exists := models[modelID]
+			if !exists || boolPtrEqual(model.BonusEligible, target) {
 				continue
 			}
 
-			var targetValue interface{}
-			if target != nil {
-				targetValue = *target
-			}
-			if err := tx.Model(&Model{}).Where("id = ?", modelID).Update("bonus_eligible", targetValue).Error; err != nil {
-				return err
-			}
 			audit := ModelBonusEligibleAudit{
 				OperatorId:     operatorId,
 				OperatorName:   operatorName,
@@ -100,8 +104,18 @@ func BatchUpdateModelBonusEligible(modelIDs []int, target *bool, operatorId int,
 			}
 			if err := tx.Create(&audit).Error; err != nil {
 				if isDuplicateKeyError(err) {
-					continue
+					// Never swallow a rejected claim: MySQL only rolls back the
+					// statement, while PostgreSQL aborts the transaction. Both
+					// must roll back the whole batch, including earlier models.
+					return ErrModelAuditConflict
 				}
+				return err
+			}
+			var targetValue any
+			if target != nil {
+				targetValue = *target
+			}
+			if err := tx.Model(&Model{}).Where("id = ?", modelID).Update("bonus_eligible", targetValue).Error; err != nil {
 				return err
 			}
 			changed++
