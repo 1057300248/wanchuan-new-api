@@ -460,15 +460,16 @@ database)
     )
     report official-token-refund ./model '^(TestOfficialTokenRefundUsesBatchAndIndependentSQL|TestOfficialTokenRefundUsesAsyncCacheWithoutPrivateFence|TestBillingTokenContextPreservesFence|TestBillingTokenRedisErrorRetainsLegacyLiveContextPolicy|TestBillingTokenExpiredDeadlineBeforeNotificationRollsBackSource)$' "${required[@]}"
     required=(
-      'TestOfficialMidjourneyFailedQuotaDoesNotSchedulePrivateRetry'
+      'TestMidjourneyMissingChannelRequiresReviewWithoutRefund'
       'TestMidjourneyTransientChannelLookupCannotAuthorizeRefund'
       'TestMidjourneyEmptyUpstreamIDsHaveIndependentRefundReceipts'
       'TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts'
       'TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts/legacy_null'
-      'TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts/uncharged_empty'
+      'TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts/legacy_empty'
+      'TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts/prepared_uncharged'
       'TestMidjourneyCacheMissRequiresAuthoritativeAbsence'
     )
-    report official-midjourney-refund ./controller '^(TestOfficialMidjourneyFailedQuotaDoesNotSchedulePrivateRetry|TestMidjourneyTransientChannelLookupCannotAuthorizeRefund|TestMidjourneyEmptyUpstreamIDsHaveIndependentRefundReceipts|TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts|TestMidjourneyCacheMissRequiresAuthoritativeAbsence)$' "${required[@]}"
+    report official-midjourney-refund ./controller '^(TestMidjourneyMissingChannelRequiresReviewWithoutRefund|TestMidjourneyTransientChannelLookupCannotAuthorizeRefund|TestMidjourneyEmptyUpstreamIDsHaveIndependentRefundReceipts|TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts|TestMidjourneyCacheMissRequiresAuthoritativeAbsence)$' "${required[@]}"
     required=(
       'TestOfficialCompatibilityKeeps093RefundRemainder'
     )

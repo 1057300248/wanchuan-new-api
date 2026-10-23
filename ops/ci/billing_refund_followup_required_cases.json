@@ -47,14 +47,15 @@
     {
       "label": "official-midjourney-refund",
       "package": "controller",
-      "selector": "^(TestOfficialMidjourneyFailedQuotaDoesNotSchedulePrivateRetry|TestMidjourneyTransientChannelLookupCannotAuthorizeRefund|TestMidjourneyEmptyUpstreamIDsHaveIndependentRefundReceipts|TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts|TestMidjourneyCacheMissRequiresAuthoritativeAbsence)$",
+      "selector": "^(TestMidjourneyMissingChannelRequiresReviewWithoutRefund|TestMidjourneyTransientChannelLookupCannotAuthorizeRefund|TestMidjourneyEmptyUpstreamIDsHaveIndependentRefundReceipts|TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts|TestMidjourneyCacheMissRequiresAuthoritativeAbsence)$",
       "required_tests": [
-        "TestOfficialMidjourneyFailedQuotaDoesNotSchedulePrivateRetry",
+        "TestMidjourneyMissingChannelRequiresReviewWithoutRefund",
         "TestMidjourneyTransientChannelLookupCannotAuthorizeRefund",
         "TestMidjourneyEmptyUpstreamIDsHaveIndependentRefundReceipts",
         "TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts",
         "TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts/legacy_null",
-        "TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts/uncharged_empty",
+        "TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts/legacy_empty",
+        "TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts/prepared_uncharged",
         "TestMidjourneyCacheMissRequiresAuthoritativeAbsence"
       ]
     },

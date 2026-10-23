@@ -18,11 +18,10 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// HTTP/WS handler completion does not join the official asynchronous refund.
-// Source credit precedes independent token credit. Pause the token update and
-// prove that this source-first window is not mistaken for full completion. The
-// first accounting read releases credit only AFTER reading the old token row,
-// so a one-shot assertion still deterministically fails.
+// HTTP/WS handler completion does not join the asynchronous atomic refund.
+// Pause the admitted refund before any source/token writes, then release it only
+// AFTER the first accounting read observes the held token row. A one-shot check
+// must not mistake durable admission or handler completion for returned funds.
 func TestResponsesAccountingWaitsForAsynchronousTokenRefund(t *testing.T) {
 	fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(*websocket.Conn, *http.Request) {})
 	oldRetry := common.RetryTimes
@@ -34,22 +33,37 @@ func TestResponsesAccountingWaitsForAsynchronousTokenRefund(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = io.WriteString(w, `{"error":{"message":"synthetic unavailable","type":"upstream_error"}}`)
 	}
-	// A second read-only connection observes the controlled pre-UPDATE window
-	// while the refund transaction owns the first connection. There are no
-	// competing writers; this does not relax production locking.
+	// A second read-only connection observes the admitted owner and held balances
+	// before the refund transaction writes either account. Pausing after a source
+	// write would instead lock SQLite readers, not expose a committed partial refund.
 	sqlDB, err := model.DB.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(2)
 	t.Cleanup(func() { sqlDB.SetMaxOpenConns(1) })
 	entered, release := make(chan struct{}), make(chan struct{})
-	var enterOnce, releaseOnce sync.Once
+	var releaseOnce sync.Once
+	var pauseClaimed atomic.Bool
 	var accountingRead, firstReadHeldToken atomic.Bool
 	var updateHits atomic.Int32
 	requestStarted, handlerJoined := false, false
 	releaseRefund := func() { releaseOnce.Do(func() { close(release) }) }
 	t.Cleanup(releaseRefund)
-	const updateHook = "test:pause-responses-token-refund"
+	const pauseHook = "test:pause-responses-admitted-refund"
+	const updateHook = "test:count-responses-token-refund"
 	const queryHook = "test:release-responses-refund-after-read"
+	require.NoError(t, model.DB.Callback().Query().After("gorm:query").Register(pauseHook, func(tx *gorm.DB) {
+		owner, ok := tx.Statement.Dest.(*model.BillingFinalization)
+		if tx.Error != nil || !ok || owner.UserID != fixture.user.Id || owner.RequestID != "responses-http-billing" || owner.State != model.BillingRefundReady {
+			return
+		}
+		// The worker is the first reader of this newly admitted owner. Later
+		// verification reads must remain non-blocking while it is paused.
+		if !pauseClaimed.CompareAndSwap(false, true) {
+			return
+		}
+		close(entered)
+		<-release
+	}))
 	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(updateHook, func(tx *gorm.DB) {
 		if tx.Statement.Table != "tokens" {
 			return
@@ -63,8 +77,6 @@ func TestResponsesAccountingWaitsForAsynchronousTokenRefund(t *testing.T) {
 			return
 		}
 		updateHits.Add(1)
-		enterOnce.Do(func() { close(entered) })
-		<-release
 	}))
 	require.NoError(t, model.DB.Callback().Query().After("gorm:query").Register(queryHook, func(tx *gorm.DB) {
 		if tx.Statement.Table == "tokens" && accountingRead.Load() {
@@ -89,6 +101,7 @@ func TestResponsesAccountingWaitsForAsynchronousTokenRefund(t *testing.T) {
 		// balances or refunded=true, zero joins the actual finite pool callbacks.
 		require.Eventually(t, func() bool { return gopool.WorkerCount() == 0 }, 5*time.Second, time.Millisecond,
 			"refund callbacks must return before removing hooks or restoring fixture globals")
+		require.NoError(t, model.DB.Callback().Query().Remove(pauseHook))
 		require.NoError(t, model.DB.Callback().Update().Remove(updateHook))
 		require.NoError(t, model.DB.Callback().Query().Remove(queryHook))
 	})
@@ -122,17 +135,45 @@ func TestResponsesAccountingWaitsForAsynchronousTokenRefund(t *testing.T) {
 	require.NoError(t, model.DB.First(&user, fixture.user.Id).Error)
 	require.Equal(t, 2000, token.RemainQuota, "handler completion precedes token refund")
 	require.Equal(t, 1000, token.UsedQuota)
-	require.Equal(t, 100000, user.Quota, "official source credit precedes the independently paused token credit")
-	require.Equal(t, 100000, user.QuotaPaid)
+	require.Equal(t, 99000, user.Quota, "durable refund admission has not yet returned either held balance")
+	require.Equal(t, 99000, user.QuotaPaid)
 	require.Zero(t, user.QuotaBonus)
 	require.Zero(t, user.QuotaReward)
 	var owners int64
 	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).
 		Where("user_id = ? AND request_id = ?", fixture.user.Id, "responses-http-billing").Count(&owners).Error)
-	require.Zero(t, owners, "official request Refund does not create a durable finalization owner")
+	require.EqualValues(t, 1, owners, "refund admission must retain the original durable owner")
+	var admitted model.BillingFinalization
+	require.NoError(t, model.DB.Where("request_id = ?", "responses-http-billing").First(&admitted).Error)
+	require.Equal(t, model.BillingRefundReady, admitted.State)
+	require.Equal(t, fixture.user.Id, admitted.UserID)
+	require.Equal(t, "wallet", admitted.Source)
+	require.Equal(t, fixture.token.Id, admitted.TokenID)
+	require.Equal(t, model.BillingTokenFingerprint(fixture.token.Key), admitted.TokenFingerprint)
+	require.Equal(t, 1000, admitted.PreConsumed)
+	require.Equal(t, 1000, admitted.SourceHeld)
+	require.Equal(t, 1000, admitted.TokenHeld)
+	require.Equal(t, []model.LedgerShare{{Account: model.AccountPaid, Amount: 1000}}, admitted.Shares())
+	require.Zero(t, updateHits.Load(), "no token credit may precede release of the admitted refund")
 	accountingRead.Store(true)
 	assertResponsesWSAccounting(t, fixture, nil)
 	require.True(t, firstReadHeldToken.Load(), "the first accounting read must observe the paused original token row")
 	require.Equal(t, int32(1), updateHits.Load())
 	require.Eventually(t, func() bool { return gopool.WorkerCount() == 0 }, 5*time.Second, time.Millisecond)
+	var completed model.BillingFinalization
+	require.NoError(t, model.DB.Where("request_id = ?", admitted.RequestID).First(&completed).Error)
+	require.Equal(t, model.BillingRefunded, completed.State)
+	require.Equal(t, admitted.RequestID, completed.RequestID)
+	require.Equal(t, admitted.UserID, completed.UserID)
+	require.Equal(t, admitted.Source, completed.Source)
+	require.Equal(t, admitted.TokenID, completed.TokenID)
+	require.Equal(t, admitted.TokenFingerprint, completed.TokenFingerprint)
+	require.Equal(t, admitted.PreConsumed, completed.PreConsumed)
+	require.Equal(t, admitted.SourceHeld, completed.SourceHeld)
+	require.Equal(t, admitted.TokenHeld, completed.TokenHeld)
+	require.Equal(t, admitted.Shares(), completed.Shares())
+	require.Zero(t, completed.ActualQuota)
+	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).
+		Where("user_id = ? AND request_id = ?", fixture.user.Id, admitted.RequestID).Count(&owners).Error)
+	require.EqualValues(t, 1, owners)
 }

@@ -643,9 +643,9 @@ func assertResponsesWSAccounting(t *testing.T, fixture *responsesWSBillingTest, 
 		charged += quota
 	}
 	// Joining the HTTP/WS handlers does not join BillingSession's background
-	// refund. Official refunds credit the source before the independent token
-	// leg, and scheduling is not completion. Wait for BOTH authoritative rows, not
-	// a cache, fixed delay or source-only signal. On timeout CollectT reports
+	// refund. Durable admission is not completion of the atomic source/token
+	// transaction. Wait for BOTH authoritative rows, not a cache, fixed delay or
+	// scheduling signal. On timeout CollectT reports
 	// the last exact counters; original accounting/ledger assertions remain.
 	require.EventuallyWithT(t, func(collect *assert.CollectT) {
 		var token model.Token

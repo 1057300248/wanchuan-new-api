@@ -411,7 +411,7 @@ func TestManageUserQuotaTargetsAndWalletBounds(t *testing.T) {
 		{name: "higher_role", mode: "override", value: 1, targetID: 1, targetRole: common.RoleRootUser, operatorRole: common.RoleAdminUser, reason: "permission_denied"},
 		{name: "read_error", mode: "add", value: 1, targetID: 1, failRead: true, reason: "database_error"},
 		{name: "add_overflow", mode: "add", before: common.MaxWalletQuota, value: 1, targetID: 1, reason: "quota_limit_exceeded"},
-		{name: "subtract_underflow", mode: "subtract", before: -common.MaxWalletQuota, value: 1, targetID: 1, reason: "insufficient_balance"},
+		{name: "subtract_underflow", mode: "subtract", before: 0, value: 1, targetID: 1, reason: "insufficient_balance"},
 		{name: "negative_override", mode: "override", before: 1000, value: -1, targetID: 1, reason: "invalid_parameters"},
 		{name: "oversized_add", mode: "add", value: common.MaxWalletQuota + 1, targetID: 1, reason: "quota_limit_exceeded"},
 		{name: "oversized_subtract", mode: "subtract", value: common.MaxWalletQuota + 1, targetID: 1, reason: "quota_limit_exceeded"},
@@ -448,6 +448,9 @@ func TestManageUserQuotaTargetsAndWalletBounds(t *testing.T) {
 			}
 			require.NoError(t, db.Unscoped().First(&user, user.Id).Error)
 			assert.Equal(t, tc.before, user.Quota)
+			assert.Zero(t, user.QuotaPaid)
+			assert.Zero(t, user.QuotaBonus)
+			assert.Zero(t, user.QuotaReward)
 			var audits []model.AuditLog
 			require.NoError(t, model.LOG_DB.Find(&audits).Error)
 			require.Len(t, audits, 1)
@@ -461,6 +464,11 @@ func TestManageUserQuotaTargetsAndWalletBounds(t *testing.T) {
 			var count int64
 			require.NoError(t, model.LOG_DB.Model(&model.Log{}).Count(&count).Error)
 			assert.Zero(t, count)
+			var operations, rows int64
+			require.NoError(t, db.Model(&model.BalanceLedgerOperation{}).Count(&operations).Error)
+			require.NoError(t, db.Model(&model.BalanceLedger{}).Count(&rows).Error)
+			assert.Zero(t, operations, "rejection must not leave an idempotency header")
+			assert.Zero(t, rows, "rejection must not create a balance ledger entry")
 		})
 	}
 }

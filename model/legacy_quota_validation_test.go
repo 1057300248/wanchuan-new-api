@@ -15,6 +15,7 @@ func TestLegacyQuotaNormalizationRejectsInvalidBalanceWithoutWrites(t *testing.T
 		err   error
 	}{
 		{name: "negative", quota: -1, err: ErrLedgerInvalidEntry},
+		{name: "negative_wallet_boundary", quota: -common.MaxWalletQuota, err: ErrLedgerInvalidEntry},
 		{name: "above_wallet_limit", quota: common.MaxWalletQuota + 1, err: ErrWalletQuotaLimitExceeded},
 	} {
 		for _, path := range []string{"backfill", "first_debit"} {
