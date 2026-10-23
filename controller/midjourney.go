@@ -3,7 +3,6 @@ package controller
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,7 +17,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 // midjourneyPollSummary is the result recorded on a midjourney_poll system task
@@ -47,14 +45,9 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 
 	logger.LogInfo(ctx, common.LogText("unfinished tasks found: %v", len(tasks)))
 	taskChannelM := make(map[int][]string)
-	taskChannelLocalIDs := make(map[int][]int)
 	taskM := make(map[string]*model.Midjourney)
 	nullTaskIds := make([]int, 0)
 	for _, task := range tasks {
-		if ctx != nil && ctx.Err() != nil {
-			return summary
-		}
-
 		if task.MjId == "" {
 			// 统计失败的未完成任务
 			nullTaskIds = append(nullTaskIds, task.Id)
@@ -62,11 +55,13 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 		}
 		taskM[task.MjId] = task
 		taskChannelM[task.ChannelId] = append(taskChannelM[task.ChannelId], task.MjId)
-		taskChannelLocalIDs[task.ChannelId] = append(taskChannelLocalIDs[task.ChannelId], task.Id)
 	}
 	if len(nullTaskIds) > 0 {
 		summary.NullTasksFailed = len(nullTaskIds)
-		err := model.FailUnfinishedMidjourneyTasksByIDs(nullTaskIds, "")
+		err := model.MjBulkUpdateByTaskIds(nullTaskIds, map[string]any{
+			"status":   "FAILURE",
+			"progress": "100%",
+		})
 		if err != nil {
 			logger.LogError(ctx, common.LogText("Fix null mj_id task error: %v", err))
 		} else {
@@ -94,23 +89,12 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 		}
 		midjourneyChannel, err := model.CacheGetChannel(channelId)
 		if err != nil {
-			if errors.Is(err, model.ErrChannelCacheStale) {
-				logger.LogWarn(ctx, "Midjourney polling deferred: channel cache is stale")
-				continue
-			}
-			logger.LogError(ctx, fmt.Sprintf("CacheGetChannel: %v", err))
-			if errors.Is(err, model.ErrChannelCacheMiss) {
-				// Another node may have added this channel after our snapshot.
-				// Only this destructive failure decision bypasses the cache.
-				_, err = model.GetChannelById(channelId, false)
-				if err == nil {
-					continue
-				}
-			}
-			if !errors.Is(err, gorm.ErrRecordNotFound) {
-				continue // A transient lookup failure cannot authorize a refund.
-			}
-			err := model.FailUnfinishedMidjourneyTasksByIDs(taskChannelLocalIDs[channelId], "Failed to get the channel information. Please contact the administrator")
+			logger.LogError(ctx, common.LogText("CacheGetChannel: %v", err))
+			err := model.MjBulkUpdate(taskIds, map[string]any{
+				"fail_reason": "Failed to get the channel information. Please contact the administrator",
+				"status":      "FAILURE",
+				"progress":    "100%",
+			})
 			if err != nil {
 				logger.LogInfo(ctx, common.LogText("UpdateMidjourneyTask error: %v", err))
 			}
@@ -221,7 +205,6 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 			if (task.Progress != "100%" && responseItem.FailReason != "") || (task.Progress == "100%" && task.Status == "FAILURE") {
 				logger.LogInfo(ctx, common.LogText("%s failed: %s", task.MjId, task.FailReason))
 				task.Progress = "100%"
-				task.Status = "FAILURE"
 				if task.Quota != 0 {
 					shouldReturnQuota = true
 				}

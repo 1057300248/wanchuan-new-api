@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql/driver"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -13,7 +12,6 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
-	"gorm.io/gorm"
 )
 
 type TaskStatus string
@@ -50,28 +48,24 @@ const (
 const TaskRefundLegacyCutoff int64 = 1771718400 // 2026-02-22 00:00:00 UTC
 
 type Task struct {
-	ID        int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
-	CreatedAt int64                 `json:"created_at" gorm:"index"`
-	UpdatedAt int64                 `json:"updated_at"`
-	TaskID    string                `json:"task_id" gorm:"type:varchar(191);index"` // 第三方id，不一定有/ song id\ Task id
-	Platform  constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
-	UserId    int                   `json:"user_id" gorm:"index"`
-	Group     string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
-	ChannelId int                   `json:"channel_id" gorm:"index"`
-	Quota     int                   `json:"quota"`
-	// SettlementPending keeps completed tasks discoverable until their main-DB
-	// funding, token and usage transaction commits. Old rows may contain NULL.
-	SettlementPending     bool       `json:"-" gorm:"index"`
-	SettlementAttemptedAt int64      `json:"-" gorm:"index"`
-	Action                string     `json:"action" gorm:"type:varchar(40);index"` // 任务类型, song, lyrics, description-mode
-	Status                TaskStatus `json:"status" gorm:"type:varchar(20);index"` // 任务状态
-	FailReason            string     `json:"fail_reason"`
-	SubmitTime            int64      `json:"submit_time" gorm:"index"`
-	StartTime             int64      `json:"start_time" gorm:"index"`
-	FinishTime            int64      `json:"finish_time" gorm:"index"`
-	Progress              string     `json:"progress" gorm:"type:varchar(20);index"`
-	Properties            Properties `json:"properties" gorm:"type:json"`
-	Username              string     `json:"username,omitempty" gorm:"-"`
+	ID         int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
+	CreatedAt  int64                 `json:"created_at" gorm:"index"`
+	UpdatedAt  int64                 `json:"updated_at"`
+	TaskID     string                `json:"task_id" gorm:"type:varchar(191);index"` // 第三方id，不一定有/ song id\ Task id
+	Platform   constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
+	UserId     int                   `json:"user_id" gorm:"index"`
+	Group      string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
+	ChannelId  int                   `json:"channel_id" gorm:"index"`
+	Quota      int                   `json:"quota"`
+	Action     string                `json:"action" gorm:"type:varchar(40);index"` // 任务类型, song, lyrics, description-mode
+	Status     TaskStatus            `json:"status" gorm:"type:varchar(20);index"` // 任务状态
+	FailReason string                `json:"fail_reason"`
+	SubmitTime int64                 `json:"submit_time" gorm:"index"`
+	StartTime  int64                 `json:"start_time" gorm:"index"`
+	FinishTime int64                 `json:"finish_time" gorm:"index"`
+	Progress   string                `json:"progress" gorm:"type:varchar(20);index"`
+	Properties Properties            `json:"properties" gorm:"type:json"`
+	Username   string                `json:"username,omitempty" gorm:"-"`
 	// 禁止返回给用户，内部可能包含key等隐私信息
 	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
 	Data        json.RawMessage `json:"data" gorm:"type:json"`
@@ -121,18 +115,12 @@ type TaskPrivateData struct {
 	// Execution records safe, immutable request provenance. It lives next to
 	// other private task state so public task DTOs cannot expose it by accident.
 	Execution *TaskExecutionSnapshot `json:"execution,omitempty"`
-	// RequestId 提交请求的账本引用（预扣费 reference），用于返利对账。
-	RequestId string `json:"request_id,omitempty"`
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
-	BillingSource           string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
-	SubscriptionId          int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
-	SubscriptionQuotaPeriod int64               `json:"subscription_quota_period,omitempty"`
-	TokenId                 int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
-	NodeName                string              `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
-	BillingContext          *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
-	// WalletDebit 钱包计费各账户实际扣减份额（按扣减顺序），异步结算补扣时
-	// 累计更新；退款按此精确退回原账户。为空表示纯 paid 计费（兼容旧数据）。
-	WalletDebit []LedgerShare `json:"wallet_debit,omitempty"`
+	BillingSource  string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
+	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
+	TokenId        int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
+	NodeName       string              `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
+	BillingContext *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
 	// ResponsesBackground records that the openai_responses create request
 	// asked for background:true. Every task is durable and survives client
 	// disconnect regardless; this only echoes the protocol-level request
@@ -148,20 +136,6 @@ type TaskPrivateData struct {
 	// and every retrieval surface treats the task as not found. The zero
 	// value keeps historical rows retained and retrievable.
 	ResultDiscarded bool `json:"result_discarded,omitempty"`
-	// PendingSettlement is historical private-policy data. New official tasks
-	// never write it; compatibility guards keep old rows read-only.
-	PendingSettlement   *TaskSettlement `json:"pending_settlement,omitempty"`
-	SubmissionAccounted bool            `json:"submission_accounted,omitempty"`
-}
-
-// TaskSettlement decodes historical private-policy intent only. No production
-// writer/recovery is connected; retain the schema without executing old intent.
-type TaskSettlement struct {
-	Phase     string             `json:"phase"`
-	Quota     int                `json:"quota"`
-	Reason    *common.Message    `json:"reason,omitempty"`
-	Clamp     *common.QuotaClamp `json:"clamp,omitempty"`
-	SkipFunds bool               `json:"skip_funds,omitempty"`
 }
 
 type TaskExecutionSnapshot struct {
@@ -188,47 +162,13 @@ type TaskPluginAuthorSnapshot struct {
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
 type TaskBillingContext struct {
-	ModelPrice       float64                      `json:"model_price,omitempty"`        // 模型单价
-	GroupRatio       float64                      `json:"group_ratio,omitempty"`        // 分组倍率
-	ModelRatio       float64                      `json:"model_ratio,omitempty"`        // 模型倍率
-	OtherRatios      map[string]float64           `json:"other_ratios,omitempty"`       // 附加倍率（时长、分辨率等）
-	OriginModelName  string                       `json:"origin_model_name,omitempty"`  // 用户请求/逻辑模型身份（旧任务唯一身份来源，必须保留）
-	BillingModelName string                       `json:"billing_model_name,omitempty"` // 价格/倍率/赠金资格使用的计费模型身份
-	PerCallBilling   bool                         `json:"per_call_billing,omitempty"`   // 按次计费：跳过轮询阶段的差额结算
-	TieredSnapshot   *billingexpr.BillingSnapshot `json:"tiered_snapshot,omitempty"`
-}
-
-// EffectiveBillingModelName 返回任务的计费模型身份。
-// 新任务直接使用提交时持久化的 BillingModelName；旧任务（仅写入
-// OriginModelName 的历史数据）回退到 OriginModelName，保证老数据结算行为不变。
-func (c *TaskBillingContext) EffectiveBillingModelName() string {
-	if c == nil {
-		return ""
-	}
-	if c.BillingModelName != "" {
-		return c.BillingModelName
-	}
-	return c.OriginModelName
-}
-
-// EffectiveRequestID 解析提交请求的账本引用（预扣费 reference），供账本与返利对账使用。
-//
-// 优先级：
-//  1. Execution.RequestID —— RC30 及之后创建的任务的唯一真源。它在提交时一次性
-//     写入，之后不再改写。
-//  2. RequestId —— 历史字段，仅为让 RC30 之前持久化的任务仍能对账而保留；
-//     任何情况下都不会优先于 Execution.RequestID。
-//
-// 两者同时非空且不一致时选 Execution.RequestID：此时残留的 legacy 值属于旧写入
-// 路径，而 Execution 快照才与实际写入的账本条目匹配。两者均为空时返回 ""。
-func (p *TaskPrivateData) EffectiveRequestID() string {
-	if p == nil {
-		return ""
-	}
-	if p.Execution != nil && p.Execution.RequestID != "" {
-		return p.Execution.RequestID
-	}
-	return p.RequestId
+	ModelPrice      float64                      `json:"model_price,omitempty"`       // 模型单价
+	GroupRatio      float64                      `json:"group_ratio,omitempty"`       // 分组倍率
+	ModelRatio      float64                      `json:"model_ratio,omitempty"`       // 模型倍率
+	OtherRatios     map[string]float64           `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
+	OriginModelName string                       `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
+	PerCallBilling  bool                         `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
+	TieredSnapshot  *billingexpr.BillingSnapshot `json:"tiered_snapshot,omitempty"`
 }
 
 // ResultRetrievable reports whether retrieval surfaces (native query routes,
@@ -262,7 +202,6 @@ func GenerateTaskID() string {
 }
 
 func (p *TaskPrivateData) Scan(val any) error {
-	*p = TaskPrivateData{}
 	bytesValue := jsonScanBytes(val)
 	if len(bytesValue) == 0 {
 		return nil
@@ -271,11 +210,11 @@ func (p *TaskPrivateData) Scan(val any) error {
 }
 
 func (p TaskPrivateData) Value() (driver.Value, error) {
-	if p.Key == "" && p.UpstreamTaskID == "" && p.ResultURL == "" && p.Execution == nil &&
-		p.BillingSource == "" && p.SubscriptionId == 0 && p.SubscriptionQuotaPeriod == 0 && p.TokenId == 0 &&
-		p.NodeName == "" && p.BillingContext == nil && len(p.WalletDebit) == 0 &&
-		p.RequestId == "" && !p.ResponsesBackground &&
-		len(p.PluginState) == 0 && p.PollFailures == 0 && !p.ResultDiscarded && p.PendingSettlement == nil && !p.SubmissionAccounted {
+	if p.Key == "" && p.UpstreamTaskID == "" && p.ResultURL == "" &&
+		p.Execution == nil && p.BillingSource == "" && p.SubscriptionId == 0 &&
+		p.TokenId == 0 && p.NodeName == "" && p.BillingContext == nil &&
+		!p.ResponsesBackground && len(p.PluginState) == 0 && p.PollFailures == 0 &&
+		!p.ResultDiscarded {
 		return nil, nil
 	}
 	// 同 Properties.Value:string 避免 PG simple protocol 的 bytea 编码。
@@ -424,25 +363,9 @@ func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) []*
 	return tasks
 }
 
-// HasLegacyBillingIntent identifies historical custom settlement records.
-// It is a compatibility read guard, not a new official task state machine.
-func (t *Task) HasLegacyBillingIntent() bool {
-	return t.SettlementPending || t.PrivateData.PendingSettlement != nil
-}
-
-func excludeLegacyBillingTasks(tasks []*Task) []*Task {
-	out := tasks[:0]
-	for _, task := range tasks {
-		if !task.HasLegacyBillingIntent() {
-			out = append(out, task)
-		}
-	}
-	return out
-}
-
 func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {
 	var tasks []*Task
-	err := DB.Where("settlement_pending = ? OR settlement_pending IS NULL", false).Where("progress != ?", "100%").
+	err := DB.Where("progress != ?", "100%").
 		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess}).
 		Where("submit_time < ?", cutoffUnix).
 		Order("submit_time").
@@ -451,18 +374,18 @@ func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {
 	if err != nil {
 		return nil
 	}
-	return excludeLegacyBillingTasks(tasks)
+	return tasks
 }
 
 func GetAllUnFinishSyncTasks(limit int) []*Task {
 	var tasks []*Task
 	var err error
 	// get all tasks progress is not 100%
-	err = DB.Where("settlement_pending = ? OR settlement_pending IS NULL", false).Where("progress != ?", "100%").Where("status != ?", TaskStatusFailure).Where("status != ?", TaskStatusSuccess).Limit(limit).Order("id").Find(&tasks).Error
+	err = DB.Where("progress != ?", "100%").Where("status != ?", TaskStatusFailure).Where("status != ?", TaskStatusSuccess).Limit(limit).Order("id").Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
-	return excludeLegacyBillingTasks(tasks)
+	return tasks
 }
 
 // HasUnfinishedSyncTasks reports whether at least one async (Suno/video) task is
@@ -472,7 +395,6 @@ func GetAllUnFinishSyncTasks(limit int) []*Task {
 func HasUnfinishedSyncTasks() bool {
 	var id int64
 	err := DB.Model(&Task{}).
-		Where("settlement_pending = ? OR settlement_pending IS NULL", false).
 		Where("progress != ?", "100%").
 		Where("status != ?", TaskStatusFailure).
 		Where("status != ?", TaskStatusSuccess).
@@ -623,21 +545,6 @@ func (t *Task) UpdateQuota() error {
 	return DB.Model(t).Update("quota", t.Quota).Error
 }
 
-// UpdateBillingStateTx commits the final quota and its wallet receipt together.
-// The previous quota guards against a stale observer applying the same token or
-// subscription adjustment twice. A failed update rolls back the caller's funds.
-func (t *Task) UpdateBillingStateTx(tx *gorm.DB, previousQuota int) error {
-	result := tx.Model(&Task{}).Where("id = ? AND quota = ?", t.ID, previousQuota).
-		Select("quota", "private_data").Updates(t)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return fmt.Errorf("task billing state changed for task %s", t.TaskID)
-	}
-	return nil
-}
-
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).
 // Returns (true, nil) if this caller won the update, (false, nil) if
 // another process already moved the task out of fromStatus. MySQL commonly
@@ -648,10 +555,7 @@ func (t *Task) UpdateBillingStateTx(tx *gorm.DB, previousQuota int) error {
 // falls back to INSERT ON CONFLICT when the WHERE-guarded UPDATE matches
 // zero rows, which silently bypasses the CAS guard.
 func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
-	if t.HasLegacyBillingIntent() {
-		return false, nil
-	}
-	result := DB.Model(t).Where("status = ?", fromStatus).Where("settlement_pending = ? OR settlement_pending IS NULL", false).Select("*").Updates(t)
+	result := DB.Model(t).Where("status = ?", fromStatus).Select("*").Updates(t)
 	if result.Error != nil {
 		return false, result.Error
 	}

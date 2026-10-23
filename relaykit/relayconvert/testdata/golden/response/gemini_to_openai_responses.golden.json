@@ -5,7 +5,7 @@
   "status": "completed",
   "instructions": null,
   "max_output_tokens": 0,
-  "model": "client-model",
+  "model": "upstream-model",
   "output": [
     {
       "type": "message",

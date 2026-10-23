@@ -147,8 +147,6 @@ func Redeem(key string, userId int) (quota int, err error) {
 		keyCol = `"key"`
 	}
 	common.RandomSleep()
-	var replayTotalAfter int
-	ledgerApplied := false
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		err := lockForUpdate(tx).Where(keyCol+" = ?", key).First(redemption).Error
 		if err != nil {
@@ -176,33 +174,13 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if result.RowsAffected == 0 {
 			return errors.New("redemption code already used")
 		}
-
-		// 兑换码入账并写账本（同一事务；幂等键 = redemption id，兑换码一次性，
-		// 数据库状态 CAS 已保证不会被重复兑换）
-		ledgerResult, err := CreditQuotaTx(tx, LedgerEntry{
-			UserId:        userId,
-			Account:       AccountPaid,
-			Delta:         redemption.Quota,
-			Reason:        LedgerReasonRedemption,
-			ReferenceType: "redemption",
-			ReferenceId:   strconv.Itoa(redemption.Id),
-		})
-		if err != nil {
-			return err
-		}
-		replayTotalAfter = ledgerResult.TotalAfter
-		ledgerApplied = true
-		return nil
-
+		return creditTopUpQuota(tx, userId, redemption.Quota, nil)
 	})
 	if err != nil {
 		common.SysError(common.LogText("redemption failed: %s", err.Error()))
 		return 0, ErrRedeemFailed
 	}
-	if ledgerApplied {
-		// 账本提交后失效用户缓存；守卫式增量与失效叠加安全（对已删除哈希跳过）。
-		RefreshUserQuotaCache(userId, replayTotalAfter)
-	}
+	syncCreditUserQuotaCache(userId, redemption.Quota, common.LogText("redemption"))
 	RecordLog(userId, LogTypeTopup, common.NewMessage("Topped up {{quota}} with a redemption code, code ID {{id}}", map[string]any{"quota": logger.FormatQuota(redemption.Quota), "id": redemption.Id}))
 	return redemption.Quota, nil
 }

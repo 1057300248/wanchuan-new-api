@@ -100,14 +100,12 @@ type ApiKeyMutateDrawerProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   currentRow?: ApiKey
-  onCreated?: () => void
 }
 
 export function ApiKeysMutateDrawer({
   open,
   onOpenChange,
   currentRow,
-  onCreated,
 }: ApiKeyMutateDrawerProps) {
   const { t } = useTranslation()
   const isUpdate = !!currentRow
@@ -372,7 +370,6 @@ export function ApiKeysMutateDrawer({
         }
 
         if (successCount > 0) {
-          onCreated?.()
           toast.success(
             t('Successfully created {{count}} API Key(s)', {
               count: successCount,

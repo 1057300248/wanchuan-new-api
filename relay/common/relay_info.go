@@ -55,13 +55,6 @@ type ResponsesUsageInfo struct {
 	BuiltInTools map[string]*BuildInToolInfo
 }
 
-// WalletDebitShare 描述钱包计费预扣在单个账户的实际扣减（与 model.LedgerShare
-// 同构；relay/common 不依赖 model 包，故独立定义，由 service 层转换）。
-type WalletDebitShare struct {
-	Account string `json:"account"`
-	Amount  int    `json:"amount"`
-}
-
 type ChannelMeta struct {
 	ChannelType          int
 	ChannelId            int
@@ -151,8 +144,6 @@ type RelayInfo struct {
 	BillingSource string
 	// SubscriptionId is the user_subscriptions.id used when BillingSource == "subscription"
 	SubscriptionId int
-	// SubscriptionQuotaPeriod binds task adjustments to the original allowance.
-	SubscriptionQuotaPeriod int64
 	// SubscriptionPreConsumed is the amount pre-consumed on subscription item (quota units or 1)
 	SubscriptionPreConsumed int64
 	// SubscriptionPostDelta is the post-consume delta applied to amount_used (quota units; can be negative).
@@ -162,14 +153,6 @@ type RelayInfo struct {
 	SubscriptionPlanTitle string
 	// RequestId is used for idempotent pre-consume/refund
 	RequestId string
-	// WssPostConsumeSequence gives each realtime incremental settlement a stable
-	// operation identity even when consecutive segments happen to cost the same.
-	// It advances only after the segment's accounting transaction commits.
-	WssPostConsumeSequence uint64
-	// WalletDebitShares 记录钱包计费预扣在各账户的实际扣减（旧 PostConsumeQuota
-	// 回退路径专用），供结算退款按原账户精确退回。Account 为账本账户标识
-	// （paid/bonus/affiliate）。
-	WalletDebitShares []WalletDebitShare
 	// SubscriptionAmountTotal / SubscriptionAmountUsedAfterPreConsume are used to compute remaining in logs.
 	SubscriptionAmountTotal               int64
 	SubscriptionAmountUsedAfterPreConsume int64
@@ -672,15 +655,10 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		info.RelayMode = c.GetInt("relay_mode")
 	}
 
-	if relayconstant.IsPlaygroundChatPath(c.Request.URL.Path) {
+	if strings.HasPrefix(c.Request.URL.Path, "/pg") {
 		info.IsPlayground = true
-		if strings.HasPrefix(c.Request.URL.Path, "/pg") {
-			info.RequestURLPath = strings.TrimPrefix(info.RequestURLPath, "/pg")
-			info.RequestURLPath = "/v1" + info.RequestURLPath
-		} else {
-			info.RequestURLPath = strings.TrimPrefix(info.RequestURLPath, "/api/user/playground/chat")
-			info.RequestURLPath = "/v1/chat/completions" + info.RequestURLPath
-		}
+		info.RequestURLPath = strings.TrimPrefix(info.RequestURLPath, "/pg")
+		info.RequestURLPath = "/v1" + info.RequestURLPath
 	}
 
 	userSetting, ok := common.GetContextKeyType[dto.UserSetting](c, constant.ContextKeyUserSetting)

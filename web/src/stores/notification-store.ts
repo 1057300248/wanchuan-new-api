@@ -26,14 +26,11 @@ interface NotificationState {
   readAnnouncementKeys: string[]
   // Timestamp of last "Close Today" action
   closedUntilDate: string | null
-  // Shared across headers for this page session; deliberately not persisted.
-  autoPopupShown: boolean
 
   // Actions
   markNoticeRead: (noticeContent: string) => void
   markAnnouncementsRead: (keys: string[]) => void
   setClosedUntilDate: (date: string | null) => void
-  setAutoPopupShown: () => void
   isAnnouncementRead: (key: string) => boolean
   isNoticeClosed: () => boolean
 }
@@ -48,7 +45,6 @@ export const useNotificationStore = create<NotificationState>()(
       lastReadNotice: '',
       readAnnouncementKeys: [],
       closedUntilDate: null,
-      autoPopupShown: false,
 
       markNoticeRead: (noticeContent: string) => {
         // Persist the full trimmed content so edits beyond 100 chars register
@@ -66,9 +62,6 @@ export const useNotificationStore = create<NotificationState>()(
 
       setClosedUntilDate: (date: string | null) => {
         set({ closedUntilDate: date })
-      },
-      setAutoPopupShown: () => {
-        set({ autoPopupShown: true })
       },
 
       isAnnouncementRead: (key: string) => {

@@ -27,7 +27,6 @@ import {
   IconWeChat,
 } from '@/assets/brand-icons'
 import { Button } from '@/components/ui/button'
-import { isOAuthAvailableOnOrigin } from '@/lib/oauth'
 import { cn } from '@/lib/utils'
 
 import { useOAuthLogin } from '../hooks/use-oauth-login'
@@ -70,12 +69,6 @@ export function OAuthProviders({
     handleTelegramLogin,
     handleCustomOAuthLogin,
   } = useOAuthLogin(status, redirectTo)
-
-  // Provider callbacks finish on the ServerAddress origin, so another entry
-  // (for example the CN site) cannot complete an OAuth flow. Hide the whole
-  // provider block there instead of offering dead buttons; password, TOTP and
-  // Passkey stay available.
-  const oauthAvailable = isOAuthAvailableOnOrigin(status?.server_address)
 
   const providerButtons: ProviderButton[] = []
 
@@ -149,7 +142,6 @@ export function OAuthProviders({
     }
   }
 
-  if (!oauthAvailable) return null
   if (providerButtons.length === 0) return null
 
   return (

@@ -1,8 +1,10 @@
 package controller
 
 import (
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -117,5 +119,37 @@ func TestPublicModelDetailPreservesNativeSchemasAndBillingVisibility(t *testing.
 				assert.Contains(t, body, "owned_by")
 			}
 		}
+	}
+}
+
+func TestPublicOwnerOptionNormalizesPersistsAndRejectsInvalidUpdates(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	owner := setting.GetPublicModelOwnedBy()
+	common.OptionMapRWMutex.Lock()
+	previous := maps.Clone(common.OptionMap)
+	common.OptionMap = map[string]string{}
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		setting.LoadPublicModelOwnedBy(owner)
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = previous
+		common.OptionMapRWMutex.Unlock()
+	})
+	values := map[string]string{setting.PublicModelOwnedByOptionKey: "  Public brand  "}
+	require.NoError(t, model.UpdateOptionsBulk(values))
+	assert.Equal(t, "  Public brand  ", values[setting.PublicModelOwnedByOptionKey], "caller-owned map is unchanged")
+	assert.Equal(t, "Public brand", setting.GetPublicModelOwnedBy())
+	for _, bad := range []string{"bad\x00owner", "bad\u202eowner", strings.Repeat("川", 129), string([]byte{0xff})} {
+		require.Error(t, model.UpdateOption(setting.PublicModelOwnedByOptionKey, bad))
+		assert.Equal(t, "Public brand", setting.GetPublicModelOwnedBy())
+	}
+	var saved model.Option
+	require.NoError(t, db.Where(map[string]any{"key": setting.PublicModelOwnedByOptionKey}).First(&saved).Error)
+	assert.Equal(t, "Public brand", saved.Value)
+	require.NoError(t, model.UpdateOption(setting.PublicModelOwnedByOptionKey, "  "))
+	assert.Equal(t, "chuanapi", setting.GetPublicModelOwnedBy())
+	for _, bad := range []string{"bad\u200bowner", "bad\nowner"} {
+		setting.LoadPublicModelOwnedBy(bad)
+		assert.Equal(t, "chuanapi", setting.GetPublicModelOwnedBy())
 	}
 }

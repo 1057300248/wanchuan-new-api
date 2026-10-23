@@ -12,6 +12,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/extension"
 	"github.com/QuantumNous/new-api/middleware"
+	consolemodule "github.com/QuantumNous/new-api/modules/chuanapi/console"
+	supportmodule "github.com/QuantumNous/new-api/modules/chuanapi/support"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
@@ -35,13 +37,7 @@ var accessTokenExemptRoutes = []string{
 	"GET /api/ratio_config",
 	"GET /api/user/groups",
 
-	// Public health/configuration and the refresh-cookie-authenticated probe.
-	"GET /api/healthz",
-	"HEAD /api/healthz",
-	"GET /api/readyz",
-	"HEAD /api/readyz",
-	"GET /api/chuanapi/public-config",
-	"HEAD /api/chuanapi/public-config",
+	// These console endpoints never reach dashboard PAT authentication.
 	"GET /api/user/auth/session",
 	"GET /api/model-monitor",
 	"GET /api/model-monitor/results/:id",
@@ -105,9 +101,10 @@ func newAccessTokenScopeTestEngine(t *testing.T) *gin.Engine {
 		SetTaskPluginProtocolRouter(engine)
 		SetVideoRouter(engine)
 		SetTaskRouter(engine)
-		// Use production composition, including deferred payment, wallet,
-		// support and console routes. Do not remove their permission rules.
-		reg := newChuanRouteRegistry(t)
+		// Match the currently active production modules, not hypothetical future routes.
+		reg := extension.NewRegistry()
+		require.NoError(t, consolemodule.Register(reg))
+		require.NoError(t, supportmodule.Register(reg))
 		require.NoError(t, reg.ApplyRoutesWithScopes(scopes, extension.PriorityBeforePlugin))
 		require.NoError(t, reg.ApplyRoutesWithScopes(scopes, extension.PriorityAfterPlugin))
 	})

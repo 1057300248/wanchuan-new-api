@@ -22,6 +22,7 @@ import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { beforeAll, describe, expect, test, vi } from 'vitest'
 
+import enOverrides from '@/extensions/chuanapi/i18n/locales/en.json'
 import en from '@/i18n/locales/en.json'
 
 import type { ReferralCommissionItem, UserWalletData } from '../../types'
@@ -35,7 +36,7 @@ beforeAll(async () => {
   await testI18n.init({
     lng: 'en',
     fallbackLng: 'en',
-    resources: { en: { translation: en.translation } },
+    resources: { en: { translation: { ...en.translation, ...enOverrides.translation } } },
     interpolation: { escapeValue: false },
   })
 })

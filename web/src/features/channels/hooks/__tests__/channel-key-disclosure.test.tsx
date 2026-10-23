@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -38,18 +37,6 @@ function Harness(props: { open: boolean; channelId: number }) {
       </output>
       <SecureVerificationDialog {...disclosure.verification.dialogProps} />
     </>
-  )
-}
-
-function HarnessWithClient(props: {
-  client: QueryClient
-  open: boolean
-  channelId: number
-}) {
-  return (
-    <QueryClientProvider client={props.client}>
-      <Harness open={props.open} channelId={props.channelId} />
-    </QueryClientProvider>
   )
 }
 
@@ -101,12 +88,7 @@ it.each(['switch', 'close'] as const)(
       throw new Error(`Unexpected POST ${url}`)
     })
     const user = userEvent.setup()
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    })
-    const view = render(
-      <HarnessWithClient client={client} open channelId={123} />
-    )
+    const view = render(<Harness open channelId={123} />)
     await user.click(screen.getByRole('button', { name: 'Reveal' }))
     await user.type(
       await screen.findByLabelText('Authenticator code or backup code'),
@@ -121,8 +103,7 @@ it.each(['switch', 'close'] as const)(
       )
     )
     view.rerender(
-      <HarnessWithClient
-        client={client}
+      <Harness
         open={change !== 'close'}
         channelId={change === 'switch' ? 456 : 123}
       />
@@ -145,19 +126,14 @@ it('cancels a pending verification when the selected channel changes', async () 
   }>()
   const post = vi.spyOn(api, 'post').mockReturnValue(reply.promise)
   const user = userEvent.setup()
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  })
-  const view = render(
-    <HarnessWithClient client={client} open channelId={123} />
-  )
+  const view = render(<Harness open channelId={123} />)
   await user.click(screen.getByRole('button', { name: 'Reveal' }))
   await user.type(
     await screen.findByLabelText('Authenticator code or backup code'),
     '123456'
   )
   await user.click(screen.getByRole('button', { name: 'Verify' }))
-  view.rerender(<HarnessWithClient client={client} open channelId={456} />)
+  view.rerender(<Harness open channelId={456} />)
   await act(async () => {
     reply.resolve({
       data: {

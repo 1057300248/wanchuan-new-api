@@ -1,20 +1,78 @@
 package service
 
 import (
+	"errors"
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/pkg/moneyport"
 )
 
-// FundingSource is retained as a service compatibility alias while ownership
-// of the runtime contract lives in the stdlib-only moneyport package.
-type FundingSource = moneyport.FundingSource
+// ---------------------------------------------------------------------------
+// FundingSource — 资金来源接口（钱包 or 订阅）
+// ---------------------------------------------------------------------------
 
-var (
-	_ FundingSource               = (*SubscriptionFunding)(nil)
-	_ moneyport.ReservableFunding = (*SubscriptionFunding)(nil)
-)
+// FundingSource 抽象了预扣费的资金来源。
+type FundingSource interface {
+	// Source 返回资金来源标识："wallet" 或 "subscription"
+	Source() string
+	// PreConsume 从该资金来源预扣 amount 额度
+	PreConsume(amount int) error
+	// Settle 根据差额调整资金来源（正数补扣，负数退还）
+	Settle(delta int) error
+	// Refund 退还所有预扣费
+	Refund() error
+}
+
+// ---------------------------------------------------------------------------
+// WalletFunding — 钱包资金来源实现
+// ---------------------------------------------------------------------------
+
+// ErrInsufficientWalletQuota 钱包原子预扣失败（余额不足），未发生任何扣减。
+// BillingSession 据此映射为 ErrorCodeInsufficientUserQuota，
+// 使 wallet_first 等计费偏好可以回退到订阅。
+var ErrInsufficientWalletQuota = errors.New("wallet quota insufficient")
+
+type WalletFunding struct {
+	userId   int
+	consumed int // 实际预扣的用户额度
+}
+
+func (w *WalletFunding) Source() string { return BillingSourceWallet }
+
+func (w *WalletFunding) PreConsume(amount int) error {
+	if amount <= 0 {
+		return nil
+	}
+	reserved, err := model.TryReserveUserQuota(w.userId, amount)
+	if err != nil {
+		return err
+	}
+	if !reserved {
+		return ErrInsufficientWalletQuota
+	}
+	// 发送前补扣会再次预扣，累加后退款才能退回全部预扣。
+	w.consumed += amount
+	return nil
+}
+
+func (w *WalletFunding) Settle(delta int) error {
+	if delta == 0 {
+		return nil
+	}
+	if delta > 0 {
+		return model.DecreaseUserQuota(w.userId, delta, false)
+	}
+	return model.IncreaseUserQuota(w.userId, -delta, false)
+}
+
+func (w *WalletFunding) Refund() error {
+	if w.consumed <= 0 {
+		return nil
+	}
+	// IncreaseUserQuota 是 quota += N 的非幂等操作，不能重试，否则会多退额度。
+	// 订阅的 RefundSubscriptionPreConsume 有 requestId 幂等保护所以可以重试。
+	return model.IncreaseUserQuota(w.userId, w.consumed, false)
+}
 
 // ---------------------------------------------------------------------------
 // SubscriptionFunding — 订阅资金来源实现
@@ -27,11 +85,6 @@ type SubscriptionFunding struct {
 	amount         int64 // 预扣的订阅额度（subConsume）
 	subscriptionId int
 	preConsumed    int64
-	// reserveDelta 通过 Reserve 累计补充预扣的增量；预扣基线是 amount，
-	// 故当前预扣目标为 amount + reserveDelta。它只负责把 Reserve 的绝对目标值
-	// 换算回订阅侧需要的增量：与它同值的 BillingSession.extraReserved 才是
-	// RelayInfo 同步与补充预扣回滚的唯一依据，两者不得叠加。
-	reserveDelta int
 	// 以下字段在 PreConsume 成功后填充，供 RelayInfo 同步使用
 	AmountTotal     int64
 	AmountUsedAfter int64
@@ -64,20 +117,6 @@ func (s *SubscriptionFunding) Settle(delta int) error {
 		return nil
 	}
 	return model.PostConsumeUserSubscriptionDelta(s.subscriptionId, int64(delta))
-}
-
-// Reserve adapts the host absolute target to official subscription delta accounting.
-// Only the base pre-consumption belongs to Refund; BillingSession returns the extra.
-func (s *SubscriptionFunding) Reserve(target int) error {
-	current := int(s.amount) + s.reserveDelta
-	if target <= current {
-		return nil
-	}
-	if err := model.PostConsumeUserSubscriptionDelta(s.subscriptionId, int64(target-current)); err != nil {
-		return err
-	}
-	s.reserveDelta = target - int(s.amount)
-	return nil
 }
 
 func (s *SubscriptionFunding) Refund() error {

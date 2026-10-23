@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -26,15 +26,7 @@ import { NotificationPopover } from '@/components/notification-popover'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { Button } from '@/components/ui/button'
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetTitle,
-  SheetTrigger,
-} from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
-import { extensionPublicHomeUrl } from '@/extensions'
 import { SystemUpdateAction } from '@/features/system-update/system-update-action'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useSystemConfig } from '@/hooks/use-system-config'
@@ -77,14 +69,13 @@ export function PublicHeader(props: PublicHeaderProps) {
     showLanguageSwitcher = true,
     logo: customLogo,
     siteName: customSiteName,
-    homeUrl = extensionPublicHomeUrl(),
+    homeUrl = '/',
     showAuthButtons = true,
     showNotifications = true,
   } = props
 
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const headerRef = useRef<HTMLDivElement>(null)
   const [scrolled, setScrolled] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [authPromptTarget, setAuthPromptTarget] =
@@ -99,7 +90,7 @@ export function PublicHeader(props: PublicHeaderProps) {
     logoLoaded,
   } = useSystemConfig()
   const dynamicLinks = useTopNavLinks()
-  const notifications = useNotifications({ autoOpen: showNotifications })
+  const notifications = useNotifications()
   const routerState = useRouterState()
   const pathname = routerState.location.pathname
 
@@ -139,24 +130,11 @@ export function PublicHeader(props: PublicHeaderProps) {
   }, [])
 
   useEffect(() => {
-    const header = headerRef.current
-    if (!header) return
-
-    // Layout uses the header container, not the viewport. Only dismiss the
-    // compact menu here when the same 64rem CSS breakpoint becomes available.
-    const observer = new ResizeObserver(([entry]) => {
-      const rem = Number.parseFloat(
-        getComputedStyle(document.documentElement).fontSize
-      )
-      if (entry.contentRect.width >= 64 * rem) setMobileOpen(false)
-    })
-    observer.observe(header)
-    return () => observer.disconnect()
-  }, [])
-
-  useEffect(() => {
-    setMobileOpen(false)
-  }, [pathname])
+    document.body.style.overflow = mobileOpen ? 'hidden' : ''
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [mobileOpen])
 
   useEffect(() => {
     if (!authPromptTarget) return
@@ -220,12 +198,11 @@ export function PublicHeader(props: PublicHeaderProps) {
   )
 
   return (
-    <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+    <>
       <header className='pointer-events-none fixed inset-x-0 top-0 z-50'>
         <div
-          ref={headerRef}
           className={cn(
-            '@container/public-header pointer-events-auto mx-auto transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]',
+            'pointer-events-auto mx-auto transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]',
             scrolled ? 'max-w-[52rem] px-3 pt-3' : 'max-w-7xl px-4 pt-0 md:px-6'
           )}
         >
@@ -238,9 +215,9 @@ export function PublicHeader(props: PublicHeaderProps) {
             )}
           >
             {/* Logo */}
-            <div className='@container/system-brand flex min-w-0 flex-1 items-center gap-1 @min-[64rem]/public-header:min-w-36'>
-              <a
-                href={homeUrl}
+            <div className='@container/system-brand flex min-w-0 flex-1 items-center gap-1 lg:min-w-36'>
+              <Link
+                to={homeUrl}
                 className='group flex min-w-0 items-center gap-2.5'
               >
                 <div className='flex size-7 shrink-0 items-center justify-center transition-all duration-300 group-hover:scale-105'>
@@ -256,35 +233,18 @@ export function PublicHeader(props: PublicHeaderProps) {
                     displaySiteName
                   )}
                 </span>
-              </a>
+              </Link>
               <SystemUpdateAction presentation='version' />
             </div>
 
             {/* Desktop nav */}
-            <div className='hidden min-w-0 items-center gap-0.5 @min-[64rem]/public-header:flex'>
+            <div className='hidden min-w-0 items-center gap-0.5 lg:flex'>
               {links.map((link) => {
                 const isActive = pathname === link.href
-                if (link.documentNavigation) {
-                  return (
-                    <a
-                      key={`${link.title}-${link.href}`}
-                      href={link.href}
-                      aria-disabled={link.disabled}
-                      tabIndex={link.disabled ? -1 : undefined}
-                      onClick={(event) => handleNavLinkClick(event, link)}
-                      className={cn(
-                        'text-muted-foreground hover:text-foreground shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors duration-200',
-                        link.disabled && 'pointer-events-none opacity-50'
-                      )}
-                    >
-                      {t(link.title)}
-                    </a>
-                  )
-                }
                 if (link.external) {
                   return (
                     <a
-                      key={`${link.title}-${link.href}`}
+                      key={`${link.title}:${link.href}`}
                       href={link.href}
                       title={t(link.title)}
                       target='_blank'
@@ -293,7 +253,7 @@ export function PublicHeader(props: PublicHeaderProps) {
                       tabIndex={link.disabled ? -1 : undefined}
                       onClick={(event) => handleNavLinkClick(event, link)}
                       className={cn(
-                        'text-muted-foreground hover:text-foreground min-w-0 truncate rounded-lg px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors duration-200',
+                        'text-muted-foreground hover:text-foreground min-w-0 truncate rounded-lg px-3 py-1.5 text-sm font-medium transition-colors duration-200',
                         link.disabled && 'pointer-events-none opacity-50'
                       )}
                     >
@@ -303,13 +263,13 @@ export function PublicHeader(props: PublicHeaderProps) {
                 }
                 return (
                   <Link
-                    key={`${link.title}-${link.href}`}
+                    key={`${link.title}:${link.href}`}
                     to={link.href}
                     title={t(link.title)}
                     disabled={link.disabled}
                     onClick={(event) => handleNavLinkClick(event, link)}
                     className={cn(
-                      'min-w-0 truncate rounded-lg px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors duration-200',
+                      'min-w-0 truncate rounded-lg px-3 py-1.5 text-sm font-medium transition-colors duration-200',
                       isActive
                         ? 'text-foreground'
                         : 'text-muted-foreground hover:text-foreground',
@@ -329,6 +289,18 @@ export function PublicHeader(props: PublicHeaderProps) {
 
               {showLanguageSwitcher && <LanguageSwitcher />}
               {showThemeSwitch && <ThemeSwitch />}
+              {showNotifications && (
+                <NotificationPopover
+                  open={notifications.popoverOpen}
+                  onOpenChange={notifications.setPopoverOpen}
+                  unreadCount={notifications.unreadCount}
+                  activeTab={notifications.activeTab}
+                  onTabChange={notifications.setActiveTab}
+                  notice={notifications.notice}
+                  announcements={notifications.announcements}
+                  loading={notifications.loading}
+                />
+              )}
 
               {showAuthButtons && (
                 <>
@@ -338,36 +310,18 @@ export function PublicHeader(props: PublicHeaderProps) {
               )}
             </div>
 
-            {showNotifications && (
-              <NotificationPopover
-                open={notifications.popoverOpen}
-                onOpenChange={notifications.setPopoverOpen}
-                unreadCount={notifications.unreadCount}
-                activeTab={notifications.activeTab}
-                onTabChange={notifications.setActiveTab}
-                notice={notifications.notice}
-                announcements={notifications.announcements}
-                loading={notifications.loading}
-                onCloseToday={notifications.closeToday}
-              />
-            )}
-
-            {/* Compact actions follow the floating header's available width. */}
-            <div className='flex shrink-0 items-center gap-2 @min-[64rem]/public-header:hidden'>
-              {showLanguageSwitcher && <LanguageSwitcher />}
+            {/* Mobile: compact actions + hamburger */}
+            <div className='flex shrink-0 items-center gap-2 lg:hidden'>
               {showThemeSwitch && <ThemeSwitch />}
               {showAuthButtons && !loading && isAuthenticated && (
                 <ProfileDropdown />
               )}
-              <SheetTrigger
-                render={
-                  <Button
-                    type='button'
-                    variant='ghost'
-                    size='icon'
-                    className='size-9'
-                  />
-                }
+              <Button
+                type='button'
+                variant='ghost'
+                size='icon'
+                className='size-9'
+                onClick={() => setMobileOpen((v) => !v)}
                 aria-label={t('Toggle navigation menu')}
               >
                 <div className='relative size-4'>
@@ -390,42 +344,27 @@ export function PublicHeader(props: PublicHeaderProps) {
                     )}
                   />
                 </div>
-              </SheetTrigger>
+              </Button>
             </div>
           </nav>
         </div>
       </header>
 
-      {/* Reuse the modal primitive for focus, Escape and scroll restoration. */}
-      <SheetContent
-        side='top'
-        showCloseButton={false}
-        aria-describedby={undefined}
-        className='bg-background/98 inset-0 h-dvh border-0 backdrop-blur-2xl'
+      {/* Mobile full-screen overlay */}
+      <div
+        className={cn(
+          'bg-background/98 fixed inset-0 z-40 backdrop-blur-2xl transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] lg:pointer-events-none lg:hidden',
+          mobileOpen
+            ? 'pointer-events-auto opacity-100'
+            : 'pointer-events-none opacity-0'
+        )}
       >
-        <SheetTitle className='sr-only'>
-          {t('Toggle navigation menu')}
-        </SheetTitle>
-        <SheetClose
-          render={
-            <Button
-              variant='ghost'
-              size='icon'
-              className='absolute top-3 right-4'
-            />
-          }
-          aria-label={t('Close')}
-        >
-          <span aria-hidden='true' className='text-xl'>
-            ×
-          </span>
-        </SheetClose>
-        <div className='flex min-h-0 flex-1 flex-col justify-between gap-6 overflow-y-auto overscroll-contain px-8 pt-20 pb-10'>
+        <div className='flex h-full flex-col justify-between px-8 pt-20 pb-10'>
           <nav className='flex flex-col gap-1'>
             {links.map((link, i) => {
               const isActive = pathname === link.href
               const linkClassName = cn(
-                'flex items-center gap-3 py-3 text-base font-medium tracking-tight wrap-anywhere transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]',
+                'flex items-center gap-3 py-3 text-base font-medium tracking-tight transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]',
                 mobileOpen
                   ? 'translate-y-0 opacity-100'
                   : 'translate-y-4 opacity-0',
@@ -435,25 +374,10 @@ export function PublicHeader(props: PublicHeaderProps) {
               const transitionStyle = {
                 transitionDelay: mobileOpen ? `${100 + i * 50}ms` : '0ms',
               }
-              if (link.documentNavigation) {
-                return (
-                  <a
-                    key={`${link.title}-${link.href}`}
-                    href={link.href}
-                    aria-disabled={link.disabled}
-                    tabIndex={link.disabled ? -1 : undefined}
-                    onClick={(event) => handleNavLinkClick(event, link, true)}
-                    className={linkClassName}
-                    style={transitionStyle}
-                  >
-                    {t(link.title)}
-                  </a>
-                )
-              }
               if (link.external) {
                 return (
                   <a
-                    key={`${link.title}-${link.href}`}
+                    key={`${link.title}:${link.href}`}
                     href={link.href}
                     target='_blank'
                     rel='noopener noreferrer'
@@ -469,7 +393,7 @@ export function PublicHeader(props: PublicHeaderProps) {
               }
               return (
                 <Link
-                  key={`${link.title}-${link.href}`}
+                  key={`${link.title}:${link.href}`}
                   to={link.href}
                   disabled={link.disabled}
                   onClick={(event) => handleNavLinkClick(event, link, true)}
@@ -502,7 +426,7 @@ export function PublicHeader(props: PublicHeaderProps) {
             )}
           </div>
         </div>
-      </SheetContent>
+      </div>
 
       <Dialog
         open={!!authPromptTarget}
@@ -532,6 +456,6 @@ export function PublicHeader(props: PublicHeaderProps) {
           })}
         </div>
       </Dialog>
-    </Sheet>
+    </>
   )
 }

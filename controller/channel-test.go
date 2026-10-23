@@ -241,10 +241,8 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	}
 
 	info.IsChannelTest = true
-	info.InitChannelMeta(c)
-	// The synthetic test request is not an end-user call: the admin response and
-	// the channel diagnostic must keep the upstream model and error detail.
 	common.SetContextKey(c, constant.ContextKeyChannelTest, true)
+	info.InitChannelMeta(c)
 
 	err = attachTestBillingRequestInput(info, request)
 	if err != nil {

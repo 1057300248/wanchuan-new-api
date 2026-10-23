@@ -114,9 +114,7 @@ export function ChannelConfiguration(props: ChannelConfigurationProps) {
       onValueChange={(value) =>
         props.onSectionChange(value as ChannelConfigurationSection)
       }
-      // Reserve the switches' expanded pointer targets instead of letting
-      // right-aligned controls overflow the scrollable form or clipping them.
-      className='min-h-0 flex-1 gap-5 [&_[role=switch]]:mx-3'
+      className='min-h-0 flex-1 gap-5'
     >
       <div className='-mt-1 shrink-0 overflow-x-auto py-1'>
         <TabsList

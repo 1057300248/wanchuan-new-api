@@ -16,16 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
-import { isOAuthAvailableOnOrigin } from '@/lib/oauth'
 import { AuthOperationError } from '@/lib/secure-verification'
-import { ensureSharedStatus } from '@/lib/status-query'
 import type { AuthBundle } from '@/stores/auth-store'
 
 import type { PasskeyDomains } from '../../passkey/assertion'
-import type { SystemStatus } from '../../types'
 import {
   checkVerificationMethods,
   getLoginVerificationRequirements,
@@ -148,7 +144,6 @@ export function useSecureVerification() {
   const [passkeyDomains, setPasskeyDomains] = useState<PasskeyDomains | null>(
     null
   )
-  const queryClient = useQueryClient()
 
   const cancel = useCallback(() => {
     const current = pending.current
@@ -162,76 +157,32 @@ export function useSecureVerification() {
 
   useEffect(() => cancel, [cancel])
 
-  const loadRequirements = useCallback(
-    async (current: PendingVerification) => {
-      dispatch({ type: 'loading', request: current.request })
-      try {
-        const [fetched, status] = await Promise.all([
-          current.kind === 'login'
-            ? getLoginVerificationRequirements(
-                current.request.challenge,
-                current.controller.signal
-              )
-            : checkVerificationMethods(
-                current.request.scope,
-                current.controller.signal
-              ),
-          ensureSharedStatus(queryClient),
-        ])
-        current.controller.signal.throwIfAborted()
-        // Status is fetched asynchronously, so decide from the value resolved
-        // with this request instead of a value captured when the dialog opened.
-        const oauthAvailable = isOAuthAvailableOnOrigin(
-          (status as SystemStatus | null)?.server_address
-        )
-        // Hide linked-account verification on entries that cannot complete the
-        // provider callback; the server-side method list stays untouched.
-        const requirements: VerificationRequirements = oauthAvailable
-          ? fetched
-          : {
-              ...fetched,
-              methods: fetched.methods.filter(
-                (option) => option.method !== 'oauth'
-              ),
-              oauth_providers: [],
-            }
-        if (pending.current !== current) return
-        const initialPassword = current.initialPassword
-        current.initialPassword = undefined
-        if (
-          current.kind === 'operation' &&
-          initialPassword !== undefined &&
-          requirements.methods.length === 1 &&
-          requirements.methods[0].method === 'password' &&
-          requirements.methods[0].available
-        ) {
-          try {
-            const proof = await verify(
-              { method: 'password', password: initialPassword },
-              current.request,
-              requirements.password_encryption_enabled,
+  const loadRequirements = useCallback(async (current: PendingVerification) => {
+    dispatch({ type: 'loading', request: current.request })
+    try {
+      const requirements =
+        current.kind === 'login'
+          ? await getLoginVerificationRequirements(
+              current.request.challenge,
               current.controller.signal
             )
-            if (pending.current !== current) return
-            pending.current = null
-            dispatch({ type: 'reset' })
-            current.resolve(proof)
-          } catch (error) {
-            if (pending.current !== current) return
-            pending.current = null
-            dispatch({ type: 'reset' })
-            current.reject(error)
-          }
-          return
-        }
-        if (
-          current.kind === 'operation' &&
-          requirements.methods.length === 1 &&
-          requirements.methods[0].method === 'session' &&
-          requirements.methods[0].available
-        ) {
+          : await checkVerificationMethods(
+              current.request.scope,
+              current.controller.signal
+            )
+      if (pending.current !== current) return
+      const initialPassword = current.initialPassword
+      current.initialPassword = undefined
+      if (
+        current.kind === 'operation' &&
+        initialPassword !== undefined &&
+        requirements.methods.length === 1 &&
+        requirements.methods[0].method === 'password' &&
+        requirements.methods[0].available
+      ) {
+        try {
           const proof = await verify(
-            { method: 'session' },
+            { method: 'password', password: initialPassword },
             current.request,
             requirements.password_encryption_enabled,
             current.controller.signal
@@ -240,22 +191,44 @@ export function useSecureVerification() {
           pending.current = null
           dispatch({ type: 'reset' })
           current.resolve(proof)
-          return
+        } catch (error) {
+          if (pending.current !== current) return
+          pending.current = null
+          dispatch({ type: 'reset' })
+          current.reject(error)
         }
-        if (pending.current === current) {
-          dispatch({ type: 'loaded', requirements })
-        }
-      } catch (error) {
-        if (pending.current === current) {
-          dispatch({
-            type: 'error',
-            error: AuthOperationError.from(error).message,
-          })
-        }
+        return
       }
-    },
-    [queryClient]
-  )
+      if (
+        current.kind === 'operation' &&
+        requirements.methods.length === 1 &&
+        requirements.methods[0].method === 'session' &&
+        requirements.methods[0].available
+      ) {
+        const proof = await verify(
+          { method: 'session' },
+          current.request,
+          requirements.password_encryption_enabled,
+          current.controller.signal
+        )
+        if (pending.current !== current) return
+        pending.current = null
+        dispatch({ type: 'reset' })
+        current.resolve(proof)
+        return
+      }
+      if (pending.current === current) {
+        dispatch({ type: 'loaded', requirements })
+      }
+    } catch (error) {
+      if (pending.current === current) {
+        dispatch({
+          type: 'error',
+          error: AuthOperationError.from(error).message,
+        })
+      }
+    }
+  }, [])
 
   const requestVerification = useCallback(
     (

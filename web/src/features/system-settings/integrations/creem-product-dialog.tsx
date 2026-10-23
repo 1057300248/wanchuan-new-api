@@ -42,7 +42,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import type { CreemProduct } from '@/lib/creem'
+import type { CreemProduct } from '@/features/wallet/types'
 
 import { safeNumberFieldProps } from '../utils/numeric-field'
 

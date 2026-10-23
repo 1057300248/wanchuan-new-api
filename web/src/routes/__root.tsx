@@ -17,13 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import {
   createRootRouteWithContext,
   Outlet,
   redirect,
   useNavigate,
 } from '@tanstack/react-router'
-import { Suspense, lazy, useEffect } from 'react'
+import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
+import { useEffect } from 'react'
 
 import { NavigationProgress } from '@/components/navigation-progress'
 import { Toaster } from '@/components/ui/sonner'
@@ -41,21 +43,6 @@ import {
 import { subscribeAuthSessionEvents } from '@/lib/auth-session-sync'
 import { resolveLegacyRoute } from '@/lib/legacy-route'
 import { useAuthStore } from '@/stores/auth-store'
-
-const ReactQueryDevtools = import.meta.env.DEV
-  ? lazy(() =>
-      import('@tanstack/react-query-devtools').then((mod) => ({
-        default: mod.ReactQueryDevtools,
-      }))
-    )
-  : null
-const TanStackRouterDevtools = import.meta.env.DEV
-  ? lazy(() =>
-      import('@tanstack/react-router-devtools').then((mod) => ({
-        default: mod.TanStackRouterDevtools,
-      }))
-    )
-  : null
 
 function RootComponent() {
   const navigate = useNavigate()
@@ -110,14 +97,12 @@ function RootComponent() {
       <NavigationProgress />
       <Outlet />
       <Toaster closeButton duration={5000} position='top-center' richColors />
-      {import.meta.env.MODE === 'development' &&
-        ReactQueryDevtools &&
-        TanStackRouterDevtools && (
-          <Suspense fallback={null}>
-            <ReactQueryDevtools buttonPosition='bottom-left' />
-            <TanStackRouterDevtools position='bottom-right' />
-          </Suspense>
-        )}
+      {import.meta.env.MODE === 'development' && (
+        <>
+          <ReactQueryDevtools buttonPosition='bottom-left' />
+          <TanStackRouterDevtools position='bottom-right' />
+        </>
+      )}
     </ThemeCustomizationProvider>
   )
 }

@@ -177,19 +177,20 @@ export function PromptInputProvider({
   const openRef = useRef<() => void>(() => {})
 
   const add = useCallback((files: File[] | FileList) => {
-    const incoming = [...files]
+    const incoming = Array.from(files)
     if (incoming.length === 0) return
 
-    setAttachements((prev) => [
-      ...prev,
-      ...incoming.map((file) => ({
-        id: nanoid(),
-        type: 'file' as const,
-        url: URL.createObjectURL(file),
-        mediaType: file.type,
-        filename: file.name,
-      })),
-    ])
+    setAttachements((prev) =>
+      prev.concat(
+        incoming.map((file) => ({
+          id: nanoid(),
+          type: 'file' as const,
+          url: URL.createObjectURL(file),
+          mediaType: file.type,
+          filename: file.name,
+        }))
+      )
+    )
   }, [])
 
   const remove = useCallback((id: string) => {
@@ -508,7 +509,7 @@ export const PromptInput = ({
 
   const addLocal = useCallback(
     (fileList: File[] | FileList) => {
-      const incoming = [...fileList]
+      const incoming = Array.from(fileList)
       const accepted = incoming.filter((f) => matchesAccept(f))
       if (incoming.length && accepted.length === 0) {
         onError?.({
@@ -551,7 +552,7 @@ export const PromptInput = ({
             filename: file.name,
           })
         }
-        return [...prev, ...next]
+        return prev.concat(next)
       })
     },
     [matchesAccept, maxFiles, maxFileSize, onError, t]
@@ -691,7 +692,7 @@ export const PromptInput = ({
     return new Promise((resolve, reject) => {
       const reader = new FileReader()
       reader.onloadend = () => resolve(reader.result as string)
-      reader.addEventListener('error', reject)
+      reader.onerror = reject
       reader.readAsDataURL(blob)
     })
   }
@@ -725,9 +726,7 @@ export const PromptInput = ({
       form.reset()
     }
 
-    // Convert blob URLs to data URLs asynchronously. Lifecycle: text is
-    // captured synchronously and the form resets immediately; attachments
-    // clear only after onSubmit succeeds so failures keep files for retry.
+    // Convert blob URLs to data URLs asynchronously
     Promise.all(
       files.map(async ({ id, ...item }) => {
         if (item.url && item.url.startsWith('blob:')) {
@@ -738,38 +737,33 @@ export const PromptInput = ({
         }
         return item
       })
-    )
-      .then((convertedFiles: FileUIPart[]) => {
-        try {
-          const result = onSubmit({ text, files: convertedFiles }, event)
+    ).then((convertedFiles: FileUIPart[]) => {
+      try {
+        const result = onSubmit({ text, files: convertedFiles }, event)
 
-          // Handle both sync and async onSubmit
-          if (result instanceof Promise) {
-            result
-              .then(() => {
-                clear()
-                if (usingProvider) {
-                  controller.textInput.clear()
-                }
-              })
-              .catch(() => {
-                // Don't clear on error - user may want to retry
-              })
-          } else {
-            // Sync function completed without throwing, clear attachments
-            clear()
-            if (usingProvider) {
-              controller.textInput.clear()
-            }
+        // Handle both sync and async onSubmit
+        if (result instanceof Promise) {
+          result
+            .then(() => {
+              clear()
+              if (usingProvider) {
+                controller.textInput.clear()
+              }
+            })
+            .catch(() => {
+              // Don't clear on error - user may want to retry
+            })
+        } else {
+          // Sync function completed without throwing, clear attachments
+          clear()
+          if (usingProvider) {
+            controller.textInput.clear()
           }
-        } catch {
-          // Don't clear on error - user may want to retry
         }
-      })
-      .catch(() => {
-        // Blob-to-dataURL conversion failed: keep attachments so the user
-        // can retry; text was already captured before the async step.
-      })
+      } catch (_error) {
+        // Don't clear on error - user may want to retry
+      }
+    })
   }
 
   // Render with or without local provider
@@ -848,7 +842,9 @@ export const PromptInputTextarea = ({
     ) {
       e.preventDefault()
       const lastAttachment =
-        attachments.files.length > 0 ? attachments.files.at(-1) : undefined
+        attachments.files.length > 0
+          ? attachments.files[attachments.files.length - 1]
+          : undefined
       if (lastAttachment) {
         attachments.remove(lastAttachment.id)
       }
@@ -893,10 +889,7 @@ export const PromptInputTextarea = ({
 
   return (
     <InputGroupTextarea
-      className={cn(
-        'field-sizing-content max-h-48 min-h-16 break-all',
-        className
-      )}
+      className={cn('field-sizing-content max-h-48 min-h-16 break-all', className)}
       name='message'
       onCompositionEnd={() => setIsComposing(false)}
       onCompositionStart={() => setIsComposing(true)}
@@ -1145,7 +1138,6 @@ export const PromptInputSpeechButton = ({
       speechRecognition.onresult = (event) => {
         let finalTranscript = ''
 
-        // oxlint-disable-next-line unicorn/prefer-spread -- SpeechRecognitionResultList is array-like but is not iterable in the DOM typings
         const results = Array.from(event.results)
 
         for (const result of results) {
@@ -1166,14 +1158,11 @@ export const PromptInputSpeechButton = ({
         }
       }
 
-      speechRecognition.addEventListener('error', (event) => {
+      speechRecognition.onerror = (event) => {
         // eslint-disable-next-line no-console
-        console.error(
-          'Speech recognition error:',
-          (event as SpeechRecognitionErrorEvent).error
-        )
+        console.error('Speech recognition error:', event.error)
         setIsListening(false)
-      })
+      }
 
       recognitionRef.current = speechRecognition
       // eslint-disable-next-line react-hooks/set-state-in-effect

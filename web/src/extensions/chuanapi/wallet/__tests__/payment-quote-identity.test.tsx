@@ -29,6 +29,8 @@ import type { InternalAxiosRequestConfig } from 'axios'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { applyAuthBundle, clearAuthentication } from '@/lib/auth-session'
+import type { AuthBundle } from '@/stores/auth-store'
 
 import { PaymentConfirmDialog } from '../components/dialogs/payment-confirm-dialog'
 import { usePayment } from '../hooks/use-payment'
@@ -56,6 +58,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
+  clearAuthentication(false)
   api.defaults.adapter = originalAdapter
 })
 
@@ -183,4 +186,58 @@ test('confirmation stays disabled while calculating or when quote identity is in
   expect(button).toBeEnabled()
   fireEvent.click(button)
   expect(onConfirm).toHaveBeenCalledTimes(1)
+})
+
+function signInQuoteOwner(id: number) {
+  const now = Math.floor(Date.now() / 1000)
+  const bundle: AuthBundle = {
+    access_token: `synthetic-quote-access-${id}`,
+    token_type: 'Bearer',
+    access_expires_at: now + 600,
+    user: { id, username: `synthetic-quote-user-${id}`, role: 1 },
+    session: {
+      sid: `synthetic-quote-session-${id}`,
+      current: true,
+      login_method: 'password',
+      ip: '127.0.0.1',
+      user_agent: 'test',
+      created_at: now,
+      last_active_at: now,
+      expires_at: now + 3600,
+    },
+  }
+  applyAuthBundle(bundle, false)
+}
+
+test.each([101, 202])('a completed quote cannot authorize owner %i after sign-out', async (nextOwner) => {
+  signInQuoteOwner(101)
+  const { result } = renderHook(() => usePayment())
+  const quote = await beginQuote(result, 100, 'alipay')
+  await act(async () => { pending[0].resolve('73.125'); await quote.promise })
+  expect(result.current.isQuoteCurrent(100, 'alipay')).toBe(true)
+  act(() => {
+    clearAuthentication(false)
+    signInQuoteOwner(nextOwner)
+  })
+  expect(result.current.isQuoteCurrent(100, 'alipay')).toBe(false)
+})
+
+test.each([101, 202])('a delayed prior-session quote cannot replace a quote for owner %i', async (nextOwner) => {
+  signInQuoteOwner(101)
+  const { result } = renderHook(() => usePayment())
+  const previous = await beginQuote(result, 100, 'alipay')
+  act(() => {
+    clearAuthentication(false)
+    signInQuoteOwner(nextOwner)
+  })
+  await act(async () => {
+    pending[0].resolve('73.125')
+    expect(await previous.promise).toBe(0)
+  })
+  expect(result.current.amount).toBe(0)
+  expect(result.current.isQuoteCurrent(100, 'alipay')).toBe(false)
+  const current = await beginQuote(result, 200, 'alipay')
+  await act(async () => { pending[1].resolve('146.25'); await current.promise })
+  expect(result.current.amount).toBe(146.25)
+  expect(result.current.isQuoteCurrent(200, 'alipay')).toBe(true)
 })

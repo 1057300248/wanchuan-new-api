@@ -168,11 +168,7 @@ it.each([
         <AuditLogViewer scope='self' />
       </QueryClientProvider>
     )
-    const cell = await screen.findByRole(
-      'cell',
-      { name: new RegExp(headline) },
-      { timeout: 3000 }
-    )
+    const cell = await screen.findByRole('cell', { name: new RegExp(headline) })
     expect(cell).toHaveTextContent(headline)
     if ('id' in params || 'target_user_id' in params) {
       expect(cell).toHaveTextContent('(ID: 11)')
@@ -387,9 +383,7 @@ it.each([
         </QueryClientProvider>
       </I18nextProvider>
     )
-    expect(
-      await screen.findByRole('cell', { name: single }, { timeout: 3000 })
-    ).toBeVisible()
+    expect(await screen.findByRole('cell', { name: single })).toBeVisible()
     expect(screen.getByRole('cell', { name: batch })).toBeVisible()
     expect(
       screen.queryByRole('cell', { name: 'channel.status_update' })

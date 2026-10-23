@@ -3,11 +3,9 @@ package service
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"maps"
 	"math"
-	"slices"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -21,7 +19,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
@@ -30,7 +27,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	tokenName := c.GetString("token_name")
 	logContent := []*common.Message{common.NewMessage("Action {{action}}", map[string]any{"action": info.Action})}
 	// 支持任务仅按次计费
-	if common.StringsContains(constant.TaskPricePatches, info.GetBillingModelName()) {
+	if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) {
 		logContent = append(logContent, common.NewMessage("Billed per request"))
 	} else {
 		var contents []string
@@ -66,7 +63,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	}
 	if info.IsModelMapped {
 		other.SetPublic("is_model_mapped", true)
-		other.SetAdmin("upstream_model_name", info.UpstreamModelName)
+		other.SetPublic("upstream_model_name", info.UpstreamModelName)
 	}
 	if snap := info.TieredBillingSnapshot; snap != nil {
 		other.SetPublic("billing_mode", "tiered_expr")
@@ -81,15 +78,9 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	}
 	appendTaskLogInfo(task, other)
 	attachQuotaSaturation(c, info, other)
-	// P1-2：钱包计费任务在提交日志中记录账户净份额（此时反映预扣+提交结算；
-	// 异步差额结算另行记录 task 引用账本与差额日志）。
-	if info.BillingSource == BillingSourceWallet {
-		refs := RelayWalletCostRefs(info)
-		FillWalletCostLogInfo(other, info.UserId, refs)
-	}
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
-		ModelName: info.GetBillingModelName(),
+		ModelName: info.OriginModelName,
 		TokenName: tokenName,
 		Quota:     info.PriceData.Quota,
 		Content:   logContent,
@@ -106,22 +97,8 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 // ---------------------------------------------------------------------------
 
 // resolveTokenKey 通过 TokenId 运行时获取令牌 Key（用于 Redis 缓存操作）。
-// Deleted tokens need no counter update; other lookup failures abort settlement.
-func resolveTokenKey(ctx context.Context, tokenId int, taskID string) (string, error) {
-	token, err := model.GetTokenById(tokenId)
-	if err != nil {
-		logger.LogWarn(ctx, common.LogText("failed to get token key (tokenId=%d, task=%s): %s", tokenId, taskID, err.Error()))
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", nil
-		}
-		return "", err
-	}
-	return token.Key, nil
-}
-
-// Refund lookup follows official rc.46: an unavailable token is logged, not a
-// rollback of a completed source refund. Successful settlement keeps its API.
-func resolveRefundTokenKey(ctx context.Context, tokenId int, taskID string) string {
+// 如果令牌已被删除或查询失败，返回空字符串。
+func resolveTokenKey(ctx context.Context, tokenId int, taskID string) string {
 	token, err := model.GetTokenById(tokenId)
 	if err != nil {
 		logger.LogWarn(ctx, common.LogText("failed to get token key (tokenId=%d, task=%s): %s", tokenId, taskID, err.Error()))
@@ -135,249 +112,24 @@ func taskIsSubscription(task *model.Task) bool {
 	return task.PrivateData.BillingSource == BillingSourceSubscription && task.PrivateData.SubscriptionId > 0
 }
 
-// taskAdjustRefundFunding retains the original ChuanAPI three-wallet source
-// adapter. A missing/partial historical receipt is not proof of later debits.
-// Token/usage/quota clearing deliberately remain the official independent steps.
-func taskAdjustRefundFunding(task *model.Task, delta int) ([]model.LedgerShare, error) {
+// taskAdjustFunding 调整任务的资金来源（钱包或订阅），delta > 0 表示扣费，delta < 0 表示退还。
+func taskAdjustFunding(task *model.Task, delta int) error {
 	if taskIsSubscription(task) {
-		return nil, model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
-	}
-	entry := model.LedgerEntry{
-		UserId:        task.UserId,
-		Account:       model.AccountPaid,
-		ReferenceType: "task",
-		ReferenceId:   task.TaskID,
-		RequestId:     task.TaskID,
+		return model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
 	}
 	if delta > 0 {
-		entry.Delta = delta
-		entry.Reason = model.LedgerReasonTaskSettle
-		entry.IdempotencyKey = "task:settle:" + task.TaskID
-		result, err := model.DebitQuota(entry, taskDebitOrder(task)...)
-		if err != nil {
-			return nil, err
-		}
-		return appendTaskShares(task.PrivateData.WalletDebit, result), nil
+		return model.DecreaseUserQuota(task.UserId, delta, false)
 	}
-	refund := -delta
-	if shares := SplitRefund(task.PrivateData.WalletDebit, refund); len(shares) > 0 {
-		entry.Reason = model.LedgerReasonTaskRefund
-		entry.IdempotencyKey = "task:refund:" + task.TaskID
-		_, err := model.CreditQuotaShares(entry, shares)
-		return nil, err
-	}
-	entry.Delta = refund
-	entry.Reason = model.LedgerReasonTaskRefund
-	entry.IdempotencyKey = "task:refund:" + task.TaskID
-	_, err := model.CreditQuota(entry)
-	return nil, err
+	return model.IncreaseUserQuota(task.UserId, -delta, false)
 }
 
-func taskAdjustFunding(task *model.Task, delta int, commit func(*gorm.DB, []model.LedgerShare, bool) error) ([]model.LedgerShare, error) {
-	if taskIsSubscription(task) {
-		if commit != nil {
-			return nil, errors.New("subscription adjustments use the official independent path")
-		}
-		return nil, model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
-	}
-	var order []model.LedgerAccount
-	if delta > 0 && !taskIsSubscription(task) {
-		order = taskDebitOrder(task)
-	}
-	key := "task:refund:" + task.TaskID
-	if delta > 0 {
-		key = "task:settle:" + task.TaskID
-	}
-	var result *model.LedgerResult
-	var nextShares []model.LedgerShare
-	var err error
-	for attempt := 0; attempt < 2; attempt++ {
-		err = model.DB.Transaction(func(tx *gorm.DB) error {
-			nextShares, result, err = taskAdjustFundingTx(tx, task, delta, key, order)
-			if err != nil {
-				return err
-			}
-			if commit != nil {
-				return commit(tx, nextShares, result != nil && result.Replayed)
-			}
-			return nil
-		})
-		if !errors.Is(err, model.ErrLedgerDuplicate) {
-			break
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-	if result != nil {
-		model.RefreshUserQuotaCache(task.UserId, result.TotalAfter)
-	}
-	return nextShares, nil
-}
-
-// taskAdjustFundingTx has no out-of-transaction writes. The caller supplies a
-// stable lifecycle key and commits the receipt, token and task intent together.
-func taskAdjustFundingTx(tx *gorm.DB, task *model.Task, delta int, key string, order []model.LedgerAccount) ([]model.LedgerShare, *model.LedgerResult, error) {
-	shares := append([]model.LedgerShare(nil), task.PrivateData.WalletDebit...)
-	if taskIsSubscription(task) {
-		return nil, nil, errors.New("subscription adjustments use the official independent path")
-	}
-	if delta == 0 {
-		return shares, nil, nil
-	}
-	entry := model.LedgerEntry{
-		UserId: task.UserId, Account: model.AccountPaid, ReferenceType: "task",
-		ReferenceId: task.TaskID, RequestId: task.TaskID, IdempotencyKey: key,
-	}
-	if delta > 0 {
-		if len(shares) == 0 && task.Quota > 0 {
-			shares = []model.LedgerShare{{Account: model.AccountPaid, Amount: task.Quota}}
-		}
-		entry.Delta = delta
-		entry.Reason = model.LedgerReasonTaskSettle
-		result, err := model.DebitQuotaTx(tx, entry, order...)
-		if err != nil {
-			return nil, nil, err
-		}
-		return appendTaskShares(shares, result), result, nil
-	}
-	refund := -delta
-	entry.Reason = model.LedgerReasonTaskRefund
-	if len(shares) == 0 {
-		entry.Delta = refund
-		result, err := model.CreditQuotaTx(tx, entry)
-		return shares, result, err
-	}
-	refunded := SplitRefund(shares, refund)
-	total := 0
-	for _, share := range refunded {
-		total += share.Amount
-	}
-	if total != refund {
-		return nil, nil, fmt.Errorf("task wallet receipt does not cover refund: task %s", task.TaskID)
-	}
-	result, err := model.CreditQuotaSharesTx(tx, entry, refunded)
-	if err != nil {
-		return nil, nil, err
-	}
-	return subtractTaskShares(shares, refunded), result, nil
-}
-
-// taskDebitOrder 返回任务钱包扣减顺序：依据任务记录的扣减份额（首个账户优先），
-// 无份额记录（旧数据/纯 paid）时按模型赠金资格重新判定。
-func taskDebitOrder(task *model.Task) []model.LedgerAccount {
-	if len(task.PrivateData.WalletDebit) > 0 {
-		order := make([]model.LedgerAccount, 0, 3)
-		for _, share := range task.PrivateData.WalletDebit {
-			if !slices.Contains(order, share.Account) {
-				order = append(order, share.Account)
-			}
-		}
-		// Receipts contain only accounts actually used by pre-consumption. If
-		// that exhausted bonus/reward, settlement must still reach the remaining
-		// generally spendable funds without granting new bonus eligibility.
-		for _, account := range []model.LedgerAccount{model.AccountReward, model.AccountPaid} {
-			if !slices.Contains(order, account) {
-				order = append(order, account)
-			}
-		}
-		return order
-	}
-	return WalletDebitOrder(&relaycommon.RelayInfo{BillingModelName: taskModelName(task)})
-}
-
-// appendTaskShares 把一次扣减结果的各账户份额累计进任务份额列表。
-func appendTaskShares(current []model.LedgerShare, result *model.LedgerResult) []model.LedgerShare {
-	if result == nil {
-		return current
-	}
-	index := make(map[model.LedgerAccount]int, len(current))
-	next := append([]model.LedgerShare(nil), current...)
-	for i, share := range next {
-		index[share.Account] = i
-	}
-	for _, row := range result.Rows {
-		if row.Delta >= 0 {
-			continue
-		}
-		account := model.LedgerAccount(row.Account)
-		if i, ok := index[account]; ok {
-			next[i].Amount += -row.Delta
-		} else {
-			index[account] = len(next)
-			next = append(next, model.LedgerShare{Account: account, Amount: -row.Delta})
-		}
-	}
-	return next
-}
-
-func subtractTaskShares(current, refunded []model.LedgerShare) []model.LedgerShare {
-	remaining := make(map[model.LedgerAccount]int, len(current))
-	for _, share := range current {
-		remaining[share.Account] += share.Amount
-	}
-	for _, share := range refunded {
-		remaining[share.Account] -= share.Amount
-	}
-	next := make([]model.LedgerShare, 0, len(current))
-	for _, share := range current {
-		if amount := remaining[share.Account]; amount > 0 {
-			next = append(next, model.LedgerShare{Account: share.Account, Amount: amount})
-		}
-	}
-	return next
-}
-
-// settleTaskFunding commits the wallet/subscription, token counter and durable
-// quota receipt together. Wallet replays repair old missing state if necessary,
-// but never repeat token or usage adjustments.
-func settleTaskFunding(ctx context.Context, task *model.Task, actualQuota int) (bool, error) {
-	delta := actualQuota - task.Quota
-	tokenKey := ""
-	if task.PrivateData.TokenId > 0 {
-		var err error
-		tokenKey, err = resolveTokenKey(ctx, task.PrivateData.TokenId, task.TaskID)
-		if err != nil {
-			return false, err
-		}
-	}
-	nextTask := *task
-	replayed := false
-	_, err := taskAdjustFunding(task, delta, func(tx *gorm.DB, shares []model.LedgerShare, walletReplayed bool) error {
-		replayed = walletReplayed
-		if walletReplayed {
-			var persisted model.Task
-			if err := tx.Select("quota", "private_data").First(&persisted, task.ID).Error; err != nil {
-				return err
-			}
-			if persisted.Quota == actualQuota {
-				nextTask.Quota = persisted.Quota
-				nextTask.PrivateData = persisted.PrivateData
-				return nil
-			}
-		}
-		if !walletReplayed && tokenKey != "" {
-			if err := model.ApplyTokenQuotaDeltaTx(tx, task.PrivateData.TokenId, tokenKey, -delta); err != nil {
-				return err
-			}
-		}
-		nextTask.Quota = actualQuota
-		nextTask.PrivateData.WalletDebit = shares
-		return nextTask.UpdateBillingStateTx(tx, task.Quota)
-	})
-	if err != nil {
-		return false, err
-	}
-	task.Quota = nextTask.Quota
-	task.PrivateData = nextTask.PrivateData
-	return replayed, nil
-}
-
+// taskAdjustTokenQuota 调整任务的令牌额度，delta > 0 表示扣费，delta < 0 表示退还。
+// 需要通过 resolveTokenKey 运行时获取 key（不从 PrivateData 中读取）。
 func taskAdjustTokenQuota(ctx context.Context, task *model.Task, delta int) {
 	if task.PrivateData.TokenId <= 0 || delta == 0 {
 		return
 	}
-	tokenKey := resolveRefundTokenKey(ctx, task.PrivateData.TokenId, task.TaskID)
+	tokenKey := resolveTokenKey(ctx, task.PrivateData.TokenId, task.TaskID)
 	if tokenKey == "" {
 		return
 	}
@@ -385,7 +137,7 @@ func taskAdjustTokenQuota(ctx context.Context, task *model.Task, delta int) {
 	if delta > 0 {
 		err = model.DecreaseTokenQuota(task.PrivateData.TokenId, tokenKey, delta)
 	} else {
-		err = model.IncreaseTokenQuotaForRefund(task.PrivateData.TokenId, tokenKey, -delta)
+		err = model.IncreaseTokenQuota(task.PrivateData.TokenId, tokenKey, -delta)
 	}
 	if err != nil {
 		logger.LogWarn(ctx, common.LogText("failed to adjust token quota (delta=%d, task=%s): %s", delta, task.TaskID, err.Error()))
@@ -425,7 +177,7 @@ func taskBillingOther(task *model.Task) *model.LogOther {
 	props := task.Properties
 	if props.UpstreamModelName != "" && props.UpstreamModelName != props.OriginModelName {
 		other.SetPublic("is_model_mapped", true)
-		other.SetAdmin("upstream_model_name", props.UpstreamModelName)
+		other.SetPublic("upstream_model_name", props.UpstreamModelName)
 	}
 	appendTaskLogInfo(task, other)
 	return other
@@ -497,14 +249,10 @@ func taskBillingContextPriceData(bc *model.TaskBillingContext) *types.PriceData 
 	return priceData
 }
 
-// taskModelName 返回任务的计费模型身份（BillingContext.BillingModelName 优先，
-// 旧任务回退 OriginModelName；再回退 Properties.OriginModelName）。
-// 计费重算、赠金资格与任务日志均使用该身份，保证与提交时价格口径一致。
+// taskModelName 从 BillingContext 或 Properties 中获取模型名称。
 func taskModelName(task *model.Task) string {
-	if bc := task.PrivateData.BillingContext; bc != nil {
-		if name := bc.EffectiveBillingModelName(); name != "" {
-			return name
-		}
+	if bc := task.PrivateData.BillingContext; bc != nil && bc.OriginModelName != "" {
+		return bc.OriginModelName
 	}
 	return task.Properties.OriginModelName
 }
@@ -513,19 +261,13 @@ func taskModelName(task *model.Task) string {
 // 当异步任务失败时，退还资金与令牌额度，并回减用户和渠道用量。
 // 返回资金来源是否已成功退还；失败时保留 quota，供显式重试或人工对账。
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool {
-	// Historic private pending intents require an explicitly approved disposition;
-	// never feed them into the official non-atomic refund path automatically.
-	if task.HasLegacyBillingIntent() {
-		logger.LogWarn(ctx, "historical task billing intent requires operator reconciliation")
-		return false
-	}
 	quota := task.Quota
 	if quota == 0 {
 		return true
 	}
 
 	// 1. 退还资金来源（钱包或订阅）
-	if _, err := taskAdjustRefundFunding(task, -quota); err != nil {
+	if err := taskAdjustFunding(task, -quota); err != nil {
 		logger.LogWarn(ctx, common.LogText("failed to refund the funding source, task %s: %s", task.TaskID, err.Error()))
 		return false
 	}
@@ -566,78 +308,6 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 // reason 写入日志内容（例如按 token 重算或 adaptor 调整）。
 // clamps 可选：若计算 actualQuota 时发生额度饱和，将其记入日志 admin_info（仅管理员可见）。
 func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason *common.Message, clamps ...*common.QuotaClamp) {
-	if task.HasLegacyBillingIntent() {
-		return
-	}
-	if taskIsSubscription(task) {
-		recalculateSubscriptionTaskQuota(ctx, task, actualQuota, reason, clamps...)
-		return
-	}
-	if actualQuota < 0 {
-		return
-	}
-	preConsumedQuota := task.Quota
-	quotaDelta := actualQuota - preConsumedQuota
-
-	if quotaDelta == 0 {
-		logger.LogInfo(ctx, common.LogText("task %s pre-consumed quota matches the actual quota (%s, %s)",
-			task.TaskID, logger.LogQuota(actualQuota), reason.Error()))
-		return
-	}
-
-	logger.LogInfo(ctx, common.LogText("task %s settles the difference: delta=%s (actual %s, pre-consumed %s, %s)",
-		task.TaskID,
-		logger.LogQuota(quotaDelta),
-		logger.LogQuota(actualQuota),
-		logger.LogQuota(preConsumedQuota),
-		reason.Error(),
-	))
-
-	// Commit the funding delta, token counter and accumulated receipt together.
-	replayed, err := settleTaskFunding(ctx, task, actualQuota)
-	if err != nil {
-		logger.LogError(ctx, common.LogText("failed to adjust funding for the difference, task %s: %s", task.TaskID, err.Error()))
-		return
-	}
-	if replayed {
-		return
-	}
-
-	// 提交阶段已经累计过一次请求；结算阶段只调整最终用量。
-	model.UpdateUserUsedQuota(task.UserId, quotaDelta)
-	model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
-
-	var logType int
-	var logQuota int
-	if quotaDelta > 0 {
-		logType = model.LogTypeConsume
-		logQuota = quotaDelta
-	} else {
-		logType = model.LogTypeRefund
-		logQuota = -quotaDelta
-	}
-	other := taskBillingOther(task)
-	other.SetPublic("task_id", task.TaskID)
-	other.SetPublic("pre_consumed_quota", preConsumedQuota)
-	other.SetPublic("actual_quota", actualQuota)
-	for _, clamp := range clamps {
-		attachQuotaSaturationToOther(other, clamp)
-	}
-	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
-		UserId:    task.UserId,
-		LogType:   logType,
-		Content:   []*common.Message{reason},
-		ChannelId: task.ChannelId,
-		ModelName: taskModelName(task),
-		Quota:     logQuota,
-		TokenId:   task.PrivateData.TokenId,
-		Group:     task.Group,
-		Other:     other,
-		NodeName:  task.PrivateData.NodeName,
-	})
-}
-
-func recalculateSubscriptionTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason *common.Message, clamps ...*common.QuotaClamp) {
 	if actualQuota < 0 {
 		return
 	}
@@ -659,7 +329,7 @@ func recalculateSubscriptionTaskQuota(ctx context.Context, task *model.Task, act
 	))
 
 	// 调整资金来源
-	if _, err := taskAdjustFunding(task, quotaDelta, nil); err != nil {
+	if err := taskAdjustFunding(task, quotaDelta); err != nil {
 		logger.LogError(ctx, common.LogText("failed to adjust funding for the difference, task %s: %s", task.TaskID, err.Error()))
 		return
 	}
@@ -710,17 +380,8 @@ func recalculateSubscriptionTaskQuota(ctx context.Context, task *model.Task, act
 // 当任务成功且返回了 totalTokens 时，根据模型倍率和分组倍率重新计算实际扣费额度，
 // 与预扣费的差额进行补扣或退还。支持钱包和订阅计费来源。
 func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) bool {
-	actualQuota, reason, clamp, ok := taskQuotaByTokens(task, totalTokens)
-	if !ok {
-		return false
-	}
-	RecalculateTaskQuota(ctx, task, actualQuota, reason, clamp)
-	return true
-}
-
-func taskQuotaByTokens(task *model.Task, totalTokens int) (int, *common.Message, *common.QuotaClamp, bool) {
 	if totalTokens <= 0 {
-		return 0, nil, nil, false
+		return false
 	}
 
 	modelName := taskModelName(task)
@@ -729,7 +390,7 @@ func taskQuotaByTokens(task *model.Task, totalTokens int) (int, *common.Message,
 	modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
 	// 只有配置了倍率(非固定价格)时才按 token 重新计费
 	if !hasRatioSetting || modelRatio <= 0 {
-		return 0, nil, nil, false
+		return false
 	}
 
 	// 获取用户和组的倍率信息
@@ -741,7 +402,7 @@ func taskQuotaByTokens(task *model.Task, totalTokens int) (int, *common.Message,
 		}
 	}
 	if group == "" {
-		return 0, nil, nil, false
+		return false
 	}
 
 	groupRatio := ratio_setting.GetGroupRatio(group)
@@ -769,7 +430,8 @@ func taskQuotaByTokens(task *model.Task, totalTokens int) (int, *common.Message,
 		"group_ratio":      fmt.Sprintf("%.2f", finalGroupRatio),
 		"other_multiplier": fmt.Sprintf("%.4f", otherMultiplier),
 	})
-	return actualQuota, reason, clamp, true
+	RecalculateTaskQuota(ctx, task, actualQuota, reason, clamp)
+	return true
 }
 
 // EvaluateTaskCompletionUsage evaluates actual facts against the frozen task
@@ -782,16 +444,7 @@ func EvaluateTaskCompletionUsage(snap *billingexpr.BillingSnapshot, facts map[st
 	usage := make(map[string]any, len(snap.UsageFacts)+len(facts))
 	maps.Copy(usage, snap.UsageFacts)
 	maps.Copy(usage, facts)
-	request := billingexpr.RequestInput{Usage: usage}
-	if snap.RequestInput != nil {
-		request.Headers = maps.Clone(snap.RequestInput.Headers)
-		request.Params = maps.Clone(snap.RequestInput.Params)
-		request.Timestamp = snap.RequestInput.Timestamp
-		request.ImageCount = snap.RequestInput.ImageCount
-	} else if billingexpr.UsesRequestContext(snap.ExprString) {
-		return billingexpr.TieredResult{}, usage, fmt.Errorf("task billing snapshot has no request-time pricing context")
-	}
-	result, err := billingexpr.ComputeTieredQuotaWithRequest(snap, billingexpr.TokenParams{}, request)
+	result, err := billingexpr.ComputeTieredQuotaWithRequest(snap, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: usage})
 	if err == nil && (result.ActualQuotaBeforeGroup < 0 || math.IsNaN(result.ActualQuotaBeforeGroup)) {
 		err = fmt.Errorf("task completion expression produced an invalid cost")
 	}

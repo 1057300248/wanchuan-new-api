@@ -37,6 +37,10 @@ export function Profile() {
   const permissions = useAuthStore((s) => s.auth.user?.permissions)
 
   const checkinEnabled = status?.checkin_enabled === true
+  const turnstileEnabled = !!(
+    status?.turnstile_check && status?.turnstile_site_key
+  )
+  const turnstileSiteKey = status?.turnstile_site_key || ''
   const canConfigureSidebar = permissions?.sidebar_settings !== false
   // Older cached status payloads lack these fields; the site default is on.
   const quotaRemindEnabled = status?.quota_remind_enabled !== false
@@ -68,7 +72,11 @@ export function Profile() {
 
               <div className='space-y-4 sm:space-y-6 xl:sticky xl:top-6'>
                 {checkinEnabled && (
-                  <CheckinCalendarCard checkinEnabled={checkinEnabled} />
+                  <CheckinCalendarCard
+                    checkinEnabled={checkinEnabled}
+                    turnstileEnabled={turnstileEnabled}
+                    turnstileSiteKey={turnstileSiteKey}
+                  />
                 )}
                 {canConfigureSidebar && <SidebarModulesCard />}
               </div>

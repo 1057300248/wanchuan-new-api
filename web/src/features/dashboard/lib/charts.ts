@@ -45,10 +45,6 @@ export function getDashboardChartColors(domainLength: number): string[] {
       (item) => !item.maxDomainLength || domainLength <= item.maxDomainLength
     ) ?? vchartDefaultDataScheme.at(-1)
 
-  if (!scheme) {
-    return []
-  }
-
   return (scheme?.scheme ?? []).filter(
     (color): color is string => typeof color === 'string'
   )

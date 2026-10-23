@@ -187,9 +187,10 @@ function buildGroupPricingRows(
 }
 
 function serializeGroupPricingRows(rows: GroupPricingRow[]) {
-  const groupRatio: Record<string, number> = {}
-  const userUsableGroups: Record<string, string> = {}
-  const topupGroupRatio: Record<string, number> = {}
+  // Keep every legal group name, including __proto__, through visual edits.
+  const groupRatio: Record<string, number> = Object.create(null)
+  const userUsableGroups: Record<string, string> = Object.create(null)
+  const topupGroupRatio: Record<string, number> = Object.create(null)
 
   for (const row of rows) {
     const name = row.name.trim()

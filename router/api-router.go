@@ -17,11 +17,6 @@ import (
 
 func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 	scopes := extension.RouteScopes{Engine: router}
-	// Probes must stay independent of the Redis-backed API limiter and caches.
-	for _, method := range []string{"GET", "HEAD"} {
-		router.Handle(method, "/api/healthz", middleware.DisableCache(), controller.GetHealthz)
-		router.Handle(method, "/api/readyz", middleware.DisableCache(), controller.GetReadyz)
-	}
 	// Keep the read-only browser identity probe inside the refresh cookie path.
 	// Cache protection precedes every rejecting middleware, including the
 	// limiter. The console module attaches the handler to this scope.
@@ -50,11 +45,6 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 	anonymousRequestBodyLimit := middleware.AnonymousRequestBodyLimit()
 	scopes.API = apiRouter
 	scopes.AnonymousRequestBodyLimit = anonymousRequestBodyLimit
-	// Payment provider endpoints stay host-owned: the ChuanAPI payment route
-	// set delegates to this registrar so its descriptor identity, priority and
-	// URL/middleware contract are preserved without the module importing the
-	// host controller/service packages.
-	scopes.PaymentRoutes = RegisterPaymentRoutes
 	{
 		apiRouter.GET("/setup", controller.GetSetup)
 		apiRouter.POST("/setup", anonymousRequestBodyLimit, controller.PostSetup)
@@ -68,7 +58,7 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 		apiRouter.GET("/about", controller.GetAbout)
 		//apiRouter.GET("/midjourney", controller.GetMidjourney)
 		apiRouter.GET("/home_page_content", controller.GetHomePageContent)
-		apiRouter.GET("/pricing", middleware.UserAuth(), controller.GetPricing)
+		apiRouter.GET("/pricing", middleware.HeaderNavModuleAuth("pricing"), controller.GetPricing)
 		perfMetricsRoute := apiRouter.Group("/perf-metrics")
 		perfMetricsRoute.Use(middleware.HeaderNavModulePublicOrUserAuth("pricing"))
 		{
@@ -96,6 +86,10 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 
 		apiRouter.POST("/stripe/webhook", anonymousRequestBodyLimit, controller.StripeWebhook)
 		apiRouter.POST("/creem/webhook", anonymousRequestBodyLimit, controller.CreemWebhook)
+		apiRouter.POST("/waffo/webhook", anonymousRequestBodyLimit, controller.WaffoWebhook)
+		// :env separates test vs prod URLs so the operator can register each
+		// in Pancake's matching webhook slot; handler enforces env match.
+		apiRouter.POST("/waffo-pancake/webhook/:env", anonymousRequestBodyLimit, controller.WaffoPancakeWebhook)
 
 		// Universal secure verification routes
 		apiRouter.GET("/verify/methods", middleware.UserAuth(), middleware.DisableCache(), controller.GetVerificationMethods)
@@ -121,14 +115,12 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 
 			selfRoute := userRoute.Group("/")
 			selfRoute.Use(middleware.DisableCache(), middleware.UserAuth())
-			scopes.UserSelf = selfRoute
 			{
 				selfRoute.GET("/sessions", middleware.DisableCache(), controller.GetLoginSessions)
 				selfRoute.DELETE("/sessions/:sid", middleware.DisableCache(), controller.DeleteLoginSession)
 				selfRoute.POST("/sessions/revoke-others", middleware.DisableCache(), controller.RevokeOtherLoginSessions)
 				selfRoute.GET("/self/groups", controller.GetUserGroups)
 				selfRoute.GET("/self", controller.GetSelf)
-				selfRoute.GET("/self/email/verification", middleware.EmailVerificationRateLimit(), controller.SendEmailVerification)
 				selfRoute.GET("/models", controller.GetUserModels)
 				selfRoute.GET("/tokens/:id/models", controller.GetTokenModels)
 				selfRoute.PUT("/self", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.UpdateSelf)
@@ -159,7 +151,13 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 				selfRoute.POST("/stripe/pay", middleware.CriticalRateLimit(), controller.RequestStripePay)
 				selfRoute.POST("/stripe/amount", controller.RequestStripeAmount)
 				selfRoute.POST("/creem/pay", middleware.CriticalRateLimit(), controller.RequestCreemPay)
+				selfRoute.POST("/waffo/amount", controller.RequestWaffoAmount)
+				selfRoute.POST("/waffo/pay", middleware.CriticalRateLimit(), controller.RequestWaffoPay)
+				selfRoute.POST("/waffo-pancake/amount", controller.RequestWaffoPancakeAmount)
+				selfRoute.POST("/waffo-pancake/pay", middleware.CriticalRateLimit(), controller.RequestWaffoPancakePay)
+				selfRoute.POST("/aff_transfer", middleware.UserCriticalRateLimit("aff-transfer"), controller.TransferAffQuota)
 				selfRoute.PUT("/setting", controller.UpdateUserSetting)
+
 				// 2FA routes
 				selfRoute.GET("/2fa/status", controller.Get2FAStatus)
 				selfRoute.POST("/2fa/setup", middleware.UserCriticalRateLimit("security-verification"), middleware.DisableCache(), controller.Setup2FA)
@@ -196,16 +194,12 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 				// Admin 2FA routes
 				adminRoute.GET("/2fa/stats", controller.Admin2FAStats)
 				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
-
 			}
 		}
-
-		registerPlaygroundRoutes(apiRouter)
 
 		// Subscription billing (plans, purchase, admin management)
 		subscriptionRoute := apiRouter.Group("/subscription")
 		subscriptionRoute.Use(middleware.UserAuth())
-		scopes.SubscriptionUser = subscriptionRoute
 		{
 			subscriptionRoute.GET("/plans", controller.GetSubscriptionPlans)
 			subscriptionRoute.GET("/self", controller.GetSubscriptionSelf)
@@ -214,6 +208,7 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 			subscriptionRoute.POST("/epay/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestEpay)
 			subscriptionRoute.POST("/stripe/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestStripePay)
 			subscriptionRoute.POST("/creem/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestCreemPay)
+			subscriptionRoute.POST("/waffo-pancake/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestWaffoPancakePay)
 		}
 		subscriptionAdminRoute := apiRouter.Group("/subscription/admin")
 		subscriptionAdminRoute.Use(middleware.AdminAuth())
@@ -256,6 +251,11 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 			optionRoute.DELETE("/channel_affinity_cache", controller.ClearChannelAffinityCache)
 			optionRoute.POST("/rest_model_ratio", controller.ResetModelRatio)
 			optionRoute.POST("/group-rename", controller.RenameGroups)
+			optionRoute.GET("/waffo-pancake/catalog", controller.ListWaffoPancakeCatalog)
+			optionRoute.POST("/waffo-pancake/pair", controller.CreateWaffoPancakePair)
+			optionRoute.POST("/waffo-pancake/save", controller.SaveWaffoPancake)
+			optionRoute.POST("/waffo-pancake/subscription-product", controller.CreateWaffoPancakeSubscriptionProduct)
+			optionRoute.GET("/waffo-pancake/subscription-product-options", controller.ListWaffoPancakeSubscriptionProductOptions)
 		}
 
 		// Custom OAuth provider management (root only)
@@ -324,7 +324,7 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 		}
 
 		usageRoute := apiRouter.Group("/usage")
-		usageRoute.Use(middleware.CriticalRateLimit())
+		usageRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
 		{
 			tokenUsageRoute := usageRoute.Group("/token")
 			tokenUsageRoute.Use(middleware.TokenAuthReadOnly())
@@ -382,7 +382,7 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 		dataRoute.GET("/flow", middleware.AdminAuth(), controller.GetAllFlowQuotaDates)
 		dataRoute.GET("/flow/self", middleware.UserAuth(), controller.GetUserFlowQuotaDates)
 
-		logRoute.Use(middleware.CriticalRateLimit())
+		logRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
 		{
 			logRoute.GET("/token", middleware.TokenAuthReadOnly(), controller.GetLogByKey)
 		}
@@ -427,7 +427,6 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 
 		modelsRoute := apiRouter.Group("/models")
 		modelsRoute.Use(middleware.AdminAuth())
-		scopes.AdminModels = modelsRoute
 		{
 			modelsRoute.GET("/sync_upstream/preview", controller.SyncUpstreamPreview)
 			modelsRoute.POST("/sync_upstream", controller.SyncUpstreamModels)
@@ -468,13 +467,4 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 		}
 	}
 	return scopes
-}
-
-func registerPlaygroundRoutes(apiRouter *gin.RouterGroup) {
-	playgroundRoute := apiRouter.Group("/user/playground")
-	playgroundRoute.Use(middleware.UserAuth())
-	{
-		playgroundRoute.GET("/bootstrap", controller.PlaygroundBootstrap)
-		playgroundRoute.POST("/chat", middleware.SystemPerformanceCheck(), middleware.Distribute(), controller.Playground)
-	}
 }

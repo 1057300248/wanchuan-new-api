@@ -24,6 +24,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { api } from '@/lib/api'
 
 import { ImageGenerationPage } from '../components/ImageGenerationPage'
+import { imageBootstrapQueryKey, signInHistoryOwner } from './history-fixture'
 
 let client: QueryClient
 const name = 'grok-imagine-image-2.0'
@@ -39,6 +40,7 @@ const hint =
   'No image models match this API key. Check the model image-generation endpoint configuration, the key group, and its model restrictions, then refresh.'
 
 beforeEach(() => {
+  signInHistoryOwner()
   localStorage.clear()
   client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
@@ -55,7 +57,7 @@ function renderPage(
   tokenModels = [name],
   selectedKey = key
 ) {
-  client.setQueryData(['image-generation-bootstrap'], {
+  client.setQueryData(imageBootstrapQueryKey(), {
     keys: [selectedKey],
     pricingModels: [{ model_name: name, supported_endpoint_types: endpoints }],
   })
@@ -145,7 +147,7 @@ test('refresh reloads pricing, token limits and owned token models after configu
 test('the Console model enables reference upload, aspect ratio and quality selection', async () => {
   const consoleName = 'grok-imagine-image-2.0-console'
   renderPage(['image-generation'], [consoleName])
-  client.setQueryData(['image-generation-bootstrap'], {
+  client.setQueryData(imageBootstrapQueryKey(), {
     keys: [key],
     pricingModels: [
       {

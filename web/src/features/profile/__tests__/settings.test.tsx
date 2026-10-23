@@ -37,6 +37,8 @@ const profile: UserProfile = {
   request_count: 0,
   status: 1,
   aff_count: 0,
+  aff_quota: 0,
+  aff_history_quota: 0,
   created_time: 0,
 }
 const settings = {
@@ -58,8 +60,7 @@ afterEach(() => vi.restoreAllMocks())
 
 /** The body a PUT sends over the wire: undefined fields are left out. */
 function sentBody(put: { mock: { calls: unknown[][] } }): unknown {
-  const jsonBody = JSON.stringify(put.mock.calls[0][1])
-  return JSON.parse(jsonBody)
+  return JSON.parse(JSON.stringify(put.mock.calls[0][1]))
 }
 
 describe('user settings saves across profile and security', () => {
@@ -341,7 +342,6 @@ describe('notifications a user receives', () => {
     await save(onUpdate)
     expect(sentBody(put)).toMatchObject({ channel_notify_enabled: true })
   })
-
   it.each(['1e308', '18014398510', '-1'])(
     'a converted threshold outside the valid quota range (%s) does not overwrite the previous setting',
     async (amount) => {

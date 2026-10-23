@@ -14,7 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/lifecycle"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -132,28 +132,31 @@ type asyncImageFinishBarrier struct {
 	once    sync.Once
 }
 
-func (h *asyncImageFinishBarrier) DialHook(next redis.DialHook) redis.DialHook { return next }
-func (h *asyncImageFinishBarrier) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
-	return next
-}
-func (h *asyncImageFinishBarrier) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
-	return func(ctx context.Context, cmd redis.Cmder) error {
-		args := cmd.Args()
-		if cmd.Name() == "evalsha" && len(args) > 1 && args[1] == finishAsyncImage.Hash() {
-			h.once.Do(func() { close(h.started) })
-			select {
-			case <-h.release:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+// Adapt only the hook interface to the official Redis v8 client. The barrier
+// remains before the exact result-persistence EVALSHA, not after task acceptance.
+func (h *asyncImageFinishBarrier) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
+	args := cmd.Args()
+	if cmd.Name() == "evalsha" && len(args) > 1 && args[1] == finishAsyncImage.Hash() {
+		h.once.Do(func() { close(h.started) })
+		select {
+		case <-h.release:
+		case <-ctx.Done():
+			return ctx, ctx.Err()
 		}
-		return next(ctx, cmd)
 	}
+	return ctx, nil
+}
+func (h *asyncImageFinishBarrier) AfterProcess(context.Context, redis.Cmder) error { return nil }
+func (h *asyncImageFinishBarrier) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmder) (context.Context, error) {
+	return ctx, nil
+}
+func (h *asyncImageFinishBarrier) AfterProcessPipeline(context.Context, []redis.Cmder) error {
+	return nil
 }
 
 func TestAsyncImageRuntimeWaitIncludesResultPersistence(t *testing.T) {
 	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr(), Protocol: 2})
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
 	workers := lifecycle.NewGroup()
 	barrier := &asyncImageFinishBarrier{started: make(chan struct{}), release: make(chan struct{})}

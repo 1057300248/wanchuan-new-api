@@ -63,7 +63,9 @@ var (
 
 // FactoryRegistry is configured at application composition time and frozen
 // before request handling. It has no process-global singleton; the host owns the
-// active registry reference.
+// active registry reference. Construct it with NewFactoryRegistry. Factories
+// and their successful results must be concrete non-nil implementations; as
+// with other Go interfaces, an interface containing a typed nil is not nil.
 type FactoryRegistry struct {
 	mu        sync.RWMutex
 	frozen    bool

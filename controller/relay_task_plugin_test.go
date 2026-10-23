@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,14 +15,11 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
-	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
-	"github.com/QuantumNous/new-api/pkg/moneyport"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
-	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -237,41 +233,6 @@ func TestExecuteTaskSubmissionPersistsPinnedPluginProvenance(t *testing.T) {
 	require.NotNil(t, stored.PrivateData.Execution.TaskPlugin.Author)
 	assert.Equal(t, "Community Author", stored.PrivateData.Execution.TaskPlugin.Author.Name)
 	assert.Equal(t, "upstream-private", stored.PrivateData.UpstreamTaskID)
-}
-
-func TestExecuteTaskSubmissionPersistsExecutionOnlyRequestID(t *testing.T) {
-	events := make([]string, 0, 3)
-	database := setupTaskSubmissionDatabase(t, true, &events)
-	previousLogConsumeEnabled := common.LogConsumeEnabled
-	common.LogConsumeEnabled = false
-	t.Cleanup(func() { common.LogConsumeEnabled = previousLogConsumeEnabled })
-
-	c := taskSubmissionTestContext()
-	c.Set(common.RequestIdKey, "request-execution-only")
-	billing := &taskSubmissionTestBilling{events: &events}
-	info := taskSubmissionRelayInfo(billing)
-	info.RequestId = "request-execution-only"
-
-	outcome, taskErr := executeTaskSubmissionWith(c, info, func(*gin.Context, *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
-		return &relay.TaskSubmitResult{
-			UpstreamTaskID: "upstream-execution-only",
-			Platform:       constant.TaskPlatform("plugin"),
-		}, nil
-	})
-
-	require.Nil(t, taskErr)
-	require.NotNil(t, outcome)
-	require.NotNil(t, outcome.Task.PrivateData.Execution)
-	assert.Equal(t, "request-execution-only", outcome.Task.PrivateData.Execution.RequestID)
-	assert.Empty(t, outcome.Task.PrivateData.RequestId)
-	assert.Equal(t, "request-execution-only", outcome.Task.PrivateData.EffectiveRequestID())
-
-	var stored model.Task
-	require.NoError(t, database.Where("task_id = ?", "task_public").First(&stored).Error)
-	require.NotNil(t, stored.PrivateData.Execution)
-	assert.Equal(t, "request-execution-only", stored.PrivateData.Execution.RequestID)
-	assert.Empty(t, stored.PrivateData.RequestId)
-	assert.Equal(t, "request-execution-only", stored.PrivateData.EffectiveRequestID())
 }
 
 // A submit route declaring retainResult: false persists the task row for
@@ -540,8 +501,8 @@ func openTaskDialectDatabase(t *testing.T, models ...any) (*gorm.DB, common.Data
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	require.NoError(t, db.AutoMigrate(append(models, &model.BillingFinalization{})...))
-	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(append(models, &model.BillingFinalization{})...)) })
+	require.NoError(t, db.AutoMigrate(models...))
+	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(models...)) })
 	var version string
 	if dialect == common.DatabaseTypeSQLite {
 		require.NoError(t, db.Raw("SELECT sqlite_version()").Scan(&version).Error)
@@ -553,13 +514,7 @@ func openTaskDialectDatabase(t *testing.T, models ...any) (*gorm.DB, common.Data
 }
 
 func TestImmediateTaskSettlementDatabase(t *testing.T) {
-	registry := moneyport.NewFactoryRegistry()
-	require.NoError(t, service.RegisterHostFundingFactories(registry))
-	require.NoError(t, walletmodule.RegisterFundingFactory(registry))
-	if err := service.ConfigureFundingFactoryRegistry(registry); err != nil {
-		require.Contains(t, err.Error(), "already configured")
-	}
-	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Channel{}, &model.Task{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{})
+	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Channel{}, &model.Task{}, &model.Log{})
 	oldDB, oldLogDB := model.DB, model.LOG_DB
 	oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
 	oldRedis, oldMemory, oldBatch, oldConsume, oldExport := common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled
@@ -586,21 +541,15 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 	plugin, err := pluginruntime.CompilePlugin(source, pluginruntime.Options{})
 	require.NoError(t, err)
 	for index, tc := range []struct {
-		name, status      string
-		actual            any
-		count             float64
-		settlementFailure bool
-		shortage          bool
+		name, status string
+		actual       any
+		count        float64
 	}{
-		{"partial", "SUCCESS", 2, 2, false, false}, {"zero", "SUCCESS", 0, 0, false, false}, {"larger", "SUCCESS", 6, 6, false, false},
-		{"invalid usage", "SUCCESS", -1, 4, false, false}, {"expression failure", "SUCCESS", 7, 4, false, false}, {"negative result", "SUCCESS", 8, 4, false, false}, {"missing usage", "SUCCESS", nil, 4, false, false}, {"failed", "FAILURE", 9, 0, false, false},
-		{"official_settlement_failure_after_insert", "SUCCESS", 2, 2, true, false},
-		{"official_upward_shortage_before_insert", "SUCCESS", 6, 6, true, true},
+		{"partial", "SUCCESS", 2, 2}, {"zero", "SUCCESS", 0, 0}, {"larger", "SUCCESS", 6, 6},
+		{"invalid usage", "SUCCESS", -1, 4}, {"expression failure", "SUCCESS", 7, 4}, {"negative result", "SUCCESS", 8, 4}, {"missing usage", "SUCCESS", nil, 4}, {"failed", "FAILURE", 9, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var upstreamCalls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				upstreamCalls.Add(1)
 				w.Header().Set("Content-Type", "application/json")
 				body := map[string]any{"status": tc.status}
 				if tc.actual != nil {
@@ -614,10 +563,7 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 			}))
 			defer server.Close()
 			initial := int(20 * common.QuotaPerUnit)
-			if tc.shortage {
-				initial = common.QuotaRound(5 * 0.01 * common.QuotaPerUnit)
-			}
-			user := model.User{Username: fmt.Sprintf("task_user_%d", index), AffCode: fmt.Sprintf("task_aff_%d", index), Quota: initial, QuotaPaid: initial}
+			user := model.User{Username: fmt.Sprintf("task_user_%d", index), AffCode: fmt.Sprintf("task_aff_%d", index), Quota: initial}
 			require.NoError(t, db.Create(&user).Error)
 			ch := model.Channel{Name: "test provider", Type: constant.ChannelTypeTaskPlugin}
 			require.NoError(t, db.Create(&ch).Error)
@@ -638,96 +584,8 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 			info.IsPlayground = true
 			info.UserSetting.BillingPreference = "wallet_only"
 			info.PublicTaskID = model.GenerateTaskID()
-			info.RequestId = fmt.Sprintf("task-request-%d", index)
-			c.Set(common.RequestIdKey, info.RequestId)
 			info.LockedChannel = &ch
-			var settlementFaultHits atomic.Int32
-			if tc.settlementFailure {
-				statement := &gorm.Statement{DB: db}
-				require.NoError(t, statement.Parse(&model.BillingFinalization{}))
-				finalizationTable := statement.Schema.Table
-				const callback = "test:official-settlement-failure"
-				require.NoError(t, db.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
-					if tx.Error != nil || tx.Statement.Table != finalizationTable {
-						return
-					}
-					receipt, ok := tx.Statement.Dest.(*model.BillingFinalization)
-					if !ok || receipt.RequestID != info.RequestId || receipt.UserID != user.Id {
-						return
-					}
-					settlementFaultHits.Add(1)
-					tx.AddError(errors.New("forced official post-insert settlement failure"))
-				}))
-				t.Cleanup(func() { require.NoError(t, db.Callback().Create().Remove(callback)) })
-			}
-			// Join even on a fatal assertion, before removing the fault callback or
-			// restoring the parent fixture's DB/cache globals. The official flag
-			// marks scheduling, not completion of its asynchronous refund.
-			t.Cleanup(func() {
-				require.Eventually(t, func() bool { return gopool.WorkerCount() == 0 }, 5*time.Second, time.Millisecond)
-			})
 			outcome, taskErr := executeTaskSubmission(c, info)
-			require.Eventually(t, func() bool { return gopool.WorkerCount() == 0 }, 5*time.Second, time.Millisecond)
-			if tc.settlementFailure {
-				wantFaultHits := int32(1)
-				if tc.shortage {
-					wantFaultHits = 0
-				}
-				require.Equal(t, wantFaultHits, settlementFaultHits.Load(), "the exact owned settlement fault must be reached only after INSERT")
-				require.Nil(t, outcome)
-				require.NotNil(t, taskErr)
-				assert.False(t, taskErr.NoRetry, "official local errors do not claim accepted ownership")
-				assert.True(t, taskErr.LocalError)
-				assert.Empty(t, c.Writer.Header().Get("X-New-API-Task-Accepted"))
-				assert.Empty(t, c.Writer.Header().Get("X-New-API-Task-ID"))
-				assert.Nil(t, taskErr.Data)
-				assert.False(t, c.Writer.Written())
-				held := common.QuotaRound(4 * 0.01 * common.QuotaPerUnit)
-				require.NotNil(t, info.Billing)
-				assert.Equal(t, held, info.Billing.GetPreConsumedQuota())
-				grossShares := []model.LedgerShare{{Account: model.AccountPaid, Amount: held}}
-				assert.Equal(t, grossShares, service.WalletSessionDebitShares(info))
-				var saved []model.Task
-				require.NoError(t, db.Where("task_id = ?", info.PublicTaskID).Find(&saved).Error)
-				wantBalance := initial - held
-				if tc.shortage {
-					assert.Equal(t, http.StatusForbidden, taskErr.StatusCode)
-					assert.Equal(t, "insufficient_user_quota", taskErr.Code)
-					assert.Equal(t, service.PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "system"}, decideTaskRetry(c, taskErr, 3))
-					assert.Empty(t, saved, "official Reserve fails before INSERT")
-					assert.False(t, info.Billing.NeedsRefund())
-					wantBalance = initial
-				} else {
-					assert.Equal(t, http.StatusInternalServerError, taskErr.StatusCode)
-					assert.Equal(t, "task_billing_settlement_failed", taskErr.Code)
-					// This is a hypothetical classification, not a second submit:
-					// the official post-INSERT error returns outside the attempt loop.
-					assert.Equal(t, service.PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "system"}, decideTaskRetry(c, taskErr, 3))
-					require.Len(t, saved, 1)
-					assert.Equal(t, user.Id, saved[0].UserId)
-					assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), saved[0].Status)
-					assert.Positive(t, saved[0].FinishTime)
-					assert.False(t, saved[0].SettlementPending)
-					assert.Nil(t, saved[0].PrivateData.PendingSettlement)
-					assert.Equal(t, grossShares, saved[0].PrivateData.WalletDebit)
-					assert.Equal(t, common.QuotaRound(tc.count*0.01*common.QuotaPerUnit), saved[0].Quota)
-					assert.True(t, info.Billing.NeedsRefund(), "official durable INSERT prevents the deferred request refund")
-				}
-				var updated model.User
-				require.NoError(t, db.First(&updated, user.Id).Error)
-				assert.Equal(t, wantBalance, updated.Quota)
-				assert.Equal(t, wantBalance, updated.QuotaPaid)
-				assert.Zero(t, updated.QuotaBonus)
-				assert.Zero(t, updated.QuotaReward)
-				assert.Zero(t, updated.UsedQuota)
-				var ownerCount, logCount int64
-				require.NoError(t, db.Model(&model.BillingFinalization{}).Where("request_id = ?", info.RequestId).Count(&ownerCount).Error)
-				require.NoError(t, db.Model(&model.Log{}).Where("user_id = ?", user.Id).Count(&logCount).Error)
-				assert.Zero(t, ownerCount, "failed/absent settlement must not leave a terminal owner")
-				assert.Zero(t, logCount, "failed/absent settlement must not create a consume log")
-				assert.EqualValues(t, 1, upstreamCalls.Load(), "no extra paid request after local failure")
-				return
-			}
 			require.Nil(t, taskErr)
 			require.NotNil(t, outcome)
 			want := common.QuotaRound(tc.count * 0.01 * common.QuotaPerUnit)
@@ -752,7 +610,6 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 			assert.Equal(t, want, logs[0].Quota)
 			var other map[string]any
 			require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
-			assert.Equal(t, float64(want), other["wallet_quota_deducted"], "submit log includes the final source adjustment, not just the initial hold")
 			if tc.status == "SUCCESS" {
 				assert.Equal(t, tc.count, other["usage_facts"].(map[string]any)["units"])
 			}

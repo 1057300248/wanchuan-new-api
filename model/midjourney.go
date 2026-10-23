@@ -1,11 +1,5 @@
 package model
 
-import (
-	"fmt"
-
-	"gorm.io/gorm"
-)
-
 type Midjourney struct {
 	Id          int    `json:"id"`
 	Code        int    `json:"code"`
@@ -32,9 +26,6 @@ type Midjourney struct {
 
 	TokenId          int `json:"-" gorm:"default:0"`
 	BillingChannelId int `json:"-" gorm:"default:0"`
-	// NULL is a legacy paid-only charge. An empty array marks a new task that
-	// has not been charged; nonempty receipts commit atomically with its debit.
-	WalletDebit []LedgerShare `json:"-" gorm:"serializer:json;type:text"`
 }
 
 // TaskQueryParams 用于包含所有搜索条件的结构体，可以根据需求添加更多字段
@@ -183,20 +174,9 @@ func (midjourney *Midjourney) Update() error {
 }
 
 func (midjourney *Midjourney) UpdateBillingState() error {
-	return midjourney.UpdateBillingStateTx(DB)
-}
-
-func (midjourney *Midjourney) UpdateBillingStateTx(tx *gorm.DB) error {
-	result := tx.Model(midjourney).
-		Select("quota", "token_id", "billing_channel_id", "wallet_debit").
-		Updates(midjourney)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return fmt.Errorf("Midjourney billing state changed for task %s", midjourney.MjId)
-	}
-	return nil
+	return DB.Model(midjourney).
+		Select("quota", "token_id", "billing_channel_id").
+		Updates(midjourney).Error
 }
 
 func (midjourney *Midjourney) GetBillingChannelId() int {
@@ -212,8 +192,7 @@ func (midjourney *Midjourney) GetBillingChannelId() int {
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).
 // Uses Model().Select("*").Updates() to avoid GORM Save()'s INSERT fallback.
 func (midjourney *Midjourney) UpdateWithStatus(fromStatus string) (bool, error) {
-	result := DB.Model(midjourney).Where("status = ?", fromStatus).Select("*").
-		Omit("quota", "token_id", "billing_channel_id", "wallet_debit").Updates(midjourney)
+	result := DB.Model(midjourney).Where("status = ?", fromStatus).Select("*").Updates(midjourney)
 	if result.Error != nil {
 		return false, result.Error
 	}
@@ -224,17 +203,6 @@ func MjBulkUpdate(mjIds []string, params map[string]any) error {
 	return DB.Model(&Midjourney{}).
 		Where("mj_id in (?)", mjIds).
 		Updates(params).Error
-}
-
-// FailUnfinishedMidjourneyTasksByIDs never overwrites a terminal observation
-// published after the polling snapshot was loaded. Local IDs also isolate tasks
-// from unrelated channels that happen to reuse an upstream ID.
-func FailUnfinishedMidjourneyTasksByIDs(taskIDs []int, reason string) error {
-	updates := map[string]any{"status": "FAILURE", "progress": "100%"}
-	if reason != "" {
-		updates["fail_reason"] = reason
-	}
-	return DB.Model(&Midjourney{}).Where("id IN ? AND status NOT IN ?", taskIDs, []string{"SUCCESS", "FAILURE"}).Updates(updates).Error
 }
 
 func MjBulkUpdateByTaskIds(taskIDs []int, params map[string]any) error {

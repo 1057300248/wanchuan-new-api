@@ -25,7 +25,6 @@ import {
   type ReactNode,
   useContext,
   useEffect,
-  useMemo,
   useState,
 } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -200,12 +199,6 @@ export type WebPreviewBodyProps = ComponentProps<'iframe'> & {
   loading?: ReactNode
 }
 
-// Least-privilege preview sandbox: scripts are needed to render previews,
-// but allow-same-origin must never accompany allow-scripts (it would let the
-// framed page escape the sandbox).
-export const WEB_PREVIEW_SANDBOX =
-  'allow-scripts allow-forms allow-popups allow-presentation'
-
 export const WebPreviewBody = ({
   className,
   loading,
@@ -219,7 +212,7 @@ export const WebPreviewBody = ({
     <div className='flex-1'>
       <iframe
         className={cn('size-full', className)}
-        sandbox={WEB_PREVIEW_SANDBOX}
+        sandbox='allow-scripts allow-same-origin allow-forms allow-popups allow-presentation'
         src={(src ?? url) || undefined}
         title={t('Preview')}
         {...props}
@@ -245,20 +238,6 @@ export const WebPreviewConsole = ({
 }: WebPreviewConsoleProps) => {
   const { t } = useTranslation()
   const { consoleOpen, setConsoleOpen } = useWebPreview()
-
-  // Generate stable keys for logs by combining timestamp + sequence number
-  const keyedLogs = useMemo(() => {
-    const sequenceMap = new Map<string, number>()
-    return logs.map((log) => {
-      const baseKey = `${log.timestamp.getTime()}-${log.level}-${log.message}`
-      const sequence = sequenceMap.get(baseKey) ?? 0
-      sequenceMap.set(baseKey, sequence + 1)
-      return {
-        ...log,
-        key: sequence > 0 ? `${baseKey}-${sequence}` : baseKey,
-      }
-    })
-  }, [logs])
 
   return (
     <Collapsible
@@ -290,10 +269,10 @@ export const WebPreviewConsole = ({
         )}
       >
         <div className='max-h-48 space-y-1 overflow-y-auto'>
-          {keyedLogs.length === 0 ? (
+          {logs.length === 0 ? (
             <p className='text-muted-foreground'>{t('No console output')}</p>
           ) : (
-            keyedLogs.map((log) => (
+            logs.map((log, index) => (
               <div
                 className={cn(
                   'text-xs',
@@ -301,7 +280,7 @@ export const WebPreviewConsole = ({
                   log.level === 'warn' && 'text-warning',
                   log.level === 'log' && 'text-foreground'
                 )}
-                key={log.key}
+                key={`${log.timestamp.getTime()}-${index}`}
               >
                 <span className='text-muted-foreground'>
                   {dayjs(log.timestamp).format('HH:mm:ss')}

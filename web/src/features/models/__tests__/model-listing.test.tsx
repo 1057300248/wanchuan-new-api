@@ -166,13 +166,13 @@ async function renderList(
   })
   const models = createRoute({
     getParentRoute: () => authenticated,
-    path: 'model-management/$section',
+    path: 'models/$section',
     component: Page,
   })
   const router = createRouter({
     routeTree: root.addChildren([authenticated.addChildren([models])]),
     history: createMemoryHistory({
-      initialEntries: [options.initialUrl ?? '/model-management/metadata'],
+      initialEntries: [options.initialUrl ?? '/models/metadata'],
     }),
   })
   await router.load()
@@ -738,7 +738,7 @@ it('distinguishes pending and failed pricing requests from an unset price', asyn
 
 it('filters actual visibility independently of policy and restores filters through browser history', async () => {
   const { get, router } = await renderList([channel], {
-    initialUrl: '/model-management/metadata?page=3&status=%5B%22enabled%22%5D',
+    initialUrl: '/models/metadata?page=3&status=%5B%22enabled%22%5D',
     total: 100,
   })
   const user = userEvent.setup()
@@ -807,8 +807,7 @@ it('keeps all columns while collapsing tags and connection counts', async () => 
 
 it('keeps an active visibility filter when its server result is empty', async () => {
   const { get } = await renderList([], {
-    initialUrl:
-      '/model-management/metadata?square_state=%5B%22unavailable%22%5D',
+    initialUrl: '/models/metadata?square_state=%5B%22unavailable%22%5D',
   })
   expect(screen.getByText('No Models Found')).toBeVisible()
   expect(screen.getByText('Try adjusting your search')).toBeVisible()

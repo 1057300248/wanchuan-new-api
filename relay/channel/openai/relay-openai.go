@@ -25,6 +25,12 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		return nil
 	}
 
+	// Preserve the official raw fast path: the shared output boundary patches
+	// only protocol identity/error fields, retaining unknown fields and numbers.
+	if !forceFormat && !thinkToContent {
+		return helper.StringData(c, data)
+	}
+
 	var lastStreamResponse dto.ChatCompletionsStreamResponse
 	if err := common.UnmarshalJsonStr(data, &lastStreamResponse); err != nil {
 		return err
@@ -32,10 +38,6 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 	if info != nil && info.OriginModelName != "" {
 		info.ObserveResponseModel(lastStreamResponse.Model)
 		lastStreamResponse.Model = info.OriginModelName
-	}
-
-	if !forceFormat && !thinkToContent {
-		return helper.ObjectData(c, lastStreamResponse)
 	}
 
 	if !thinkToContent {

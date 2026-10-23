@@ -3,9 +3,12 @@ package controller
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -13,10 +16,79 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type discoveryRedirectTestTransport func(*http.Request) (*http.Response, error)
+
+func (transport discoveryRedirectTestTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return transport(request)
+}
+
+type discoveryRedirectTestBody struct {
+	io.Reader
+	closed bool
+}
+
+func (body *discoveryRedirectTestBody) Close() error {
+	body.closed = true
+	return nil
+}
+
+func TestModelDiscoveryRejectsRedirectWithoutForwardingCredentials(t *testing.T) {
+	client, err := service.GetHttpClientWithProxySettings("", dto.ChannelSettings{})
+	require.NoError(t, err)
+	originalClient := *client
+	t.Cleanup(func() { *client = originalClient })
+	for _, kind := range []string{"advanced custom", "Gemini"} {
+		for _, status := range []int{301, 302, 303, 307, 308} {
+			t.Run(kind+"/"+http.StatusText(status), func(t *testing.T) {
+				const origin = "https://origin.invalid"
+				channel := newAdvancedCustomModelListChannel(origin, "fixture-only", "/provider/models", &dto.AdvancedCustomRouteAuth{Type: dto.AdvancedCustomAuthTypeHeader, Name: "X-Custom-Authorization", Value: "{api_key}"})
+				headerOverride := `{"Host":"configured.invalid"}`
+				channel.HeaderOverride = &headerOverride
+				credentialHeader := "X-Custom-Authorization"
+				targetBody := `{"data":[{"id":"wrong-target"}]}`
+				if kind == "Gemini" {
+					baseURL := origin
+					channel = &model.Channel{Type: constant.ChannelTypeGemini, Key: "fixture-only", BaseURL: &baseURL}
+					credentialHeader = "x-goog-api-key"
+					targetBody = `{"models":[{"name":"models/wrong-target"}]}`
+				}
+				body := &discoveryRedirectTestBody{Reader: strings.NewReader("fixture redirect")}
+				sourceCalls, targetCalls, policyCalls := 0, 0, 0
+				client.Transport = discoveryRedirectTestTransport(func(request *http.Request) (*http.Response, error) {
+					if request.URL.Host == "redirect.invalid" {
+						targetCalls++
+						return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(targetBody)), Request: request}, nil
+					}
+					sourceCalls++
+					assert.Equal(t, "fixture-only", request.Header.Get(credentialHeader))
+					if kind == "advanced custom" {
+						assert.Equal(t, "configured.invalid", request.Host)
+						assert.Equal(t, "/provider/models", request.URL.Path)
+					} else {
+						assert.Equal(t, "/v1beta/models", request.URL.Path)
+					}
+					return &http.Response{StatusCode: status, Header: http.Header{"Location": {"https://redirect.invalid/models"}}, Body: body, Request: request}, nil
+				})
+				client.CheckRedirect = func(*http.Request, []*http.Request) error { policyCalls++; return nil }
+				models, err := fetchChannelUpstreamModelIDs(channel)
+				assert.ErrorContains(t, err, fmt.Sprintf("%d", status))
+				assert.Empty(t, models)
+				assert.Equal(t, 1, sourceCalls)
+				assert.Zero(t, targetCalls, "custom credentials must never reach a second origin")
+				assert.True(t, body.closed)
+				assert.Zero(t, policyCalls)
+				require.NoError(t, client.CheckRedirect(nil, nil))
+				assert.Equal(t, 1, policyCalls, "the cached client's policy must remain unchanged")
+			})
+		}
+	}
+}
 
 func newAdvancedCustomModelListChannel(baseURL string, key string, upstreamPath string, auth *dto.AdvancedCustomRouteAuth) *model.Channel {
 	config := &dto.AdvancedCustomConfig{

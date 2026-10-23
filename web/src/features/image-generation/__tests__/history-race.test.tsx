@@ -145,7 +145,12 @@ describe('keepLocally does not orphan blobs when history changes mid-flight', ()
     seedStorage([seedEntry('e1')])
     vi.mocked(saveImageBlob).mockResolvedValue(undefined)
     const { result } = renderHook(() => useImageHistory())
-    vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+    // Native Storage ignores an own-property method override. Target its
+    // prototype (or the official fallback's own method), not a named item.
+    const storageMethods = Object.hasOwn(window.localStorage, 'setItem')
+      ? window.localStorage
+      : (Object.getPrototypeOf(window.localStorage) as Storage)
+    const failedWrite = vi.spyOn(storageMethods, 'setItem').mockImplementation(() => {
       throw new DOMException('Storage full', 'QuotaExceededError')
     })
     await act(async () => {
@@ -153,6 +158,7 @@ describe('keepLocally does not orphan blobs when history changes mid-flight', ()
         'keep-failed'
       )
     })
+    expect(failedWrite).toHaveBeenCalled()
     expect(result.current.entries[0].results[0]).toMatchObject({
       keptLocally: false,
       type: 'url',

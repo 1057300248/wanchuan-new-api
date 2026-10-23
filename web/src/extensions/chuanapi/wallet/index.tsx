@@ -25,6 +25,8 @@ import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
 
+import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
+import { SubscriptionPlansCard } from './components/subscription-plans-card'
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
@@ -65,10 +67,18 @@ interface WalletProps {
   initialShowHistory?: boolean
 }
 
-export function Wallet(_props: WalletProps) {
+export function Wallet(props: WalletProps) {
   const { t } = useTranslation()
   const [user, setUser] = useState<UserWalletData | null>(null)
   const [userLoading, setUserLoading] = useState(true)
+  const [billingDialogOpen, setBillingDialogOpen] = useState(false)
+
+  useEffect(() => {
+    if (props.initialShowHistory) {
+      setBillingDialogOpen(true)
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+  }, [props.initialShowHistory])
   const [topupAmount, setTopupAmount] = useState(0)
   const [selectedPreset, setSelectedPreset] = useState<number | null>(null)
   const [selectedPaymentMethod, setSelectedPaymentMethod] =
@@ -358,6 +368,7 @@ export function Wallet(_props: WalletProps) {
                   loading={topupLoading}
                   priceRatio={(status?.price as number) || 1}
                   usdExchangeRate={effectiveUsdExchangeRate}
+                  onOpenBilling={() => setBillingDialogOpen(true)}
                   creemProducts={topupInfo?.creem_products}
                   enableCreemTopup={topupInfo?.enable_creem_topup}
                   onCreemProductSelect={handleCreemProductSelect}
@@ -390,10 +401,20 @@ export function Wallet(_props: WalletProps) {
                 />
               </section>
             </div>
+            <SubscriptionPlansCard
+              topupInfo={topupInfo}
+              userQuota={user?.quota}
+              onPurchaseSuccess={fetchUser}
+            />
             <LedgerTable />
           </div>
         </SectionPageLayout.Content>
       </SectionPageLayout>
+
+      <BillingHistoryDialog
+        open={billingDialogOpen}
+        onOpenChange={setBillingDialogOpen}
+      />
 
       <PaymentConfirmDialog
         open={confirmDialogOpen}

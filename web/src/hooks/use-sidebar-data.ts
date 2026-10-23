@@ -28,6 +28,7 @@ import {
   LayoutDashboard,
   LifeBuoy,
   ListTodo,
+  MessageSquare,
   PlugZap,
   Radio,
   ServerCog,
@@ -59,7 +60,7 @@ export function useSidebarData(): SidebarData {
         title: t('Chat'),
         items: [
           {
-            title: t('Text Generation'),
+            title: t('Playground'),
             url: '/playground',
             icon: FlaskConical,
           },
@@ -69,8 +70,8 @@ export function useSidebarData(): SidebarData {
             icon: ImageIcon,
           },
           {
-            title: t('Third-party'),
-            icon: PlugZap,
+            title: t('Chat'),
+            icon: MessageSquare,
             type: 'chat-presets',
           },
         ],
@@ -150,7 +151,7 @@ export function useSidebarData(): SidebarData {
           },
           {
             title: t('Models'),
-            url: '/model-management/metadata',
+            url: '/models/metadata',
             icon: Box,
           },
           {

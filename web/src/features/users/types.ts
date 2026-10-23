@@ -140,10 +140,10 @@ export type QuotaAdjustMode = 'add' | 'subtract' | 'override'
 
 export interface ManageUserQuotaPayload {
   id: number
+  request_id: string
   action: 'add_quota'
   mode: QuotaAdjustMode
   value: number
-  request_id: string
 }
 
 // ============================================================================

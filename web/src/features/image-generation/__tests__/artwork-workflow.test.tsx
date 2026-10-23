@@ -24,8 +24,9 @@ import { beforeEach, afterEach, expect, test, vi } from 'vitest'
 import { api } from '@/lib/api'
 
 import { ImageGenerationPage } from '../components/ImageGenerationPage'
+import { getImageHistoryOwnerId } from '../storage/history-owner'
 import type { ImageHistoryEntry } from '../types'
-import { HISTORY_OWNER_KEY, signInHistoryOwner } from './history-fixture'
+import { HISTORY_OWNER_KEY, imageBootstrapQueryKey, signInHistoryOwner } from './history-fixture'
 
 const entry: ImageHistoryEntry = {
   id: 'old',
@@ -45,6 +46,8 @@ const entry: ImageHistoryEntry = {
 }
 let client: QueryClient
 let tokenModels: string[]
+let bootstrapOwners: number[]
+let modelRequests: Array<{ owner: number | null; url: string }>
 beforeEach(() => {
   signInHistoryOwner()
   localStorage.clear()
@@ -52,7 +55,7 @@ beforeEach(() => {
   client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   })
-  client.setQueryData(['image-generation-bootstrap'], {
+  client.setQueryData(imageBootstrapQueryKey(), {
     keys: [
       {
         id: 7,
@@ -71,8 +74,44 @@ beforeEach(() => {
     ],
   })
   tokenModels = ['dall-e-3']
+  bootstrapOwners = []
+  modelRequests = []
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
-    if (url === '/api/token/7/models') {
+    // A new account/session must fetch its own bootstrap, not use the seeded A cache.
+    if (url.startsWith('/api/token/?')) {
+      const owner = getImageHistoryOwnerId()
+      if (owner !== 101 && owner !== 202) throw new Error('Unknown fixture owner')
+      bootstrapOwners.push(owner)
+      return {
+        data: {
+          success: true,
+          data: {
+            items: [{
+              id: owner === 202 ? 8 : 7,
+              name: owner === 202 ? 'Account B key' : 'Current key',
+              status: 1,
+              group: 'test',
+              model_limits_enabled: false,
+              model_limits: '',
+            }],
+            total: 1,
+          },
+        },
+      }
+    }
+    if (url === '/api/pricing') {
+      return {
+        data: {
+          success: true,
+          data: tokenModels.map((model_name) => ({
+            model_name,
+            supported_endpoint_types: ['image-generation'],
+          })),
+        },
+      }
+    }
+    if (url === '/api/token/7/models' || url === '/api/token/8/models') {
+      modelRequests.push({ owner: getImageHistoryOwnerId(), url })
       return { data: { success: true, data: tokenModels } }
     }
     throw new Error(`Unexpected request: ${url}`)
@@ -129,7 +168,7 @@ test('generation resets filters and inserts a single new result without losing o
 })
 
 test('reusing with reference images requires confirmation before clearing them', async () => {
-  client.setQueryData(['image-generation-bootstrap'], {
+  client.setQueryData(imageBootstrapQueryKey(), {
     keys: [
       {
         id: 7,
@@ -222,8 +261,17 @@ test('changing the authenticated account clears the editor and historical previe
   await user.type(screen.getByLabelText('Prompt'), 'Private A draft')
   expect(screen.getByAltText('Previous landscape')).toBeInTheDocument()
   act(() => signInHistoryOwner(202))
-  expect(screen.getByLabelText('Prompt')).toHaveValue('')
+  // While B's fresh bootstrap is pending, no A editor/history is visible.
+  expect(screen.queryByDisplayValue('Private A draft')).not.toBeInTheDocument()
   expect(screen.queryByAltText('Previous landscape')).not.toBeInTheDocument()
+  expect(await screen.findByLabelText('Prompt')).toHaveValue('')
+  await waitFor(() => {
+    expect(screen.getByLabelText('Token')).toHaveTextContent('Account B key')
+    expect(modelRequests).toContainEqual({ owner: 202, url: '/api/token/8/models' })
+  })
+  expect(modelRequests).not.toContainEqual({ owner: 202, url: '/api/token/7/models' })
   act(() => signInHistoryOwner(101))
   expect(await screen.findByAltText('Previous landscape')).toBeInTheDocument()
+  expect(screen.getByLabelText('Prompt')).toHaveValue('')
+  expect(bootstrapOwners).toEqual([202, 101])
 })

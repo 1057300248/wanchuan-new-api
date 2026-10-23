@@ -1,12 +1,12 @@
 // Package moneyport 定义资金来源的能力接口（capability port）。
 //
-// 计费编排层（service.BillingSession）通过这些接口与具体资金来源交互，
-// 不再断言 *WalletFunding / *SubscriptionFunding 等实现类型：新增资金来源
-// 只需实现所需能力，编排层无需修改。
+// 这些接口保留已有 BillingSession 与资金模块之间的边界；本阶段只引入
+// 叶子契约，尚未接入 rc46 的运行时计费。能力不是事务或幂等性的自动证明，
+// 事务参与和 host receipt 验证仍由宿主编排层负责。
 //
 // 叶子包约束：本包只依赖标准库，严禁 import model / service / controller /
 // router / relay。因此这里的 DTO 与账本类型（model.LedgerShare）同构但独立，
-// 由 service 层在边界做转换。能力接口只收录已有调用点证明其必要性的方法。
+// 由宿主在边界做转换。能力接口只收录现有定制调用点证明其必要性的方法。
 package moneyport
 
 // AccountShare 描述一次资金变动在单个账户上的份额。

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/QuantumNous/new-api/pkg/httpx"
 	"io"
 	"net/http"
 	"strconv"
@@ -20,7 +21,6 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 func CovertMjpActionToModelName(mjAction string) string {
@@ -39,7 +39,6 @@ func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.
 	task.Quota = 0
 	task.TokenId = 0
 	task.BillingChannelId = 0
-	task.WalletDebit = []model.LedgerShare{}
 	if !shouldBill {
 		return false, nil
 	}
@@ -73,94 +72,43 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 		return false, errors.New("Midjourney task must be persisted before billing")
 	}
 
-	if task.Quota == 0 {
-		return true, nil
-	}
-	nextTask := *task
-	result, billingErr := postConsumeQuotaWithWalletCommit(relayInfo, task.Quota, 0, true, "", func(tx *gorm.DB, ledgerResult *model.LedgerResult) error {
-		if ledgerResult != nil && ledgerResult.Replayed {
-			var persisted model.Midjourney
-			if err := tx.First(&persisted, task.Id).Error; err != nil {
-				return err
-			}
-			nextTask.Quota = persisted.Quota
-			nextTask.TokenId = persisted.TokenId
-			nextTask.BillingChannelId = persisted.BillingChannelId
-			nextTask.WalletDebit = persisted.WalletDebit
-			return nil
-		}
-		nextTask.TokenId = 0
-		if !relayInfo.IsPlayground {
-			nextTask.TokenId = relayInfo.TokenId
-		}
-		nextTask.WalletDebit = appendTaskShares(nil, ledgerResult)
-		// A failure observer may have won the status transition before billing.
-		// In that case the wallet and token debit must roll back with this write.
-		return nextTask.UpdateBillingStateTx(tx.Where("status <> ?", "FAILURE"))
-	})
+	result, billingErr := postConsumeQuotaWithResult(relayInfo, task.Quota, 0, true)
 	if !result.FundingApplied {
 		task.Quota = 0
 		task.TokenId = 0
 		task.BillingChannelId = 0
-		task.WalletDebit = []model.LedgerShare{}
-		if updateErr := task.UpdateBillingStateTx(model.DB.Where("wallet_debit = ?", "[]")); updateErr != nil {
+		if updateErr := task.UpdateBillingState(); updateErr != nil {
 			return false, errors.Join(billingErr, fmt.Errorf("clear Midjourney billing state: %w", updateErr))
 		}
 		return false, billingErr
 	}
 
-	task.Quota = nextTask.Quota
-	task.TokenId = nextTask.TokenId
-	task.BillingChannelId = nextTask.BillingChannelId
-	task.WalletDebit = nextTask.WalletDebit
-	return task.Quota > 0, billingErr
+	task.TokenId = 0
+	if result.TokenApplied {
+		task.TokenId = relayInfo.TokenId
+	}
+	if updateErr := task.UpdateBillingState(); updateErr != nil {
+		return true, errors.Join(billingErr, fmt.Errorf("update Midjourney billing state: %w", updateErr))
+	}
+	return true, billingErr
 }
 
-// RefundMidjourneyQuota follows the official source/token/usage/quota-clear order,
-// with only the original-account and uncharged-marker compatibility adapter.
+// RefundMidjourneyQuota reverses every accounting element recorded for a billed legacy task.
 func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason string) bool {
-	if task == nil {
-		return false
-	}
-	// A poll snapshot can precede successful charging. Load the original source
-	// shares rather than inventing a paid-only receipt from that stale snapshot.
-	if task.Id > 0 {
-		var persisted model.Midjourney
-		if err := model.DB.Where("id = ? AND user_id = ?", task.Id, task.UserId).First(&persisted).Error; err != nil {
-			logger.LogWarn(ctx, common.LogText("failed to load Midjourney billing state, task %s: %s", task.MjId, err.Error()))
-			return false
-		}
-		task.MjId = persisted.MjId
-		task.Quota = persisted.Quota
-		task.TokenId = persisted.TokenId
-		task.BillingChannelId = persisted.BillingChannelId
-		task.WalletDebit = persisted.WalletDebit
-	}
 	quota := task.Quota
 	if quota == 0 {
 		return true
 	}
 
-	if task.WalletDebit != nil && len(task.WalletDebit) == 0 {
-		// The persisted [] marker means charging never committed. It is not a
-		// legacy nil receipt and must not mint a source or token refund.
-		task.Quota = 0
-		if err := task.UpdateBillingState(); err != nil {
-			logger.LogWarn(ctx, common.LogText("failed to clear uncharged Midjourney billing state, task %s: %s", task.MjId, err.Error()))
-			return false
-		}
-		return true
-	}
-
-	if err := refundMidjourneyFunding(task, quota, reason); err != nil {
+	if err := model.IncreaseUserQuota(task.UserId, quota, false); err != nil {
 		logger.LogWarn(ctx, common.LogText("failed to refund Midjourney user quota, task %s: %s", task.MjId, err.Error()))
 		return false
 	}
 
 	if task.TokenId > 0 {
-		tokenKey := resolveRefundTokenKey(ctx, task.TokenId, task.MjId)
+		tokenKey := resolveTokenKey(ctx, task.TokenId, task.MjId)
 		if tokenKey != "" {
-			if err := model.IncreaseTokenQuotaForRefund(task.TokenId, tokenKey, quota); err != nil {
+			if err := model.IncreaseTokenQuota(task.TokenId, tokenKey, quota); err != nil {
 				logger.LogWarn(ctx, common.LogText("failed to refund Midjourney token quota, task %s: %s", task.MjId, err.Error()))
 			}
 		}
@@ -187,39 +135,6 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		logger.LogError(ctx, common.LogText("Midjourney refund succeeded but clearing the quota failed, task %s: %s", task.MjId, err.Error()))
 	}
 	return true
-}
-
-// refundMidjourneyFunding adapts only the original paid/bonus/reward source.
-// A ledger replay does not suppress the following official independent steps.
-func refundMidjourneyFunding(task *model.Midjourney, quota int, reason string) error {
-	referenceID, refundKey := task.MjId, "midjourney:refund:"+task.MjId
-	if task.MjId == "" {
-		referenceID = strconv.Itoa(task.Id)
-		refundKey = "midjourney:refund-local:" + referenceID
-	}
-	entry := model.LedgerEntry{
-		UserId: task.UserId, Account: model.AccountPaid, Delta: quota,
-		Reason: model.LedgerReasonTaskRefund, ReferenceType: "mj_task",
-		ReferenceId: referenceID, RequestId: task.MjId, IdempotencyKey: refundKey,
-	}
-	metadata := map[string]any{"reason": reason}
-	if task.WalletDebit == nil {
-		metadata["fallback_account"] = "paid"
-	}
-	entry.SetMetadata(metadata)
-	if len(task.WalletDebit) > 0 {
-		total := 0
-		for _, share := range task.WalletDebit {
-			total += share.Amount
-		}
-		if total != quota {
-			return errors.New("Midjourney wallet receipt does not match quota")
-		}
-		_, err := model.CreditQuotaShares(entry, task.WalletDebit)
-		return err
-	}
-	_, err := model.CreditQuota(entry)
-	return err
 }
 
 func GetMjRequestModel(relayMode int, midjRequest *dto.MidjourneyRequest) (string, *dto.MidjourneyResponse, bool) {
@@ -431,11 +346,12 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 		req.Header.Set("mj-api-secret", auth)
 	}
 	defer cancel()
-	resp, err := DoRequestWithoutRedirects(GetHttpClient(), req)
+	resp, err := httpx.DoWithoutRedirects(GetHttpClient(), req)
 	if err != nil {
 		common.SysLog(common.LogText("do request failed: %s", err.Error()))
 		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "do_request_failed", http.StatusInternalServerError), nullBytes, err
 	}
+	defer CloseResponseBodyGracefully(resp)
 	statusCode := resp.StatusCode
 	//if statusCode != 200  {
 	//	return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "bad_response_status_code", statusCode), nullBytes, nil
@@ -454,7 +370,6 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 	if err != nil {
 		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "read_response_body_failed", statusCode), nullBytes, err
 	}
-	CloseResponseBodyGracefully(resp)
 	logger.LogDebug(c, "midjourney response body: %s", responseBody)
 	if len(responseBody) == 0 {
 		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "empty_response_body", statusCode), responseBody, nil

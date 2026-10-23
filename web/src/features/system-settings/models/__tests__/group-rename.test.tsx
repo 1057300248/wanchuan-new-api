@@ -413,3 +413,49 @@ test('JSON mode reserved group rename blocks save', async () => {
   ).toBeInTheDocument()
   expect(calls).toHaveLength(0)
 })
+
+
+// Use the real visual editor and form submission: a mapper-only regression
+// would miss keys lost by row serialization before the mapper is called.
+test.each([
+  ['vip', '__proto__', null],
+  ['__proto__', 'gold', null],
+  ['vip', 'gold', '__proto__'],
+] as const)(
+  'visual rename saves own group keys for %s to %s (retained: %s)',
+  async (from, to, untouched) => {
+    const names = untouched === null ? [from] : [from, untouched]
+    const keyed = (value: unknown) =>
+      JSON.stringify(Object.fromEntries(names.map((name) => [name, value])))
+    const values: GroupFormValues = {
+      ...GROUP_FORM_VALUES,
+      GroupRatio: keyed(0.8),
+      TopupGroupRatio: keyed(1.2),
+      UserUsableGroups: keyed('Synthetic group'),
+      AutoGroups: JSON.stringify(names),
+    }
+    const { calls, onSave } = createSaveSpy()
+    render(<GroupFormFixture onSave={onSave} values={values} />)
+
+    fireEvent.change(screen.getByDisplayValue(from), {
+      target: { value: to },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+
+    await waitFor(() => expect(calls).toHaveLength(1))
+    expect(calls[0].renames).toEqual([{ from, to }])
+    const expectedNames = names.map((name) => (name === from ? to : name))
+    for (const [field, value] of [
+      ['GroupRatio', 0.8],
+      ['TopupGroupRatio', 1.2],
+      ['UserUsableGroups', 'Synthetic group'],
+    ] as const) {
+      const actual = JSON.parse(calls[0].values[field])
+      expect(actual, field).toEqual(
+        Object.fromEntries(expectedNames.map((name) => [name, value]))
+      )
+      expect(Object.hasOwn(actual, to), field).toBe(true)
+    }
+    expect(JSON.parse(calls[0].values.AutoGroups)).toEqual(expectedNames)
+  }
+)

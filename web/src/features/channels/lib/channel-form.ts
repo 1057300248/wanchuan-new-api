@@ -31,14 +31,11 @@ import {
   MODEL_FETCHABLE_TYPES,
   OPENAI_FIELD_PASSTHROUGH_TYPES,
 } from '../constants'
-import type { AdvancedCustomConfig, Channel } from '../types'
+import type { Channel } from '../types'
 import {
   CHANNEL_TYPE_ADVANCED_CUSTOM,
   advancedCustomConfigUsesRelativeUpstreamPath,
   hasValidAdvancedCustomModelListRoute,
-  isAdvancedCustomManagementPath,
-  isAdvancedCustomPassThroughAllowed,
-  normalizeAdvancedCustomConfig,
   parseAdvancedCustomConfig,
   stringifyAdvancedCustomConfig,
   validateAdvancedCustomConfig,
@@ -612,27 +609,7 @@ export function transformChannelToFormDefaults(
         ? parsed.upstream_model_update_ignored_models.join(',')
         : ''
       if (parsed.advanced_custom) {
-        const advancedCustomConfig = normalizeAdvancedCustomConfig(
-          parsed.advanced_custom as AdvancedCustomConfig
-        )
-        // Legacy Advanced Custom channels stored pass-through on the channel
-        // setting. Carry it into eligible native forwarding routes so the
-        // per-route representation survives an unrelated edit.
-        if (
-          channel.type === CHANNEL_TYPE_ADVANCED_CUSTOM &&
-          extraSettings.pass_through_body_enabled
-        ) {
-          for (const route of advancedCustomConfig.advanced_routes || []) {
-            const incomingPath = route.incoming_path?.trim() || ''
-            if (
-              !isAdvancedCustomManagementPath(incomingPath) &&
-              isAdvancedCustomPassThroughAllowed(route.converter || 'none')
-            ) {
-              route.pass_through_body_enabled = true
-            }
-          }
-        }
-        advancedCustom = stringifyAdvancedCustomConfig(advancedCustomConfig)
+        advancedCustom = stringifyAdvancedCustomConfig(parsed.advanced_custom)
       }
     } catch (error) {
       // eslint-disable-next-line no-console

@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestLogOtherScopesAndMerges(t *testing.T) {
@@ -103,4 +104,32 @@ func TestLegacyUpstreamDiagnosticsAreOnlyVisibleToAdministrators(t *testing.T) {
 	root := formatLogOtherJSON(legacy, logOtherVisibilityRoot)
 	assert.Contains(t, root, `"root_info":{"secret":"root-only"}`)
 	assert.JSONEq(t, `{"request_path":"/v1/responses","cache_tokens":9007199254740993}`, formatLogOtherJSON(root, logOtherVisibilityUser))
+}
+
+func TestLogOtherPublicErrorCodeAllowlistPreservesOpaqueNumbers(t *testing.T) {
+	for _, tc := range []struct {
+		name, code string
+		keep       bool
+	}{
+		{"safe", `"rate_limit_exceeded"`, true},
+		{"provider", `"private-provider-code-42"`, false},
+		{"object", `{"provider":"private-provider"}`, false},
+		{"number", `42`, false},
+		{"null", `null`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := `{"error_code":` + tc.code + `,"cache_tokens":9007199254740993,"opaque":{"negative":-9007199254740993,"decimal":0.12345678901234567890123456789}}`
+			user := formatLogOtherJSON(original, logOtherVisibilityUser)
+			assert.Equal(t, tc.keep, gjson.Get(user, "error_code").Exists(), user)
+			if tc.keep {
+				assert.Equal(t, tc.code, gjson.Get(user, "error_code").Raw)
+			}
+			assert.Equal(t, "9007199254740993", gjson.Get(user, "cache_tokens").Raw)
+			assert.Equal(t, "-9007199254740993", gjson.Get(user, "opaque.negative").Raw)
+			assert.Equal(t, "0.12345678901234567890123456789", gjson.Get(user, "opaque.decimal").Raw)
+			for _, v := range []logOtherVisibility{logOtherVisibilityAdmin, logOtherVisibilityRoot} {
+				assert.Equal(t, original, formatLogOtherJSON(original, v), "privileged diagnostics are unchanged")
+			}
+		})
+	}
 }

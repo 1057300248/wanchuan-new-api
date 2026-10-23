@@ -103,7 +103,6 @@ import {
 } from './billing-time-fields'
 import { DraftNumberInput } from './draft-number-input'
 import { RequestSimulation } from './request-simulation'
-import { carryStableUiKey, getStableUiKey } from './tiered-pricing-ui-key'
 import { VisualBillingDocumentEditor } from './visual-billing-document-editor'
 
 type Preset = {
@@ -300,7 +299,6 @@ const PRESET_GROUPS: PresetGroup[] = [
   },
 ]
 
-// ---------------------------------------------------------------------------
 // Raw expression editor
 // ---------------------------------------------------------------------------
 
@@ -563,23 +561,18 @@ function RuleGroupCard({
   onRemove,
 }: RuleGroupCardProps) {
   const { t } = useTranslation()
-  const emitGroupChange = (next: RequestRuleGroup) =>
-    onChange(carryStableUiKey(group, next))
 
   const handleConditionChange = (
     conditionIndex: number,
     next: RequestCondition
   ) => {
     const conditions = [...group.conditions]
-    conditions[conditionIndex] = carryStableUiKey(
-      conditions[conditionIndex],
-      next
-    )
-    emitGroupChange({ ...group, conditions })
+    conditions[conditionIndex] = next
+    onChange({ ...group, conditions })
   }
 
   const handleAddCondition = (timeMode: boolean) => {
-    emitGroupChange({
+    onChange({
       ...group,
       conditions: [
         ...group.conditions,
@@ -607,11 +600,12 @@ function RuleGroupCard({
       <div className='space-y-2'>
         {group.conditions.map((condition, conditionIndex) => (
           <RuleConditionRow
-            key={getStableUiKey(condition)}
+            // eslint-disable-next-line react/no-array-index-key -- Parsed editor rows have no IDs; preserve input identity while their editable labels and values change.
+            key={conditionIndex}
             condition={condition}
             onChange={(next) => handleConditionChange(conditionIndex, next)}
             onRemove={() =>
-              emitGroupChange({
+              onChange({
                 ...group,
                 conditions: group.conditions.filter(
                   (_, i) => i !== conditionIndex
@@ -647,7 +641,7 @@ function RuleGroupCard({
           step={0.000001}
           value={group.multiplier}
           onValueChange={(value) =>
-            emitGroupChange({ ...group, multiplier: String(value) })
+            onChange({ ...group, multiplier: String(value) })
           }
           className='w-32'
           placeholder='1.0'
@@ -1273,12 +1267,13 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
               <>
                 {requestRuleGroups.map((group, groupIndex) => (
                   <RuleGroupCard
-                    key={getStableUiKey(group)}
+                    // eslint-disable-next-line react/no-array-index-key -- Parsed editor rows have no IDs; preserve input identity while their editable labels and values change.
+                    key={groupIndex}
                     group={group}
                     index={groupIndex}
                     onChange={(next) => {
                       const updated = [...requestRuleGroups]
-                      updated[groupIndex] = carryStableUiKey(group, next)
+                      updated[groupIndex] = next
                       handleRuleGroupsChange(updated)
                     }}
                     onRemove={() =>

@@ -265,7 +265,7 @@ export function extractAllTags(models: PricingModel[]): string[] {
     }
   })
 
-  return [...tagSet].sort((a, b) => a.localeCompare(b))
+  return Array.from(tagSet).sort((a, b) => a.localeCompare(b))
 }
 
 /**

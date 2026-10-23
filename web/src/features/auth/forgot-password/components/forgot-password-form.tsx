@@ -53,12 +53,7 @@ export function ForgotPasswordForm({
 }: React.HTMLAttributes<HTMLFormElement>) {
   const { t } = useTranslation()
   const [isLoading, setIsLoading] = useState(false)
-  const [turnstileWidgetKey, setTurnstileWidgetKey] = useState(0)
-  const {
-    secondsLeft,
-    isActive,
-    start: startCountdown,
-  } = useCountdown({ initialSeconds: PASSWORD_RESET_COUNTDOWN })
+
   const {
     isTurnstileEnabled,
     turnstileSiteKey,
@@ -66,27 +61,24 @@ export function ForgotPasswordForm({
     setTurnstileToken,
     validateTurnstile,
   } = useTurnstile()
+  const {
+    secondsLeft,
+    isActive,
+    start: startCountdown,
+  } = useCountdown({ initialSeconds: PASSWORD_RESET_COUNTDOWN })
 
   const form = useForm<z.infer<typeof forgotPasswordFormSchema>>({
     resolver: zodResolver(forgotPasswordFormSchema),
     defaultValues: { email: '' },
   })
+  const turnstileReady = !isTurnstileEnabled || Boolean(turnstileToken)
 
   async function onSubmit(data: z.infer<typeof forgotPasswordFormSchema>) {
     if (!validateTurnstile()) return
 
-    const submittedTurnstileToken = turnstileToken
-    if (isTurnstileEnabled) {
-      setTurnstileToken('')
-      setTurnstileWidgetKey((current) => current + 1)
-    }
-
     setIsLoading(true)
     try {
-      const res = await sendPasswordResetEmail(
-        data.email,
-        submittedTurnstileToken
-      )
+      const res = await sendPasswordResetEmail(data.email, turnstileToken)
       if (res?.success) {
         form.reset()
         startCountdown()
@@ -126,7 +118,11 @@ export function ForgotPasswordForm({
           )}
         />
 
-        <Button type='submit' className='mt-2' disabled={isLoading || isActive}>
+        <Button
+          type='submit'
+          className='mt-2'
+          disabled={isLoading || isActive || !turnstileReady}
+        >
           {isActive
             ? t('Resend ({{seconds}}s)', { seconds: secondsLeft })
             : t('Send reset email')}
@@ -136,11 +132,8 @@ export function ForgotPasswordForm({
         {isTurnstileEnabled && (
           <div className='mt-2'>
             <Turnstile
-              key={turnstileWidgetKey}
               siteKey={turnstileSiteKey}
-              action='reset_password'
               onVerify={setTurnstileToken}
-              onExpire={() => setTurnstileToken('')}
             />
           </div>
         )}

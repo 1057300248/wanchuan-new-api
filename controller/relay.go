@@ -666,6 +666,9 @@ func executeTaskSubmissionWith(
 		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 	}
 
+	// Reserve any submit-time upward billing adjustment before persistence.
+	// This keeps insertion failures fully refundable while ensuring settlement
+	// after the barrier normally has a zero positive delta.
 	if relayInfo.Billing != nil {
 		stage = "reserve"
 		diagnostics.reserve("reserve_start", result.Quota)
@@ -686,21 +689,18 @@ func executeTaskSubmissionWith(
 	task := model.InitTask(result.Platform, relayInfo)
 	task.PrivateData.Execution = service.TaskExecutionSnapshotFromContext(c)
 	task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
-	task.PrivateData.WalletDebit = service.WalletSessionDebitShares(relayInfo)
 	task.PrivateData.BillingSource = relayInfo.BillingSource
 	task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
-	task.PrivateData.SubscriptionQuotaPeriod = relayInfo.SubscriptionQuotaPeriod
 	task.PrivateData.TokenId = relayInfo.TokenId
 	task.PrivateData.NodeName = common.NodeName
 	task.PrivateData.BillingContext = &model.TaskBillingContext{
-		ModelPrice:       relayInfo.PriceData.ModelPrice,
-		GroupRatio:       relayInfo.PriceData.GroupRatioInfo.GroupRatio,
-		ModelRatio:       relayInfo.PriceData.ModelRatio,
-		OtherRatios:      relayInfo.PriceData.OtherRatios(),
-		OriginModelName:  relayInfo.OriginModelName,
-		BillingModelName: relayInfo.GetBillingModelName(),
-		PerCallBilling:   common.StringsContains(constant.TaskPricePatches, relayInfo.GetBillingModelName()) || relayInfo.PriceData.UsePrice,
-		TieredSnapshot:   relayInfo.TieredBillingSnapshot,
+		ModelPrice:      relayInfo.PriceData.ModelPrice,
+		GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+		ModelRatio:      relayInfo.PriceData.ModelRatio,
+		OtherRatios:     relayInfo.PriceData.OtherRatios(),
+		OriginModelName: relayInfo.OriginModelName,
+		PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+		TieredSnapshot:  relayInfo.TieredBillingSnapshot,
 	}
 	task.Quota = result.Quota
 	task.Data = result.TaskData

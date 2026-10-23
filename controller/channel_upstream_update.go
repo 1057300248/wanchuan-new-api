@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/QuantumNous/new-api/pkg/httpx"
 	"io"
 	"net/http"
 	"net/url"
@@ -353,7 +354,7 @@ func getFetchModelsResponseBody(method string, requestURL string, channel *model
 	if err != nil {
 		return nil, err
 	}
-	response, err := service.DoRequestWithoutRedirects(client, request)
+	response, err := httpx.DoWithoutRedirects(client, request)
 	if err != nil {
 		return nil, err
 	}
@@ -406,8 +407,6 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 	}
 
 	if channel.Type == constant.ChannelTypeCline {
-		// Cline has no /v1/models listing; its public recommended-models
-		// catalog is the discovery source.
 		return cline.FetchRecommendedModelIDs(baseURL, channel.GetSetting().Proxy)
 	}
 

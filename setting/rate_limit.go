@@ -37,16 +37,11 @@ func ModelRequestRateLimitGroup2JSONString() string {
 }
 
 func UpdateModelRequestRateLimitGroupByJSONString(jsonStr string) error {
-	// A shared read lock cannot protect replacement of the map. Decode into
-	// private state and publish only a complete configuration under the writer lock.
-	next := make(map[string][2]int)
-	if err := common.Unmarshal([]byte(jsonStr), &next); err != nil {
-		return err
-	}
-	ModelRequestRateLimitMutex.Lock()
-	ModelRequestRateLimitGroup = next
-	ModelRequestRateLimitMutex.Unlock()
-	return nil
+	ModelRequestRateLimitMutex.RLock()
+	defer ModelRequestRateLimitMutex.RUnlock()
+
+	ModelRequestRateLimitGroup = make(map[string][2]int)
+	return common.Unmarshal([]byte(jsonStr), &ModelRequestRateLimitGroup)
 }
 
 func GetGroupRateLimit(group string) (totalCount, successCount int, found bool) {

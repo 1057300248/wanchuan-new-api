@@ -17,8 +17,6 @@ func SetRouter(router *gin.Engine, assets WebAssets) error {
 	return setRouterWithRegistry(router, assets, extension.Default())
 }
 
-// setRouterWithRegistry keeps the production composition path injectable for
-// contract tests without mutating the process-wide write-once registry.
 func setRouterWithRegistry(router *gin.Engine, assets WebAssets, registry *extension.Registry) error {
 	router.Use(middleware.CORS())
 	routeScopes := SetApiRouter(router)
@@ -36,10 +34,7 @@ func setRouterWithRegistry(router *gin.Engine, assets WebAssets, registry *exten
 		frontendBaseUrl = ""
 		common.SysLog(common.LogText("FRONTEND_BASE_URL is ignored on master node"))
 	}
-	// api_only builds disable the embedded dashboard. That decision precedes
-	// the legacy frontend redirect: a disabled build must answer JSON 404 on
-	// its own origin instead of bouncing visitors to FRONTEND_BASE_URL.
-	if frontendBaseUrl == "" || assets.Disabled {
+	if frontendBaseUrl == "" {
 		SetWebRouter(router, assets, pluginDispatcher)
 	} else {
 		frontendBaseUrl = strings.TrimSuffix(frontendBaseUrl, "/")
@@ -57,8 +52,8 @@ func setRouterWithRegistry(router *gin.Engine, assets WebAssets, registry *exten
 
 // setPluginAndExtensionRoutes owns the two registry expansion points around
 // SetPluginRouter's static-route snapshot. BeforePlugin routes are visible to
-// plugin conflict detection; AfterPlugin routes preserve the historical
-// /llms.txt behavior and remain outside that snapshot.
+// plugin conflict detection; explicitly AfterPlugin routes remain outside
+// that snapshot. No current ChuanAPI module uses the latter phase.
 func setPluginAndExtensionRoutes(scopes extension.RouteScopes, registry *extension.Registry) (gin.HandlerFunc, error) {
 	if registry == nil {
 		return nil, fmt.Errorf("router: extension registry must not be nil")

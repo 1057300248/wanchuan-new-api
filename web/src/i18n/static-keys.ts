@@ -19,10 +19,6 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
-  'Channel model owner label must be at most 64 characters without control or formatting characters',
-  'Public model owner must be at most 128 characters and contain no control or formatting characters',
-  'Filtering exemptions require exact group names, one per line; auto and wildcards are not allowed',
-  'This password is too common. Choose a different password.',
   'Task usage metadata is unavailable. Pricing details cannot be displayed.',
   'This expression cannot be expanded into a price table. View the original expression below.',
   'This operation is only supported for vLLM or SGLang channels',
@@ -95,11 +91,6 @@ export const STATIC_I18N_KEYS = [
   'Connect to self-hosted models served by vLLM',
   'vLLM server address, without /v1',
   'vLLM API key, or EMPTY if authentication is disabled',
-  'Cline',
-  'Connect to the Cline API with an API key or access token',
-  'Cline API base URL, including /api/v1',
-  'Cline API key or access token',
-  'Models fetched from the Cline recommended-models catalog',
 
   'Price per image',
   'Per image',
@@ -220,9 +211,7 @@ export const STATIC_I18N_KEYS = [
   'Worker instances do not run master-only background tasks.',
   'Drawing task polling',
 
-  // Pricing constants (legacy sort labels retained for cached views)
-  'Price: Low to High',
-  'Price: High to Low',
+  // Pricing constants
   'Name',
   'Input Price: Low to High',
   'Input Price: High to Low',
@@ -624,26 +613,8 @@ export const STATIC_I18N_KEYS = [
 
   // Sidebar modules
   'Chat Area',
-  'Text Generation and chat functions',
-  'Text Generation',
-
-  // Image generation (variable-passed keys not caught by the t() scanner)
-  'A tranquil lake at sunrise, soft mist, photorealistic',
-  'A cozy robot reading in a library, warm light, illustration',
-  'Minimalist mountain poster, bold shapes, flat design',
-  'A futuristic city street at night, neon reflections',
-  'Low',
-  'Medium',
-  'High',
-  'HD',
-  'Vivid',
-  'Natural',
-  'This model does not support reference images',
-  'Only PNG, JPEG, or WebP images are supported',
-  'Total reference image size must not exceed 15MB',
-  'Too many reference images for this model',
-  '{{count}} of {{max}} images',
-  'No matching history.',
+  'Playground and chat functions',
+  'Playground',
   'AI model testing environment',
   'Chat session management',
   'No content to copy',
@@ -857,12 +828,6 @@ export const STATIC_I18N_KEYS = [
   'Vendor name and icon must not exceed 128 characters.',
   'Shown',
   'Not shown',
-  // Optional metadata fields retained by the versioned model synchronization flow.
-  'Context length',
-  'Release date',
-  'Input modalities',
-  'Output modalities',
-  'Bonus eligibility',
   // Access token permission catalog labels and descriptions (served by the backend).
   'View',
   'Profile',

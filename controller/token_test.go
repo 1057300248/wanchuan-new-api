@@ -736,9 +736,7 @@ func TestAPITokenAuditDatabaseMatrix(t *testing.T) {
 				db, _ := newAuditTestDatabase(t, database.name, dsn)
 				model.DB = db
 				common.SetDatabaseTypes(database.typ, database.typ)
-				// Token writes resolve group aliases transactionally on real databases.
-				// Keep that production dependency present in every audit fixture.
-				require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.UserAccessToken{}, &model.Token{}, &model.Option{}))
+				require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Token{}))
 				// Initialize production column quoting as well as the existing audit table.
 				require.NoError(t, model.InitLogDB())
 				if separateLog {
@@ -766,13 +764,9 @@ func TestAPITokenAuditDatabaseMatrix(t *testing.T) {
 
 func verifyAPITokenAudit(t *testing.T) {
 	t.Helper()
-	pat := model.AccessTokenPrefix + "api-token-audit-pat-secret"
-	user := &model.User{Username: "token-owner", Password: "placeholder", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: "token-owner"}
+	pat := "api-token-audit-pat-secret"
+	user := &model.User{Username: "token-owner", Password: "placeholder", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AccessToken: &pat, AffCode: "token-owner"}
 	require.NoError(t, model.DB.Create(user).Error)
-	// The real-database suite must not rely on another test initializing legacy PATs.
-	accessToken := &model.UserAccessToken{UserId: user.Id, Name: "audit-fixture", TokenHash: model.AccessTokenFingerprint(pat), ExpiresAt: time.Now().Add(time.Hour).Unix()}
-	require.NoError(t, accessToken.SetScopes([]string{"api_key:reveal"}))
-	require.NoError(t, model.DB.Create(accessToken).Error)
 	other := &model.User{Username: "other-owner", Password: "placeholder", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: "other-owner"}
 	require.NoError(t, model.DB.Create(other).Error)
 	session := &model.UserSession{SID: "token-audit-session", UserID: user.Id, Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive, RefreshHash: "placeholder", LoginMethod: "password", LastActiveAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Hour).Unix()}

@@ -28,8 +28,9 @@ import {
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
-import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 
+import enOverrides from '@/extensions/chuanapi/i18n/locales/en.json'
 import en from '@/i18n/locales/en.json'
 import { getSelf } from '@/lib/api'
 
@@ -38,6 +39,7 @@ import {
   getAffiliateCode,
   getReferralRewards,
   getTopupInfo,
+  getUserBillingHistory,
   getWalletSummary,
   redeemTopupCode,
   requestPayment,
@@ -76,6 +78,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 vi.mock('../api', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getTopupInfo: vi.fn(),
+  getUserBillingHistory: vi.fn(),
   calculateAmount: vi.fn(),
   requestPayment: vi.fn(),
   redeemTopupCode: vi.fn(),
@@ -83,6 +86,12 @@ vi.mock('../api', async (importOriginal) => ({
   getAffiliateCode: vi.fn(),
   getReferralRewards: vi.fn(),
   transferAffiliateQuota: vi.fn(),
+}))
+
+vi.mock('@/features/subscriptions/api', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getPublicPlans: vi.fn(async () => ({ success: true, data: [] })),
+  getSelfSubscriptionFull: vi.fn(async () => ({ success: true, data: { subscriptions: [], all_subscriptions: [] } })),
 }))
 
 vi.mock('../components/ledger-table', () => ({
@@ -149,26 +158,31 @@ beforeAll(async () => {
   await testI18n.init({
     lng: 'en',
     fallbackLng: 'en',
-    resources: { en: { translation: en.translation } },
+    resources: { en: { translation: { ...en.translation, ...enOverrides.translation } } },
     interpolation: { escapeValue: false },
   })
 })
 
-function renderWallet() {
+function renderWallet(initialShowHistory = false) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   return render(
     <I18nextProvider i18n={testI18n}>
       <QueryClientProvider client={queryClient}>
-        <Wallet />
+        <Wallet initialShowHistory={initialShowHistory} />
       </QueryClientProvider>
     </I18nextProvider>
   )
 }
 
+afterEach(() => {
+  window.history.replaceState({}, '', '/')
+})
+
 describe('wallet funding flow', () => {
   beforeEach(() => {
+    vi.mocked(getUserBillingHistory).mockResolvedValue({ success: true, data: { total: 0, items: [] } })
     vi.mocked(getSelf).mockResolvedValue({ success: true, data: walletUser })
     vi.mocked(getWalletSummary).mockResolvedValue({
       success: true,
@@ -183,6 +197,20 @@ describe('wallet funding flow', () => {
       data: referralRewards,
     })
     vi.mocked(calculateAmount).mockResolvedValue({ success: true, data: '73' })
+  })
+
+  test('payment return opens official order history and dismissal leaves a reusable entry', async () => {
+    vi.mocked(getTopupInfo).mockResolvedValue({ success: true, data: onlineTopupInfo })
+    window.history.replaceState({}, '', '/wallet?show_history=true')
+    renderWallet(true)
+    const dialog = await screen.findByRole('dialog', { name: 'Billing History' })
+    expect(dialog).toBeVisible()
+    expect(window.location.pathname).toBe('/wallet')
+    expect(window.location.search).toBe('')
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Billing History' })).not.toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: 'Order History' }))
+    expect(await screen.findByRole('dialog', { name: 'Billing History' })).toBeVisible()
   })
 
   test('hides payment methods and the redemption input when topup info fails to load', async () => {

@@ -14,10 +14,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
-	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
-	"github.com/QuantumNous/new-api/pkg/moneyport"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -53,7 +51,6 @@ func TestMain(m *testing.M) {
 
 	if err := db.AutoMigrate(
 		&model.Task{},
-		&model.BillingFinalization{},
 		&model.User{},
 		&model.Token{},
 		&model.Log{},
@@ -63,33 +60,8 @@ func TestMain(m *testing.M) {
 		&model.UserSubscription{},
 		&model.SystemTask{},
 		&model.SystemTaskLock{},
-		&model.BalanceLedgerOperation{},
-		&model.BalanceLedger{},
-		&model.Model{},
-		&model.Vendor{},
-		&model.ModelBonusEligibleAudit{},
-		&model.ReferralCommission{},
-		&model.Redemption{},
-		&model.SubscriptionPlan{},
-		&model.SubscriptionOrder{},
-		&model.SubscriptionPreConsumeRecord{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
-	}
-
-	if err := walletmodule.RegisterRuntime(); err != nil {
-		panic("failed to register wallet policy runtime: " + err.Error())
-	}
-
-	fundingFactories := moneyport.NewFactoryRegistry()
-	if err := RegisterHostFundingFactories(fundingFactories); err != nil {
-		panic("failed to register host funding factories: " + err.Error())
-	}
-	if err := walletmodule.RegisterFundingFactory(fundingFactories); err != nil {
-		panic("failed to register wallet funding factory: " + err.Error())
-	}
-	if err := ConfigureFundingFactoryRegistry(fundingFactories); err != nil {
-		panic("failed to configure funding factories: " + err.Error())
 	}
 
 	os.Exit(m.Run())
@@ -102,34 +74,22 @@ func TestMain(m *testing.M) {
 func truncate(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
-		model.DB.Exec("DELETE FROM balance_ledger")
-		model.DB.Exec("DELETE FROM balance_ledger_operations")
-		model.DB.Exec("DELETE FROM referral_commissions")
 		model.DB.Exec("DELETE FROM tasks")
-		model.DB.Exec("DELETE FROM billing_finalizations")
 		model.DB.Exec("DELETE FROM users")
 		model.DB.Exec("DELETE FROM tokens")
 		model.DB.Exec("DELETE FROM logs")
 		model.DB.Exec("DELETE FROM channels")
 		model.DB.Exec("DELETE FROM midjourneys")
 		model.DB.Exec("DELETE FROM top_ups")
-		model.DB.Exec("DELETE FROM redemptions")
-		model.DB.Exec("DELETE FROM subscription_orders")
-		model.DB.Exec("DELETE FROM subscription_pre_consume_records")
-		model.DB.Exec("DELETE FROM subscription_plans")
 		model.DB.Exec("DELETE FROM user_subscriptions")
 		model.DB.Exec("DELETE FROM system_task_locks")
 		model.DB.Exec("DELETE FROM system_tasks")
-		model.DB.Exec("DELETE FROM models")
-		model.DB.Exec("DELETE FROM vendors")
-		model.DB.Exec("DELETE FROM model_bonus_eligible_audits")
-		model.InvalidateModelBonusEligibleCache()
 	})
 }
 
 func seedUser(t *testing.T, id int, quota int) {
 	t.Helper()
-	user := &model.User{Id: id, Username: "test_user", Quota: quota, QuotaPaid: quota, Status: common.UserStatusEnabled}
+	user := &model.User{Id: id, Username: "test_user", Quota: quota, Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 }
 
@@ -154,7 +114,6 @@ func seedSubscription(t *testing.T, id int, userId int, amountTotal int64, amoun
 		UserId:      userId,
 		AmountTotal: amountTotal,
 		AmountUsed:  amountUsed,
-		QuotaPeriod: 1,
 		Status:      "active",
 		StartTime:   time.Now().Unix(),
 		EndTime:     time.Now().Add(30 * 24 * time.Hour).Unix(),
@@ -183,10 +142,6 @@ func seedChargedAccounting(t *testing.T, userID, channelID, tokenID, quota, requ
 }
 
 func makeTask(userId, channelId, quota, tokenId int, billingSource string, subscriptionId int) *model.Task {
-	period := int64(0)
-	if billingSource == BillingSourceSubscription {
-		period = 1
-	}
 	return &model.Task{
 		TaskID:    "task_" + time.Now().Format("150405.000"),
 		UserId:    userId,
@@ -201,10 +156,9 @@ func makeTask(userId, channelId, quota, tokenId int, billingSource string, subsc
 			OriginModelName: "test-model",
 		},
 		PrivateData: model.TaskPrivateData{
-			BillingSource:           billingSource,
-			SubscriptionId:          subscriptionId,
-			SubscriptionQuotaPeriod: period,
-			TokenId:                 tokenId,
+			BillingSource:  billingSource,
+			SubscriptionId: subscriptionId,
+			TokenId:        tokenId,
 			BillingContext: &model.TaskBillingContext{
 				ModelPrice:      0.02,
 				GroupRatio:      1.0,
@@ -559,37 +513,6 @@ func TestTaskBillingContextPriceDataFiltersMultiplier(t *testing.T) {
 	}, priceData.OtherRatios())
 }
 
-// TestTaskBillingOtherPreservesH3UsageFactsAndBillingIdentity guards the
-// MiniMax-H3 merge: the new plugin usage facts (input image count, input
-// video seconds) must survive into the public task log scope, and the
-// persisted BillingModelName must remain the billing identity (with legacy
-// fallback to OriginModelName) so polling/billing never mixes H3 facts into
-// other models' price identity.
-func TestTaskBillingOtherPreservesH3UsageFactsAndBillingIdentity(t *testing.T) {
-	task := makeTask(1, 1, 100, 0, BillingSourceWallet, 0)
-	task.TaskID = "task_h3_public"
-	task.Properties.OriginModelName = "MiniMax-H3"
-	task.PrivateData.BillingContext.OriginModelName = "MiniMax-H3"
-	task.PrivateData.BillingContext.BillingModelName = "MiniMax-H3"
-	task.PrivateData.BillingContext.OtherRatios = map[string]float64{
-		"seconds":             5,
-		"input_images":        9,
-		"input_video_seconds": 15,
-	}
-
-	other := taskBillingOther(task).Snapshot()
-
-	assert.Equal(t, "MiniMax-H3", taskModelName(task))
-	assert.Equal(t, 5.0, other["seconds"])
-	assert.Equal(t, 9.0, other["input_images"])
-	assert.Equal(t, 15.0, other["input_video_seconds"])
-
-	legacy := makeTask(1, 1, 100, 0, BillingSourceWallet, 0)
-	legacy.PrivateData.BillingContext.BillingModelName = ""
-	legacy.PrivateData.BillingContext.OriginModelName = "MiniMax-Hailuo-02"
-	assert.Equal(t, "MiniMax-Hailuo-02", taskModelName(legacy))
-}
-
 // ---------------------------------------------------------------------------
 // Read-back helpers
 // ---------------------------------------------------------------------------
@@ -763,7 +686,6 @@ func TestMidjourneyRefundRestoresEveryAccountingElementOnBillingChannel(t *testi
 
 	seedChargedAccounting(t, userID, billingChannelID, tokenID, chargedQuota, 1)
 
-	require.NoError(t, model.DB.Model(task).Update("status", "FAILURE").Error)
 	assert.True(t, RefundMidjourneyQuota(ctx, task, "Composition failed"))
 	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
 	assert.Equal(t, initialTokenQuota, getTokenRemainQuota(t, tokenID))
@@ -842,8 +764,9 @@ func TestSettleMidjourneyTaskBillingFundingFailureClearsMarkers(t *testing.T) {
 	assert.Zero(t, countLogs(t))
 }
 
-func TestSettleMidjourneyTaskBillingTokenFailureRollsBackFundingAtomically(t *testing.T) {
+func TestSettleMidjourneyTaskBillingTokenFailureKeepsFundingRefundable(t *testing.T) {
 	truncate(t)
+	ctx := context.Background()
 
 	const userID, tokenID, channelID = 53, 53, 53
 	const initialUserQuota, initialTokenQuota, chargedQuota = 10000, 5000, 3000
@@ -881,19 +804,26 @@ func TestSettleMidjourneyTaskBillingTokenFailureRollsBackFundingAtomically(t *te
 	billed, err := SettleMidjourneyTaskBilling(relayInfo, task, prepared)
 
 	require.Error(t, err)
-	require.False(t, billed)
-	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
+	require.True(t, billed)
+	assert.Equal(t, initialUserQuota-chargedQuota, getUserQuota(t, userID))
 	assert.Equal(t, initialTokenQuota, getTokenRemainQuota(t, tokenID))
 	assert.Zero(t, getTokenUsedQuota(t, tokenID))
 	persisted := getMidjourneyTask(t, task.Id)
-	assert.Zero(t, persisted.Quota)
+	assert.Equal(t, chargedQuota, persisted.Quota)
 	assert.Zero(t, persisted.TokenId)
-	assert.Zero(t, persisted.BillingChannelId)
+	assert.Equal(t, channelID, persisted.BillingChannelId)
+
+	seedChargedAccounting(t, userID, channelID, 0, chargedQuota, 1)
+	assert.True(t, RefundMidjourneyQuota(ctx, task, "token settlement failed"))
+	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
+	assert.Equal(t, initialTokenQuota, getTokenRemainQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageAccounting(t, userID)
 	assert.Zero(t, usedQuota)
-	assert.Zero(t, requestCount)
+	assert.Equal(t, 1, requestCount)
 	assert.Zero(t, getChannelUsedQuota(t, channelID))
-	assert.Zero(t, countLogs(t))
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.Zero(t, log.TokenId)
 }
 
 func TestPrepareMidjourneyTaskBillingRejectsSubscriptionBeforeCharge(t *testing.T) {
@@ -930,7 +860,6 @@ func TestRefundMidjourneyQuotaUsesLegacyChannelFallbackWithoutTokenAdjustment(t 
 	}
 	require.NoError(t, task.Insert())
 
-	require.NoError(t, model.DB.Model(task).Update("status", "FAILURE").Error)
 	assert.True(t, RefundMidjourneyQuota(ctx, task, "legacy failure"))
 
 	assert.Equal(t, walletAfterCharge+chargedQuota, getUserQuota(t, userID))
@@ -1117,7 +1046,6 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 
-	require.NoError(t, model.DB.Create(task).Error)
 	RecalculateTaskQuota(ctx, task, actualQuota, common.NewMessage("adaptor adjustment"))
 
 	// User quota should decrease by the delta (1000 additional charge)
@@ -1157,7 +1085,6 @@ func TestRecalculate_NegativeDelta(t *testing.T) {
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 
-	require.NoError(t, model.DB.Create(task).Error)
 	RecalculateTaskQuota(ctx, task, actualQuota, common.NewMessage("adaptor adjustment"))
 
 	// User quota should increase by abs(delta) = 2000 (refund overpayment)
@@ -1257,7 +1184,6 @@ func TestRecalculate_Subscription_NegativeDelta(t *testing.T) {
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceSubscription, subID)
 
-	require.NoError(t, model.DB.Create(task).Error)
 	RecalculateTaskQuota(ctx, task, actualQuota, common.NewMessage("subscription over-charge"))
 
 	// Subscription used should decrease by delta (refund 3000)
@@ -1515,7 +1441,6 @@ func TestSettle_PerCallBilling_SkipsAdaptorAdjust(t *testing.T) {
 	adaptor := &mockAdaptor{adjustReturn: 2000}
 	taskResult := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess}
 
-	require.NoError(t, model.DB.Create(task).Error)
 	settled := settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 
 	// Per-call: no adjustment despite adaptor returning 2000
@@ -1544,7 +1469,6 @@ func TestSettle_PerCallBilling_SkipsTotalTokens(t *testing.T) {
 	adaptor := &mockAdaptor{adjustReturn: 0}
 	taskResult := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess, TotalTokens: 9999}
 
-	require.NoError(t, model.DB.Create(task).Error)
 	settled := settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 
 	// Per-call: no recalculation by tokens
@@ -1574,7 +1498,6 @@ func TestSettle_NonPerCallBilling_AppliesAdaptorAdjustment(t *testing.T) {
 	adaptor := &mockAdaptor{adjustReturn: adaptorQuota}
 	taskResult := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess}
 
-	require.NoError(t, model.DB.Create(task).Error)
 	settled := settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 
 	// Non-per-call: adaptor adjustment applies (refund 2000)
@@ -1606,7 +1529,6 @@ func TestSettle_TieredEvaluationFailureKeepsPreConsumedCharge(t *testing.T) {
 		TaskUsageBilling: true,
 	}
 
-	require.NoError(t, model.DB.Create(task).Error)
 	settled := settleTaskBillingOnComplete(ctx, &mockAdaptor{}, task, &relaycommon.TaskInfo{Status: model.TaskStatusFailure})
 
 	assert.True(t, settled)
@@ -1637,7 +1559,6 @@ func TestSettle_TieredFailureReturnsFalseForCallerRefund(t *testing.T) {
 		EstimatedTier:    "base",
 	}
 
-	require.NoError(t, model.DB.Create(task).Error)
 	settled := settleTaskBillingOnComplete(
 		ctx,
 		&mockAdaptor{adjustReturn: 1},
@@ -1675,7 +1596,6 @@ func TestSettle_TieredSuccessStillRecomputes(t *testing.T) {
 		EstimatedTier:    "base",
 	}
 
-	require.NoError(t, model.DB.Create(task).Error)
 	settled := settleTaskBillingOnComplete(
 		ctx,
 		&mockAdaptor{adjustReturn: 1},
@@ -1699,83 +1619,6 @@ func TestSettle_TieredSuccessStillRecomputes(t *testing.T) {
 	facts, ok := other["usage_facts"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, map[string]any{"seconds": float64(8), "clips": float64(2)}, facts)
-}
-
-func TestSettle_TieredRequestContextSurvivesSnapshotPersistence(t *testing.T) {
-	truncate(t)
-	const userID = 39
-	const initialQuota, preConsumed = 10_000, 2
-	seedUser(t, userID, initialQuota)
-
-	expression := `tier("base", header("x-plan") == "fast" ? u("seconds") * 2.0 : u("seconds"))`
-	snapshot := billingexpr.BillingSnapshot{
-		ExprString:       expression,
-		ExprHash:         billingexpr.ExprHashString(expression),
-		GroupRatio:       1,
-		QuotaPerUnit:     1,
-		ExprVersion:      1,
-		TaskUsageBilling: true,
-		UsageFacts:       map[string]any{"seconds": float64(1)},
-		EstimatedTier:    "base",
-		RequestInput: &billingexpr.RequestInput{
-			Headers:   map[string]string{"x-plan": "fast"},
-			Timestamp: time.Date(2026, time.September, 10, 3, 15, 0, 0, time.UTC).Unix(),
-		},
-	}
-	encoded, err := common.Marshal(snapshot)
-	require.NoError(t, err)
-	var persisted billingexpr.BillingSnapshot
-	require.NoError(t, common.Unmarshal(encoded, &persisted))
-
-	task := makeTask(userID, 0, preConsumed, 0, BillingSourceWallet, 0)
-	task.Status = model.TaskStatusSuccess
-	task.PrivateData.BillingContext.TieredSnapshot = &persisted
-	require.NoError(t, model.DB.Create(task).Error)
-	settled := settleTaskBillingOnComplete(
-		context.Background(),
-		&mockAdaptor{},
-		task,
-		&relaycommon.TaskInfo{Status: model.TaskStatusSuccess, UsageFacts: map[string]any{"seconds": float64(4)}},
-	)
-
-	require.True(t, settled)
-	assert.Equal(t, 8, task.Quota)
-	assert.Equal(t, initialQuota-(8-preConsumed), getUserQuota(t, userID))
-	require.NotNil(t, task.PrivateData.BillingContext.TieredSnapshot.RequestInput)
-	assert.Equal(t, "fast", task.PrivateData.BillingContext.TieredSnapshot.RequestInput.Headers["x-plan"])
-}
-
-func TestSettle_LegacyTieredSnapshotMissingRequestContextKeepsPreConsumedCharge(t *testing.T) {
-	truncate(t)
-	const userID = 40
-	const initialQuota, preConsumed = 10_000, 50
-	seedUser(t, userID, initialQuota)
-
-	expression := `tier("base", header("x-plan") == "fast" ? u("seconds") * 2.0 : u("seconds"))`
-	task := makeTask(userID, 0, preConsumed, 0, BillingSourceWallet, 0)
-	task.Status = model.TaskStatusSuccess
-	task.PrivateData.BillingContext.TieredSnapshot = &billingexpr.BillingSnapshot{
-		ExprString:       expression,
-		ExprHash:         billingexpr.ExprHashString(expression),
-		GroupRatio:       1,
-		QuotaPerUnit:     1,
-		ExprVersion:      1,
-		TaskUsageBilling: true,
-		UsageFacts:       map[string]any{"seconds": float64(5)},
-		EstimatedTier:    "base",
-	}
-
-	require.NoError(t, model.DB.Create(task).Error)
-	settled := settleTaskBillingOnComplete(
-		context.Background(),
-		&mockAdaptor{},
-		task,
-		&relaycommon.TaskInfo{Status: model.TaskStatusSuccess, UsageFacts: map[string]any{"seconds": float64(8)}},
-	)
-
-	assert.True(t, settled)
-	assert.Equal(t, preConsumed, task.Quota)
-	assert.Equal(t, initialQuota, getUserQuota(t, userID))
 }
 
 func TestSettle_TieredUsageFactsMergeCompletionOverSubmission(t *testing.T) {
@@ -1826,7 +1669,6 @@ func TestSettle_TieredUsageFactsMergeCompletionOverSubmission(t *testing.T) {
 				EstimatedTier:    "base",
 			}
 
-			require.NoError(t, model.DB.Create(task).Error)
 			settled := settleTaskBillingOnComplete(
 				context.Background(),
 				&mockAdaptor{},
@@ -1876,7 +1718,6 @@ func TestSettle_TieredSnapshotWriteBackUsesSettledFactsAndMatchedTier(t *testing
 		EstimatedTier:    "720P",
 	}
 
-	require.NoError(t, model.DB.Create(task).Error)
 	settled := settleTaskBillingOnComplete(
 		context.Background(),
 		&mockAdaptor{},
@@ -1953,7 +1794,6 @@ func TestSettle_TokenRecalcFallsBackToCompletionTokens(t *testing.T) {
 			seedChannel(t, channelID)
 
 			task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
-			require.NoError(t, model.DB.Create(task).Error)
 			settled := settleTaskBillingOnComplete(
 				context.Background(),
 				&mockAdaptor{},

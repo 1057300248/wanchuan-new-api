@@ -878,6 +878,7 @@ func EditChannelByTag(tag string, newTag *string, modelMapping *string, models *
 	updateData := Channel{}
 	shouldReCreateAbilities := false
 	updatedTag := tag
+	// 如果 newTag 不为空且不等于 tag，则更新 tag
 	if newTag != nil && *newTag != tag {
 		updateData.Tag = newTag
 		updatedTag = *newTag

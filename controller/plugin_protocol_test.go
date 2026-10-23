@@ -1614,7 +1614,7 @@ export const protocols = {openai_image: {
   decodeRequest: function(ctx) { return {kind:"submit", model: ctx.model, requestBody: ctx.body.value}; },
   render: function(ctx, task) {
     const data = (task.data && task.data.images || []).map(function(url) { return {url: url}; });
-    return {data: data, vendor: "test", model: "private-provider-image-model"};
+    return {data: data, vendor: "test"};
   },
 }};
 `
@@ -1640,7 +1640,6 @@ func newImageProtocolTestContext(responseFormat string) (*gin.Context, *httptest
 	common.SetContextKey(c, constant.ContextKeyTokenId, 81)
 	common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
 	c.Set("resolved_task_model", "image-model")
-	common.SetContextKey(c, constant.ContextKeyOriginalModel, "image-model")
 	value := map[string]any{"model": "image-model", "prompt": "a cat", "n": 2}
 	if responseFormat != "" {
 		value["response_format"] = responseFormat
@@ -1697,8 +1696,6 @@ func TestServeTaskPluginImageProtocolRendersImmediateResultAndInlinesBase64(t *t
 			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 			assert.Equal(t, float64(1_710_000_000), response["created"])
 			assert.Equal(t, "test", response["vendor"], "plugin fields are preserved")
-			assert.Equal(t, "image-model", response["model"])
-			assert.NotContains(t, recorder.Body.String(), "private-provider-image-model")
 			data, ok := response["data"].([]any)
 			require.True(t, ok)
 			require.Len(t, data, 2)
@@ -1728,8 +1725,8 @@ func TestServeTaskPluginImageProtocolWaitsForAsynchronousTask(t *testing.T) {
 		wantMessage string
 	}{
 		{"success", model.TaskStatusSuccess, http.StatusOK, "", ""},
-		{"failure", model.TaskStatusFailure, http.StatusBadRequest, "image_generation_failed", "invalid request"},
-		{"timeout", "", http.StatusGatewayTimeout, "task_timeout", "upstream request failed"},
+		{"failure", model.TaskStatusFailure, http.StatusBadRequest, "image_generation_failed", "DataInspectionFailed"},
+		{"timeout", "", http.StatusGatewayTimeout, "task_timeout", "still running"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pinned := imageProtocolTestEndpoint(t)
@@ -1772,8 +1769,8 @@ func TestServeTaskPluginImageProtocolWaitsForAsynchronousTask(t *testing.T) {
 	}
 }
 
-// Submission failures keep the OpenAI envelope but never expose vendor diagnostics
-// to ordinary callers. Administrator channel tests are covered separately.
+// Submission failures use the OpenAI error envelope and surface a DashScope
+// {code, message} failure body as a readable vendor message.
 func TestServeTaskPluginImageProtocolSubmissionErrorUsesOpenAIEnvelope(t *testing.T) {
 	pinned := imageProtocolTestEndpoint(t)
 	c, recorder := newImageProtocolTestContext("")
@@ -1786,10 +1783,9 @@ func TestServeTaskPluginImageProtocolSubmissionErrorUsesOpenAIEnvelope(t *testin
 	var response map[string]any
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	errorBody := response["error"].(map[string]any)
-	assert.Nil(t, errorBody["code"])
+	assert.Equal(t, "InvalidParameter", errorBody["code"])
 	assert.Equal(t, "invalid_request_error", errorBody["type"])
-	assert.Equal(t, "invalid request", errorBody["message"])
-	assert.NotContains(t, recorder.Body.String(), "InvalidParameter")
+	assert.Contains(t, errorBody["message"], "n must be 1")
 	assert.NotContains(t, errorBody["message"], "request_id")
 }
 

@@ -42,7 +42,6 @@ type RequiredTextPart = {
 
 type NormalizedRequiredTextPart = RequiredTextPart & {
   inputIndex?: number
-  key: string
 }
 
 type RiskAcknowledgementDialogProps = {
@@ -65,25 +64,8 @@ type RiskAcknowledgementDialogProps = {
   className?: string
 }
 
-type KeyedItem = {
-  text: string
-  key: string
-}
-
 function getRequiredTextRows(text: string) {
-  return Math.max(1, Math.ceil([...text].length / 42))
-}
-
-function createStableKeys(items: string[], prefix: string): KeyedItem[] {
-  const occurrences = new Map<string, number>()
-  return items.map((text) => {
-    const occurrence = occurrences.get(text) ?? 0
-    occurrences.set(text, occurrence + 1)
-    return {
-      text,
-      key: `${prefix}-${encodeURIComponent(text)}-${occurrence}`,
-    }
-  })
+  return Math.max(1, Math.ceil(Array.from(text).length / 42))
 }
 
 export function RiskAcknowledgementDialog({
@@ -106,40 +88,23 @@ export function RiskAcknowledgementDialog({
   className,
 }: RiskAcknowledgementDialogProps) {
   const { t } = useTranslation()
-  const [checkedItemKeys, setCheckedItemKeys] = useState<Set<string>>(
-    () => new Set()
-  )
+  const [checkedItems, setCheckedItems] = useState<boolean[]>([])
   const [typedText, setTypedText] = useState('')
   const [typedTextParts, setTypedTextParts] = useState<string[]>([])
-
-  const keyedItems = useMemo(() => createStableKeys(items, 'item'), [items])
-  const keyedChecklist = useMemo(
-    () => createStableKeys(checklist, 'check'),
-    [checklist]
-  )
 
   const normalizedRequiredTextParts = useMemo<
     NormalizedRequiredTextPart[]
   >(() => {
-    const occurrences = new Map<string, number>()
     return requiredTextParts.reduce<{
       parts: NormalizedRequiredTextPart[]
       inputIndex: number
     }>(
       (acc, part) => {
-        const signature = JSON.stringify([
-          part.type,
-          part.text,
-          part.placeholder ?? '',
-        ])
-        const occurrence = occurrences.get(signature) ?? 0
-        occurrences.set(signature, occurrence + 1)
-        const key = `required-text-part-${encodeURIComponent(signature)}-${occurrence}`
         if (part.type !== 'input') {
-          return { ...acc, parts: [...acc.parts, { ...part, key }] }
+          return { ...acc, parts: [...acc.parts, part] }
         }
         return {
-          parts: [...acc.parts, { ...part, inputIndex: acc.inputIndex, key }],
+          parts: [...acc.parts, { ...part, inputIndex: acc.inputIndex }],
           inputIndex: acc.inputIndex + 1,
         }
       },
@@ -161,17 +126,20 @@ export function RiskAcknowledgementDialog({
   useEffect(() => {
     if (!open) return
     const timer = window.setTimeout(() => {
-      setCheckedItemKeys(new Set())
+      setCheckedItems(Array(checklist.length).fill(false))
       setTypedText('')
       setTypedTextParts(Array(requiredTextInputCount).fill(''))
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [open, requiredTextInputCount])
+  }, [open, checklist.length, requiredTextInputCount])
 
   const allChecked = useMemo(() => {
-    if (keyedChecklist.length === 0) return true
-    return keyedChecklist.every((item) => checkedItemKeys.has(item.key))
-  }, [checkedItemKeys, keyedChecklist])
+    if (checklist.length === 0) return true
+    return (
+      checkedItems.length === checklist.length &&
+      checkedItems.every((checked) => checked)
+    )
+  }, [checkedItems, checklist.length])
 
   const typedMatched = useMemo(() => {
     if (hasSegmentedRequiredText) {
@@ -195,11 +163,10 @@ export function RiskAcknowledgementDialog({
 
   const canConfirm = allChecked && typedMatched && !isLoading
 
-  const handleChecklistChange = (key: string, checked: boolean) => {
-    setCheckedItemKeys((previous) => {
-      const next = new Set(previous)
-      if (checked) next.add(key)
-      else next.delete(key)
+  const handleChecklistChange = (index: number, checked: boolean) => {
+    setCheckedItems((previous) => {
+      const next = [...previous]
+      next[index] = checked
       return next
     })
   }
@@ -233,25 +200,25 @@ export function RiskAcknowledgementDialog({
         </AlertDialogHeader>
 
         <div className='min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pb-4 sm:px-6'>
-          {keyedItems.length > 0 ? (
+          {items.length > 0 ? (
             <ol className='border-border/70 bg-muted/30 text-foreground list-decimal space-y-2 rounded-lg border px-4 py-3 pl-8 text-sm leading-6 sm:px-5 sm:py-4 sm:pl-9'>
-              {keyedItems.map((item) => (
-                <li key={item.key}>{item.text}</li>
+              {items.map((item) => (
+                <li key={item}>{item}</li>
               ))}
             </ol>
           ) : null}
 
-          {keyedChecklist.length > 0 ? (
+          {checklist.length > 0 ? (
             <div className='border-border/70 bg-muted/30 space-y-3 rounded-lg border p-3 sm:p-4'>
-              {keyedChecklist.map((item) => {
-                const id = `risk-acknowledgement-${item.key}`
+              {checklist.map((item, index) => {
+                const id = `risk-acknowledgement-${index}`
                 return (
-                  <div key={item.key} className='flex items-start gap-3'>
+                  <div key={item} className='flex items-start gap-3'>
                     <Checkbox
                       id={id}
-                      checked={checkedItemKeys.has(item.key)}
+                      checked={checkedItems[index] ?? false}
                       onCheckedChange={(checked) =>
-                        handleChecklistChange(item.key, checked === true)
+                        handleChecklistChange(index, checked === true)
                       }
                       className='mt-0.5'
                     />
@@ -259,7 +226,7 @@ export function RiskAcknowledgementDialog({
                       htmlFor={id}
                       className='text-muted-foreground text-sm leading-5 font-normal'
                     >
-                      {item.text}
+                      {item}
                     </Label>
                   </div>
                 )
@@ -277,17 +244,17 @@ export function RiskAcknowledgementDialog({
               </div>
               {hasSegmentedRequiredText ? (
                 <div className='flex flex-col gap-2'>
-                  {normalizedRequiredTextParts.map((part) =>
+                  {normalizedRequiredTextParts.map((part, index) =>
                     part.type === 'static' ? (
                       <span
-                        key={part.key}
+                        key={`static-${index}`}
                         className='text-muted-foreground bg-background/70 border-border w-fit rounded-md border px-2 py-1.5 font-mono text-sm select-none'
                       >
                         {part.text}
                       </span>
                     ) : (
                       <Textarea
-                        key={part.key}
+                        key={`input-${index}`}
                         value={typedTextParts[part.inputIndex ?? 0] ?? ''}
                         onChange={(event) =>
                           handleTextPartChange(

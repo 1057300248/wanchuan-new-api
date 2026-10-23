@@ -58,15 +58,19 @@ export function toImageKeyOption(key: ApiKey): ImageApiKeyOption {
 
 const IMAGE_KEYS_PAGE_SIZE = 100
 
-export async function loadImagePageBootstrap(): Promise<{
+export async function loadImagePageBootstrap(
+  assertCurrent: () => void = () => {}
+): Promise<{
   keys: ImageApiKeyOption[]
   pricingModels: { model_name: string; supported_endpoint_types?: string[] }[]
 }> {
+  assertCurrent()
   const [firstPage, pricingRes] = await Promise.all([
     getApiKeys({ p: 1, size: IMAGE_KEYS_PAGE_SIZE }),
     getPricing(),
   ])
 
+  assertCurrent()
   const firstItems = firstPage.data?.items ?? []
   const total = firstPage.data?.total ?? firstItems.length
   const pageSize =
@@ -78,15 +82,17 @@ export async function loadImagePageBootstrap(): Promise<{
   let items = firstItems
   if (totalPages > 1) {
     const rest = await Promise.all(
-      Array.from({ length: totalPages - 1 }, (_, index) =>
-        getApiKeys({ p: index + 2, size: pageSize })
-      )
+      Array.from({ length: totalPages - 1 }, (_, index) => {
+        assertCurrent()
+        return getApiKeys({ p: index + 2, size: pageSize })
+      })
     )
     for (const page of rest) {
       items = [...items, ...(page.data?.items ?? [])]
     }
   }
 
+  assertCurrent()
   const keys = items.filter((item) => item.status === 1).map(toImageKeyOption)
 
   return { keys, pricingModels: pricingRes.data ?? [] }

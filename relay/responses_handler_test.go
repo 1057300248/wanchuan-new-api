@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestPrepareResponsesPassThroughBodyPreservesRawBodyWithoutOverride(t *testing.T) {
@@ -140,4 +141,35 @@ func newResponsesPassThroughTestContext(t *testing.T, body string) *gin.Context 
 	c.Request.Header.Set("Content-Type", "application/json")
 	t.Cleanup(func() { common.CleanupBodyStorage(c) })
 	return c
+}
+
+func TestPrepareResponsesPassThroughBodyPreservesOpaquePrecision(t *testing.T) {
+	const opaque = `{"opaque_id":9007199254740993,"negative_id":-9007199254740993,"decimal":0.12345678901234567890123456789,"unknown":[{"future_flag":true}]}`
+	const raw = `{"model":"client-visible","reasoning_effort":"none","future":` + opaque + `,"input":[]}`
+	cases := []struct {
+		name     string
+		override map[string]any
+	}{
+		{"raw", nil},
+		{"legacy", map[string]any{"temperature": 0.2}},
+		{"operations", map[string]any{"operations": []any{map[string]any{"mode": "delete", "path": "reasoning_effort"}}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newResponsesPassThroughTestContext(t, raw)
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ParamOverride: tc.override}}
+			body, closer, apiErr := prepareResponsesPassThroughBody(c, info)
+			require.Nil(t, apiErr)
+			if closer != nil {
+				t.Cleanup(func() { require.NoError(t, closer.Close()) })
+			}
+			got, err := io.ReadAll(body)
+			require.NoError(t, err)
+			require.True(t, gjson.ValidBytes(got))
+			assert.Equal(t, opaque, gjson.GetBytes(got, "future").Raw, "unknown fields and number lexemes must remain byte-exact")
+			if tc.override == nil {
+				assert.Equal(t, raw, string(got))
+			}
+		})
+	}
 }

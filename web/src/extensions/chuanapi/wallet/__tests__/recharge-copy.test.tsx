@@ -22,7 +22,9 @@ import { I18nextProvider, initReactI18next } from 'react-i18next'
 import { beforeEach, expect, it, vi } from 'vitest'
 
 import { RechargeFormCard } from '@/extensions/chuanapi/wallet/components/recharge-form-card'
+import enOverrides from '@/extensions/chuanapi/i18n/locales/en.json'
 import en from '@/i18n/locales/en.json'
+import zhOverrides from '@/extensions/chuanapi/i18n/locales/zh.json'
 import zh from '@/i18n/locales/zh.json'
 
 const i18n = createInstance()
@@ -32,7 +34,10 @@ beforeEach(async () => {
     lng: 'zh',
     fallbackLng: false,
     nsSeparator: false,
-    resources: { en, zh },
+    resources: {
+      en: { translation: { ...en.translation, ...enOverrides.translation } },
+      zh: { translation: { ...zh.translation, ...zhOverrides.translation } },
+    },
     interpolation: { escapeValue: false },
   })
 })

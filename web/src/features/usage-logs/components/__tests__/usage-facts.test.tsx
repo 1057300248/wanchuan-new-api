@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import i18next from 'i18next'
 import { afterEach, beforeAll, describe, expect, test } from 'vitest'
 
@@ -64,18 +64,14 @@ function makeLog(other: LogOtherData): UsageLog {
   }
 }
 
-function renderDetails(
-  other: LogOtherData,
-  promptTokens = 0,
-  isAdmin = false
-): QueryClient {
+function renderDetails(other: LogOtherData, promptTokens = 0): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   const freshAt = Date.now() + 60_000
   queryClient.setQueryData(['status'], {}, { updatedAt: freshAt })
   queryClient.setQueryData(
-    ['pricing', 'public'],
+    ['pricing'],
     { data: [], vendors: [] },
     { updatedAt: freshAt }
   )
@@ -84,7 +80,7 @@ function renderDetails(
     <QueryClientProvider client={queryClient}>
       <DetailsDialog
         log={{ ...makeLog(other), prompt_tokens: promptTokens }}
-        isAdmin={isAdmin}
+        isAdmin={false}
         isRoot={false}
         open
         onOpenChange={() => undefined}
@@ -98,44 +94,18 @@ function rowValue(label: string): string | null {
   return screen.getByText(label).nextElementSibling?.textContent ?? null
 }
 
-test('shows recorded upstream model observations to administrators', () => {
-  const queryClient = renderDetails(
-    {
-      admin_info: {
-        response_model: {
-          requested_model: 'requested-model',
-          upstream_model: 'mapped-model',
-          returned_model: 'unexpected-model',
-        },
-      },
+test('shows the recorded request and response models in log details', () => {
+  const queryClient = renderDetails({
+    response_model: {
+      requested_model: 'requested-model',
+      upstream_model: 'mapped-model',
+      returned_model: 'unexpected-model',
     },
-    0,
-    true
-  )
+  })
   expect(screen.getByText('Response model: unexpected-model')).toBeVisible()
   expect(rowValue('Request Model')).toBe('requested-model')
   expect(rowValue('Upstream Model')).toBe('mapped-model')
   expect(screen.getByText('unexpected-model')).toBeVisible()
-  cleanup()
-  queryClient.clear()
-})
-
-test('does not disclose legacy or admin-only upstream model observations to users', () => {
-  const observation = {
-    requested_model: 'requested-model',
-    upstream_model: 'mapped-model',
-    returned_model: 'unexpected-model',
-  }
-  const queryClient = renderDetails({
-    response_model: observation,
-    admin_info: { response_model: observation },
-  })
-  expect(
-    screen.queryByText('Response model: unexpected-model')
-  ).not.toBeInTheDocument()
-  expect(screen.queryByText('mapped-model')).not.toBeInTheDocument()
-  expect(screen.queryByText('unexpected-model')).not.toBeInTheDocument()
-  cleanup()
   queryClient.clear()
 })
 
@@ -153,7 +123,6 @@ describe('usage facts billing details', () => {
       screen.getByText('Billable image count').parentElement
     ).toHaveTextContent('2')
     expect(screen.getAllByText(/\/image/).length).toBeGreaterThan(0)
-    cleanup()
     queryClient.clear()
   })
   const queryClients: QueryClient[] = []
@@ -201,7 +170,6 @@ describe('usage facts billing details', () => {
   })
 
   afterEach(() => {
-    cleanup()
     for (const queryClient of queryClients) {
       queryClient.clear()
     }

@@ -1,11 +1,7 @@
 package perfmetrics
 
 import (
-	"context"
-	"errors"
-	"fmt"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -26,20 +22,11 @@ func flushLoop() {
 	}
 }
 
-var flushMu sync.Mutex
-
 func flushCompletedBuckets() {
-	_ = flushBuckets(context.Background(), false)
-}
-
-func flushBuckets(ctx context.Context, includeCurrent bool) error {
-	flushMu.Lock()
-	defer flushMu.Unlock()
-	var result error
 	currentBucket := bucketStart(time.Now().Unix())
 	hotBuckets.Range(func(key, value any) bool {
 		k := key.(bucketKey)
-		if !includeCurrent && k.bucketTs >= currentBucket {
+		if k.bucketTs >= currentBucket {
 			return true
 		}
 
@@ -50,7 +37,7 @@ func flushBuckets(ctx context.Context, includeCurrent bool) error {
 			return true
 		}
 
-		err := model.UpsertPerfMetricContext(ctx, &model.PerfMetric{
+		err := model.UpsertPerfMetric(&model.PerfMetric{
 			ModelName:      k.model,
 			Group:          k.group,
 			BucketTs:       k.bucketTs,
@@ -64,15 +51,13 @@ func flushBuckets(ctx context.Context, includeCurrent bool) error {
 		})
 		if err != nil {
 			bucket.addCounters(drained)
-			result = errors.Join(result, err)
-			common.SysError(fmt.Sprintf("failed to flush perf metric bucket model=%s group=%s bucket=%d: %s", k.model, k.group, k.bucketTs, err.Error()))
+			common.SysError(common.LogText("failed to flush perf metric bucket model=%s group=%s bucket=%d: %s", k.model, k.group, k.bucketTs, err.Error()))
 			return true
 		}
 
 		deleteOldEmptyBucket(k, key)
 		return true
 	})
-	return result
 }
 
 func deleteOldEmptyBucket(k bucketKey, rawKey any) {

@@ -208,27 +208,23 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	return priceData, nil
 }
 
-// ModelPriceHelperPerCall 按次/按量计费的 PriceHelper (MJ、Task)。
-// 价格/倍率一律取计费身份 GetBillingModelName()，与提交时持久化的
-// TaskBillingContext.BillingModelName、赠金资格保持同一资金口径；
-// 未显式设置 BillingModelName 时回退 OriginModelName，行为不变。
+// ModelPriceHelperPerCall 按次/按量计费的 PriceHelper (MJ、Task)
 func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hosttypes.PriceData, error) {
 	groupRatioInfo := HandleGroupRatio(c, info)
 
-	billingModelName := info.GetBillingModelName()
-	modelPrice, success := ratio_setting.GetModelPrice(billingModelName, true)
+	modelPrice, success := ratio_setting.GetModelPrice(info.OriginModelName, true)
 	usePrice := success
 	var modelRatio float64
 
 	if !success {
-		defaultPrice, ok := ratio_setting.GetDefaultModelPriceMap()[billingModelName]
+		defaultPrice, ok := ratio_setting.GetDefaultModelPriceMap()[info.OriginModelName]
 		if ok {
 			modelPrice = defaultPrice
 			usePrice = true
 		} else {
 			var ratioSuccess bool
 			var matchName string
-			modelRatio, ratioSuccess, matchName = ratio_setting.GetModelRatio(billingModelName)
+			modelRatio, ratioSuccess, matchName = ratio_setting.GetModelRatio(info.OriginModelName)
 			acceptUnsetRatio := false
 			if info.UserSetting.AcceptUnsetRatioModel {
 				acceptUnsetRatio = true

@@ -1,11 +1,9 @@
 package model
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -397,18 +395,6 @@ func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota cannot be negative")
 	}
-	if quota == 0 {
-		return nil
-	}
-	return applyTokenQuotaDelta(tokenId, key, quota)
-}
-
-// IncreaseTokenQuotaForRefund preserves the official rc.46 cache/batch/SQL
-// refund path. Non-refund settlement and compensation retain their existing API.
-func IncreaseTokenQuotaForRefund(tokenId int, key string, quota int) (err error) {
-	if quota < 0 {
-		return errors.New("quota cannot be negative")
-	}
 	if common.RedisEnabled {
 		gopool.Go(func() {
 			// 守卫式增量：哈希不存在时跳过，由下次读取从数据库水合，
@@ -440,79 +426,29 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota cannot be negative")
 	}
-	if quota == 0 {
+	if common.RedisEnabled {
+		gopool.Go(func() {
+			if _, err := cacheApplyTokenQuotaDelta(id, key, int64(-quota)); err != nil {
+				common.SysLog(common.LogText("failed to decrease token quota: %s", err.Error()))
+			}
+		})
+	}
+	if common.BatchUpdateEnabled {
+		addNewRecord(BatchUpdateTypeTokenQuota, id, -quota)
 		return nil
 	}
-	return applyTokenQuotaDelta(id, key, -quota)
+	return decreaseTokenQuota(id, quota)
 }
 
-// ApplyTokenQuotaDeltaTx updates token quota inside a caller-owned database
-// transaction. delta follows the balance direction: positive refunds quota,
-// negative consumes quota. The token cache is fenced before the database write
-// so a rolled-back transaction leaves only a cold cache, never a stale value.
-func ApplyTokenQuotaDeltaTx(tx *gorm.DB, id int, key string, delta int) error {
-	if tx == nil {
-		return errors.New("token quota transaction is nil")
-	}
-	if id <= 0 {
-		return errors.New("token id must be positive")
-	}
-	if delta == 0 {
-		return nil
-	}
-	ctx := tx.Statement.Context
-	if err := invalidateTokenCacheForMutationContext(ctx, key); err != nil {
-		code, class := BillingRefundErrorCode(err)
-		common.SysLog(fmt.Sprintf("failed to invalidate token quota cache before transaction: code=%s class=%s", code, class))
-	}
-	// A Redis socket deadline can expire before the context timer publishes
-	// cancellation. Do not turn that elapsed transaction budget into a live
-	// cache error and proceed with SQL. Unexpired Redis failures retain the
-	// existing log-and-proceed policy.
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
-		return context.DeadlineExceeded
-	}
-	result := tx.Model(&Token{}).Where("id = ?", id).Updates(
+func decreaseTokenQuota(id int, quota int) (err error) {
+	err = DB.Model(&Token{}).Where("id = ?", id).Updates(
 		map[string]any{
-			"remain_quota":  gorm.Expr("remain_quota + ?", delta),
-			"used_quota":    gorm.Expr("used_quota - ?", delta),
+			"remain_quota":  gorm.Expr("remain_quota - ?", quota),
+			"used_quota":    gorm.Expr("used_quota + ?", quota),
 			"accessed_time": common.GetTimestamp(),
 		},
-	)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return fmt.Errorf("token quota update affected %d rows for token %d", result.RowsAffected, id)
-	}
-	return nil
-}
-
-// SettleTokenQuotaDeltaTx accounts for an already-authorized request after the
-// upstream work has run. Revoking its token must not cancel the owner's wallet
-// settlement. Soft-deleted rows retain their counters without becoming usable;
-// physically removed rows have no counters left to update. A surviving row must
-// still match both the original owner and credential, including on deleted rows.
-// Reservations must keep using the live-token-only path instead.
-func SettleTokenQuotaDeltaTx(tx *gorm.DB, id, userID int, key string, delta int) error {
-	if tx == nil || id <= 0 || userID <= 0 || key == "" {
-		return errors.New("invalid authorized token settlement identity")
-	}
-	var token Token
-	err := lockForUpdate(tx.Unscoped()).First(&token, id).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if token.UserId != userID || token.Key != key {
-		return errors.New("token settlement identity mismatch")
-	}
-	return ApplyTokenQuotaDeltaTx(tx.Unscoped(), id, key, delta)
+	).Error
+	return err
 }
 
 // CountUserTokens returns total number of tokens for the given user, used for pagination

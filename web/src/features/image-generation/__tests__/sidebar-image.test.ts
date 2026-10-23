@@ -26,6 +26,7 @@ import {
   parseSidebarModulesAdmin,
 } from '@/features/system-settings/maintenance/config'
 import { useSidebarData } from '@/hooks/use-sidebar-data'
+import { getStatus } from '@/lib/api'
 import { isSidebarModuleEnabled } from '@/lib/nav-modules'
 import { Route as ImageRoute } from '@/routes/_authenticated/image/index'
 
@@ -55,6 +56,9 @@ async function callImageBeforeLoad(): Promise<unknown> {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(getStatus)
+    .mockReset()
+    .mockRejectedValue(new Error('network unavailable in unit test'))
 })
 
 function setSidebarModulesAdmin(value: unknown) {
@@ -68,8 +72,8 @@ afterEach(() => {
   window.localStorage.removeItem('status')
 })
 
-describe('sidebar exposes Text Generation and Image Generation in order', () => {
-  test('chat group lists text generation before image generation', () => {
+describe('sidebar preserves official Playground beside Image Generation', () => {
+  test('chat group lists the official playground immediately before image generation', () => {
     const { result } = renderHook(() => useSidebarData())
     const chat = result.current.navGroups.find((group) => group.id === 'chat')
     const urls = (chat?.items ?? [])
@@ -78,14 +82,14 @@ describe('sidebar exposes Text Generation and Image Generation in order', () => 
     const playgroundIndex = urls.indexOf('/playground')
     const imageIndex = urls.indexOf('/image')
     expect(playgroundIndex).toBeGreaterThanOrEqual(0)
-    expect(imageIndex).toBeGreaterThan(playgroundIndex)
+    expect(imageIndex).toBe(playgroundIndex + 1)
 
     const titles = (chat?.items ?? [])
       .filter((item) => 'url' in item)
       .map((item) => (item as { title: string }).title)
-    expect(titles).toContain('Text Generation')
+    expect(titles).toContain('Playground')
     expect(titles).toContain('Image Generation')
-    expect(titles).not.toContain('Playground')
+    expect(titles).not.toContain('Text Generation')
   })
 
   test('admin chat.image defaults to true and stays independently controllable', () => {
@@ -109,9 +113,14 @@ describe('chat.image route gate honors SidebarModulesAdmin', () => {
     expect(isSidebarModuleEnabled('chat', 'playground')).toBe(true)
   })
 
-  test('disabled image module redirects /image to /dashboard without legacy hops', async () => {
+  test('fresh disabled image module overrides cached enabled access without legacy hops', async () => {
     setSidebarModulesAdmin({
-      chat: { enabled: true, playground: true, image: false },
+      chat: { enabled: true, playground: true, image: true },
+    })
+    vi.mocked(getStatus).mockResolvedValueOnce({
+      SidebarModulesAdmin: JSON.stringify({
+        chat: { enabled: true, playground: true, image: false },
+      }),
     })
     let thrown: unknown
     try {
@@ -124,13 +133,38 @@ describe('chat.image route gate honors SidebarModulesAdmin', () => {
     expect((thrown as { options?: { to?: string } }).options?.to).toBe(
       '/dashboard'
     )
+    expect(getStatus).toHaveBeenCalledOnce()
   })
 
   test('enabled image module lets /image beforeLoad pass without redirect', async () => {
     setSidebarModulesAdmin({
-      chat: { enabled: true, playground: true, image: true },
+      chat: { enabled: true, playground: true, image: false },
+    })
+    vi.mocked(getStatus).mockResolvedValueOnce({
+      SidebarModulesAdmin: JSON.stringify({
+        chat: { enabled: true, playground: true, image: true },
+      }),
     })
     await expect(callImageBeforeLoad()).resolves.toBeUndefined()
+    expect(getStatus).toHaveBeenCalledOnce()
+  })
+
+  test('cached enabled image module cannot bypass a failed fresh status request', async () => {
+    setSidebarModulesAdmin({
+      chat: { enabled: true, playground: true, image: true },
+    })
+    let thrown: unknown
+    try {
+      await callImageBeforeLoad()
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(isRedirect(thrown)).toBe(true)
+    expect((thrown as { options?: { to?: string } }).options?.to).toBe(
+      '/dashboard'
+    )
+    expect(getStatus).toHaveBeenCalledOnce()
   })
 
   test('missing sidebar config redirects /image when status is unavailable', async () => {

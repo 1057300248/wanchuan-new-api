@@ -20,20 +20,12 @@ import { createFileRoute, redirect } from '@tanstack/react-router'
 
 import { Main } from '@/components/layout'
 import { ImageGenerationPage } from '@/features/image-generation'
-import { isSidebarModuleEnabledInStatus } from '@/lib/nav-modules'
-import { ensureSharedStatus, readCachedStatus } from '@/lib/status-query'
+import { getFreshSidebarModuleEnabled } from '@/lib/nav-modules'
 
 export const Route = createFileRoute('/_authenticated/image/')({
   beforeLoad: async ({ context }) => {
-    const queryClient = context?.queryClient
-    const status = queryClient
-      ? await ensureSharedStatus(queryClient)
-      : readCachedStatus()
-    // Fail closed when there is no cached status and the shared query fails.
-    if (!status) {
-      throw redirect({ to: '/dashboard' })
-    }
-    if (!isSidebarModuleEnabledInStatus(status, 'chat', 'image')) {
+    // The official shared query refreshes stale access flags and fails closed.
+    if (!context?.queryClient || !(await getFreshSidebarModuleEnabled(context.queryClient, 'chat', 'image'))) {
       throw redirect({ to: '/dashboard' })
     }
   },

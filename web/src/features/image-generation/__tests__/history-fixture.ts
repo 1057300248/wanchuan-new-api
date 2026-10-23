@@ -16,9 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { getAuthSessionEpoch } from '@/lib/auth-session'
+
 import { useAuthStore, type AuthBundle } from '@/stores/auth-store'
 
-import { imageHistoryStorageKey } from '../storage/history-owner'
+import { getImageHistoryOwnerId, imageHistoryStorageKey } from '../storage/history-owner'
 
 export const HISTORY_OWNER_ID = 101
 export const HISTORY_OWNER_KEY = imageHistoryStorageKey(HISTORY_OWNER_ID) ?? ''
@@ -41,4 +43,9 @@ export function signInHistoryOwner(id = HISTORY_OWNER_ID) {
     },
   }
   useAuthStore.getState().auth.setBundle(bundle)
+}
+
+// Seed the same owner/epoch cache boundary as the real image query observer.
+export function imageBootstrapQueryKey() {
+  return ['image-generation-bootstrap', getImageHistoryOwnerId(), getAuthSessionEpoch()]
 }

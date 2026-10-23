@@ -124,10 +124,14 @@ export function deleteUserAccount(
  * Send email verification code
  */
 export async function sendEmailVerification(
-  email: string
+  email: string,
+  turnstileToken?: string
 ): Promise<ApiResponse> {
   const params = new URLSearchParams({ email })
-  const res = await api.get(`/api/user/self/email/verification?${params}`)
+  if (turnstileToken) {
+    params.append('turnstile', turnstileToken)
+  }
+  const res = await api.get(`/api/verification?${params}`)
   return res.data
 }
 
@@ -293,10 +297,11 @@ export async function getCheckinStatus(
  * Perform daily checkin
  */
 export async function performCheckin(
-  turnstile?: string
+  turnstileToken?: string
 ): Promise<ApiResponse<CheckinResponse>> {
-  const res = await api.post('/api/user/checkin', undefined, {
-    params: { turnstile },
-  })
+  const url = turnstileToken
+    ? `/api/user/checkin?turnstile=${encodeURIComponent(turnstileToken)}`
+    : '/api/user/checkin'
+  const res = await api.post(url)
   return res.data
 }

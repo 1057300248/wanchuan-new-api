@@ -22,7 +22,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { act, cleanup, render, screen, within } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import {
@@ -141,9 +141,7 @@ describe('quota adjustment log localization', () => {
     queryClient.setQueryData(['status'], {}, { updatedAt: Date.now() + 60_000 })
   })
 
-  afterEach(async () => {
-    cleanup()
-    await queryClient.cancelQueries()
+  afterEach(() => {
     queryClient.clear()
     useSystemConfigStore.getState().setConfig(previousConfig)
   })

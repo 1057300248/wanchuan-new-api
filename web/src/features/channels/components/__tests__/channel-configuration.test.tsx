@@ -2033,62 +2033,7 @@ test('advanced custom edits preview draft connection settings with the saved key
   )
 })
 
-test('a limited operator can fetch saved upstream models while the provider and key stay read-only', async () => {
-  useAuthStore.setState({
-    auth: {
-      ...originalAuth,
-      user: {
-        id: 10,
-        username: 'operator',
-        role: ROLE.ADMIN,
-        permissions: {
-          admin_permissions: {
-            channel: { read: true, write: true, operate: true },
-          },
-        },
-      },
-    },
-  })
-  const user = userEvent.setup()
-  render(<ConfigurationHarness currentRow={editingChannel} />)
-  await screen.findByDisplayValue('Existing channel')
-  expect(screen.getByRole('button', { name: 'Change provider' })).toBeDisabled()
-  expect(screen.getByLabelText('API Key *')).toBeDisabled()
-  await user.click(screen.getByRole('button', { name: 'Fetch from Upstream' }))
-  expect(
-    await screen.findByRole('checkbox', { name: 'upstream-model' })
-  ).toBeVisible()
-})
-
-test('a limited operator sees request-processing and proxy settings disabled and clicking them changes nothing', async () => {
-  useAuthStore.setState({
-    auth: {
-      ...originalAuth,
-      user: {
-        id: 10,
-        username: 'operator',
-        role: ROLE.ADMIN,
-        permissions: {
-          admin_permissions: {
-            channel: { read: true, write: true, operate: true },
-          },
-        },
-      },
-    },
-  })
-  const user = userEvent.setup()
-  render(<ConfigurationHarness currentRow={editingChannel} />)
-  await screen.findByDisplayValue('Existing channel')
-  await user.click(screen.getByRole('tab', { name: /Request & Response/ }))
-  const thinking = screen.getByRole('switch', { name: 'Thinking to Content' })
-  expect(thinking).toHaveAttribute('aria-disabled', 'true')
-  await user.click(thinking)
-  expect(thinking).not.toBeChecked()
-  await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
-  expect(screen.getByLabelText('Proxy Address')).toBeDisabled()
-})
-
-test('a limited operator can save routing priority while sensitive setting and key stay omitted', async () => {
+test('an operator without sensitive write permission can discover saved models and update routing', async () => {
   useAuthStore.setState({
     auth: {
       ...originalAuth,
@@ -2136,21 +2081,12 @@ test('a limited operator can save routing priority while sensitive setting and k
   await user.click(thinking)
   expect(thinking).not.toBeChecked()
   await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
-  // Scope portal-heavy label queries to the active panel so the test stays
-  // fast and deterministic on the large drawer DOM.
-  expect(
-    within(
-      await screen.findByRole('tabpanel', { name: /Other Settings/ })
-    ).getByLabelText('Proxy Address')
-  ).toBeDisabled()
+  expect(screen.getByLabelText('Proxy Address')).toBeDisabled()
   await user.click(screen.getByRole('tab', { name: /Routing & Mapping/ }))
-  const routingPanel = await screen.findByRole('tabpanel', {
-    name: /Routing & Mapping/,
-  })
-  fireEvent.change(within(routingPanel).getByLabelText('Priority'), {
+  fireEvent.change(screen.getByLabelText('Priority'), {
     target: { value: '8' },
   })
-  fireEvent.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
   await waitFor(() => expect(put).toHaveBeenCalled())
   expect(put.mock.calls[0]?.[1]).toMatchObject({ id: 42, priority: 8 })
   expect(put.mock.calls[0]?.[1]).not.toHaveProperty('setting')
@@ -3038,33 +2974,6 @@ test('AWS interface selection is disabled without sensitive channel write permis
   render(<ConfigurationHarness currentRow={editingChannel} />)
   expect(
     await screen.findByRole('combobox', { name: 'AWS API' })
-  ).toBeDisabled()
-})
-
-test('Vertex project ID is disabled without sensitive channel write permission', async () => {
-  editingChannel = {
-    ...editingChannel,
-    type: 41,
-    settings:
-      '{"vertex_key_type":"api_key","vertex_project_id":"private-project"}',
-  }
-  useAuthStore.setState({
-    auth: {
-      ...originalAuth,
-      user: {
-        id: 10,
-        username: 'operator',
-        role: ROLE.ADMIN,
-        permissions: {
-          admin_permissions: { channel: { read: true, write: true } },
-        },
-      },
-    },
-  })
-  render(<ConfigurationHarness currentRow={editingChannel} />)
-
-  expect(
-    await screen.findByRole('textbox', { name: 'Vertex AI Project ID' })
   ).toBeDisabled()
 })
 

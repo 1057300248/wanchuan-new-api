@@ -24,6 +24,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { loadImagePageBootstrap, loadImageTokenModels } from '../api'
 import { useImageData } from '../hooks/use-image-data'
 import type { ImageApiKeyOption } from '../types'
+import { signInHistoryOwner } from './history-fixture'
 
 vi.mock('../api', () => ({
   loadImageTokenModels: vi.fn(),
@@ -66,6 +67,7 @@ function createWrapper() {
 }
 
 beforeEach(() => {
+  signInHistoryOwner()
   vi.resetAllMocks()
   bootstrapKeys = [makeKey(1, 'g1')]
   bootstrapMock.mockImplementation(async () => ({

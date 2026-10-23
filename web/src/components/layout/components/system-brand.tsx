@@ -25,9 +25,8 @@ import {
 } from '@/components/ui/sidebar'
 import { extensionPublicHomeUrl } from '@/extensions'
 import { useStatus } from '@/hooks/use-status'
+import { useSystemConfig } from '@/hooks/use-system-config'
 import { cn } from '@/lib/utils'
-
-import { HeaderLogo } from './header-logo'
 
 type SystemBrandProps = {
   defaultName?: string
@@ -49,6 +48,7 @@ type SystemBrandProps = {
 export function SystemBrand(props: SystemBrandProps) {
   const { t } = useTranslation()
   const { status } = useStatus()
+  const { logo } = useSystemConfig()
 
   const variant = props.variant ?? 'sidebar'
   const name = status?.system_name || props.defaultName || 'New API'
@@ -66,7 +66,11 @@ export function SystemBrand(props: SystemBrandProps) {
         )}
       >
         <div className='flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-md'>
-          <HeaderLogo alt={t('Logo')} className='size-full' />
+          <img
+            src={logo}
+            alt={t('Logo')}
+            className='size-full rounded-md object-cover'
+          />
         </div>
         <span className='max-w-[12rem] truncate'>{name}</span>
       </a>
@@ -82,7 +86,11 @@ export function SystemBrand(props: SystemBrandProps) {
           render={<div />}
         >
           <div className='flex aspect-square size-8 items-center justify-center overflow-hidden rounded-lg'>
-            <HeaderLogo alt={t('Logo')} className='size-full' />
+            <img
+              src={logo}
+              alt={t('Logo')}
+              className='size-full rounded-lg object-cover'
+            />
           </div>
           <div className='grid flex-1 text-start text-sm leading-tight group-data-[collapsible=icon]:hidden'>
             <span className='truncate font-semibold'>{name}</span>

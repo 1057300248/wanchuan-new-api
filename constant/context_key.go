@@ -9,17 +9,15 @@ const (
 
 	ContextKeyOriginalModel    ContextKey = "original_model"
 	ContextKeyRequestStartTime ContextKey = "request_start_time"
-	// The Responses handler owns the SSE error response, even when the client
-	// disconnected or a write failed. Do not retry or append a JSON HTTP error.
+
+	// Channel tests are administrative diagnostics, not public relay responses.
+	ContextKeyChannelTest ContextKey = "channel_test"
+
+	// These markers let a protocol adaptor own an already-emitted SSE error.
+	// The outer retry policy must not send a second response or retry it.
 	ContextKeyResponsesStreamErrorHandled ContextKey = "responses_stream_error_handled"
-	// A failed native non-stream response has confirmed output or usage to
-	// settle. Other adaptors may return an empty Usage alongside an error.
-	ContextKeyResponsesPartialUsage ContextKey = "responses_partial_usage"
-	// ContextKeyStreamErrorHandled marks a non-Responses SSE failure that has
-	// already emitted an in-band protocol error. The outer relay must still
-	// record the request as failed, but must not append a JSON HTTP error or retry
-	// after partial output has reached the client.
-	ContextKeyStreamErrorHandled ContextKey = "stream_error_handled"
+	ContextKeyResponsesPartialUsage       ContextKey = "responses_partial_usage"
+	ContextKeyStreamErrorHandled          ContextKey = "stream_error_handled"
 
 	/* token related keys */
 	ContextKeyTokenUnlimited         ContextKey = "token_unlimited_quota"
@@ -96,9 +94,4 @@ const (
 	ContextKeyTokenAuditParams ContextKey = "token_audit_params"
 	// ContextKeyTokenAuditSucceeded disambiguates token responses that exceed the audit buffer.
 	ContextKeyTokenAuditSucceeded ContextKey = "token_audit_succeeded"
-
-	// ContextKeyChannelTest marks an administrator-triggered channel test. Its
-	// synthetic request carries no end-user credential, so the client privacy
-	// boundary must not rewrite the upstream model or scrub diagnostics.
-	ContextKeyChannelTest ContextKey = "channel_test"
 )

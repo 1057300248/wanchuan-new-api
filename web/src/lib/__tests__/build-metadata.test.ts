@@ -16,82 +16,85 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { mkdtempSync, rmSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import path from 'node:path'
+import { runInNewContext } from 'node:vm'
 
-import { loadEnv, rspack } from '@rsbuild/core'
-import { afterEach, expect, it, vi } from 'vitest'
+import { createRsbuild } from '@rsbuild/core'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const requireBundle = createRequire(import.meta.url)
+import productionConfig from '../../../rsbuild.config'
+
+interface CompiledBuildMetadata {
+  getBuildRevision(): string
+}
 
 afterEach(() => {
   vi.unstubAllEnvs()
 })
 
-it.each([
-  {
-    condition: 'the release version is set',
-    version: 'v1.2.3-custom',
-    expected: 'rv.v1.2.3-custom.2k6e8r7p',
-  },
-  {
-    condition: 'the release version is empty',
-    version: '',
-    expected: 'rv.0000.2k6e8r7p',
-  },
-])('compiles the expected build revision when $condition', async (fixture) => {
-  vi.stubEnv('VITE_REACT_APP_VERSION', fixture.version)
-  const env = loadEnv({ mode: 'production', prefixes: ['VITE_'] })
-  const directory = mkdtempSync(join(tmpdir(), 'new-api-build-metadata-'))
-  const bundlePath = join(directory, 'metadata.cjs')
-
-  try {
-    const compiler = rspack({
-      mode: 'production',
-      target: 'node',
-      entry: join(
-        dirname(fileURLToPath(import.meta.url)),
-        '../build-metadata.ts'
-      ),
-      output: {
-        path: directory,
-        filename: 'metadata.cjs',
-        library: { type: 'commonjs2' },
-      },
-      module: {
-        rules: [
-          {
-            test: /\.ts$/,
-            loader: 'builtin:swc-loader',
-            options: { jsc: { parser: { syntax: 'typescript' } } },
-          },
-        ],
-      },
-      plugins: [new rspack.DefinePlugin(env.publicVars)],
-    })
-    await new Promise<void>((resolve, reject) => {
-      compiler.run((error, stats) => {
-        compiler.close((closeError) => {
-          if (error || closeError) {
-            reject(error || closeError)
-          } else if (stats?.hasErrors()) {
-            reject(new Error(stats.toString({ all: false, errors: true })))
-          } else {
-            resolve()
-          }
+describe('production build revision', () => {
+  it.each([
+    ['a supplied release revision', 'rc46-test-abc123', 'rc46-test-abc123'],
+    ['an empty release revision', '', '0000'],
+    ['an absent release revision', undefined, '0000'],
+  ])(
+    'preserves the expected revision for %s',
+    async (_label, version, expected) => {
+      vi.stubEnv('VITE_REACT_APP_VERSION', version)
+      const directory = await mkdtemp(
+        path.join(tmpdir(), 'newapi-build-metadata-')
+      )
+      try {
+        // Use the real production define configuration and real module. Vitest's
+        // import.meta.env emulation alone cannot detect Rspack substitution bugs.
+        const config = productionConfig({
+          env: 'production',
+          envMode: 'production',
+          command: 'build',
         })
-      })
-    })
-
-    const metadata = requireBundle(bundlePath) as {
-      getBuildRevision: () => string
+        const rsbuild = await createRsbuild({
+          cwd: directory,
+          config: {
+            mode: 'production',
+            source: {
+              entry: {
+                metadata: path.resolve('src/lib/build-metadata.ts'),
+              },
+              define: config.source?.define,
+            },
+            output: {
+              target: 'web',
+              distPath: { root: directory, js: '' },
+              filename: { js: 'metadata.js' },
+              cleanDistPath: false,
+              minify: true,
+            },
+            performance: { buildCache: false, printFileSize: false },
+            tools: {
+              rspack: {
+                output: { library: { name: 'BuildMetadata', type: 'var' } },
+              },
+            },
+          },
+        })
+        const result = await rsbuild.build()
+        try {
+          const runtime: { BuildMetadata?: CompiledBuildMetadata } = {}
+          runInNewContext(
+            await readFile(path.join(directory, 'metadata.js'), 'utf8'),
+            runtime
+          )
+          expect(runtime.BuildMetadata?.getBuildRevision()).toBe(
+            `rv.${expected}.2k6e8r7p`
+          )
+        } finally {
+          await result.close()
+        }
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
     }
-    expect(metadata.getBuildRevision()).toBe(fixture.expected)
-  } finally {
-    delete requireBundle.cache[bundlePath]
-    rmSync(directory, { recursive: true, force: true })
-  }
+  )
 })

@@ -24,12 +24,21 @@ func TestUpdateChannelNewAPIBalanceRejectsNonFiniteConversion(t *testing.T) {
 		{name: "negative overflow", remaining: "-1e308", quotaPerUnit: "1e-308", wantErr: true},
 		{name: "zero conversion rate", remaining: "1", quotaPerUnit: "0", wantErr: true},
 		{name: "negative conversion rate", remaining: "1", quotaPerUnit: "-1", wantErr: true},
+		// Non-finite JSON literals/overflow must also be rejected, even when the
+		// decoder (rather than the later arithmetic gate) rejects them first.
+		{name: "NaN conversion rate JSON", remaining: "1", quotaPerUnit: "NaN", wantErr: true},
+		{name: "positive infinity conversion rate JSON", remaining: "1", quotaPerUnit: "Infinity", wantErr: true},
+		{name: "negative infinity conversion rate JSON", remaining: "1", quotaPerUnit: "-Infinity", wantErr: true},
+		{name: "overflowing finite literal", remaining: "1", quotaPerUnit: "1e999", wantErr: true},
 		{name: "tiny finite amounts", remaining: "1e-308", quotaPerUnit: "1e-308", want: 1},
 		{name: "large finite balance", remaining: "1e308", quotaPerUnit: "1", want: 1e308},
 		{name: "negative finite balance", remaining: "-1250000", quotaPerUnit: "1000000", want: -1.25},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			setupSub2APIBalanceTest(t)
+			ownedDB, err := model.DB.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, ownedDB.Close()) })
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {

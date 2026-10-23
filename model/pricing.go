@@ -115,17 +115,21 @@ func FilterPricingByUsableGroups(pricing []Pricing, usableGroups map[string]stri
 }
 
 func GetPricing() []Pricing {
-	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-		updatePricingLock.Lock()
-		defer updatePricingLock.Unlock()
-		// Double check after acquiring the lock
-		if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-			modelSupportEndpointsLock.Lock()
-			defer modelSupportEndpointsLock.Unlock()
-			updatePricing()
-		}
+	pricing, _ := getPricingSnapshot()
+	return pricing
+}
+
+// getPricingSnapshot returns the rows and their age under the same lock, so
+// derived eligibility caches cannot grant an older snapshot another full TTL.
+func getPricingSnapshot() ([]Pricing, time.Time) {
+	updatePricingLock.Lock()
+	defer updatePricingLock.Unlock()
+	if time.Since(lastGetPricingTime) > time.Minute || len(pricingMap) == 0 {
+		modelSupportEndpointsLock.Lock()
+		defer modelSupportEndpointsLock.Unlock()
+		updatePricing()
 	}
-	return pricingMap
+	return pricingMap, lastGetPricingTime
 }
 
 func InvalidatePricingCache() {
@@ -139,10 +143,9 @@ func InvalidatePricingCache() {
 
 // GetVendors 返回当前定价接口使用到的供应商信息
 func GetVendors() []PricingVendor {
-	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-		// 保证先刷新一次
-		GetPricing()
-	}
+	GetPricing()
+	updatePricingLock.Lock()
+	defer updatePricingLock.Unlock()
 	return vendorsList
 }
 

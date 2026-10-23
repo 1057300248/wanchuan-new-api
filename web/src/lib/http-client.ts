@@ -22,9 +22,8 @@ import axios, {
 } from 'axios'
 import { t } from 'i18next'
 
-import i18n from '@/i18n/config'
-import { toBackendLanguage } from '@/i18n/languages'
 import { API_BASE_URL } from '@/lib/api-url'
+
 import {
   applyAuthRotation,
   clearAuthentication,
@@ -191,10 +190,6 @@ api.interceptors.response.use(
 api.interceptors.request.use(
   async (config) => {
     assertCurrentRequestSession(config)
-    config.headers.set(
-      'Accept-Language',
-      toBackendLanguage(i18n.resolvedLanguage || i18n.language)
-    )
     if (config.preserveAuthorization) return config
     if (
       config.singleUseAuthorization ||

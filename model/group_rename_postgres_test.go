@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/redis/go-redis/v9"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -25,7 +25,7 @@ func TestGroupRenamePostgresRedis(t *testing.T) {
 	previousDB, previousLog := DB, LOG_DB
 	previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
 	previousMaster, previousRedis, previousRDB := common.IsMasterNode, common.RedisEnabled, common.RDB
-	installDatabaseCompatRegistry(t)
+	installRebuildGroupRegistry(t)
 	t.Setenv("SQL_DSN", dsn)
 	t.Setenv("LOG_SQL_DSN", dsn)
 	common.IsMasterNode = true

@@ -41,15 +41,7 @@ func (b *nativeRouteBilling) Settle(int) error {
 func (b *nativeRouteBilling) Refund(*gin.Context) {
 	b.events = append(b.events, "refund")
 	if !b.settled && b.preConsumed > 0 {
-		_, _ = model.CreditQuota(model.LedgerEntry{
-			UserId:         b.userID,
-			Account:        model.AccountPaid,
-			Delta:          b.preConsumed,
-			Reason:         model.LedgerReasonBillingRefund,
-			ReferenceType:  "native_route_test",
-			ReferenceId:    "refund",
-			IdempotencyKey: "native-route-test:refund",
-		})
+		_ = model.IncreaseUserQuota(b.userID, b.preConsumed, true)
 		b.preConsumed = 0
 	}
 }
@@ -64,15 +56,7 @@ func (b *nativeRouteBilling) GetPreConsumedQuota() int {
 
 func (b *nativeRouteBilling) Reserve(quota int) error {
 	b.events = append(b.events, "reserve")
-	_, err := model.DebitQuota(model.LedgerEntry{
-		UserId:         b.userID,
-		Delta:          quota,
-		Reason:         model.LedgerReasonBillingReserve,
-		ReferenceType:  "native_route_test",
-		ReferenceId:    "reserve",
-		IdempotencyKey: "native-route-test:reserve",
-	}, model.AccountPaid)
-	if err != nil {
+	if err := model.DecreaseUserQuota(b.userID, quota, true); err != nil {
 		return err
 	}
 	b.preConsumed = quota
@@ -95,14 +79,7 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 	previousRedisEnabled := common.RedisEnabled
 	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, database.AutoMigrate(
-		&model.User{},
-		&model.Channel{},
-		&model.Task{},
-		&model.Log{},
-		&model.BalanceLedgerOperation{},
-		&model.BalanceLedger{},
-	))
+	require.NoError(t, database.AutoMigrate(&model.User{}, &model.Channel{}, &model.Task{}, &model.Log{}))
 	model.DB = database
 	model.LOG_DB = database
 	common.MemoryCacheEnabled = false
@@ -121,11 +98,10 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(previousModelRatios))
 	})
 	require.NoError(t, database.Create(&model.User{
-		Id:        7,
-		Username:  "native-route-user",
-		Group:     "default",
-		Quota:     1_000_000,
-		QuotaPaid: 1_000_000,
+		Id:       7,
+		Username: "native-route-user",
+		Group:    "default",
+		Quota:    1_000_000,
 	}).Error)
 
 	var submitCalls atomic.Int32
@@ -247,7 +223,6 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 	var settledUser model.User
 	require.NoError(t, database.First(&settledUser, 7).Error)
 	assert.Equal(t, 999_999, settledUser.Quota)
-	assert.Equal(t, 999_999, settledUser.QuotaPaid)
 
 	queryBinding, found := generation.LookupDeclaredRoute(http.MethodGet, "/kling/v1/videos/text2video/:task_id")
 	require.True(t, found)

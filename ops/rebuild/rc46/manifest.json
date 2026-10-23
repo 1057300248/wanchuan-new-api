@@ -1,0 +1,1331 @@
+{
+  "schema_version": 1,
+  "purpose": "Feature-by-contract reconstruction, not bulk replay of the custom tree",
+  "upstream": {
+    "repository": "QuantumNous/new-api",
+    "tag": "v1.0.0-rc.46",
+    "commit": "7d8b91268dab69d7150f345c448b5e250163146a",
+    "tree": "b0c81ba58095ef0399b23ba59f9ec6ec6c2db8eb",
+    "tracked_files": 2657,
+    "local_shallow_boundary": "206e0fa5c600127a314a97f88592c067f784f4a6"
+  },
+  "custom_reference": {
+    "repository": "1057300248/wanchuan-new-api",
+    "published_commit": "7f2f92284dc6d798919226da039780d96f22d91c",
+    "local_equivalent_commit": "fb8d883b524e526b248f6827d271747003507237",
+    "tree": "9dc897534846945fb53eb320d3c69d62f7ba964f",
+    "production_contract_commit": "093c7197d5eac50787971fd5ff7553a414142fc7",
+    "latest_customization_source": {
+      "local_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "published_equivalent": "023da978",
+      "selection": "Feature-specific modules and minimal hooks only; original reference record retained"
+    }
+  },
+  "branch": "dot/rc46-modular-rebuild-20261022",
+  "publication": {
+    "status": "local_only",
+    "constraint": "Exact upstream ancestry is required; do not substitute an identical-tree snapshot",
+    "actions": "No workflow dispatch, tag, PR, merge, deployment, release or repository-settings changes"
+  },
+  "financial_design": {
+    "status": "official_flow_with_minimal_reviewed_financial_consistency_repairs",
+    "decision_source": {
+      "user_message_id": "Sentinel_71ea54546f808191a7aea9fe86dfc02a",
+      "instruction": "继续让子代理完成，改为astra ultra思考 为什么退款按官方暂停了",
+      "related_root_authority": "2026-10-22 17:47 全部修复"
+    },
+    "approved_policy": "Restore the exact-official-baseline rebuild; retain official product flow plus required ChuanAPI customizations. Minimal financial consistency fixes are allowed; absolute byte parity is not required.",
+    "preserve": [
+      "paid_bonus_reward_entitlements",
+      "production_data_contracts",
+      "original_partial_preconsume_policy",
+      "no_negative_credit_or_new_debt"
+    ],
+    "constraint": "Financial repairs are integrated only after coordination and independent review of the financial-consistency owner. No new FinancialEvent table, no automatic consumption of historical pending or production data.",
+    "runtime_activation": false,
+    "execution_policy": "Heavy Go/SQL/frontend/browser runs must be serialized with the financial test owner; static implementation is active."
+  },
+  "toolchain_target": {
+    "go": "1.27.3",
+    "vitest": "5.0.4",
+    "evidence": "New branch tests are required; old reference-tree acceptance does not transfer"
+  },
+  "stages": [
+    {
+      "id": "S0",
+      "name": "Freeze source provenance and classify maintained deltas",
+      "upstream_paths": [],
+      "custom_paths": [
+        "ops/rebuild/rc46/manifest.json",
+        "ops/rebuild/rc46/verify_delta.py"
+      ]
+    },
+    {
+      "id": "S1",
+      "name": "Access-log display privacy without changing request semantics",
+      "upstream_paths": [
+        "middleware/logger.go"
+      ],
+      "custom_paths": [
+        "pkg/accesslog/path.go",
+        "middleware/logger_credential_query_test.go"
+      ]
+    },
+    {
+      "id": "F1a",
+      "name": "Unwired stdlib funding contract and frozen construction registry",
+      "upstream_paths": [],
+      "custom_paths": [
+        "pkg/moneyport/factory.go",
+        "pkg/moneyport/funding.go",
+        "pkg/moneyport/host_finalization.go",
+        "pkg/moneyport/factory_test.go"
+      ],
+      "source_reference_commit": "44f8cd439b4bf0c8b845c5aa9de644373cab60d1",
+      "runtime_activation": false,
+      "acceptance": "source_and_pure_leaf_normal_race_accepted_at_bf38f7e7156d04d058385d326c400ced4317cc56_only; not database or application acceptance"
+    },
+    {
+      "id": "F1b1",
+      "name": "Required primary wallet schema and generic-writer isolation; no backfill or funding activation",
+      "upstream_paths": [
+        "model/main.go",
+        "model/user.go"
+      ],
+      "custom_paths": [
+        "model/wallet_schema.go",
+        "model/wallet_schema_test.go"
+      ],
+      "source_reference_commit": "44f8cd439b4bf0c8b845c5aa9de644373cab60d1",
+      "production_data_contract_commit": "093c7197d5eac50787971fd5ff7553a414142fc7",
+      "acceptance": "Historical SQLite focused behavioral red then 8 normal nodes green at 222188c; not full migration or application acceptance",
+      "runtime_activation": false,
+      "runtime_boundary": "New wallet fields are JSON-visible and are excluded from generic User.UpdateWithTx. This partial financial chain must not be published or deployed.",
+      "later_contributors": {
+        "model/main.go": [
+          "S6a explicit extension model/data phase"
+        ],
+        "model/user.go": [
+          "S4g group rename namespace/reference consistency seam"
+        ]
+      }
+    },
+    {
+      "id": "S2",
+      "name": "Per-request redirect isolation for authenticated auxiliary requests",
+      "upstream_paths": [
+        "controller/channel_upstream_update_test.go",
+        "service/http_client_transport_test.go",
+        "controller/channel_upstream_update.go",
+        "relay/channel/gemini/relay-gemini.go",
+        "service/midjourney.go",
+        "relay/channel/api_request.go"
+      ],
+      "custom_paths": [
+        "pkg/httpx/redirect.go",
+        "pkg/httpx/redirect_test.go"
+      ],
+      "acceptance": "44d16cc authenticated redirects behavior RED confirmed; 4115d83 response cleanup two-leaf behavioral RED confirmed; green pending on fixed pin",
+      "red_pin": "44d16cc48adb56962d02856dec6b84ea72c7a5e6",
+      "later_contributors": {
+        "controller/channel_upstream_update.go": [
+          "S3 Cline catalog branch"
+        ],
+        "relay/channel/api_request.go": [
+          "S3d stream delivery and cancellation"
+        ]
+      }
+    },
+    {
+      "id": "S3",
+      "name": "Cline protocol adapter, reasoning-history and image conversion",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [
+        "common/api_type.go",
+        "common/endpoint_type.go",
+        "constant/api_type.go",
+        "constant/channel.go",
+        "relay/common/relay_info.go",
+        "relay/relay_adaptor.go",
+        "relaykit/relayconvert/convmeta/options.go",
+        "relaykit/relayconvert/internal/claude_messages/to_oai_chat_req.go",
+        "relaykit/relayconvert/internal/oai_responses/to_oai_chat_req.go",
+        "relaykit/relayconvert/internal/oai_responses/to_oai_chat_req_test.go",
+        "relaykit/relayconvert/request_registry.go",
+        "service/relay_error.go",
+        "service/request_policy.go",
+        "constant/context_key.go",
+        "service/protected_fetch_client.go",
+        "service/protected_fetch_client_test.go",
+        "relay/common/stream_status.go",
+        "relay/common/stream_status_test.go"
+      ],
+      "custom_paths": [
+        "controller/channel_upstream_update_cline_test.go",
+        "relay/channel/cline/adaptor.go",
+        "relay/channel/cline/content.go",
+        "relay/channel/cline/content_test.go",
+        "relay/channel/cline/discovery.go",
+        "relay/channel/cline/discovery_test.go",
+        "relay/channel/cline/entrypoint_chat_test.go",
+        "relay/channel/cline/entrypoint_responses_test.go",
+        "relay/channel/cline/error_classification.go",
+        "relay/channel/cline/error_classification_test.go",
+        "relay/channel/cline/harness_test.go",
+        "relay/channel/cline/helpers_test.go",
+        "relay/channel/cline/media_entrypoint_test.go",
+        "relay/channel/cline/plain_text.go",
+        "relay/channel/cline/plain_text_test.go",
+        "relay/channel/cline/registration_test.go",
+        "relay/channel/cline/request_test.go",
+        "relay/channel/cline/response.go",
+        "relay/channel/cline/response_test.go",
+        "relay/channel/cline/stream.go",
+        "relay/channel/cline/stream_test.go",
+        "relaykit/dto/media_content_json.go",
+        "relaykit/dto/media_content_json_test.go",
+        "relaykit/relayconvert/internal/claude_messages/chat_image.go",
+        "relaykit/relayconvert/internal/claude_messages/chat_image_test.go",
+        "relaykit/relayconvert/internal/oai_responses/chat_image_test.go",
+        "service/relay_cancellation.go",
+        "service/relay_cancellation_test.go"
+      ],
+      "acceptance": "ported feature slice; build and behavior verification pending",
+      "deferred_tests": [
+        "Cline financial entrypoint/cancellation/ping tests require the later finance and delivery slice"
+      ],
+      "compile_fix": "Shared stream-status methods and official protected-fetch proxy constructor required by Cline; no replacement transport or financial producer."
+    },
+    {
+      "id": "S4a",
+      "name": "Global public model owner and separate validated channel metadata",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [
+        "controller/model.go",
+        "controller/model_list_test.go",
+        "controller/model_owned_by_test.go",
+        "model/channel.go",
+        "model/channel_settings_test.go",
+        "model/option.go",
+        "relaykit/dto/channel_settings.go"
+      ],
+      "custom_paths": [
+        "controller/model_public_owner_test.go",
+        "setting/public_model_owner.go"
+      ],
+      "acceptance": "behavior tests and three-database option/channel roundtrip pending",
+      "boundary": "Public owner is global and independent of channel metadata; unchanged exported model owner resolvers are retained. UI composition follows.",
+      "later_contributors": {
+        "model/channel.go": [
+          "S4g group rename namespace/reference consistency seam"
+        ],
+        "model/option.go": [
+          "S4g group rename namespace/reference consistency seam"
+        ]
+      }
+    },
+    {
+      "id": "S6a",
+      "name": "Support and public monitor modules using explicit frozen composition",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [
+        "main.go",
+        "router/api-router.go",
+        "router/main.go",
+        "i18n/keys.go",
+        "i18n/locales/en.yaml",
+        "i18n/locales/zh-CN.yaml",
+        "i18n/locales/zh-TW.yaml"
+      ],
+      "custom_paths": [
+        "chuanapi/register.go",
+        "controller/support_ticket.go",
+        "extension/boundary_test.go",
+        "extension/lifecycle.go",
+        "extension/lifecycle_test.go",
+        "extension/migration.go",
+        "extension/migration_test.go",
+        "extension/registry.go",
+        "extension/registry_test.go",
+        "extension/routes.go",
+        "extension/routes_test.go",
+        "model/support_ticket.go",
+        "model/support_ticket_migration_test.go",
+        "modules/chuanapi/console/monitor/artwork.go",
+        "modules/chuanapi/console/monitor/client.go",
+        "modules/chuanapi/console/monitor/handlers.go",
+        "modules/chuanapi/console/monitor/monitor_test.go",
+        "modules/chuanapi/console/monitor/settings.go",
+        "modules/chuanapi/console/monitor/settings_postgres_test.go",
+        "modules/chuanapi/console/monitor/settings_test.go",
+        "modules/chuanapi/console/monitor/types.go",
+        "modules/chuanapi/console/monitor/visibility_database_test.go",
+        "modules/chuanapi/console/monitor/visibility_test.go",
+        "modules/chuanapi/console/register.go",
+        "modules/chuanapi/support/register.go",
+        "service/support_ticket.go",
+        "service/support_ticket_test.go",
+        "chuanapi/support_ticket_http_test.go"
+      ],
+      "acceptance": "b10e285 modules 45 testevents PASS (console/imagegen/lifecycle); same-origin and trusted-origin session cases PASS, no-cookie actual behavior RED 500 vs required 401. Source 526 one-line ErrRefreshTokenInvalid mapper restored; router remaining/delivery/root build not run after first failure. Full native/browser remain pending.",
+      "boundary": "Core routes and migration order retained. No payment or legacy data step registered. Public monitor hidden groups filter list/detail/assets on server.",
+      "later_contributors": {
+        "router/api-router.go": [
+          "S4b three token-model endpoints",
+          "S4g group rename namespace/reference consistency seam"
+        ],
+        "router/main.go": [
+          "S6b CORS before API/dashboard/relay route registration"
+        ]
+      }
+    },
+    {
+      "id": "S4b",
+      "name": "Selected-token effective model scope and CC Switch capability filtering",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [
+        "controller/token.go",
+        "model/ability.go",
+        "service/group.go"
+      ],
+      "custom_paths": [
+        "controller/token_models_test.go",
+        "relay/ccswitch_capability.go",
+        "relay/ccswitch_capability_test.go"
+      ],
+      "acceptance": "Static migration; compile and behavior pending",
+      "boundary": "Owner lookup plus enabled abilities/channels, user/token effective groups, model limits and real adaptor protocol conversion; no upstream network request or unrelated group namespace rewrite.",
+      "later_contributors": {
+        "model/ability.go": [
+          "S4g group rename namespace/reference consistency seam"
+        ]
+      }
+    },
+    {
+      "id": "S3d",
+      "name": "Protocol-owned stream failure, cancellation and client privacy boundary",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [
+        "controller/channel-test.go",
+        "controller/relay.go",
+        "controller/responses_websocket.go",
+        "relay/channel/openai/helper.go",
+        "relay/channel/openai/relay-openai.go",
+        "relay/channel/openai/responses_via_chat.go",
+        "relay/helper/common.go",
+        "relay/helper/stream_result.go",
+        "relay/helper/stream_scanner.go",
+        "relay/helper/stream_scanner_test.go",
+        "service/http.go",
+        "relay/compatible_handler.go",
+        "relay/request_billing.go",
+        "relay/responses_handler.go",
+        "relay/channel/openai/image_stream_test.go"
+      ],
+      "custom_paths": [
+        "pkg/privacy/allowlist.go",
+        "pkg/privacy/error_test.go",
+        "pkg/privacy/payload_test.go",
+        "pkg/privacy/privacy.go",
+        "relay/channel/cline/cancellation_entrypoint_test.go",
+        "relay/channel/cline/stream_ping_failure_test.go",
+        "relay/channel/openai/rebuild_stream_payload_test.go",
+        "service/http_privacy_test.go",
+        "service/stream_failure_billing_test.go",
+        "service/billing_finalization_test.go",
+        "service/refund_fixture_process_test.go"
+      ],
+      "acceptance": "02e0681: all185 Cline testevents, privacy35 and helper138 PASS; OpenAI64PASS and one legacy public-diagnostic assertion requires mature privacy contract update. Full production root build PASS with compile-only embed. Service tests lacked isolated callback fixture; restored original audited helper unchanged, pending rerun.",
+      "boundary": "Mature transport/delivery logic only; no Task/MJ transaction or wallet/subscription mutation changes. Preserve official raw SSE fast path rather than typed reserialization, retaining unknown JSON fields and numeric lexemes. Existing settlement APIs receive observed partial usage before outer error/refund; no new transaction implementation. Verified with financial owner that delivery files are outside his changes."
+    },
+    {
+      "id": "S4c",
+      "name": "Restore existing production model catalogue metadata and public pricing projection",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [
+        "controller/model_sync.go",
+        "model/model_meta.go",
+        "model/model_metadata_sync.go",
+        "model/pricing.go"
+      ],
+      "custom_paths": [
+        "model/model_metadata_test.go",
+        "model/pricing_filter_test.go"
+      ],
+      "schema_reason": "All nine nullable catalogue fields already exist in production baseline093c7197, preserving model directory UX and explicit tri-state bonus policy. No new table. Restore official-fresh schema columns and retain production values on upgrade. Bonus eligibility cache/runtime and batch admin transactions are not enabled in this step.",
+      "acceptance": "Focused real SQLite metadata persistence/clear/sync/zero-value/pricing tests and actual MySQL/PostgreSQL fresh+093 upgrades pending. Existing official metadata transaction/sync/routing-owner lookup retained; no private per-channel owner read projected to public output.",
+      "later_contributors": {
+        "model/model_meta.go": [
+          "S4d committed cache invalidation hooks"
+        ],
+        "model/pricing.go": [
+          "S4d atomic snapshot age for derived eligibility TTL"
+        ]
+      }
+    },
+    {
+      "id": "S4d",
+      "name": "Bound bonus eligibility to pricing TTL and committed invalidation generation",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [
+        "model/pricing_refresh.go"
+      ],
+      "custom_paths": [
+        "model/model_bonus_eligible.go",
+        "model/rebuild_bonus_cache_test.go",
+        "model/rebuild_bonus_ack_test.go"
+      ],
+      "acceptance": "d27d899 real SQLite RED: 2 stale-true assertions failed and 14 events passed. bbb2821 exact detached GREEN: all 19 testevents PASS, including original TTL/in-flight assertions and snapshot-age/post-commit/rollback controls. Evidence S4d-red-d27d899 and S4d-green-bbb2821. No eligibility rule or money allocation changes; race/native validation pending. Independent financial Ultra identified additional COMMIT-ACK-loss cache case, copied as isolated real-SQL wrapper regression from sealed 4a8ecc4 (source-reviewed, financial runtime not yet accepted). Existing 19 GREEN tests do not cover this new case; test-only RED candidate now present. 4a5a140 actual ACK RED: real SQL COMMIT and stored false verified before stale positive assertion at rebuild_bonus_ack_test.go:67. Both metadata mutations now invalidate after either transaction result; rejected-mutation regression verifies unchanged committed row/eligibility instead of an unsafe no-invalidation invariant. New GREEN pending.",
+      "boundary": "Pricing snapshot rows/time are read under the existing pricing lock; no new tables, workers, network or alternate billing authority. GetVendors read uses the same lock. Existing pricing->channel and pricing->endpoint lock ordering is retained; invalidation never acquires the loader mutex."
+    },
+    {
+      "id": "S7a",
+      "name": "Bounded asynchronous image task module and owned runtime primitives",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [],
+      "custom_paths": [
+        "modules/imagegen/async_handler.go",
+        "modules/imagegen/async_handler_test.go",
+        "modules/imagegen/async_store.go",
+        "modules/imagegen/async_store_test.go",
+        "modules/imagegen/register.go",
+        "modules/imagegen/register_test.go",
+        "modules/imagegen/routes_auth_test.go",
+        "modules/imagegen/runtime_test.go",
+        "pkg/lifecycle/drain_failure_test.go",
+        "pkg/lifecycle/runtime.go",
+        "pkg/lifecycle/runtime_test.go"
+      ],
+      "runtime_wired": true,
+      "boundary": "Mature Redis task retention/admission/user isolation plus normal relay pipeline re-entry; no SQL table and no alternate image charging path. Host registration is implemented by S7b but not yet validated at the composed successor pin.",
+      "acceptance": "b10e285 imagegen/lifecycle tests pass with official Redis v8 adapter (included in 45 modules testevents). This is isolated module testing, not activated host/financial integration or browser proof.",
+      "compatibility": "Retain the official Redis v8 client and existing common.RDB; only imports and the test-hook interface are adapted from mature Redis v9 source. Same Lua admission/result/TTL semantics, no second client or global major upgrade. 27eae3e image compile failed solely at unavailable v9 import; 24 console/lifecycle testevents passed, remaining stages not run. The later b10e285 module run passed; this does not validate the newly composed host.",
+      "runtime_validation_pending": true
+    },
+    {
+      "id": "S6c",
+      "name": "Restore anonymous catalogue and read-only browser identity extension",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [
+        "middleware/auth.go",
+        "service/auth_session.go"
+      ],
+      "custom_paths": [
+        "modules/chuanapi/console/llms.go",
+        "modules/chuanapi/console/llms_test.go",
+        "modules/chuanapi/console/pricing.go",
+        "modules/chuanapi/console/pricing_test.go",
+        "modules/chuanapi/console/auth_session.go",
+        "router/auth_session_test.go",
+        "router/extension_routes_test.go",
+        "router/public_api_routes_test.go"
+      ],
+      "boundary": "Mature public allowlisted pricing projection/llms and cookie-only read-only identity probe; no token rotation, bearer/PAT acceptance, cookie path/SameSite/CORS loosening, or private per-channel owner exposure. Host owns origin/cache/limiter/auth middleware ordering. Public-config/status with commercial bonus flags remain deferred until those flags are actually wired.",
+      "acceptance": "1f61ac4 router/session 17 testevents PASS, then original CORS middleware-order assertion RED; 4a5a140 source compiles and root build passes. Actual CORS RED separately covered by S6b. Native/browser remain pending.",
+      "previous_stage_id": "S6a (historical duplicate label; paths unchanged)"
+    },
+    {
+      "id": "S3e",
+      "name": "Preserve image generation preset fields and mapped request bodies",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [
+        "relaykit/dto/openai_image.go",
+        "relay/image_handler.go"
+      ],
+      "custom_paths": [
+        "relay/image_handler_test.go",
+        "relay/channel/openai/image_console_test.go"
+      ],
+      "boundary": "Mature DTO aspect_ratio/resolution fields and lossless top-level model remap for JSON/multipart passthrough; preserve vendor fields and original replay storage across retries. Existing official image relay/charging remain unchanged. 2K/4K are generation presets, not upscaling.",
+      "acceptance": "Source actual-HTTP request/adaptor/body-preservation and preset tests pending at a new fixed pin; test upstream deliberately returns controlled 422 to avoid financial side effects. Async image routes remain unwired pending reviewed financial integration."
+    },
+    {
+      "id": "S3f",
+      "name": "Restore pure incremental output estimation and explicit stream usage-text capture",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [
+        "relaykit/relayconvert/response_registry.go",
+        "relaykit/relayconvert/response_registry_test.go",
+        "relaykit/relayconvert/internal/oai_responses/to_oai_chat_stream_resp.go",
+        "relaykit/relayconvert/internal/oai_responses/to_claude_messages_stream_resp.go"
+      ],
+      "custom_paths": [
+        "tokenkit/stream.go",
+        "tokenkit/stream_test.go",
+        "relaykit/relayconvert/internal/oai_responses/usage_text_capture_test.go"
+      ],
+      "boundary": "Standalone tokenkit/relaykit only: incremental estimator matches concatenated-text Estimate, including UTF-8 boundary splits; zero-value converter options retain prior capture behavior, explicit opt-out avoids unbounded output retention when host accounts emitted chunks. No host configuration, wallet, SQL, network or changed settlement API.",
+      "acceptance": "Source standalone tests/build pending at fixed pin; no existing golden output rewritten."
+    },
+    {
+      "id": "S3g",
+      "name": "Restore native and converted Responses terminal/output accounting adapters",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [
+        "relay/channel/openai/relay_responses.go",
+        "relay/channel/openai/chat_via_responses.go",
+        "service/responses_usage.go",
+        "relay/channel/openai/relay_responses_billing_test.go",
+        "relay/channel/openai/chat_via_responses_test.go",
+        "service/responses_usage_test.go"
+      ],
+      "custom_paths": [
+        "service/stream_estimate.go",
+        "relay/common/responses_tool_usage.go",
+        "relay/channel/openai/chat_via_responses_buffered_failure_test.go",
+        "relay/channel/openai/chat_via_responses_failure_test.go",
+        "relay/channel/openai/chat_via_responses_stream_estimate_test.go",
+        "relay/channel/openai/relay_responses_stream_failure_test.go",
+        "relay/channel/openai/relay_responses_test.go",
+        "service/stream_estimate_test.go"
+      ],
+      "boundary": "Existing official relay/billing entrypoints; transport-layer failed/incomplete/cancelled outcomes, generated-output usage facts, one-time completed tool observation and incremental Chat estimate only. No wallet/SQL/settlement implementation, Realtime handler, pricing rules or global JSON codec replacement. Native raw frames retained with targeted model alias rewrites. Financial owner confirmed these paths are not modified by its current patch.",
+      "acceptance": "4a5a140 five affected package test binaries compile and root production build PASS (compile-only frontend stub, not browser assets); original service/OpenAI delivery selectors 34 testevents PASS. Newly restored full native/converted Responses suite, standalone tokenkit/relaykit suite, native financial DB and final runtime acceptance remain pending."
+    },
+    {
+      "id": "S6b",
+      "name": "Preserve existing split-console CORS without granting session trust",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "custom_paths": [
+        "middleware/cors_test.go",
+        "router/rebuild_console_cors_test.go"
+      ],
+      "upstream_paths": [
+        "middleware/cors.go",
+        "router/relay-router.go"
+      ],
+      "boundary": "Root approved code-only exact configured origin credentials; all other origins public wildcard without credentials. SessionCookieOriginGuard, SameSiteStrict, refresh cookie path and actual production configuration are unchanged. Source policy migration only after explicit synthetic HTTP RED.",
+      "acceptance": "Exact ecea6964: 31 CORS/session/llms/real origin-guard tests PASS, rootbuild PASS (compile-only frontend stub); prior actual 4a5a140 CORS RED preserved. No browser/native/race claim."
+    },
+    {
+      "id": "S4g",
+      "name": "Restore transactional group rename/reference fencing through official model seams",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [
+        "common/str.go",
+        "controller/subscription.go",
+        "model/channel_cache.go",
+        "model/request_policy.go",
+        "model/subscription.go",
+        "model/token.go",
+        "relaykit/relayconvert/kitutil/mask.go",
+        "relaykit/relayconvert/kitutil/mask_test.go",
+        "setting/auto_group.go",
+        "setting/auto_group_test.go",
+        "middleware/access_token_routes.go"
+      ],
+      "custom_paths": [
+        "controller/group_rename.go",
+        "controller/group_rename_test.go",
+        "controller/subscription_plan_update_test.go",
+        "model/group_namespace.go",
+        "model/group_namespace_postgres_test.go",
+        "model/group_namespace_sql_test.go",
+        "model/group_namespace_test.go",
+        "model/group_rename.go",
+        "model/group_rename_postgres_test.go",
+        "model/group_rename_sensitive_test.go",
+        "model/group_rename_test.go",
+        "model/rebuild_group_registry_test.go",
+        "router/group_rename_router_test.go",
+        "router/scoped_token_fixture_test.go",
+        "setting/public_request_policy_test.go",
+        "setting/sensitive_groups.go"
+      ],
+      "boundary": "Existing group settings/user/token/channel/ability/active-subscription references only. Group namespace uses existing Option rows and DB locks, no new tables. Keep official billing/period/refund paths and original Redis v8; subscription changes only group validation/plan-field-presence and namespace-before-user lock ordering. Channel cache keeps official getters and scheduling; adds only safe serialized refresh, publication revision fence and cursor lock order. No cache health/stale policy framework. AutoGroup reads are existing source detached snapshots. Log-mask leaf protects infrastructure diagnostics without changing user-facing documentation links. Root-auth POST /api/option/group-rename uses unchanged mature payload. Sensitive group policy data migration restored; relay exemption runtime and owned pubsub lifecycle still pending.",
+      "acceptance": "3deccfa five packages compile and root build PASS (frontend stub); 61 selected SQLite assertions PASS, 5 native opt-in SKIP; group RootAuth real HTTP regression found missing official PAT option:write descriptor. One-line descriptor restored from exact526; new pin regression pending."
+    },
+    {
+      "id": "S4h",
+      "name": "Explicit official PAT declarations for currently restored custom routes",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [
+        "router/access_token_scope_test.go"
+      ],
+      "custom_paths": [],
+      "acceptance": "b3212df composed PAT catalog and original group-root authorization, plus auto-group/setting controls: 24 tests PASS. This does not cover future unregistered finance/image dashboard routes."
+    },
+    {
+      "id": "S3h",
+      "name": "Wire preserved ordinary Responses/provider and scoped local-keyword contracts",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [
+        "common/model.go",
+        "relay/channel/advancedcustom/adaptor.go",
+        "relay/channel/ali/adaptor.go",
+        "relay/channel/ali/adaptor_test.go",
+        "relay/channel/ali/embedding.go",
+        "relay/channel/aws/relay-aws.go",
+        "relay/channel/cloudflare/relay_cloudflare.go",
+        "relay/channel/cohere/relay-cohere.go",
+        "relay/channel/coze/relay-coze.go",
+        "relay/channel/deepseek/adaptor.go",
+        "relay/channel/deepseek/adaptor_test.go",
+        "relay/channel/gemini/relay-gemini-native.go",
+        "relay/channel/gemini/relay_gemini_usage_test.go",
+        "relay/channel/gemini/relay_responses.go",
+        "relay/channel/gemini/relay_responses_test.go",
+        "relay/channel/openai/adaptor.go",
+        "relay/channel/task/jsplugin/adaptor.go",
+        "relay/channel/xai/adaptor.go",
+        "relay/chat_completions_via_responses.go",
+        "relay/claude_handler.go",
+        "relay/gemini_handler.go",
+        "relay/responses_request.go",
+        "relay/responses_websocket.go"
+      ],
+      "custom_paths": [
+        "relay/channel/deepseek/adaptor_reasoning_test.go",
+        "relay/channel/gemini/models_no_redirect_test.go",
+        "relay/channel/gemini/relay_gemini_delivery_failure_test.go",
+        "relay/channel/gemini/test_main_test.go",
+        "relay/channel/xai/adaptor_reasoning_test.go",
+        "relay/responses_handler_test.go",
+        "service/request_sensitive.go",
+        "service/request_sensitive_test.go"
+      ],
+      "acceptance": "0bf7bf5 fresh Gemini/Xai/advancedcustom114 PASS events/60top-level after b321 real Gemini delivery RED; six affected package compile and rootbuild0. No funding/native claims.",
+      "funding_boundary": "No Task/MJ settlement, token debit, realtime.go or money algorithm changes. Financial final pin must retain local keyword checks and existing partial-usage returns.",
+      "protocol_boundary": "No global JSON codec replacement: source raw passthrough plus exact-number/unknown-subtree assertions for no override, legacy override and operation override."
+    },
+    {
+      "id": "S7b",
+      "name": "Owned async image and group-subscriber composition on the official main flow",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [],
+      "custom_paths": [
+        "custom_runtime.go",
+        "custom_runtime_test.go"
+      ],
+      "acceptance": "0bf7bf5 compile/rootbuild and all seven real HTTP/hijack host tests PASS; host+imagegen+lifecycle40 PASS events. Native main-process HTTP/SIGTERM, two-process Redis and browser still pending.",
+      "composition_boundary": "Register existing imagegen and explicitly own RunGroupConfigSubscriber with the existing lifecycle leaf. Keep original upstream background startup calls/positions; do not copy the source applicationRuntime framework or claim those upstream goroutines joined.",
+      "shutdown_boundary": "Stop new HTTP/job admissions, allow accepted work the existing SHUTDOWN_TIMEOUT_SECONDS budget (default120), then cancel request/custom work and attempt one shared5s join. SQL pools and final quota-cache flush are gated on proven request/custom drain; preserve a late worker failure/force timeout as nonzero process status. HTTP Close alone never proves a hijacked handler joined."
+    },
+    {
+      "id": "S3i",
+      "name": "Preserve task-image/download/log privacy and concurrent logger metadata",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [
+        "model/log_other_test.go",
+        "controller/plugin_protocol_image.go",
+        "model/log_other.go",
+        "service/download.go",
+        "logger/logger.go"
+      ],
+      "custom_paths": [
+        "controller/plugin_protocol_image_privacy_test.go",
+        "service/download_privacy_test.go",
+        "logger/logger_concurrency_test.go"
+      ],
+      "acceptance": "Exact a1fbbb2 compile0 and expected image/log/download behavior RED plus logger shared-count DATA RACE, original Go exits1 retained. Exact525ddcc successor compile4pkgs0, privacy30PASS events/13tops, logger-only race1PASS, rootbuild0, owned session64724 actualjoin exit0/endclean. All4 runtime blobs exactly mature526. No rotation lifecycle/native/frontend/main SIGTERM or broad finance claim.",
+      "boundary": "Reuse existing privacy/sanitizer, preserve unknown payloads and exact numeric lexemes, public artifact URLs, privileged diagnostics, error identity and download request bytes. Logger fixture joins all writers and deliberately stays below rotation."
+    },
+    {
+      "id": "S3j",
+      "name": "Guard finite upstream New API channel balance conversion",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "upstream_paths": [
+        "controller/channel-billing.go"
+      ],
+      "custom_paths": [
+        "controller/channel_billing_finite_test.go"
+      ],
+      "acceptance": "Exact888cd15 controller compile0; real loopback/SQLite positive and negative overflow two exactRED,9 controlsPASS, no skips/extra failures; original Go exit1 and outerexpectedclassification0 retained, session29309 actualjoin/endclean. Applied independently reviewed mature21-line finite-positive divisor and finite quotient guard only; successor GREEN pending. NaN/Infinity wire cases are decoder controls, not arithmetic branch coverage.",
+      "boundary": "Read-only upstream balance query plus channel display cache only; no user wallet/ledger/token mutations. Real loopback HTTP, owned synthetic Channel SQLite connection closed, same original source assertions."
+    },
+    {
+      "id": "UI1",
+      "name": "Thin required frontend customizations on official routes, components and refresh framework",
+      "source_reference_commit": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+      "feature_branch_base": "06e7231b2f8e0099c04066e465e94b6cd69543ef",
+      "validated_frontend_source_commit": "92c22d4b10b1bfc5bbd098f97cbdbdeaa0a91050",
+      "integrated_source_commit": "18dd5484febd4626a4850288dcbcc7f120657f10",
+      "upstream_paths": [
+        "web/bun.lock",
+        "web/package.json",
+        "web/rsbuild.config.ts",
+        "web/src/components/layout/components/header-logo.tsx",
+        "web/src/components/layout/components/nav-link-item.tsx",
+        "web/src/components/layout/components/public-navigation.tsx",
+        "web/src/components/layout/components/system-brand.tsx",
+        "web/src/components/layout/components/top-nav.tsx",
+        "web/src/components/layout/types.ts",
+        "web/src/features/auth/lib/password-encryption.ts",
+        "web/src/features/channels/api.ts",
+        "web/src/features/channels/components/__tests__/channel-configuration.test.tsx",
+        "web/src/features/channels/components/__tests__/priority-order.test.tsx",
+        "web/src/features/channels/components/drawers/channel-mutate-drawer.tsx",
+        "web/src/features/channels/constants.ts",
+        "web/src/features/channels/lib/channel-form.ts",
+        "web/src/features/channels/types.ts",
+        "web/src/features/dashboard/components/models/performance-overview.tsx",
+        "web/src/features/dashboard/components/overview/performance-health-panel.tsx",
+        "web/src/features/keys/api.ts",
+        "web/src/features/keys/components/__tests__/api-keys-mutate-drawer.test.tsx",
+        "web/src/features/keys/components/api-keys-dialogs.tsx",
+        "web/src/features/keys/components/api-keys-mutate-drawer.tsx",
+        "web/src/features/keys/components/dialogs/__tests__/cc-switch-dialog.test.tsx",
+        "web/src/features/keys/components/dialogs/cc-switch-dialog.tsx",
+        "web/src/features/keys/types.ts",
+        "web/src/features/models/__tests__/metadata-sync.test.tsx",
+        "web/src/features/models/__tests__/vendor-management.test.tsx",
+        "web/src/features/models/components/dialogs/sync-wizard-dialog.tsx",
+        "web/src/features/models/types.ts",
+        "web/src/features/pricing/__tests__/sorting.test.ts",
+        "web/src/features/pricing/api.ts",
+        "web/src/features/pricing/components/model-details-api.tsx",
+        "web/src/features/pricing/constants.ts",
+        "web/src/features/pricing/hooks/use-filters.ts",
+        "web/src/features/pricing/hooks/use-pricing-data.ts",
+        "web/src/features/pricing/lib/filters.ts",
+        "web/src/features/profile/__tests__/settings.test.tsx",
+        "web/src/features/profile/components/sidebar-modules-card.tsx",
+        "web/src/features/profile/components/tabs/notification-tab.tsx",
+        "web/src/features/security/components/__tests__/access-token-create-dialog.test.tsx",
+        "web/src/features/security/components/__tests__/access-tokens-card.test.tsx",
+        "web/src/features/system-info/__tests__/system-tasks-panel.test.tsx",
+        "web/src/features/system-settings/api.ts",
+        "web/src/features/system-settings/billing/index.tsx",
+        "web/src/features/system-settings/billing/section-registry.tsx",
+        "web/src/features/system-settings/content/section-registry.tsx",
+        "web/src/features/system-settings/general/__tests__/pre-consume-settings.test.tsx",
+        "web/src/features/system-settings/general/quota-settings-section.tsx",
+        "web/src/features/system-settings/integrations/payment-method-dialog.tsx",
+        "web/src/features/system-settings/integrations/payment-methods-visual-editor.tsx",
+        "web/src/features/system-settings/integrations/payment-settings-section.tsx",
+        "web/src/features/system-settings/integrations/waffo-pancake-api.ts",
+        "web/src/features/system-settings/integrations/waffo-pancake-settings-section.tsx",
+        "web/src/features/system-settings/integrations/waffo-settings-section.tsx",
+        "web/src/features/system-settings/maintenance/config.ts",
+        "web/src/features/system-settings/maintenance/sidebar-modules-section.tsx",
+        "web/src/features/system-settings/models/__tests__/group-settings.test.tsx",
+        "web/src/features/system-settings/models/global-settings-card.tsx",
+        "web/src/features/system-settings/models/group-ratio-form.tsx",
+        "web/src/features/system-settings/models/group-ratio-visual-editor.tsx",
+        "web/src/features/system-settings/models/index.tsx",
+        "web/src/features/system-settings/models/ratio-settings-card.tsx",
+        "web/src/features/system-settings/models/section-registry.tsx",
+        "web/src/features/system-settings/types.ts",
+        "web/src/features/users/components/user-quota-dialog.tsx",
+        "web/src/features/users/types.ts",
+        "web/src/features/wallet/__tests__/copy.test.tsx",
+        "web/src/features/wallet/api.ts",
+        "web/src/features/wallet/components/affiliate-rewards-card.tsx",
+        "web/src/features/wallet/components/creem-products-section.tsx",
+        "web/src/features/wallet/components/dialogs/billing-history-dialog.tsx",
+        "web/src/features/wallet/components/dialogs/creem-confirm-dialog.tsx",
+        "web/src/features/wallet/components/dialogs/payment-confirm-dialog.tsx",
+        "web/src/features/wallet/components/dialogs/transfer-dialog.tsx",
+        "web/src/features/wallet/components/recharge-form-card.tsx",
+        "web/src/features/wallet/components/subscription-plans-card.tsx",
+        "web/src/features/wallet/components/wallet-stats-card.tsx",
+        "web/src/features/wallet/constants.ts",
+        "web/src/features/wallet/hooks/index.ts",
+        "web/src/features/wallet/hooks/use-affiliate.ts",
+        "web/src/features/wallet/hooks/use-billing-history.ts",
+        "web/src/features/wallet/hooks/use-creem-payment.ts",
+        "web/src/features/wallet/hooks/use-payment.test.ts",
+        "web/src/features/wallet/hooks/use-payment.ts",
+        "web/src/features/wallet/hooks/use-redemption.ts",
+        "web/src/features/wallet/hooks/use-topup-info.ts",
+        "web/src/features/wallet/hooks/use-waffo-pancake-payment.ts",
+        "web/src/features/wallet/hooks/use-waffo-payment.ts",
+        "web/src/features/wallet/index.tsx",
+        "web/src/features/wallet/lib/__tests__/payment-icons.test.tsx",
+        "web/src/features/wallet/lib/affiliate.ts",
+        "web/src/features/wallet/lib/billing.ts",
+        "web/src/features/wallet/lib/format.ts",
+        "web/src/features/wallet/lib/index.ts",
+        "web/src/features/wallet/lib/payment.test.ts",
+        "web/src/features/wallet/lib/payment.ts",
+        "web/src/features/wallet/lib/ui.tsx",
+        "web/src/features/wallet/types.ts",
+        "web/src/hooks/use-sidebar-config.ts",
+        "web/src/hooks/use-sidebar-data.ts",
+        "web/src/hooks/use-system-config.ts",
+        "web/src/hooks/use-top-nav-links.ts",
+        "web/src/i18n/config.ts",
+        "web/src/lib/auth-session.ts",
+        "web/src/lib/currency.ts",
+        "web/src/lib/dom-utils.ts",
+        "web/src/lib/http-client.ts",
+        "web/src/lib/nav-modules.ts",
+        "web/src/lib/query-client.ts",
+        "web/src/lib/server-error-message.ts",
+        "web/src/lib/session-hint.ts",
+        "web/src/main.tsx",
+        "web/src/routeTree.gen.ts",
+        "web/src/routes/_authenticated/wallet/index.tsx"
+      ],
+      "custom_paths": [
+        "web/public/brand/wanchuan-icon-v4.png",
+        "web/public/brand/wanchuan-mark-v4.png",
+        "web/src/extensions/__tests__/bridge.test.ts",
+        "web/src/extensions/__tests__/help-composition.test.tsx",
+        "web/src/extensions/__tests__/payment-settings-composition.test.tsx",
+        "web/src/extensions/__tests__/wallet-composition.test.tsx",
+        "web/src/extensions/bootstrap.ts",
+        "web/src/extensions/brand.ts",
+        "web/src/extensions/chuanapi/brand.ts",
+        "web/src/extensions/chuanapi/flags.ts",
+        "web/src/extensions/chuanapi/help/components/ai-docs-callout.tsx",
+        "web/src/extensions/chuanapi/help/components/api-code-block.tsx",
+        "web/src/extensions/chuanapi/help/components/api-endpoint-tree.tsx",
+        "web/src/extensions/chuanapi/help/components/docs-shell.tsx",
+        "web/src/extensions/chuanapi/help/components/docs-sidebar.tsx",
+        "web/src/extensions/chuanapi/help/components/faq-section.tsx",
+        "web/src/extensions/chuanapi/help/components/guide-article.tsx",
+        "web/src/extensions/chuanapi/help/components/prev-next-nav.tsx",
+        "web/src/extensions/chuanapi/help/content/endpoints.ts",
+        "web/src/extensions/chuanapi/help/content/faq.ts",
+        "web/src/extensions/chuanapi/help/content/guides/anthropic-sdk.ts",
+        "web/src/extensions/chuanapi/help/content/guides/authentication.ts",
+        "web/src/extensions/chuanapi/help/content/guides/billing.ts",
+        "web/src/extensions/chuanapi/help/content/guides/cc-switch.ts",
+        "web/src/extensions/chuanapi/help/content/guides/cherry-studio.ts",
+        "web/src/extensions/chuanapi/help/content/guides/claude-code.ts",
+        "web/src/extensions/chuanapi/help/content/guides/cline-roo.ts",
+        "web/src/extensions/chuanapi/help/content/guides/codex-cli.ts",
+        "web/src/extensions/chuanapi/help/content/guides/compatibility.ts",
+        "web/src/extensions/chuanapi/help/content/guides/console-tour.ts",
+        "web/src/extensions/chuanapi/help/content/guides/function-calling.ts",
+        "web/src/extensions/chuanapi/help/content/guides/immersive-translate.ts",
+        "web/src/extensions/chuanapi/help/content/guides/index.ts",
+        "web/src/extensions/chuanapi/help/content/guides/openai-sdk.ts",
+        "web/src/extensions/chuanapi/help/content/guides/playground.ts",
+        "web/src/extensions/chuanapi/help/content/guides/quick-start.ts",
+        "web/src/extensions/chuanapi/help/content/guides/streaming.ts",
+        "web/src/extensions/chuanapi/help/content/guides/troubleshooting.ts",
+        "web/src/extensions/chuanapi/help/content/guides/vision.ts",
+        "web/src/extensions/chuanapi/help/content/nav.ts",
+        "web/src/extensions/chuanapi/help/content/types.ts",
+        "web/src/extensions/chuanapi/help/index.tsx",
+        "web/src/extensions/chuanapi/help/lib/api-samples.ts",
+        "web/src/extensions/chuanapi/help/lib/docs-utils.ts",
+        "web/src/extensions/chuanapi/help/pages/api-reference-page.tsx",
+        "web/src/extensions/chuanapi/help/pages/docs-index.tsx",
+        "web/src/extensions/chuanapi/help/pages/guide-page.tsx",
+        "web/src/extensions/chuanapi/i18n/index.ts",
+        "web/src/extensions/chuanapi/i18n/locales/en.json",
+        "web/src/extensions/chuanapi/i18n/locales/fr.json",
+        "web/src/extensions/chuanapi/i18n/locales/ja.json",
+        "web/src/extensions/chuanapi/i18n/locales/ru.json",
+        "web/src/extensions/chuanapi/i18n/locales/vi.json",
+        "web/src/extensions/chuanapi/i18n/locales/zh-TW.json",
+        "web/src/extensions/chuanapi/i18n/locales/zh.json",
+        "web/src/extensions/chuanapi/index.ts",
+        "web/src/extensions/chuanapi/lazy-pages.tsx",
+        "web/src/extensions/chuanapi/monitor/__tests__/composition.test.tsx",
+        "web/src/extensions/chuanapi/monitor/__tests__/dashboard.test.tsx",
+        "web/src/extensions/chuanapi/monitor/__tests__/settings.test.tsx",
+        "web/src/extensions/chuanapi/monitor/api.ts",
+        "web/src/extensions/chuanapi/monitor/artwork.tsx",
+        "web/src/extensions/chuanapi/monitor/dashboard.tsx",
+        "web/src/extensions/chuanapi/monitor/index.tsx",
+        "web/src/extensions/chuanapi/monitor/result-dialog.tsx",
+        "web/src/extensions/chuanapi/monitor/result-state.ts",
+        "web/src/extensions/chuanapi/monitor/settings-api.ts",
+        "web/src/extensions/chuanapi/monitor/settings.tsx",
+        "web/src/extensions/chuanapi/monitor/target-card.tsx",
+        "web/src/extensions/chuanapi/monitor/types.ts",
+        "web/src/extensions/chuanapi/navigation.test.ts",
+        "web/src/extensions/chuanapi/navigation.ts",
+        "web/src/extensions/chuanapi/payment/index.tsx",
+        "web/src/extensions/chuanapi/payment/payment-method-dialog.tsx",
+        "web/src/extensions/chuanapi/payment/payment-methods-visual-editor.tsx",
+        "web/src/extensions/chuanapi/payment/payment-settings-section.tsx",
+        "web/src/extensions/chuanapi/payment/waffo-pancake-api.ts",
+        "web/src/extensions/chuanapi/payment/waffo-pancake-settings-section.tsx",
+        "web/src/extensions/chuanapi/payment/waffo-settings-section.tsx",
+        "web/src/extensions/chuanapi/wallet/__tests__/billing-history-copy.test.tsx",
+        "web/src/extensions/chuanapi/wallet/__tests__/funding-flow.test.tsx",
+        "web/src/extensions/chuanapi/wallet/__tests__/payment-quote-identity.test.tsx",
+        "web/src/extensions/chuanapi/wallet/__tests__/recharge-copy.test.tsx",
+        "web/src/extensions/chuanapi/wallet/__tests__/referral-copy.test.ts",
+        "web/src/extensions/chuanapi/wallet/api.ts",
+        "web/src/extensions/chuanapi/wallet/components/__tests__/affiliate-rewards-card-i18n.test.tsx",
+        "web/src/extensions/chuanapi/wallet/components/__tests__/affiliate-rewards-card.test.tsx",
+        "web/src/extensions/chuanapi/wallet/components/__tests__/ledger-table-error.test.tsx",
+        "web/src/extensions/chuanapi/wallet/components/__tests__/wallet-stats-card.test.tsx",
+        "web/src/extensions/chuanapi/wallet/components/affiliate-rewards-card.tsx",
+        "web/src/extensions/chuanapi/wallet/components/creem-products-section.tsx",
+        "web/src/extensions/chuanapi/wallet/components/dialogs/billing-history-dialog.tsx",
+        "web/src/extensions/chuanapi/wallet/components/dialogs/creem-confirm-dialog.tsx",
+        "web/src/extensions/chuanapi/wallet/components/dialogs/payment-confirm-dialog.tsx",
+        "web/src/extensions/chuanapi/wallet/components/dialogs/transfer-dialog.tsx",
+        "web/src/extensions/chuanapi/wallet/components/ledger-table.tsx",
+        "web/src/extensions/chuanapi/wallet/components/recharge-form-card.tsx",
+        "web/src/extensions/chuanapi/wallet/components/referral-commission-records.tsx",
+        "web/src/extensions/chuanapi/wallet/components/subscription-plans-card.tsx",
+        "web/src/extensions/chuanapi/wallet/components/wallet-stats-card.tsx",
+        "web/src/extensions/chuanapi/wallet/constants.ts",
+        "web/src/extensions/chuanapi/wallet/hooks/__tests__/use-affiliate.test.ts",
+        "web/src/extensions/chuanapi/wallet/hooks/index.ts",
+        "web/src/extensions/chuanapi/wallet/hooks/use-affiliate.ts",
+        "web/src/extensions/chuanapi/wallet/hooks/use-billing-history.ts",
+        "web/src/extensions/chuanapi/wallet/hooks/use-creem-payment.ts",
+        "web/src/extensions/chuanapi/wallet/hooks/use-payment.test.ts",
+        "web/src/extensions/chuanapi/wallet/hooks/use-payment.ts",
+        "web/src/extensions/chuanapi/wallet/hooks/use-redemption.ts",
+        "web/src/extensions/chuanapi/wallet/hooks/use-topup-info.ts",
+        "web/src/extensions/chuanapi/wallet/hooks/use-waffo-pancake-payment.ts",
+        "web/src/extensions/chuanapi/wallet/hooks/use-waffo-payment.ts",
+        "web/src/extensions/chuanapi/wallet/hooks/use-wallet.ts",
+        "web/src/extensions/chuanapi/wallet/index.tsx",
+        "web/src/extensions/chuanapi/wallet/lib/__tests__/affiliate.test.ts",
+        "web/src/extensions/chuanapi/wallet/lib/__tests__/ledger.test.ts",
+        "web/src/extensions/chuanapi/wallet/lib/__tests__/payment-icons.test.tsx",
+        "web/src/extensions/chuanapi/wallet/lib/__tests__/wallet-contract.test.ts",
+        "web/src/extensions/chuanapi/wallet/lib/affiliate.ts",
+        "web/src/extensions/chuanapi/wallet/lib/billing.ts",
+        "web/src/extensions/chuanapi/wallet/lib/format.ts",
+        "web/src/extensions/chuanapi/wallet/lib/index.ts",
+        "web/src/extensions/chuanapi/wallet/lib/ledger.ts",
+        "web/src/extensions/chuanapi/wallet/lib/payment.test.ts",
+        "web/src/extensions/chuanapi/wallet/lib/payment.ts",
+        "web/src/extensions/chuanapi/wallet/lib/ui.tsx",
+        "web/src/extensions/chuanapi/wallet/types.ts",
+        "web/src/extensions/flags.ts",
+        "web/src/extensions/help.ts",
+        "web/src/extensions/i18n.ts",
+        "web/src/extensions/index.ts",
+        "web/src/extensions/monitor.ts",
+        "web/src/extensions/navigation.test.ts",
+        "web/src/extensions/navigation.ts",
+        "web/src/extensions/payment-settings.ts",
+        "web/src/extensions/wallet.ts",
+        "web/src/features/auth/lib/__tests__/password-encryption.test.ts",
+        "web/src/features/channels/lib/__tests__/public-model-owner.test.ts",
+        "web/src/features/dashboard/components/models/__tests__/performance-unavailable.test.tsx",
+        "web/src/features/dashboard/components/ui/performance-unavailable.tsx",
+        "web/src/features/dashboard/hooks/use-performance-summary.ts",
+        "web/src/features/image-generation/__tests__/api.test.ts",
+        "web/src/features/image-generation/__tests__/artwork-workflow.test.tsx",
+        "web/src/features/image-generation/__tests__/blob-store-account-boundary.test.ts",
+        "web/src/features/image-generation/__tests__/bootstrap.test.ts",
+        "web/src/features/image-generation/__tests__/download.test.ts",
+        "web/src/features/image-generation/__tests__/generation-cancel.test.tsx",
+        "web/src/features/image-generation/__tests__/generation-interaction.test.tsx",
+        "web/src/features/image-generation/__tests__/history-account-boundary.test.tsx",
+        "web/src/features/image-generation/__tests__/history-fixture.ts",
+        "web/src/features/image-generation/__tests__/history-panel.test.tsx",
+        "web/src/features/image-generation/__tests__/history-race.test.tsx",
+        "web/src/features/image-generation/__tests__/history-storage.test.ts",
+        "web/src/features/image-generation/__tests__/history-ttl.test.tsx",
+        "web/src/features/image-generation/__tests__/history-utils.test.ts",
+        "web/src/features/image-generation/__tests__/image-url-safety.test.ts",
+        "web/src/features/image-generation/__tests__/interceptor-auth.test.ts",
+        "web/src/features/image-generation/__tests__/model-capabilities.test.ts",
+        "web/src/features/image-generation/__tests__/model-discovery.test.tsx",
+        "web/src/features/image-generation/__tests__/model-filter.test.ts",
+        "web/src/features/image-generation/__tests__/prompt-locale.test.tsx",
+        "web/src/features/image-generation/__tests__/query-owner-boundary.test.tsx",
+        "web/src/features/image-generation/__tests__/reference-uploader.test.tsx",
+        "web/src/features/image-generation/__tests__/reference-validation.test.ts",
+        "web/src/features/image-generation/__tests__/request-builders.test.ts",
+        "web/src/features/image-generation/__tests__/resolution-presets.test.tsx",
+        "web/src/features/image-generation/__tests__/response-format.test.ts",
+        "web/src/features/image-generation/__tests__/route-guard.test.ts",
+        "web/src/features/image-generation/__tests__/sidebar-image.test.ts",
+        "web/src/features/image-generation/__tests__/use-image-data.test.tsx",
+        "web/src/features/image-generation/__tests__/use-image-history.test.tsx",
+        "web/src/features/image-generation/__tests__/use-reference-images.test.tsx",
+        "web/src/features/image-generation/api.ts",
+        "web/src/features/image-generation/components/GenerationForm.tsx",
+        "web/src/features/image-generation/components/HistoryPanel.tsx",
+        "web/src/features/image-generation/components/ImageGenerationPage.tsx",
+        "web/src/features/image-generation/components/ImageResolutionPresets.tsx",
+        "web/src/features/image-generation/components/ImageResolutionPreview.tsx",
+        "web/src/features/image-generation/components/ReferenceUploader.tsx",
+        "web/src/features/image-generation/constants.ts",
+        "web/src/features/image-generation/hooks/use-image-data.ts",
+        "web/src/features/image-generation/hooks/use-image-generation.ts",
+        "web/src/features/image-generation/hooks/use-image-history.ts",
+        "web/src/features/image-generation/hooks/use-reference-images.ts",
+        "web/src/features/image-generation/index.tsx",
+        "web/src/features/image-generation/lib/blob-store.ts",
+        "web/src/features/image-generation/lib/history-utils.ts",
+        "web/src/features/image-generation/lib/managed-object-urls.ts",
+        "web/src/features/image-generation/lib/model-capabilities.ts",
+        "web/src/features/image-generation/lib/model-filter.ts",
+        "web/src/features/image-generation/lib/reference-data-url.ts",
+        "web/src/features/image-generation/lib/reference-validation.ts",
+        "web/src/features/image-generation/lib/request-builders.ts",
+        "web/src/features/image-generation/storage/history-owner.ts",
+        "web/src/features/image-generation/storage/history-storage.ts",
+        "web/src/features/image-generation/types.ts",
+        "web/src/features/keys/components/__tests__/api-key-model-scope.test.tsx",
+        "web/src/features/keys/components/dialogs/__tests__/cc-switch-routing-scope.test.tsx",
+        "web/src/features/keys/components/dialogs/cc-switch-utils.ts",
+        "web/src/features/performance-metrics/lib/__tests__/summary-response.test.ts",
+        "web/src/features/performance-metrics/lib/summary-response.ts",
+        "web/src/features/pricing/hooks/__tests__/pricing-endpoint.test.tsx",
+        "web/src/features/support/__tests__/api.test.ts",
+        "web/src/features/support/__tests__/mutation-errors.test.tsx",
+        "web/src/features/support/__tests__/support-center-detail-retention.test.tsx",
+        "web/src/features/support/__tests__/ticket-detail.test.tsx",
+        "web/src/features/support/api.ts",
+        "web/src/features/support/components/create-ticket-dialog.tsx",
+        "web/src/features/support/components/ticket-detail.tsx",
+        "web/src/features/support/index.tsx",
+        "web/src/features/support/lib/schema.ts",
+        "web/src/features/support/lib/status.ts",
+        "web/src/features/support/types.ts",
+        "web/src/features/system-settings/models/__tests__/group-rename-prototype.test.ts",
+        "web/src/features/system-settings/models/__tests__/group-rename.test.tsx",
+        "web/src/features/system-settings/models/__tests__/public-model-owner.test.tsx",
+        "web/src/features/system-settings/models/__tests__/ratio-settings-stale-save.test.tsx",
+        "web/src/features/system-settings/models/group-rename-panel.tsx",
+        "web/src/features/system-settings/models/group-rename.ts",
+        "web/src/features/system-settings/utils/public-policy-fields.ts",
+        "web/src/features/users/__tests__/admin-quota-intent.test.tsx",
+        "web/src/hooks/__tests__/use-top-nav-links.test.tsx",
+        "web/src/lib/__tests__/api-url.test.ts",
+        "web/src/lib/__tests__/http-session-boundary.test.ts",
+        "web/src/lib/__tests__/query-error-navigation.test.ts",
+        "web/src/lib/__tests__/session-hint.test.ts",
+        "web/src/lib/api-url.ts",
+        "web/src/lib/creem.ts",
+        "web/src/lib/public-site.ts",
+        "web/src/routes/_authenticated/image/index.tsx",
+        "web/src/routes/_authenticated/support/index.tsx",
+        "web/src/routes/help/api/index.tsx",
+        "web/src/routes/help/guides/$slug.tsx",
+        "web/src/routes/help/index.tsx",
+        "web/src/routes/model-monitor/index.tsx"
+      ],
+      "contracts": [
+        "Brand/help/support/public monitor and hidden-group UX; official shared UI and attribution retained",
+        "Image workbench, model/provider capabilities, selected-token scope and CC Switch",
+        "Three-wallet/referral/payment UI as one extension, retaining official billing history and subscription UI; backend financial integration pending",
+        "Owner/channel model metadata and model-sync nine existing fields",
+        "Public versus account pricing projection, identity-separated query caches, session epochs and late-response boundaries",
+        "Group rename cross-configuration references and null-prototype round-trip dictionaries; no new name restrictions",
+        "Existing sparse/zero notification threshold validation and canonical administrator adjustment intent/in-flight/numeric safeguards",
+        "Mature password encryption and minimal locked dependency security seams; no official global framework replacement"
+      ],
+      "boundary": "Only web paths were integrated. Financial runtime, final database migrations, full frontend/backend suites and real browser validation remain incomplete. Secure cross-origin cookie flow and native number-input badInput behavior have not been established by these tests.",
+      "dispositions": [
+        "Keep official Playground name, route and subscription/session semantics; source-only aliases not enabled",
+        "Keep official pricing visual layout and equivalent model details; only required data/filter compatibility seams",
+        "Keep official shared UI, official locales plus feature-only overlays and official refresh flow; no wholesale framework replay"
+      ],
+      "source_provenance": {
+        "path": "deliverables/frontend-clean-port/path-provenance.json",
+        "sha256": "fa6aa2bf7dfffc8774696909df53a8cbf83e6abbb22bfe5c090eca6efd7e96d0",
+        "entries": 350
+      },
+      "commit_provenance": {
+        "path": "deliverables/frontend-clean-port/feature-commits.json",
+        "sha256": "eb420701beb86e778ef02e64d7574a28e9c56daae5e1d7124af9c6b6e912891e",
+        "commits": 33,
+        "integration_evidence": "evidence/rc46-modular-rebuild/frontend-integration-92c22d4/integration.json",
+        "integration_evidence_sha256": "e5eec506df088b021556b8b864ef81c557b4c20e6f4e4d3f54f22c37324aa1cb"
+      },
+      "acceptance": {
+        "pin": "92c22d4b10b1bfc5bbd098f97cbdbdeaa0a91050",
+        "tree": "d64ea9a93f197eea444861f2801746e2e6dd872c",
+        "actual_session": 67627,
+        "actual_join": true,
+        "outer_exit": 0,
+        "typecheck_exit": 0,
+        "build_exit": 0,
+        "focused_files": 84,
+        "focused_assertions_passed": 613,
+        "focused_assertions_skipped": 0,
+        "separate_control_group_pass_counts": [
+          46,
+          82,
+          31
+        ],
+        "count_note": "Control groups can overlap focused selection; not summed as unique tests. 613 assertions have 611 distinct names because two original parameterized tests each use one repeated display name.",
+        "raw_lint_exits": [
+          1,
+          1
+        ],
+        "approved_exact_upstream_diagnostic_difference_exit": 0,
+        "lint_boundary": "Only ten exact upstream errors and mapped pre-existing warnings are allowed; no raw lint zero claim, blanket ignores or new diagnostic allowances.",
+        "evidence": "deliverables/frontend-final-green-92c22d4",
+        "artifacts_files": 1874,
+        "artifacts_manifest_sha256": "a48ef72be93f3342ecda30e31df462869e072e058c0a8f567052f3d2771035a4",
+        "integration_validation": "Pending on exact integrated successor; standalone results do not transfer to the composed backend."
+      }
+    },
+    {
+      "id": "UI2",
+      "name": "Keep the production build revision observable through the static Rsbuild define boundary",
+      "upstream_paths": [
+        "web/src/lib/build-metadata.ts"
+      ],
+      "custom_paths": [
+        "web/src/lib/__tests__/build-metadata.test.ts"
+      ],
+      "acceptance": {
+        "baseline": "283202532b8767e2f7d3bb7a37e042deb3143de6",
+        "baseline_runtime_equal_to_official": true,
+        "expected_behavior_red": 1,
+        "empty_and_absent_version_controls_passed": 2,
+        "red_evidence": "evidence/rc46-modular-rebuild/build-metadata-red2-2832025",
+        "red_actual_session": 52592,
+        "red_actual_join": true,
+        "red_original_exit": 1,
+        "green_status": "Focused production-module regression 3/3, touched-file lint, typecheck and touched-file format all exit0 on exact hashes; final same-pin whole-SPA build and Go embed build remain pending.",
+        "green_evidence": "evidence/rc46-modular-rebuild/build-metadata-green2",
+        "green_actual_session": 87727,
+        "green_actual_join": true,
+        "green_outer_exit": 0,
+        "green_runtime_sha256": "fa9126fdda5973148449f691690b31fcffbb27448a2f62a77808b3d1dae2c874",
+        "green_test_sha256": "fef36800e2decbc65eda068eb83b97779e700376905a1958c59911c19d990cfb"
+      },
+      "boundary": "Keep existing revision format, channel tag, empty/missing fallback and metadata destinations unchanged. Test compiles the real module with the real production source.define using Rsbuild, then executes the emitted getter; not whole-SPA or browser-runtime acceptance."
+    }
+  ],
+  "policy_history": [
+    {
+      "recorded_at": "2026-10-22T17:57:00Z",
+      "status": "HISTORICAL_ONLY_NOT_CURRENT_AUTHORITY",
+      "financial_design": {
+        "status": "official_refund_policy_active_old_A_architecture_superseded",
+        "decision_at": null,
+        "decision_received_from_root_at": "2026-10-22T04:09:50Z",
+        "decision_source": {
+          "user_message_id": "Sentinel_88827563351c8191a726083e88cf00f8",
+          "instruction": "按回官方，不要再乱改",
+          "timestamp_note": "Root relay observation time only; exact user-message timestamp was not supplied"
+        },
+        "approved_policy": "Return to the official refund implementation. Do not port custom durable refund queues, recovery state machines, or new refund admission.",
+        "preserve": [
+          "paid_bonus_reward_entitlements",
+          "production_data_contracts",
+          "original_partial_preconsume_policy",
+          "no_negative_credit_or_new_debt"
+        ],
+        "constraint": "Preserve necessary existing wallet shares/data and brand customization; no data deletion, history rewrite, strict prepaid or new negative credit/debt. New Go/native execution remains on coordinator HOLD. Historical scoped tests do not authorize refund integration.",
+        "schema_boundary": "The existing wallet fields and released093 ledger schema currently present are necessary data-compatibility work, not a terminal/refund queue implementation. This policy does not activate wallet funding, legacy backfill or refund recovery; preserve existing data and require separate review/scheduling for subsequent work.",
+        "unwired_contract_boundary": "All pkg/moneyport contracts remain unimported and unregistered. In particular HostBillingFinalizationSource is an old-A declaration retained as historical unwired code, not permission to implement or activate host refund recovery.",
+        "superseded_policy_history": [
+          {
+            "superseded_by_user_message_id": "Sentinel_88827563351c8191a726083e88cf00f8",
+            "status": "HISTORICAL_ONLY_NOT_CURRENT_AUTHORITY",
+            "previous_financial_design": {
+              "status": "design_boundaries_reviewed_f1a_leaf_validated_f1b1_correction_pending_review_and_green",
+              "decision_at": "2026-10-22T01:08:14Z",
+              "approved_policy": "Official refund business rules with same-transaction, idempotency and failure-recovery safeguards (option A)",
+              "preserve": [
+                "paid_bonus_reward_entitlements",
+                "production_data_contracts",
+                "original_partial_preconsume_policy",
+                "no_negative_credit_or_new_debt"
+              ],
+              "constraint": "Port only separately source-reviewed and accepted feature slices; no strict prepaid or new negative credit/debt; old-branch acceptance never transfers",
+              "schema_boundary": "Existing production/PR19 wallet, terminal and period data contracts may be ported with explicit migration/rollback gates and review. Do not invent a NEW cache-only durable outbox/schema extension or other additional financial structures."
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "validation_after_ecea6964": {
+    "actual_pin": "ecea6964eb397e74c59351ee160523e1dc7bec8f",
+    "cors_session_llms_guard_pass": 31,
+    "cache_metadata_ack_pass": 20,
+    "root_build_exit": 0,
+    "frontend_assets": "compile-only stub",
+    "evidence": "evidence/rc46-modular-rebuild/core-ecea696",
+    "excludes": [
+      "group stage",
+      "native databases",
+      "race",
+      "frontend",
+      "browser"
+    ]
+  },
+  "later_contributors": {
+    "middleware/access_token_routes.go": [
+      "S4h: Exact mature descriptor subset for active support/monitor/token-model routes only; no future unregistered financial routes.",
+      "S4h follow-up: exact source GET /api/token/:id/models api_key:read alias after real b9 composed-catalog failure; no assertion relaxation."
+    ],
+    "controller/relay.go": [
+      "S3h: source ordinary protocol/scoped-keyword hook only; no financial algorithm rewrite."
+    ],
+    "relay/request_billing.go": [
+      "S3h: source ordinary protocol/scoped-keyword hook only; no financial algorithm rewrite."
+    ],
+    "relay/responses_handler.go": [
+      "S3h: source ordinary protocol/scoped-keyword hook only; no financial algorithm rewrite."
+    ],
+    "main.go": [
+      "S7b: small composition/owned drain hooks while keeping official background startup flow and attribution."
+    ],
+    "model/group_namespace.go": [
+      "S7b: remove unused fire-and-forget StartGroupConfigSubscriber; main owns the blocking Run variant directly."
+    ],
+    "relay/channel/gemini/relay-gemini.go": [
+      "S3h follow-up to b321 real delivery RED: preserve observed usage but stop output/retry on prelude/data/final write, short-write or flush failure; retain mature public alias and error privacy projection. Existing httpx no-redirect helper remains."
+    ]
+  },
+  "validation_after_b9b87ae": {
+    "pin": "b9b87ae5ca7fff77038e237a65d1f38b1981565d",
+    "actual_terminal_join": true,
+    "session_id": 96749,
+    "outer_exit": 1,
+    "ended_at": "2026-10-22T20:46:40Z",
+    "groups": {
+      "compile": {
+        "exit": 0,
+        "test_passes": 0,
+        "failed_tests": []
+      },
+      "build": {
+        "exit": 0,
+        "test_passes": 0,
+        "failed_tests": []
+      },
+      "route-setting": {
+        "exit": 1,
+        "test_passes": 0,
+        "failed_tests": [
+          "TestAccessTokenRouteRulesCoverEveryDashboardRoute"
+        ]
+      }
+    },
+    "not_run": [
+      "setting assertions",
+      "scoped-policy",
+      "providers"
+    ],
+    "classification": "real route-declaration assertion; compile/rootbuild successful; not infrastructure failure"
+  },
+  "validation_after_b3212df": {
+    "pin": "b3212df6d9243cce98d9b6cebb90f824c2fe6136",
+    "actual_terminal_join": true,
+    "session_id": 56193,
+    "outer_exit": 1,
+    "ended_at": "2026-10-22T21:01:59Z",
+    "groups": {
+      "compile": {
+        "exit": 0,
+        "test_passes": 0,
+        "failed_tests": [],
+        "passed_packages": [
+          "github.com/QuantumNous/new-api/router",
+          "github.com/QuantumNous/new-api/setting",
+          "github.com/QuantumNous/new-api/service",
+          "github.com/QuantumNous/new-api/relay",
+          "github.com/QuantumNous/new-api/relay/channel/openai",
+          "github.com/QuantumNous/new-api/relay/channel/ali",
+          "github.com/QuantumNous/new-api/relay/channel/deepseek",
+          "github.com/QuantumNous/new-api/relay/channel/gemini",
+          "github.com/QuantumNous/new-api/relay/channel/xai",
+          "github.com/QuantumNous/new-api/relay/channel/advancedcustom"
+        ]
+      },
+      "build": {
+        "exit": 0,
+        "test_passes": 0,
+        "failed_tests": [],
+        "passed_packages": []
+      },
+      "route-setting": {
+        "exit": 0,
+        "test_passes": 24,
+        "failed_tests": [],
+        "passed_packages": [
+          "github.com/QuantumNous/new-api/router",
+          "github.com/QuantumNous/new-api/setting"
+        ]
+      },
+      "scoped-policy": {
+        "exit": 0,
+        "test_passes": 27,
+        "failed_tests": [],
+        "passed_packages": [
+          "github.com/QuantumNous/new-api/service",
+          "github.com/QuantumNous/new-api/relay"
+        ]
+      },
+      "providers": {
+        "exit": 1,
+        "test_passes": 174,
+        "failed_tests": [
+          "TestGeminiStreamDeliveryFailurePreservesNativeUsageAndStops",
+          "TestGeminiStreamDeliveryFailurePreservesNativeUsageAndStops/Chat_data/write"
+        ],
+        "passed_packages": [
+          "github.com/QuantumNous/new-api/relay/channel/openai",
+          "github.com/QuantumNous/new-api/relay/channel/ali",
+          "github.com/QuantumNous/new-api/relay/channel/deepseek"
+        ]
+      }
+    }
+  },
+  "stage_identity_guard": "The existing source verifier rejects duplicate stage IDs. Its actual worktree RED rejected only duplicate S7a before the host stage was renamed S7b; this is a static provenance check, not runtime testing.",
+  "validation_after_0bf7bf5": {
+    "pin": "0bf7bf564bb7c2e52131042876be4cae03c7a663",
+    "evidence": "evidence/rc46-modular-rebuild/core-0bf7bf5",
+    "actual_exit": 0,
+    "compile_packages": 6,
+    "root_build_exit": 0,
+    "host_imagegen_lifecycle_pass_events": 40,
+    "host_imagegen_lifecycle_top_level": 26,
+    "provider_pass_events": 114,
+    "provider_top_level": 60,
+    "boundary": "No native/race/frontend/main-process SIGTERM or financial runtime validation."
+  },
+  "validation_after_a1fbbb2": {
+    "pin": "a1fbbb2f9ee04b73c589ae67a31db42a39a44a68",
+    "tree": "968e0d662e690a54ec71828173d231f40e6a8dc0",
+    "compile_exit": 0,
+    "behavior_exits": {
+      "controller": 1,
+      "model": 1,
+      "download": 1,
+      "logger_race": 1
+    },
+    "outer_classification_exit": 0,
+    "actual_join": true,
+    "evidence": "evidence/rc46-modular-rebuild/privacy-red-a1fbbb2",
+    "boundary": "Expected RED means confirmed missing contracts, not success of implementation. Original assertions unchanged in candidate. No native DB, no full race, no rotation test."
+  },
+  "validation_after_525ddcc": {
+    "pin": "525ddcc0ce13b8f56d42fb608a149c9e145b073c",
+    "tree": "e68fe9cd8d51d6cc79a6803487abcf6fca0c3d3f",
+    "evidence": "evidence/rc46-modular-rebuild/privacy-green-525ddcc",
+    "actual_session": 64724,
+    "actual_join": true,
+    "outer_exit": 0,
+    "privacy_pass_events": 30,
+    "privacy_top_level_pass": 13,
+    "logger_race_pass": 1,
+    "four_package_compile": 0,
+    "root_build": 0,
+    "scope": "Only four privacy production seams plus unchanged targeted tests; no broader validation transfer."
+  },
+  "validation_after_888cd15": {
+    "pin": "888cd15542dedd69fb748b40696a3b0d850f582a",
+    "tree": "4f828b6150d4f38413822208f13b1c8df75f8a28",
+    "evidence": "evidence/rc46-modular-rebuild/channel-finite-red-888cd15",
+    "actual_session": 29309,
+    "actual_join": true,
+    "compile_exit": 0,
+    "behavior_go_exit": 1,
+    "outer_exit": 0,
+    "expected_red_leaf_count": 2,
+    "control_pass_count": 9,
+    "scope": "Controller finite channel-display conversion test only; no wallet or ledger."
+  },
+  "validation_after_6cc369d": {
+    "pin": "6cc369dfa999cbbf56fd1b8620ec6a4d497287ad",
+    "tree": "5eca3938bb33cd9a6d43ba9affe7a28fbddb247c",
+    "actual_session": 36206,
+    "actual_join": true,
+    "compile_exit": 0,
+    "behavior_exit": 0,
+    "leaf_pass": 17,
+    "top_level_pass": 2,
+    "root_build_exit": 0,
+    "outer_exit": 0,
+    "evidence": "evidence/rc46-modular-rebuild/channel-finite-green-6cc369d",
+    "scope": "Controller finite display conversion and official smallerRemaining controls only; root build used compile-only frontend placeholder, not integrated UI or final binary acceptance."
+  }
+}

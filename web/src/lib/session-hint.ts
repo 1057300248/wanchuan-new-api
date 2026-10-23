@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+
 /**
  * Detection of the server's login-session hint cookie.
  *
@@ -94,5 +95,7 @@ export function readCookie(cookieHeader: string, name: string): string | null {
  */
 export function hasSessionHint(): boolean {
   if (typeof document === 'undefined') return true
-  return readCookie(document.cookie, SESSION_HINT_COOKIE_NAME) !== null
+  return (
+    readCookie(document.cookie, SESSION_HINT_COOKIE_NAME) !== null
+  )
 }

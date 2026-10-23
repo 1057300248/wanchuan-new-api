@@ -62,7 +62,8 @@ declare global {
 
 function readEnvRevision(): string | undefined {
   try {
-    // Rsbuild substitutes the complete property access during compilation.
+    // Rsbuild replaces this exact static expression at build time. Aliasing
+    // import.meta.env first leaves the release revision undefined in bundles.
     const raw = import.meta.env.VITE_REACT_APP_VERSION
     if (typeof raw === 'string' && raw.length > 0) return raw
   } catch {

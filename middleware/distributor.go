@@ -78,9 +78,9 @@ func Distribute() func(c *gin.Context) {
 					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired))
 					return
 				}
-				usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-				// check playground chat path
-				if relayconstant.IsPlaygroundChatPath(c.Request.URL.Path) {
+				// check path is /pg/chat/completions
+				if strings.HasPrefix(c.Request.URL.Path, "/pg/chat/completions") {
+					usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 					playgroundRequest := &dto.PlayGroundRequest{}
 					err = common.UnmarshalBodyReusable(c, playgroundRequest)
 					if err != nil {
@@ -499,7 +499,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		}
 		c.Set("relay_mode", relayMode)
 	}
-	if relayconstant.IsPlaygroundChatPath(c.Request.URL.Path) {
+	if strings.HasPrefix(c.Request.URL.Path, "/pg/chat/completions") {
 		// playground chat completions
 		req, err := getModelFromRequest(c)
 		if err != nil {

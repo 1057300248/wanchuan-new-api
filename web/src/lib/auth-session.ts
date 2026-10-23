@@ -20,9 +20,8 @@ import type { QueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { t } from 'i18next'
 
-import i18n from '@/i18n/config'
-import { toBackendLanguage } from '@/i18n/languages'
 import { API_BASE_URL } from '@/lib/api-url'
+
 import { publishAuthSessionEvent } from '@/lib/auth-session-sync'
 import {
   clearSessionHint,
@@ -179,9 +178,8 @@ export function applyAuthBundle(
   const previousSID = useAuthStore.getState().auth.session?.sid
   authEpoch += 1
   useAuthStore.getState().auth.setBundle(bundle)
-  // Keep the frontend host's non-credential hint in sync with the successful
-  // authentication result and the server session's own expiry; the API host's
-  // hint is unreadable when the console is hosted on a different origin.
+  // The frontend host cannot read the API host's non-credential hint.
+  // Keep this copy bounded by the server session expiry, not a new lifetime.
   markSessionHint(bundle.session.expires_at)
   if (synchronizeTabs && previousSID !== bundle.session.sid) {
     publishAuthSessionEvent('authenticated', bundle.session.sid)
@@ -220,8 +218,6 @@ export function clearAuthentication(
   const sid = useAuthStore.getState().auth.session?.sid
   authEpoch += 1
   useAuthStore.getState().auth.reset(bootstrapState)
-  // Explicit sign-out and server-side invalidation both land here, so the
-  // frontend host's hint is cleared in lockstep with the session.
   clearSessionHint()
   if (synchronizeTabs && sid) {
     publishAuthSessionEvent('signed_out', sid)
@@ -313,12 +309,7 @@ async function requestRefresh(
       '/api/user/auth/refresh',
       undefined,
       {
-        headers: {
-          'Accept-Language': toBackendLanguage(
-            i18n.resolvedLanguage || i18n.language
-          ),
-          ...(expectedSID ? { 'X-Auth-Session': expectedSID } : {}),
-        },
+        headers: expectedSID ? { 'X-Auth-Session': expectedSID } : undefined,
       }
     )
     return { status: response.status, data: response.data }
@@ -447,9 +438,6 @@ export async function bootstrapAuthentication(): Promise<RefreshOutcome> {
 export function getCommonHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'Accept-Language': toBackendLanguage(
-      i18n.resolvedLanguage || i18n.language
-    ),
   }
   const accessToken = useAuthStore.getState().auth.accessToken
   if (accessToken) {

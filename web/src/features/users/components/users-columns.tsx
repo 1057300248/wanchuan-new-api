@@ -32,7 +32,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { extensionFlags } from '@/extensions'
 import { getCurrencyDisplay } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
 import { useSystemConfigStore } from '@/stores/system-config-store'
@@ -244,15 +243,8 @@ export function useUsersColumns(): ColumnDef<User>[] {
           const affCount = user.aff_count || 0
           const affHistoryQuota = user.aff_history_quota || 0
           const inviterId = user.inviter_id || 0
-          const showInviteCount = affCount > 0
-          const showLegacyAffiliateEarnings =
-            extensionFlags.showLegacyAffiliateQuota && affHistoryQuota !== 0
 
-          if (
-            !showInviteCount &&
-            !showLegacyAffiliateEarnings &&
-            inviterId === 0
-          ) {
+          if (affCount === 0 && affHistoryQuota === 0 && inviterId === 0) {
             return <span className='text-muted-foreground text-sm'>—</span>
           }
 
@@ -261,13 +253,9 @@ export function useUsersColumns(): ColumnDef<User>[] {
               data-table-text='secondary'
               className='min-w-0 space-y-1 text-xs font-normal'
             >
-              {showInviteCount && (
+              {(affCount > 0 || affHistoryQuota !== 0) && (
                 <LongText>
-                  {t('Invited {{count}} users', { count: affCount })}
-                </LongText>
-              )}
-              {showLegacyAffiliateEarnings && (
-                <LongText>
+                  {t('Invited {{count}} users', { count: affCount })} ·{' '}
                   {t('Earnings')}:{' '}
                   <span className='tabular-nums'>
                     {formatQuota(affHistoryQuota)}

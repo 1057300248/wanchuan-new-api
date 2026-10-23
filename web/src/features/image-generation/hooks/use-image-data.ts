@@ -17,24 +17,50 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { skipToken, useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { CanceledError } from 'axios'
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+
+import { getAuthSessionEpoch } from '@/lib/auth-session'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { loadImageTokenModels, loadImagePageBootstrap } from '../api'
 import { getAvailableImageModels } from '../lib/model-filter'
+import { getImageHistoryOwnerId } from '../storage/history-owner'
 
 export function useImageData() {
+  const ownerEpoch = useSyncExternalStore(useAuthStore.subscribe, getAuthSessionEpoch)
+  const sessionReady = useAuthStore((state) =>
+    state.auth.bootstrapState === 'complete' &&
+    Boolean(state.auth.accessToken && state.auth.session?.sid)
+  )
+  const ownerId = sessionReady ? getImageHistoryOwnerId() : null
+  const isCurrentOwner = useCallback(() =>
+    ownerId !== null &&
+    ownerEpoch === getAuthSessionEpoch() &&
+    useAuthStore.getState().auth.bootstrapState === 'complete' &&
+    getImageHistoryOwnerId() === ownerId,
+    [ownerEpoch, ownerId]
+  )
+  const assertCurrentOwner = useCallback((signal: AbortSignal) => {
+    if (signal.aborted || !isCurrentOwner()) {
+      throw new CanceledError('Image query owner changed')
+    }
+  }, [isCurrentOwner])
   const [apiKeyId, setApiKeyId] = useState<number | null>(null)
   const [model, setModel] = useState('')
 
   const bootstrap = useQuery({
-    queryKey: ['image-generation-bootstrap'],
-    queryFn: loadImagePageBootstrap,
+    queryKey: ['image-generation-bootstrap', ownerId, ownerEpoch],
+    enabled: ownerId !== null,
+    queryFn: ({ signal }) =>
+      loadImagePageBootstrap(() => assertCurrentOwner(signal)),
   })
 
-  const keys = useMemo(() => bootstrap.data?.keys ?? [], [bootstrap.data?.keys])
+  const bootstrapData = ownerId === null ? undefined : bootstrap.data
+  const keys = useMemo(() => bootstrapData?.keys ?? [], [bootstrapData?.keys])
   const pricingModels = useMemo(
-    () => bootstrap.data?.pricingModels ?? [],
-    [bootstrap.data?.pricingModels]
+    () => bootstrapData?.pricingModels ?? [],
+    [bootstrapData?.pricingModels]
   )
 
   const selectedKey = useMemo(
@@ -46,21 +72,29 @@ export function useImageData() {
   const tokenModelsQuery = useQuery({
     queryKey: [
       'image-generation-token-models',
+      ownerId,
+      ownerEpoch,
       selectedKey?.id ?? null,
       group,
       selectedKey?.auto_groups ?? null,
       selectedKey?.model_limits_enabled ?? false,
       selectedKey?.model_limits ?? '',
     ],
+    enabled: ownerId !== null && selectedKey !== null,
     queryFn: selectedKey
-      ? () => loadImageTokenModels(selectedKey.id)
+      ? async ({ signal }) => {
+          assertCurrentOwner(signal)
+          const models = await loadImageTokenModels(selectedKey.id)
+          assertCurrentOwner(signal)
+          return models
+        }
       : skipToken,
     staleTime: 0,
   })
 
   const tokenModels = useMemo(
-    () => (tokenModelsQuery.isError ? [] : (tokenModelsQuery.data ?? [])),
-    [tokenModelsQuery.data, tokenModelsQuery.isError]
+    () => (ownerId === null || tokenModelsQuery.isError ? [] : (tokenModelsQuery.data ?? [])),
+    [ownerId, tokenModelsQuery.data, tokenModelsQuery.isError]
   )
 
   const availableModels = useMemo(
@@ -73,7 +107,29 @@ export function useImageData() {
     [pricingModels, tokenModels, selectedKey]
   )
 
-  const effectiveApiKeyId = apiKeyId ?? selectedKey?.id ?? null
+  // QueryObserver.refetch ignores enabled. Guard even callbacks retained by a
+  // mounted page from before logout, without suppressing genuine auth failures.
+  const { refetch: refetchBootstrapQuery } = bootstrap
+  const { refetch: refetchTokenModelsQuery } = tokenModelsQuery
+  const refetchBootstrap = useCallback(
+    () =>
+      isCurrentOwner() ? refetchBootstrapQuery() : Promise.resolve(undefined),
+    [isCurrentOwner, refetchBootstrapQuery]
+  )
+  const refetchTokenModels = useCallback(
+    () =>
+      isCurrentOwner() && selectedKey
+        ? refetchTokenModelsQuery()
+        : Promise.resolve(undefined),
+    [isCurrentOwner, selectedKey, refetchTokenModelsQuery]
+  )
+
+  const effectiveApiKeyId = selectedKey?.id ?? null
+
+  useEffect(() => {
+    setApiKeyId(null)
+    setModel('')
+  }, [ownerEpoch, ownerId])
 
   useEffect(() => {
     if (keys.length === 0) return
@@ -99,12 +155,12 @@ export function useImageData() {
     model,
     setModel,
     group,
-    isLoadingBootstrap: bootstrap.isLoading,
-    isBootstrapError: bootstrap.isError,
-    bootstrapError: bootstrap.error,
-    refetchBootstrap: bootstrap.refetch,
-    isLoadingTokenModels: tokenModelsQuery.isLoading,
-    isTokenModelsError: tokenModelsQuery.isError,
-    refetchTokenModels: tokenModelsQuery.refetch,
+    isLoadingBootstrap: ownerId !== null && bootstrap.isLoading,
+    isBootstrapError: ownerId !== null && bootstrap.isError,
+    bootstrapError: ownerId === null ? null : bootstrap.error,
+    refetchBootstrap,
+    isLoadingTokenModels: ownerId !== null && tokenModelsQuery.isLoading,
+    isTokenModelsError: ownerId !== null && tokenModelsQuery.isError,
+    refetchTokenModels,
   }
 }

@@ -14,8 +14,7 @@ export default defineConfig(({ envMode }) => {
     process.env.VITE_REACT_APP_SERVER_URL ||
     env.rawPublicVars.VITE_REACT_APP_SERVER_URL ||
     'http://localhost:3000'
-  // Empty keeps app-owned requests on the frontend origin (dev proxy included);
-  // a value points them at a separately hosted API origin.
+
   const apiBaseUrl =
     process.env.VITE_API_BASE_URL || env.rawPublicVars.VITE_API_BASE_URL || ''
 
@@ -30,30 +29,27 @@ export default defineConfig(({ envMode }) => {
   return {
     plugins: [pluginReact(), pluginTailwindcss({ optimize: false })],
     // Rsbuild 2: replaces deprecated `performance.chunkSplit` (RSPack 2 aligned)
-    // Vendor groups use `initial` so lazily loaded Markdown/UI/parser/devtools
-    // dependencies stay in async chunks instead of flowing back into the sync
-    // entry. Async-only heavy deps are never part of the initial payload.
     splitChunks: {
       preset: 'default',
       cacheGroups: {
         'vendor-react': {
           test: /node_modules[\\/](react|react-dom)[\\/]/,
           name: 'vendor-react',
-          chunks: 'initial',
+          chunks: 'all',
           priority: 0,
           enforce: true,
         },
         'vendor-ui-primitives': {
           test: /node_modules[\\/](@base-ui|@radix-ui)[\\/]/,
           name: 'vendor-ui-primitives',
-          chunks: 'initial',
+          chunks: 'all',
           priority: 0,
           enforce: true,
         },
         'vendor-tanstack': {
           test: /node_modules[\\/]@tanstack[\\/]/,
           name: 'vendor-tanstack',
-          chunks: 'initial',
+          chunks: 'all',
           priority: 0,
           enforce: true,
         },

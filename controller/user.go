@@ -134,7 +134,7 @@ func recordLoginAudit(user *model.User, c *gin.Context) {
 		UserAgent:   c.Request.UserAgent(),
 	}
 	content := fmt.Sprintf("Logged in successfully via %s", method)
-	params := map[string]interface{}{
+	params := map[string]any{
 		"method": method,
 	}
 	if verifiedMethod := c.GetString("login_verification_method"); verifiedMethod != "" {
@@ -409,6 +409,39 @@ func GetUser(c *gin.Context) {
 	return
 }
 
+type TransferAffQuotaRequest struct {
+	Quota int `json:"quota" binding:"required"`
+}
+
+func TransferAffQuota(c *gin.Context) {
+	if !requirePaymentCompliance(c) {
+		return
+	}
+
+	id := c.GetInt("id")
+	user, err := model.GetUserById(id, true)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	tran := TransferAffQuotaRequest{}
+	if err := c.ShouldBindJSON(&tran); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	err = user.TransferAffQuotaToQuota(tran.Quota)
+	var message *common.Message
+	if errors.As(err, &message) {
+		common.ApiError(c, err)
+		return
+	}
+	if err != nil {
+		common.ApiErrorT(c, "Transfer failed {{error}}", map[string]any{"error": err.Error()})
+		return
+	}
+	common.ApiSuccessT(c, "Transfer successful", nil)
+}
+
 func GetAffCode(c *gin.Context) {
 	id := c.GetInt("id")
 	user, err := model.GetUserById(id, true)
@@ -458,15 +491,15 @@ func GetSelf(c *gin.Context) {
 // buildSelfUserData is the single safe dashboard-user DTO used by GetSelf,
 // login and refresh. It intentionally excludes password, management PAT and
 // administrator-only remarks.
-func buildSelfUserData(user *model.User) map[string]interface{} {
+func buildSelfUserData(user *model.User) map[string]any {
 	userSetting := user.GetSetting()
 	permissions := calculateUserPermissions(user.Role)
 	permissions["admin_permissions"] = authz.Capabilities(user.Id, user.Role)
-	return map[string]interface{}{
-		"has_password":      user.HasPassword,
+	return map[string]any{
 		"id":                user.Id,
 		"username":          user.Username,
 		"display_name":      user.DisplayName,
+		"has_password":      user.HasPassword,
 		"role":              user.Role,
 		"status":            user.Status,
 		"email":             user.Email,
@@ -493,26 +526,26 @@ func buildSelfUserData(user *model.User) map[string]interface{} {
 }
 
 // 计算用户权限的辅助函数
-func calculateUserPermissions(userRole int) map[string]interface{} {
-	permissions := map[string]interface{}{}
+func calculateUserPermissions(userRole int) map[string]any {
+	permissions := map[string]any{}
 
 	// 根据用户角色计算权限
 	if userRole == common.RoleRootUser {
 		// 超级管理员不需要边栏设置功能
 		permissions["sidebar_settings"] = false
-		permissions["sidebar_modules"] = map[string]interface{}{}
+		permissions["sidebar_modules"] = map[string]any{}
 	} else if userRole == common.RoleAdminUser {
 		// 管理员可以设置边栏，但不包含系统设置功能
 		permissions["sidebar_settings"] = true
-		permissions["sidebar_modules"] = map[string]interface{}{
-			"admin": map[string]interface{}{
+		permissions["sidebar_modules"] = map[string]any{
+			"admin": map[string]any{
 				"setting": false, // 管理员不能访问系统设置
 			},
 		}
 	} else {
 		// 普通用户只能设置个人功能，不包含管理员区域
 		permissions["sidebar_settings"] = true
-		permissions["sidebar_modules"] = map[string]interface{}{
+		permissions["sidebar_modules"] = map[string]any{
 			"admin": false, // 普通用户不能访问管理员区域
 		}
 	}
@@ -522,17 +555,17 @@ func calculateUserPermissions(userRole int) map[string]interface{} {
 
 // 根据用户角色生成默认的边栏配置
 func generateDefaultSidebarConfig(userRole int) string {
-	defaultConfig := map[string]interface{}{}
+	defaultConfig := map[string]any{}
 
 	// 聊天区域 - 所有用户都可以访问
-	defaultConfig["chat"] = map[string]interface{}{
+	defaultConfig["chat"] = map[string]any{
 		"enabled":    true,
 		"playground": true,
 		"chat":       true,
 	}
 
 	// 控制台区域 - 所有用户都可以访问
-	defaultConfig["console"] = map[string]interface{}{
+	defaultConfig["console"] = map[string]any{
 		"enabled":    true,
 		"detail":     true,
 		"token":      true,
@@ -542,7 +575,7 @@ func generateDefaultSidebarConfig(userRole int) string {
 	}
 
 	// 个人中心区域 - 所有用户都可以访问
-	defaultConfig["personal"] = map[string]interface{}{
+	defaultConfig["personal"] = map[string]any{
 		"enabled":  true,
 		"topup":    true,
 		"personal": true,
@@ -551,7 +584,7 @@ func generateDefaultSidebarConfig(userRole int) string {
 	// 管理员区域 - 根据角色决定
 	if userRole == common.RoleAdminUser {
 		// 管理员可以访问管理员区域，但不能访问系统设置
-		defaultConfig["admin"] = map[string]interface{}{
+		defaultConfig["admin"] = map[string]any{
 			"enabled":    true,
 			"channel":    true,
 			"models":     true,
@@ -561,7 +594,7 @@ func generateDefaultSidebarConfig(userRole int) string {
 		}
 	} else if userRole == common.RoleRootUser {
 		// 超级管理员可以访问所有功能
-		defaultConfig["admin"] = map[string]interface{}{
+		defaultConfig["admin"] = map[string]any{
 			"enabled":    true,
 			"channel":    true,
 			"models":     true,
@@ -746,7 +779,7 @@ func AdminClearUserBinding(c *gin.Context) {
 }
 
 func UpdateSelf(c *gin.Context) {
-	var requestData map[string]interface{}
+	var requestData map[string]any
 	if err := common.DecodeJson(c.Request.Body, &requestData); err != nil {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
@@ -760,7 +793,7 @@ func UpdateSelf(c *gin.Context) {
 	succeeded, notificationFailed := false, false
 	if passwordRequested {
 		defer func() {
-			recordUserSecurityAudit(c, c.GetInt("id"), "user.password_change", map[string]interface{}{"success": succeeded, "notification_failed": notificationFailed})
+			recordUserSecurityAudit(c, c.GetInt("id"), "user.password_change", map[string]any{"success": succeeded, "notification_failed": notificationFailed})
 		}()
 	}
 	// 检查是否是用户设置更新请求 (sidebar_modules 或 language)
@@ -1049,11 +1082,10 @@ func updateAdminPermissionsForUserInTx(c *gin.Context, tx *gorm.DB, userID int, 
 }
 
 type ManageRequest struct {
-	Id        int    `json:"id"`
-	Action    string `json:"action"`
-	Value     int    `json:"value"`
-	Mode      string `json:"mode"`
-	RequestId string `json:"request_id"`
+	Id     int    `json:"id"`
+	Action string `json:"action"`
+	Value  int    `json:"value"`
+	Mode   string `json:"mode"`
 }
 
 // ManageUser Only admin user can do this
@@ -1284,20 +1316,20 @@ func TopUp(c *gin.Context) {
 }
 
 type UpdateUserSettingRequest struct {
-	QuotaWarningType                 string                      `json:"notify_type"`
-	QuotaWarningThreshold            quotaReminderThresholdInput `json:"quota_warning_threshold"`
-	QuotaWarningEnabled              *bool                       `json:"quota_warning_enabled,omitempty"`
-	WebhookUrl                       string                      `json:"webhook_url,omitempty"`
-	WebhookSecret                    string                      `json:"webhook_secret,omitempty"`
-	NotificationEmail                string                      `json:"notification_email,omitempty"`
-	BarkUrl                          string                      `json:"bark_url,omitempty"`
-	GotifyUrl                        string                      `json:"gotify_url,omitempty"`
-	GotifyToken                      string                      `json:"gotify_token,omitempty"`
-	GotifyPriority                   int                         `json:"gotify_priority,omitempty"`
-	UpstreamModelUpdateNotifyEnabled *bool                       `json:"upstream_model_update_notify_enabled,omitempty"`
-	ChannelNotifyEnabled             *bool                       `json:"channel_notify_enabled,omitempty"`
-	AcceptUnsetModelRatioModel       bool                        `json:"accept_unset_model_ratio_model"`
-	RecordIpLog                      bool                        `json:"record_ip_log"`
+	QuotaWarningType                 string  `json:"notify_type"`
+	QuotaWarningThreshold            float64 `json:"quota_warning_threshold"`
+	QuotaWarningEnabled              *bool   `json:"quota_warning_enabled,omitempty"`
+	WebhookUrl                       string  `json:"webhook_url,omitempty"`
+	WebhookSecret                    string  `json:"webhook_secret,omitempty"`
+	NotificationEmail                string  `json:"notification_email,omitempty"`
+	BarkUrl                          string  `json:"bark_url,omitempty"`
+	GotifyUrl                        string  `json:"gotify_url,omitempty"`
+	GotifyToken                      string  `json:"gotify_token,omitempty"`
+	GotifyPriority                   int     `json:"gotify_priority,omitempty"`
+	UpstreamModelUpdateNotifyEnabled *bool   `json:"upstream_model_update_notify_enabled,omitempty"`
+	ChannelNotifyEnabled             *bool   `json:"channel_notify_enabled,omitempty"`
+	AcceptUnsetModelRatioModel       bool    `json:"accept_unset_model_ratio_model"`
+	RecordIpLog                      bool    `json:"record_ip_log"`
 }
 
 func UpdateUserSetting(c *gin.Context) {
@@ -1310,6 +1342,12 @@ func UpdateUserSetting(c *gin.Context) {
 	// 验证预警类型
 	if req.QuotaWarningType != dto.NotifyTypeEmail && req.QuotaWarningType != dto.NotifyTypeWebhook && req.QuotaWarningType != dto.NotifyTypeBark && req.QuotaWarningType != dto.NotifyTypeGotify {
 		common.ApiErrorT(c, "Invalid warning type")
+		return
+	}
+
+	// 验证预警阈值，0 表示使用系统默认阈值
+	if req.QuotaWarningThreshold < 0 {
+		common.ApiErrorT(c, "Reminder threshold cannot be negative")
 		return
 	}
 
@@ -1385,11 +1423,7 @@ func UpdateUserSetting(c *gin.Context) {
 	// 请求未携带的开关也保持原值
 	settings := user.GetSetting()
 	settings.NotifyType = req.QuotaWarningType
-	// Explicit zero uses the site default; an older partial request preserves
-	// the exact saved value, including finite legacy fractional thresholds.
-	if req.QuotaWarningThreshold.present {
-		settings.QuotaWarningThreshold = req.QuotaWarningThreshold.value
-	}
+	settings.QuotaWarningThreshold = req.QuotaWarningThreshold
 	settings.AcceptUnsetRatioModel = req.AcceptUnsetModelRatioModel
 	settings.RecordIpLog = req.RecordIpLog
 	if req.QuotaWarningEnabled != nil {

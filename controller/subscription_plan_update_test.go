@@ -17,16 +17,16 @@ import (
 
 func TestAdminUpdateSubscriptionPlanGroupFields(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		fields string
-		wantSuccess bool
-		wantUpgrade string
+		name          string
+		fields        string
+		wantSuccess   bool
+		wantUpgrade   string
 		wantDowngrade string
 	}{
 		{"omitted", "", true, "new", "new"},
 		{"null preserves", `,"upgrade_group":null,"downgrade_group":null`, true, "new", "new"},
 		{"explicit clear upgrade", `,"upgrade_group":""`, true, "", "new"},
-			{"explicit clear downgrade", `,"downgrade_group":""`, true, "new", ""},
+		{"explicit clear downgrade", `,"downgrade_group":""`, true, "new", ""},
 		{"database group despite stale runtime", `,"upgrade_group":" new ","downgrade_group":"new"`, true, "new", "new"},
 		{"retired upgrade", `,"upgrade_group":"old"`, false, "new", "new"},
 		{"retired downgrade", `,"downgrade_group":"old"`, false, "new", "new"},
@@ -63,7 +63,10 @@ func TestAdminUpdateSubscriptionPlanGroupFields(t *testing.T) {
 			request.Header.Set("Content-Type", "application/json")
 			recorder := httptest.NewRecorder()
 			router.ServeHTTP(recorder, request)
-			var response struct { Success bool `json:"success"`; Message string `json:"message"` }
+			var response struct {
+				Success bool   `json:"success"`
+				Message string `json:"message"`
+			}
 			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 			require.Equal(t, tc.wantSuccess, response.Success, response.Message)
 			var stored model.SubscriptionPlan

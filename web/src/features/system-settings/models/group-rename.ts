@@ -93,7 +93,8 @@ function renameKeyedValues(raw: string, lookup: Map<string, string>): string {
     fallback: {},
     silent: true,
   })
-  const renamed: Record<string, unknown> = {}
+  // Group names are data keys; __proto__ must round-trip as an own JSON key.
+  const renamed: Record<string, unknown> = Object.create(null)
   for (const [name, value] of Object.entries(values)) {
     renamed[renameGroupName(name, lookup)] = value
   }
@@ -113,9 +114,9 @@ export function applyGroupRenamesToValues<T extends GroupRenameEditableValues>(
     values.GroupGroupRatio,
     { fallback: {}, silent: true }
   )
-  const renamedNested: Record<string, Record<string, number>> = {}
+  const renamedNested: Record<string, Record<string, number>> = Object.create(null)
   for (const [userGroup, overrides] of Object.entries(nested)) {
-    const renamedOverrides: Record<string, number> = {}
+    const renamedOverrides: Record<string, number> = Object.create(null)
     for (const [targetGroup, ratio] of Object.entries(overrides ?? {})) {
       renamedOverrides[renameGroupName(targetGroup, lookup)] = ratio
     }
@@ -134,9 +135,10 @@ export function applyGroupRenamesToValues<T extends GroupRenameEditableValues>(
     values.GroupSpecialUsableGroup,
     { fallback: {}, silent: true }
   )
-  const renamedSpecialUsable: Record<string, Record<string, string>> = {}
+  const renamedSpecialUsable: Record<string, Record<string, string>> =
+    Object.create(null)
   for (const [userGroup, rules] of Object.entries(specialUsable)) {
-    const renamedRules: Record<string, string> = {}
+    const renamedRules: Record<string, string> = Object.create(null)
     for (const [rawKey, description] of Object.entries(rules ?? {})) {
       renamedRules[renameSpecialUsableKey(rawKey, lookup)] = description
     }

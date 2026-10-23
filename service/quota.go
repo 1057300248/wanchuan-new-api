@@ -21,7 +21,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
-	"gorm.io/gorm"
 )
 
 type TokenDetails struct {
@@ -90,19 +89,23 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	if relayInfo.UsePrice {
 		return nil
 	}
+	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
+	if err != nil {
+		return err
+	}
 
 	token, err := model.GetTokenByKey(strings.TrimPrefix(relayInfo.TokenKey, "sk-"), false)
 	if err != nil {
 		return err
 	}
 
-	billingModelName := relayInfo.GetBillingModelName()
+	modelName := relayInfo.OriginModelName
 	textInputTokens := usage.InputTokenDetails.TextTokens
 	textOutTokens := usage.OutputTokenDetails.TextTokens
 	audioInputTokens := usage.InputTokenDetails.AudioTokens
 	audioOutTokens := usage.OutputTokenDetails.AudioTokens
 	groupRatio := ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
-	modelRatio, _, _ := ratio_setting.GetModelRatio(billingModelName)
+	modelRatio, _, _ := ratio_setting.GetModelRatio(modelName)
 
 	autoGroup, exists := common.GetContextKey(ctx, constant.ContextKeyAutoGroup)
 	if exists {
@@ -126,7 +129,7 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 			TextTokens:  textOutTokens,
 			AudioTokens: audioOutTokens,
 		},
-		ModelName:  billingModelName,
+		ModelName:  modelName,
 		UsePrice:   relayInfo.UsePrice,
 		ModelRatio: modelRatio,
 		GroupRatio: actualGroupRatio,
@@ -135,31 +138,19 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	quota, clamp := calculateAudioQuota(quotaInfo)
 	noteQuotaClamp(relayInfo, clamp)
 
-	// P0-5：余额校验按模型赠金资格分账户进行：eligible 检查 bonus+reward+paid；
-	// 非 eligible 允许 reward+paid（邀请奖励不受赠金限制），不足时返回明确错误。
-	paid, bonus, reward, accountErr := model.GetUserAccountBalances(relayInfo.UserId)
-	if accountErr != nil {
-		return accountErr
-	}
-	if WalletBonusEligible(relayInfo) {
-		if paid+bonus+reward < quota {
-			return fmt.Errorf("user quota is not enough, user quota: %s, need quota: %s", logger.FormatQuota(paid+bonus+reward), logger.FormatQuota(quota))
-		}
-	} else if paid+reward < quota {
-		return fmt.Errorf("%w, need quota: %s", ErrModelBonusNotSupported, logger.FormatQuota(quota))
+	if userQuota < quota {
+		return fmt.Errorf("user quota is not enough, user quota: %s, need quota: %s", logger.FormatQuota(userQuota), logger.FormatQuota(quota))
 	}
 
 	if !token.UnlimitedQuota && token.RemainQuota < quota {
 		return fmt.Errorf("token quota is not enough, token remain quota: %s, need quota: %s", logger.FormatQuota(token.RemainQuota), logger.FormatQuota(quota))
 	}
 
-	nextSequence := relayInfo.WssPostConsumeSequence + 1
-	_, err = postConsumeQuotaWithOperation(relayInfo, quota, 0, false, fmt.Sprintf("wss:%d", nextSequence))
+	err = PostConsumeQuota(relayInfo, quota, 0, false)
 	if err != nil {
 		return err
 	}
-	relayInfo.WssPostConsumeSequence = nextSequence
-	logger.LogInfo(ctx, "realtime streaming consume quota success, quota: "+fmt.Sprintf("%d", quota))
+	logger.LogInfo(ctx, common.LogText("realtime streaming consume quota success, quota: %d", quota))
 	return nil
 }
 
@@ -184,12 +175,11 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	audioOutTokens := usage.OutputTokenDetails.AudioTokens
 
 	tokenName := ctx.GetString("token_name")
-	billingModelName := relayInfo.GetBillingModelName()
-	completionRatio := decimal.NewFromFloat(ratio_setting.GetCompletionRatio(billingModelName))
-	audioRatio := decimal.NewFromFloat(ratio_setting.GetAudioRatio(billingModelName))
-	audioCompletionRatio := decimal.NewFromFloat(ratio_setting.GetAudioCompletionRatio(billingModelName))
+	completionRatio := decimal.NewFromFloat(ratio_setting.GetCompletionRatio(modelName))
+	audioRatio := decimal.NewFromFloat(ratio_setting.GetAudioRatio(relayInfo.OriginModelName))
+	audioCompletionRatio := decimal.NewFromFloat(ratio_setting.GetAudioCompletionRatio(modelName))
 
-	modelRatio, _, _ := ratio_setting.GetModelRatio(billingModelName)
+	modelRatio := relayInfo.PriceData.ModelRatio
 	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
 	modelPrice := relayInfo.PriceData.ModelPrice
 	usePrice := relayInfo.PriceData.UsePrice
@@ -203,7 +193,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 			TextTokens:  textOutTokens,
 			AudioTokens: audioOutTokens,
 		},
-		ModelName:  billingModelName,
+		ModelName:  modelName,
 		UsePrice:   usePrice,
 		ModelRatio: modelRatio,
 		GroupRatio: groupRatio,
@@ -245,9 +235,8 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
 
-	settleErr := SettleBilling(ctx, relayInfo, quota)
-	if settleErr != nil {
-		logger.LogError(ctx, "error settling billing: "+settleErr.Error())
+	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
+		logger.LogError(ctx, common.LogText("error settling billing: %s", err.Error()))
 	}
 
 	logModel := modelName
@@ -258,10 +247,6 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
 	attachQuotaSaturation(ctx, relayInfo, other)
-	// P1-2：钱包净份额记录（仅结算成功）
-	if relayInfo.BillingSource == BillingSourceWallet && settleErr == nil {
-		FillWalletCostLogInfo(other, relayInfo.UserId, RelayWalletCostRefs(relayInfo))
-	}
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.InputTokens,
@@ -389,9 +374,8 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
 
-	settleErr := SettleBilling(ctx, relayInfo, quota)
-	if settleErr != nil {
-		logger.LogError(ctx, "error settling billing: "+settleErr.Error())
+	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
+		logger.LogError(ctx, common.LogText("error settling billing: %s", err.Error()))
 	}
 
 	logModel := billingModelName
@@ -402,10 +386,6 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
 	attachQuotaSaturation(ctx, relayInfo, other)
-	// P1-2：钱包净份额记录（仅结算成功）
-	if relayInfo.BillingSource == BillingSourceWallet && settleErr == nil {
-		FillWalletCostLogInfo(other, relayInfo.UserId, RelayWalletCostRefs(relayInfo))
-	}
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.PromptTokens,
@@ -456,32 +436,9 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 }
 
 func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (result postConsumeQuotaResult, err error) {
-	return postConsumeQuotaWithOperation(relayInfo, quota, preConsumedQuota, sendEmail, "")
-}
-
-func postConsumeQuotaWithOperation(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool, operationSuffix string) (result postConsumeQuotaResult, err error) {
-	return postConsumeQuotaWithWalletCommit(relayInfo, quota, preConsumedQuota, sendEmail, operationSuffix, nil)
-}
-
-// commit persists a task's refund receipt inside the wallet/token transaction.
-// It runs for replays too, so callers can recover the already committed state.
-func postConsumeQuotaWithWalletCommit(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool, operationSuffix string, commit func(*gorm.DB, *model.LedgerResult) error) (result postConsumeQuotaResult, err error) {
-	return postConsumeQuotaWithWalletCommitPurpose(relayInfo, quota, preConsumedQuota, sendEmail, operationSuffix, "", commit)
-}
-
-// purpose only adds financial provenance. It does not change fee policy, amount,
-// timing, reason, idempotency key or signature. Unmarked historical operations
-// are never retroactively inferred to be independent fees.
-func postConsumeQuotaWithWalletCommitPurpose(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool, operationSuffix, purpose string, commit func(*gorm.DB, *model.LedgerResult) error) (result postConsumeQuotaResult, err error) {
-	if purpose != "" && (purpose != "violation_fee" || quota <= 0 || preConsumedQuota != 0 || commit != nil) {
-		return result, errors.New("invalid independent billing purpose")
-	}
 
 	// 1) Consume from wallet quota OR subscription item
 	if relayInfo != nil && relayInfo.BillingSource == BillingSourceSubscription {
-		if commit != nil {
-			return result, errors.New("wallet commit callback does not support subscriptions")
-		}
 		if relayInfo.SubscriptionId == 0 {
 			return result, errors.New("subscription id is missing")
 		}
@@ -492,90 +449,29 @@ func postConsumeQuotaWithWalletCommitPurpose(relayInfo *relaycommon.RelayInfo, q
 			}
 			relayInfo.SubscriptionPostDelta += delta
 		}
-		result.FundingApplied = true
-		if !relayInfo.IsPlayground {
-			if quota > 0 {
-				err = model.DecreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, quota)
-			} else {
-				err = model.IncreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, -quota)
-			}
-			if err != nil {
-				return result, err
-			}
-			result.TokenApplied = true
-		}
-
 	} else {
-		// Wallet：差额结算写账本（幂等键 = request_id + settle / settle_refund）。
-		// P0-5：扣减与退款均按模型赠金资格确定账户顺序/份额（与预扣一致）。
-		entry := model.LedgerEntry{
-			UserId:        relayInfo.UserId,
-			Account:       model.AccountPaid,
-			Reason:        model.LedgerReasonBillingSettle,
-			ReferenceType: "relay",
-			ReferenceId:   relayInfo.RequestId,
-			RequestId:     relayInfo.RequestId,
-		}
-		if purpose == "violation_fee" {
-			entry.SetMetadata(map[string]interface{}{"independent_fee": "violation_fee"})
-		}
-		operationPart := ""
-		if operationSuffix != "" {
-			operationPart = ":" + operationSuffix
-		}
-		// Resolve model policy before opening the wallet transaction. The policy
-		// lookup may hit model.DB; doing that from inside a transaction can block
-		// forever on single-connection SQLite test/runtime configurations.
-		debitOrder := WalletDebitOrder(relayInfo)
-		var ledgerResult *model.LedgerResult
-		for attempt := 0; attempt < 2; attempt++ {
-			ledgerResult = nil
-			err = model.DB.Transaction(func(tx *gorm.DB) error {
-				if quota > 0 {
-					entry.Delta = quota
-					entry.IdempotencyKey = fmt.Sprintf("billing:settle:%s%s:%d", relayInfo.RequestId, operationPart, quota)
-					ledgerResult, err = model.DebitQuotaTx(tx, entry, debitOrder...)
-				} else {
-					refund := -quota
-					entry.IdempotencyKey = fmt.Sprintf("billing:settle_refund:%s%s:%d", relayInfo.RequestId, operationPart, refund)
-					if shares := splitFromRelayShares(relayInfo.WalletDebitShares, refund); len(shares) > 0 {
-						ledgerResult, err = model.CreditQuotaSharesTx(tx, entry, shares)
-					} else {
-						entry.Delta = refund
-						ledgerResult, err = model.CreditQuotaTx(tx, entry)
-					}
-				}
-				if err != nil {
-					return err
-				}
-				if ledgerResult != nil && !ledgerResult.Replayed && !relayInfo.IsPlayground {
-					if err := model.SettleTokenQuotaDeltaTx(tx, relayInfo.TokenId, relayInfo.UserId, relayInfo.TokenKey, -quota); err != nil {
-						return err
-					}
-				}
-				if commit != nil {
-					return commit(tx, ledgerResult)
-				}
-				return nil
-			})
-			if !errors.Is(err, model.ErrLedgerDuplicate) {
-				break
-			}
+		// Wallet
+		if quota > 0 {
+			err = model.DecreaseUserQuota(relayInfo.UserId, quota, false)
+		} else {
+			err = model.IncreaseUserQuota(relayInfo.UserId, -quota, false)
 		}
 		if err != nil {
-			if quota > 0 && !WalletBonusEligible(relayInfo) && errors.Is(err, model.ErrLedgerInsufficientBalance) {
-				return result, ErrModelBonusNotSupported
-			}
 			return result, err
 		}
-		if ledgerResult != nil {
-			model.RefreshUserQuotaCache(relayInfo.UserId, ledgerResult.TotalAfter)
-			if quota > 0 && !ledgerResult.Replayed {
-				relayInfo.WalletDebitShares = appendShares(relayInfo.WalletDebitShares, ledgerResult)
-			}
+	}
+	result.FundingApplied = true
+
+	if !relayInfo.IsPlayground {
+		if quota > 0 {
+			err = model.DecreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, quota)
+		} else {
+			err = model.IncreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, -quota)
 		}
-		result.FundingApplied = true
-		result.TokenApplied = !relayInfo.IsPlayground
+		if err != nil {
+			return result, err
+		}
+		result.TokenApplied = true
 	}
 
 	if sendEmail {

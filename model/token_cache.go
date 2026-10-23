@@ -32,19 +32,14 @@ func tokenCacheTTLSeconds() int {
 // While the fence exists readers simply serve the database without caching.
 const tokenCacheFenceSeconds = 10
 
-// invalidateTokenCacheForMutation is called before a token metadata or quota mutation
+// invalidateTokenCacheForMutation is called before a token metadata mutation
 // writes to the database: it raises the fence and drops the cached hash so no
 // reader can act on (or re-publish) the pre-mutation state.
 func invalidateTokenCacheForMutation(key string) error {
-	return invalidateTokenCacheForMutationContext(context.Background(), key)
-}
-
-// Bounded transactional callers must propagate their deadline through both
-// parts of the pre-mutation fence. This never removes or shortens the fence.
-func invalidateTokenCacheForMutationContext(ctx context.Context, key string) error {
 	if !common.RedisEnabled || key == "" {
 		return nil
 	}
+	ctx := context.Background()
 	err := common.RDB.Set(ctx, getTokenCacheFenceKey(key), 1, time.Duration(tokenCacheFenceSeconds)*time.Second).Err()
 	if err != nil {
 		return err
@@ -54,9 +49,9 @@ func invalidateTokenCacheForMutationContext(ctx context.Context, key string) err
 
 // cacheInitToken publishes a database snapshot only when no mutation fence is
 // active and the hash is cold. An existing hash only gets its TTL refreshed:
-// a database snapshot may predate a concurrent mutation or cache publication,
-// so it must never overwrite a newer live hash. Quota mutations fence this
-// derived cache before updating the authoritative database counters.
+// its RemainQuota may already be ahead of this snapshot because atomic
+// pre-consume decrements Redis first, so a snapshot must never overwrite any
+// field of a live hash.
 // 返回值：0=被 fence 拦截，1=完成初始化，2=哈希已存在，仅刷新 TTL。
 func cacheInitToken(token Token) (int, error) {
 	if !common.RedisEnabled {

@@ -16,15 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Suspense, lazy } from 'react'
-import { useTranslation } from 'react-i18next'
-
 import { HtmlContent, type HtmlContentVariant } from '@/components/html-content'
-import { cn } from '@/lib/utils'
-
-const Markdown = lazy(() =>
-  import('@/components/ui/markdown').then((mod) => ({ default: mod.Markdown }))
-)
+import { Markdown } from '@/components/ui/markdown'
 
 type RichContentMode = 'markdown' | 'html'
 
@@ -34,22 +27,6 @@ interface RichContentProps {
   breaks?: boolean
   className?: string
   htmlVariant?: HtmlContentVariant
-}
-
-function MarkdownFallback(props: { className?: string }) {
-  const { t } = useTranslation()
-  return (
-    <div
-      className={cn(
-        'prose prose-sm dark:prose-invert max-w-none min-h-6 animate-pulse',
-        props.className
-      )}
-      role='status'
-      aria-busy='true'
-      aria-live='polite'
-      aria-label={t('Loading...')}
-    />
-  )
 }
 
 export function RichContent(props: RichContentProps) {
@@ -64,10 +41,8 @@ export function RichContent(props: RichContentProps) {
   }
 
   return (
-    <Suspense fallback={<MarkdownFallback className={props.className} />}>
-      <Markdown breaks={props.breaks} className={props.className}>
-        {props.content}
-      </Markdown>
-    </Suspense>
+    <Markdown breaks={props.breaks} className={props.className}>
+      {props.content}
+    </Markdown>
   )
 }

@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"embed"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -14,7 +16,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/QuantumNous/new-api/chuanapi"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/controller"
@@ -23,11 +24,11 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/modules/imagegen"
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/pkg/lifecycle"
-	"github.com/QuantumNous/new-api/pkg/moneyport"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
+	"github.com/QuantumNous/new-api/pkg/wsmanager"
 	"github.com/QuantumNous/new-api/relay"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/router"
@@ -36,47 +37,45 @@ import (
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
 	_ "net/http/pprof"
 )
 
+//go:embed web/dist
+var buildFS embed.FS
+
+//go:embed web/dist/index.html
+var indexPage []byte
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "plugin" {
 		os.Exit(jsplugin.RunCLI(os.Args[2:], os.Stdout, os.Stderr))
 	}
-	if err := runApplication(); err != nil {
-		common.FatalLog(common.MaskSensitiveLogInfo(err.Error()))
-	}
-}
-
-func runApplication() error {
+	exitCode := 0
+	defer func() {
+		if exitCode != 0 {
+			os.Exit(exitCode)
+		}
+	}()
+	customWorkers := lifecycle.NewGroup()
+	defer customWorkers.ForceCancel()
+	requests := lifecycle.NewGate()
+	requestContext, cancelRequests := context.WithCancel(context.Background())
+	defer cancelRequests()
+	customDrainProven := false
 	startTime := time.Now()
 	kitutil.SetLogging(common.SysLog, func(message string) {
 		logger.LogError(nil, message)
 	})
 	kitutil.SetSystemErrorLogging(common.SysError)
 
-	safeToCloseResources := true
-	defer func() {
-		if !safeToCloseResources {
-			return
-		}
-		if common.RDB != nil {
-			if err := common.RDB.Close(); err != nil {
-				common.SysError("failed to close Redis: " + err.Error())
-			}
-		}
-		if err := model.CloseDB(); err != nil {
-			common.SysError("failed to close database: " + err.Error())
-		}
-	}()
-
-	app := newApplicationRuntime()
-	err := InitResources(app.workers)
+	err := InitResources(customWorkers)
 	if err != nil {
-		return fmt.Errorf("failed to initialize resources: %w", err)
+		common.FatalLog(common.LogText("failed to initialize resources: %s", err.Error()))
+		return
 	}
 
 	common.SysLog(common.LogText("New API %s started", common.Version))
@@ -89,6 +88,17 @@ func runApplication() error {
 
 	kitutil.Debug.Store(common.DebugEnabled)
 
+	defer func() {
+		if !customDrainProven {
+			common.SysError("skipping explicit database close: request/custom worker drain is unproven")
+			return
+		}
+		err := model.CloseDB()
+		if err != nil {
+			common.FatalLog(common.LogText("failed to close database: %s", err.Error()))
+		}
+	}()
+
 	if common.RedisEnabled {
 		// for compatibility with old versions
 		common.MemoryCacheEnabled = true
@@ -97,23 +107,59 @@ func runApplication() error {
 		common.SysLog(common.LogText("memory cache enabled"))
 		common.SysLog(common.LogText("sync frequency: %d seconds", common.SyncFrequency))
 
-		if err := model.RefreshChannelCache(context.Background()); err != nil {
-			return fmt.Errorf("initial channel cache load failed: %w", err)
-		}
+		// Add panic recovery and retry for InitChannelCache
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					common.SysLog(common.LogText("InitChannelCache panic: %v, retrying once", r))
+					// Retry once
+					_, _, fixErr := model.FixAbility()
+					if fixErr != nil {
+						common.FatalLog(common.LogText("InitChannelCache failed: %s", fixErr.Error()))
+					}
+				}
+			}()
+			model.InitChannelCache()
+		}()
+
+		go model.SyncChannelCache(common.SyncFrequency)
 	}
+	wsmanager.StartSubscriber(context.Background())
+	customWorkers.Go("group-config-subscriber", func(schedule, _ context.Context) {
+		model.RunGroupConfigSubscriber(schedule)
+	})
 
 	// Warm pricing after channel cache initialization so Advanced Custom
 	// endpoint inference can read cached route settings on first request.
 	model.GetPricing()
 
-	var balanceInterval time.Duration
-	if value := os.Getenv("CHANNEL_UPDATE_FREQUENCY"); value != "" {
-		frequency, err := strconv.Atoi(value)
-		if err != nil || frequency <= 0 || frequency > 525600 {
-			return errors.New("CHANNEL_UPDATE_FREQUENCY must be positive minutes, at most one year")
+	// 热更新配置
+	go model.SyncOptions(common.SyncFrequency)
+	go controller.SyncTaskPlugins()
+
+	// 周期性重载授权策略，保证多节点/多 master 部署下权限变更能传播到每个实例
+	go authz.StartPolicySync(common.SyncFrequency)
+
+	// 数据看板
+	go model.UpdateQuotaData()
+
+	if os.Getenv("CHANNEL_UPDATE_FREQUENCY") != "" {
+		frequency, err := strconv.Atoi(os.Getenv("CHANNEL_UPDATE_FREQUENCY"))
+		if err != nil {
+			common.FatalLog(common.LogText("failed to parse CHANNEL_UPDATE_FREQUENCY: %s", err.Error()))
 		}
-		balanceInterval = time.Duration(frequency) * time.Minute
+		go controller.AutomaticallyUpdateChannels(frequency)
 	}
+
+	// Codex credential auto-refresh check every 10 minutes, refresh when expires within 1 day
+	service.StartCodexCredentialAutoRefreshTask()
+
+	// Subscription quota reset task (daily/weekly/monthly/custom)
+	service.StartSubscriptionQuotaResetTask()
+
+	// Report this process as a system instance so the System Info page can show
+	// all currently alive nodes in multi-instance deployments.
+	service.StartSystemInstanceReporter()
 
 	// Wire task polling adaptor factory (breaks service -> relay import cycle).
 	// Must run before the system task runner starts: the async_task_poll handler
@@ -131,20 +177,33 @@ func runApplication() error {
 	// (DB-lease dedup across masters + run history), then start the runner that
 	// schedules and executes them. Master-only execution and the UpdateTask
 	// switch are enforced inside the runner and each handler's Enabled().
-	if err := extension.Default().ApplyLifecycle(extension.PhaseBeforeBackgroundWorkers); err != nil {
-		return fmt.Errorf("failed to apply extension startup lifecycle: %w", err)
-	}
 	controller.RegisterScheduledSystemTasks()
+	service.StartSystemTaskRunner()
 
 	if os.Getenv("BATCH_UPDATE_ENABLED") == "true" {
 		common.BatchUpdateEnabled = true
-		common.SysLog("batch update enabled with interval " + strconv.Itoa(common.BatchUpdateInterval) + "s")
+		common.SysLog(common.LogText("batch update enabled with interval %ss", strconv.Itoa(common.BatchUpdateInterval)))
+		model.InitBatchUpdater()
+	}
+
+	if os.Getenv("ENABLE_PPROF") == "true" {
+		gopool.Go(func() {
+			log.Println(http.ListenAndServe("0.0.0.0:8005", nil))
+		})
+		go common.Monitor()
+		common.SysLog(common.LogText("pprof enabled"))
+	}
+
+	err = common.StartPyroScope()
+	if err != nil {
+		common.SysError(common.LogText("start pyroscope error : %v", err))
 	}
 
 	// Initialize HTTP server
 	server := gin.New()
 	if err := middleware.ConfigureTrustedProxies(server); err != nil {
-		return fmt.Errorf("failed to configure trusted proxies: %w", err)
+		common.FatalLog(common.LogText("failed to configure trusted proxies: %s", err.Error()))
+		return
 	}
 	server.Use(gin.CustomRecovery(func(c *gin.Context, err any) {
 		common.SysLog(common.LogText("panic detected: %v", err))
@@ -168,9 +227,9 @@ func runApplication() error {
 	if err := router.SetRouter(server, router.WebAssets{
 		BuildFS:   buildFS,
 		IndexPage: indexPage,
-		Disabled:  frontendAssetsDisabled,
 	}); err != nil {
-		return fmt.Errorf("failed to initialize routes: %w", err)
+		common.FatalLog("failed to register routes: " + err.Error())
+		return
 	}
 	var port = os.Getenv("PORT")
 	if port == "" {
@@ -178,55 +237,50 @@ func runApplication() error {
 	}
 
 	srv := &http.Server{
-		Addr:              ":" + port,
-		Handler:           app.gate.Wrap(server),
-		ReadHeaderTimeout: 15 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		MaxHeaderBytes:    1 << 20,
+		Addr:    ":" + port,
+		Handler: requests.Wrap(server),
+		BaseContext: func(net.Listener) context.Context {
+			return requestContext
+		},
 	}
 
-	listener, err := net.Listen("tcp", srv.Addr)
-	if err != nil {
-		return fmt.Errorf("failed to bind HTTP server: %w", err)
-	}
+	// Install shutdown handling before the listener can admit any request.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(quit)
-	safeToCloseResources = false
-	app.Start(balanceInterval, os.Getenv("ENABLE_PPROF") == "true")
-	if err := common.StartPyroScope(); err != nil {
-		common.SysError("start pyroscope error: " + common.MaskSensitiveLogInfo(err.Error()))
-	}
-	serveErrors := make(chan error, 1)
-	go func() { serveErrors <- srv.Serve(listener) }()
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			common.FatalLog(common.LogText("failed to start HTTP server: %s", err.Error()))
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
 	common.LogStartupSuccess(startTime, port)
 
-	var runErr error
 	select {
 	case sig := <-quit:
-		common.SysLog(fmt.Sprintf("received signal: %v, shutting down...", sig))
-	case err := <-serveErrors:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			runErr = fmt.Errorf("HTTP server stopped: %w", err)
-			common.SysError(runErr.Error())
-		}
-	case err := <-app.workers.Failures():
-		runErr = err
-		common.SysError(err.Error())
-	}
-	safeToCloseResources = app.Shutdown(srv)
-	if !safeToCloseResources {
-		return errors.New("runtime shutdown or finalization did not complete")
+		common.SysLog(common.LogText("received signal: %v, shutting down...", sig))
+	case workerErr := <-customWorkers.Failures():
+		exitCode = 1
+		common.SysError("custom worker failed: " + workerErr.Error())
 	}
 
-	// A worker may fail after SIGTERM selected the shutdown path. Shutdown
-	// proved the group joined, so this read cannot block and preserves that
-	// late failure instead of returning a successful process exit.
-	if runErr == nil {
-		runErr = app.workers.Wait(context.Background())
+	// SSE streams may run for minutes; give them time to finish before forced exit
+	shutdownTimeout := time.Duration(common.GetEnvOrDefault("SHUTDOWN_TIMEOUT_SECONDS", 120)) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	customDrainProven, err = drainCustomRuntime(ctx, 5*time.Second, srv, requests, customWorkers, cancelRequests)
+	if err != nil {
+		exitCode = 1
+		common.SysError(common.LogText("server forced to shutdown: %v", err))
 	}
-	common.SysLog("server exited")
-	return runErr
+	// 内存中的看板数据保存入库，避免重启丢失未落库数据 (issue #5679)
+	if common.DataExportEnabled && customDrainProven {
+		model.SaveQuotaDataCache()
+	}
+	common.SysLog(common.LogText("server exited"))
 }
 
 func InjectUmamiAnalytics() {
@@ -292,42 +346,11 @@ func InitResources(workers *lifecycle.Group) error {
 
 	service.InitHttpClient()
 
-	if err := chuanapi.RegisterRuntimeServices(); err != nil {
-		common.FatalLog("failed to register chuanapi runtime services: " + err.Error())
-		return err
-	}
-	// Runtime funding implementations are composed explicitly and frozen before
-	// any request can create a BillingSession.
-	fundingFactories := moneyport.NewFactoryRegistry()
-	if err := service.RegisterHostFundingFactories(fundingFactories); err != nil {
-		common.FatalLog("failed to register host funding factories: " + err.Error())
-		return err
-	}
-	if err := chuanapi.RegisterFundingFactories(fundingFactories); err != nil {
-		common.FatalLog("failed to register chuanapi funding factories: " + err.Error())
-		return err
-	}
-	if err := service.ConfigureFundingFactoryRegistry(fundingFactories); err != nil {
-		common.FatalLog("failed to configure funding factory registry: " + err.Error())
-		return err
-	}
-
-	// Compose the extension registry before any migration runs: model.InitDB
-	// reads extension.Default() to append extension models to the core
-	// AutoMigrate call and to run extension data steps. Registration is
-	// build-time and explicit, so a wiring failure here must abort startup
-	// rather than silently start with an unmigrated extension schema.
-	registry := extension.NewRegistry()
-	if err := imagegen.Register(registry, workers); err != nil {
-		common.FatalLog("failed to register image generation module: " + err.Error())
-		return err
-	}
-	if err := chuanapi.Register(registry); err != nil {
-		common.FatalLog("failed to register chuanapi extension: " + err.Error())
+	registry, err := newRuntimeRegistry(workers)
+	if err != nil {
 		return err
 	}
 	if err := extension.SetDefault(registry); err != nil {
-		common.FatalLog("failed to install extension registry: " + err.Error())
 		return err
 	}
 
@@ -373,6 +396,11 @@ func InitResources(workers *lifecycle.Group) error {
 		return err
 	}
 
+	perfmetrics.Init()
+
+	// 启动系统监控
+	common.StartSystemMonitor()
+
 	// Initialize i18n
 	err = i18n.Init()
 	if err != nil {
@@ -390,6 +418,8 @@ func InitResources(workers *lifecycle.Group) error {
 		common.SysError(common.LogText("failed to load custom OAuth providers: %s", err.Error()))
 		// Don't return error, custom OAuth is not critical
 	}
+
+	service.StartAuthArtifactCleanup()
 
 	return nil
 }

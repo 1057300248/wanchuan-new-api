@@ -164,12 +164,7 @@ export function NotificationTab({
               onValueChange={(value) => {
                 const nextValue = value.find((item) => item !== notifyType)
                 if (nextValue) {
-                  updateField(
-                    'notify_type',
-                    NOTIFICATION_METHODS.find(
-                      (method) => method.value === nextValue
-                    )?.value ?? 'email'
-                  )
+                  updateField('notify_type', nextValue as NotifyType)
                 }
               }}
               aria-label={t('Notification Method')}

@@ -29,31 +29,3 @@ export const publicModelOwnerSchema = z
     'Public model owner must be at most 128 characters and contain no control or formatting characters'
   )
   .transform((value) => value || 'chuanapi')
-
-export function normalizeSensitiveExemptGroups(value: string): string {
-  return [
-    ...new Set(
-      value
-        .split('\n')
-        .map((group) => group.trim())
-        .filter(Boolean)
-    ),
-  ].join('\n')
-}
-
-export const sensitiveExemptGroupsSchema = z
-  .string()
-  .refine(
-    (value) =>
-      normalizeSensitiveExemptGroups(value)
-        .split('\n')
-        .every(
-          (group) =>
-            group !== 'auto' &&
-            group !== '*' &&
-            [...group].length <= 128 &&
-            !invalidDisplayCharacters.test(group)
-        ),
-    'Filtering exemptions require exact group names, one per line; auto and wildcards are not allowed'
-  )
-  .transform(normalizeSensitiveExemptGroups)

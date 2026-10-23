@@ -413,18 +413,16 @@ export function PluginsTable(props: PluginsTableProps) {
         }}
       />
       <ConfirmDialog
-        open={Boolean(deleteTarget) && blockedAction !== 'delete'}
+        open={Boolean(deleteTarget)}
         onOpenChange={(open) => {
-          if (!open && !deleteMutation.isPending) setDeleteTarget(null)
+          if (!open) setDeleteTarget(null)
         }}
         title={t('Delete plugin version?')}
         destructive
         isLoading={deleteMutation.isPending}
         confirmText={t('Delete')}
         handleConfirm={() => {
-          if (deleteTarget && !deleteMutation.isPending) {
-            deleteMutation.mutate({ plugin: deleteTarget })
-          }
+          if (deleteTarget) deleteMutation.mutate({ plugin: deleteTarget })
         }}
         desc={
           hasFactoryFallback
@@ -439,11 +437,9 @@ export function PluginsTable(props: PluginsTableProps) {
       <ConfirmDialog
         open={Boolean(blockedAction)}
         onOpenChange={(open) => {
-          if (!open && !statusMutation.isPending && !deleteMutation.isPending) {
+          if (!open) {
             setBlockedAction(null)
             setBlockedUsage(null)
-            setDeleteTarget(null)
-            setStatusTarget(null)
           }
         }}
         title={t('Plugin is still in use')}
@@ -452,7 +448,6 @@ export function PluginsTable(props: PluginsTableProps) {
         isLoading={statusMutation.isPending || deleteMutation.isPending}
         confirmText={t('Force operation')}
         handleConfirm={() => {
-          if (statusMutation.isPending || deleteMutation.isPending) return
           if (blockedAction === 'delete' && deleteTarget) {
             deleteMutation.mutate({ plugin: deleteTarget, force: true })
           } else if (blockedAction === 'disable' && statusTarget) {
@@ -468,21 +463,14 @@ export function PluginsTable(props: PluginsTableProps) {
           <div className='flex'>
             <Button
               variant='outline'
-              disabled={statusMutation.isPending || deleteMutation.isPending}
-              onClick={() => {
-                if (
-                  !statusTarget ||
-                  statusMutation.isPending ||
-                  deleteMutation.isPending
-                ) {
-                  return
-                }
+              onClick={() =>
+                statusTarget &&
                 statusMutation.mutate({
                   key: statusTarget.meta.key,
                   enabled: false,
                   options: { cascade: true },
                 })
-              }}
+              }
             >
               {t('Cascade disable channels')}
             </Button>

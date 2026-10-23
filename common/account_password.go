@@ -3,7 +3,6 @@ package common
 import (
 	"crypto/rand"
 	"crypto/subtle"
-	_ "embed"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -27,23 +26,7 @@ var (
 	ErrAccountPasswordLength = errors.New("Password must contain between 8 and 128 characters.")
 	ErrAccountPasswordSame   = errors.New("New password must be different from current password")
 	ErrPasswordLegacyLimit   = errors.New("Long passwords are unavailable until the password storage upgrade is complete.")
-	ErrAccountPasswordCommon = errors.New("This password is too common. Choose a different password.")
 )
-
-//go:embed account_password_blocklist.txt
-var accountPasswordBlocklistText string
-
-var accountPasswordBlocklist = func() map[string]struct{} {
-	words := strings.Split(accountPasswordBlocklistText, "\n")
-	blocked := make(map[string]struct{}, len(words))
-	for _, word := range words {
-		word = strings.TrimSuffix(word, "\r")
-		if word != "" {
-			blocked[word] = struct{}{}
-		}
-	}
-	return blocked
-}()
 
 // ValidateNewAccountPassword applies only when a user chooses a new password.
 // Authentication must continue to accept historical passwords without applying
@@ -51,9 +34,6 @@ var accountPasswordBlocklist = func() map[string]struct{} {
 func ValidateNewAccountPassword(password string) error {
 	if !utf8.ValidString(password) || utf8.RuneCountInString(password) < MinAccountPasswordLength || utf8.RuneCountInString(password) > MaxAccountPasswordLength {
 		return ErrAccountPasswordLength
-	}
-	if _, blocked := accountPasswordBlocklist[strings.ToLower(password)]; blocked {
-		return ErrAccountPasswordCommon
 	}
 	return nil
 }

@@ -1,6 +1,6 @@
 {
   "id": "chatcmpl-<uuid>",
-  "model": "client-model",
+  "model": "upstream-model",
   "object": "chat.completion",
   "created": 0,
   "choices": [

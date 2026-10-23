@@ -2,9 +2,9 @@ package model
 
 import (
 	"errors"
-	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -20,10 +20,9 @@ type UserQuotaAdjustment struct {
 	Username string
 	Before   int
 	After    int
-	Replayed bool
 }
 
-func AdjustUserQuota(userID, operatorRole int, mode string, value int, entry LedgerEntry) (*UserQuotaAdjustment, error) {
+func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuotaAdjustment, error) {
 	if userID <= 0 || (mode != "add" && mode != "subtract" && mode != "override") {
 		return nil, ErrInvalidUserQuotaAdjustment
 	}
@@ -32,13 +31,6 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int, entry Led
 	}
 	if value > common.MaxWalletQuota || value < -common.MaxWalletQuota {
 		return nil, ErrWalletQuotaLimitExceeded
-	}
-	if value < 0 {
-		return nil, ErrInvalidUserQuotaAdjustment
-	}
-	entry.UserId, entry.Account, entry.Delta = userID, AccountPaid, value
-	if strings.TrimSpace(entry.IdempotencyKey) == "" {
-		entry.IdempotencyKey = NewAutoLedgerKey("admin_quota_request")
 	}
 
 	var adjustment UserQuotaAdjustment
@@ -53,34 +45,42 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int, entry Led
 		if user.Quota > common.MaxWalletQuota || user.Quota < -common.MaxWalletQuota {
 			return ErrWalletQuotaLimitExceeded
 		}
-		var result *LedgerResult
-		var err error
+		quota := decimal.NewFromInt(int64(value))
 		switch mode {
 		case "add":
-			entry.Reason = LedgerReasonAdminAdd
-			result, err = CreditQuotaTx(tx, entry)
+			quota = decimal.NewFromInt(int64(user.Quota)).Add(quota)
 		case "subtract":
-			entry.Reason = LedgerReasonAdminSubtract
-			result, err = DebitQuotaTx(tx, entry, AccountPaid)
-		case "override":
-			entry.Reason = LedgerReasonAdminOverride
-			result, err = OverrideQuotaTx(tx, entry)
+			quota = decimal.NewFromInt(int64(user.Quota)).Sub(quota)
 		}
+		after, err := common.WalletQuotaFromDecimalStrict(quota)
 		if err != nil {
-			return err
+			return ErrWalletQuotaLimitExceeded
 		}
-		adjustment = UserQuotaAdjustment{UserID: user.Id, Username: user.Username, Before: result.TotalBefore, After: result.TotalAfter, Replayed: result.Replayed}
+		// An unchanged override is a successful operation, including on MySQL
+		// configurations that count only changed rows in RowsAffected.
+		if after != user.Quota {
+			result := tx.Model(&User{}).Where("id = ?", userID).Update("quota", after)
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return gorm.ErrRecordNotFound
+			}
+		}
+		adjustment = UserQuotaAdjustment{UserID: user.Id, Username: user.Username, Before: user.Quota, After: after}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// Wallet reservations and adjustments are already committed in the ledger.
-	// A concurrent cache miss may have loaded the new balance, so applying the
-	// same difference to Redis would credit or debit it twice.
-	if !adjustment.Replayed {
-		RefreshUserQuotaCache(userID, adjustment.After)
+	// Apply only the committed difference, preserving outstanding reservations.
+	// Both balances are bounded above, so their difference fits in int64.
+	delta := int64(adjustment.After) - int64(adjustment.Before)
+	if delta != 0 {
+		if err := cacheIncrUserQuota(userID, delta); err != nil {
+			common.SysError(common.LogText("failed to sync manual quota adjustment for user %d: %s", userID, err))
+		}
 	}
 	return &adjustment, nil
 }

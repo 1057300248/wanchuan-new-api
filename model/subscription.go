@@ -3,7 +3,6 @@ package model
 import (
 	"errors"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -339,9 +338,6 @@ type UserSubscription struct {
 
 	AmountTotal int64 `json:"amount_total" gorm:"type:bigint;not null;default:0"`
 	AmountUsed  int64 `json:"amount_used" gorm:"type:bigint;not null;default:0"`
-	// QuotaPeriod identifies an allowance generation, independently of reset timestamps.
-	// Zero is legacy/unknown; official rc.46 request receipts do not populate it.
-	QuotaPeriod int64 `json:"quota_period" gorm:"type:bigint;not null;default:0"`
 
 	StartTime int64  `json:"start_time" gorm:"bigint"`
 	EndTime   int64  `json:"end_time" gorm:"bigint;index;index:idx_user_sub_active,priority:3"`
@@ -613,7 +609,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 			return nil, common.NewMessage("Purchase limit for this plan has been reached")
 		}
 	}
-	nowUnix := GetDBTimestamp(tx)
+	nowUnix := GetDBTimestamp()
 	now := time.Unix(nowUnix, 0)
 	endUnix, err := calcPlanEndTime(now, plan)
 	if err != nil {
@@ -706,7 +702,7 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		if order.Status != common.TopUpStatusPending {
 			return ErrSubscriptionOrderStatusInvalid
 		}
-		plan, err := getSubscriptionPlanByIdTx(tx, order.PlanId)
+		plan, err := GetSubscriptionPlanById(order.PlanId)
 		if err != nil {
 			return err
 		}
@@ -882,7 +878,6 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 	var logMoney float64
 	var chargedQuota int
 	var upgradeGroup string
-	var ledgerTotalAfter int
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockGroupNamespace(tx); err != nil {
 			return err
@@ -906,30 +901,18 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 			return err
 		}
 
-		// 订单号在扣款前生成，作为余额扣减的幂等业务引用
-		tradeNo := fmt.Sprintf("SUBBALUSR%dNO%s%d", userId, common.GetRandomString(6), time.Now().UnixNano())
-
 		var user User
 		if err := lockForUpdate(tx).Where("id = ?", userId).First(&user).Error; err != nil {
 			return err
 		}
-		// P0-4 默认消费账户仅为 paid；bonus 资格与消费顺序在 P0-5 再启用。
-		if requiredQuota > 0 && user.QuotaPaid < requiredQuota {
-			return errors.New("余额不足")
+		if requiredQuota > 0 && user.Quota < requiredQuota {
+			return common.NewMessage("Insufficient balance")
 		}
 		if requiredQuota > 0 {
-			// 余额扣减写账本（同一事务；幂等键 = 订阅订单号）
-			result, err := DebitQuotaTx(tx, LedgerEntry{
-				UserId:        userId,
-				Delta:         requiredQuota,
-				Reason:        LedgerReasonSubscriptionPurchase,
-				ReferenceType: "subscription_order",
-				ReferenceId:   tradeNo,
-			}, AccountPaid)
-			if err != nil {
+			if err := tx.Model(&User{}).Where("id = ?", userId).
+				Update("quota", gorm.Expr("quota - ?", requiredQuota)).Error; err != nil {
 				return err
 			}
-			ledgerTotalAfter = result.TotalAfter
 		}
 
 		subscription, err := CreateUserSubscriptionFromPlanTx(tx, userId, plan, PaymentMethodBalance)
@@ -938,6 +921,7 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 		}
 
 		now := common.GetTimestamp()
+		tradeNo := fmt.Sprintf("SUBBALUSR%dNO%s%d", userId, common.GetRandomString(6), time.Now().UnixNano())
 		order := &SubscriptionOrder{
 			UserId:          userId,
 			PlanId:          plan.Id,
@@ -967,8 +951,9 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 	}
 
 	if chargedQuota > 0 {
-		// 事务成功后刷新额度缓存
-		RefreshUserQuotaCache(userId, ledgerTotalAfter)
+		if err := cacheDecrUserQuota(userId, int64(chargedQuota)); err != nil {
+			common.SysLog(common.LogText("failed to decrease user quota cache after subscription balance purchase: %s", err.Error()))
+		}
 	}
 	if upgradeGroup != "" {
 		refreshSubscriptionUserGroupCache(userId, common.LogText("subscription balance purchase"))
@@ -1156,10 +1141,6 @@ func resetUserSubscriptionTx(tx *gorm.DB, sub *UserSubscription, plan *Subscript
 	if tx == nil || sub == nil || plan == nil {
 		return errors.New("invalid reset args")
 	}
-	if sub.QuotaPeriod < 0 || sub.QuotaPeriod == math.MaxInt64 {
-		return errors.New("subscription quota period exhausted")
-	}
-	sub.QuotaPeriod++
 	sub.AmountUsed = 0
 	if advanceResetTime {
 		nextReset := calcNextResetTime(time.Unix(now, 0), plan, sub.EndTime)
@@ -1170,7 +1151,7 @@ func resetUserSubscriptionTx(tx *gorm.DB, sub *UserSubscription, plan *Subscript
 			sub.LastResetTime = 0
 		}
 	}
-	return tx.Select("amount_used", "quota_period", "last_reset_time", "next_reset_time", "updated_at").Updates(sub).Error
+	return tx.Save(sub).Error
 }
 
 func buildSubscriptionResetResult(plan *SubscriptionPlan, subs []UserSubscription, advanceResetTime bool) *SubscriptionResetResult {
@@ -1277,10 +1258,7 @@ func AdminResetPlanSubscriptions(planId int, advanceResetTime bool) (*Subscripti
 
 type SubscriptionPreConsumeResult struct {
 	UserSubscriptionId int
-	QuotaPeriod        int64
-	Replayed           bool
 	PreConsumed        int64
-	ReservedAmount     int64
 	AmountTotal        int64
 	AmountUsedBefore   int64
 	AmountUsedAfter    int64
@@ -1393,10 +1371,7 @@ type SubscriptionPreConsumeRecord struct {
 	UserId             int    `json:"user_id" gorm:"index"`
 	UserSubscriptionId int    `json:"user_subscription_id" gorm:"index"`
 	PreConsumed        int64  `json:"pre_consumed" gorm:"type:bigint;not null;default:0"`
-	QuotaPeriod        int64  `json:"quota_period" gorm:"type:bigint;not null;default:0"`
-	ReservedAmount     int64  `json:"reserved_amount" gorm:"type:bigint;not null;default:0"`
-	SettledAmount      int64  `json:"settled_amount" gorm:"type:bigint;not null;default:0"`
-	Status             string `json:"status" gorm:"type:varchar(32);index"` // consumed/settled/refunded
+	Status             string `json:"status" gorm:"type:varchar(32);index"` // consumed/refunded
 	CreatedAt          int64  `json:"created_at" gorm:"bigint"`
 	UpdatedAt          int64  `json:"updated_at" gorm:"bigint;index"`
 }
@@ -1439,21 +1414,17 @@ func maybeResetUserSubscriptionWithPlanTx(tx *gorm.DB, sub *UserSubscription, pl
 		if sub.NextResetTime == 0 && next > 0 {
 			sub.NextResetTime = next
 			sub.LastResetTime = base.Unix()
-			return tx.Select("next_reset_time", "last_reset_time", "updated_at").Updates(sub).Error
+			return tx.Save(sub).Error
 		}
 		return nil
 	}
-	if sub.QuotaPeriod < 0 || sub.QuotaPeriod == math.MaxInt64 {
-		return errors.New("subscription quota period exhausted")
-	}
-	sub.QuotaPeriod++
 	sub.AmountUsed = 0
 	sub.LastResetTime = base.Unix()
 	sub.NextResetTime = next
-	return tx.Select("amount_used", "quota_period", "last_reset_time", "next_reset_time", "updated_at").Updates(sub).Error
+	return tx.Save(sub).Error
 }
 
-// PreConsumeUserSubscription uses the official rc.46 request lifecycle.
+// PreConsumeUserSubscription pre-consumes from any active subscription total quota.
 func PreConsumeUserSubscription(requestId string, userId int, modelName string, quotaType int, amount int64) (*SubscriptionPreConsumeResult, error) {
 	if userId <= 0 {
 		return nil, errors.New("invalid userId")
@@ -1557,8 +1528,7 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 	return returnValue, nil
 }
 
-// RefundSubscriptionPreConsume is the official rc.46 request-id refund.
-// Historical period/held columns remain untouched, not consumed by a new worker.
+// RefundSubscriptionPreConsume is idempotent and refunds pre-consumed subscription quota by requestId.
 func RefundSubscriptionPreConsume(requestId string) error {
 	if strings.TrimSpace(requestId) == "" {
 		return errors.New("requestId is empty")
@@ -1627,12 +1597,14 @@ func ResetDueSubscriptions(limit int) (int, error) {
 	return resetCount, nil
 }
 
-// CleanupSubscriptionPreConsumeRecords deliberately retains financial receipts.
-// A time-based deletion can erase an in-flight task/refund or allow a finalized
-// request ID to reserve again. GC needs an explicit shared retention contract
-// with the durable request and task journals; age alone is not such proof.
+// CleanupSubscriptionPreConsumeRecords removes old idempotency records to keep table small.
 func CleanupSubscriptionPreConsumeRecords(olderThanSeconds int64) (int64, error) {
-	return 0, nil
+	if olderThanSeconds <= 0 {
+		olderThanSeconds = 7 * 24 * 3600
+	}
+	cutoff := GetDBTimestamp() - olderThanSeconds
+	res := DB.Where("updated_at < ?", cutoff).Delete(&SubscriptionPreConsumeRecord{})
+	return res.RowsAffected, res.Error
 }
 
 type SubscriptionPlanInfo struct {
@@ -1664,7 +1636,7 @@ func GetSubscriptionPlanInfoByUserSubscriptionId(userSubscriptionId int) (*Subsc
 	return info, nil
 }
 
-// PostConsumeUserSubscriptionDelta uses the official rc.46 subscription delta semantics.
+// Update subscription used amount by delta (positive consume more, negative refund).
 func PostConsumeUserSubscriptionDelta(userSubscriptionId int, delta int64) error {
 	if userSubscriptionId <= 0 {
 		return errors.New("invalid userSubscriptionId")

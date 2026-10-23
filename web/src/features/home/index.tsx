@@ -23,12 +23,7 @@ import { PublicLayout } from '@/components/layout'
 import { Footer } from '@/components/layout/components/footer'
 import { RichContent } from '@/components/rich-content'
 import { useTheme } from '@/context/theme-provider'
-import { useStatus } from '@/hooks/use-status'
 import { isLikelyHtml } from '@/lib/content-format'
-import {
-  isPublicRegistrationEnabled,
-  resolvePublicDocsUrl,
-} from '@/lib/public-site'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { CTA, Features, Hero, HowItWorks, Stats } from './components'
@@ -40,11 +35,6 @@ export function Home() {
   const { resolvedTheme } = useTheme()
   const { auth } = useAuthStore()
   const isAuthenticated = !!auth.user
-  const { status } = useStatus()
-  const registrationEnabled = isPublicRegistrationEnabled(
-    status as Record<string, unknown> | null
-  )
-  const docsUrl = resolvePublicDocsUrl(status?.docs_link)
   const { content, isLoaded, isUrl } = useHomePageContent()
 
   const syncIframePreferences = useCallback(() => {
@@ -132,18 +122,11 @@ export function Home() {
 
   return (
     <PublicLayout showMainContainer={false}>
-      <Hero
-        isAuthenticated={isAuthenticated}
-        registrationEnabled={registrationEnabled}
-        docsUrl={docsUrl}
-      />
+      <Hero isAuthenticated={isAuthenticated} />
       <Stats />
       <Features />
       <HowItWorks />
-      <CTA
-        isAuthenticated={isAuthenticated}
-        registrationEnabled={registrationEnabled}
-      />
+      <CTA isAuthenticated={isAuthenticated} />
       <Footer />
     </PublicLayout>
   )

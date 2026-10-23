@@ -1,3 +1,6 @@
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { useForm } from 'react-hook-form'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -16,9 +19,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { useForm } from 'react-hook-form'
 import { assert, describe, expect, test } from 'vitest'
 
 import { Form } from '@/components/ui/form'

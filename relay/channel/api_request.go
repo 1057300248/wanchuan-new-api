@@ -3,6 +3,7 @@ package channel
 import (
 	"errors"
 	"fmt"
+	"github.com/QuantumNous/new-api/pkg/httpx"
 	"io"
 	"net/http"
 	"net/url"
@@ -448,12 +449,6 @@ func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	return doRequest(c, req, info)
 }
 
-// keepUpstreamRedirectResponse stops net/http from following redirects while
-// returning the upstream 3xx response to the relay without an extra error.
-func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
-	return http.ErrUseLastResponse
-}
-
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	if stopped := service.RelayRequestCancellation(c); stopped != nil {
 		return nil, stopped
@@ -462,12 +457,6 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
-	// Clients are cached and shared across channels, so override redirect
-	// behavior on a shallow copy instead of mutating the cached client. This
-	// still reuses its transport and connection pools, including HTTP/2's
-	// transparent stream retries.
-	relayClient := *client
-	relayClient.CheckRedirect = keepUpstreamRedirectResponse
 	if common2.DebugEnabled && req != nil && req.URL != nil {
 		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)
 		logger.LogDebug(c, "http transport select: host=%s protocol=%s shards=%d policy=%s",
@@ -489,12 +478,12 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	}
 
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestOrigin, req.URL.Scheme+"://"+req.URL.Host)
-	resp, err := relayClient.Do(req)
+	resp, err := httpx.DoWithoutRedirects(client, req)
 	if err != nil {
 		if stopped := service.RelayRequestCancellation(c); stopped != nil {
 			return nil, stopped
 		}
-		logger.LogError(c, "do request failed: "+err.Error())
+		logger.LogError(c, common2.LogText("do request failed: %s", err.Error()))
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
 	}
 	if resp == nil {

@@ -8,7 +8,6 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/pkg/privacy"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -108,15 +107,7 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 			other.SetPublic("request_path", c.Request.URL.Path)
 		}
 		other.SetPublic("error_type", err.GetErrorType())
-		if code := err.GetErrorCode(); code != "" {
-			if privacy.IsSafeErrorCode(string(code)) {
-				other.SetPublic("error_code", code)
-			} else {
-				// Provider-supplied codes can embed internal identities and are
-				// only ever exposed to administrators.
-				other.SetAdmin("error_code", code)
-			}
-		}
+		other.SetPublic("error_code", err.GetErrorCode())
 		other.SetPublic("status_code", err.StatusCode)
 		AppendRelayLogAdminInfo(c, relayInfo, other)
 		AppendResponseModelLogInfo(relayInfo, other)

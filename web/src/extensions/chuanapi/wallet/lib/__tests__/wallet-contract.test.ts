@@ -37,12 +37,14 @@ describe('ChuanAPI wallet surface contract', () => {
       'AffiliateRewardsCard',
       'LedgerTable',
       'TransferDialog',
+      'BillingHistoryDialog',
+      'SubscriptionPlansCard',
     ]
     for (const component of required) {
       expect(wallet).toMatch(new RegExp(`<${component}`))
     }
     expect(wallet).not.toMatch(
-      /WalletAccountsCard|RedemptionCard|SubscriptionPlansCard|BillingHistoryDialog|ReferralRewardsCard|ReferralHistoryCard/
+      /WalletAccountsCard|RedemptionCard|ReferralRewardsCard|ReferralHistoryCard/
     )
   })
 

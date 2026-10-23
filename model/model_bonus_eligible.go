@@ -23,10 +23,11 @@ import (
 const modelBonusEligibleCacheTTL = 60 * time.Second
 
 var (
-	modelBonusEligibleMap  = make(map[string]bool) // 仅收录显式 true 的模型名
-	modelBonusEligibleLock sync.RWMutex
-	modelBonusEligibleTime time.Time
-	modelBonusEligibleOnce sync.Mutex
+	modelBonusEligibleMap        = make(map[string]bool) // 仅收录显式 true 的模型名
+	modelBonusEligibleLock       sync.RWMutex
+	modelBonusEligibleTime       time.Time
+	modelBonusEligibleOnce       sync.Mutex
+	modelBonusEligibleGeneration uint64
 )
 
 // IsModelBonusEligible 返回模型是否允许使用赠金消费（fail-closed）。
@@ -37,23 +38,17 @@ func IsModelBonusEligible(modelName string) bool {
 		return false
 	}
 	modelBonusEligibleLock.RLock()
-	eligible := modelBonusEligibleMap[modelName]
-	modelBonusEligibleLock.RUnlock()
-	if eligible {
-		return true
-	}
-
-	modelBonusEligibleLock.RLock()
-	fresh := !modelBonusEligibleTime.IsZero() && time.Since(modelBonusEligibleTime) < modelBonusEligibleCacheTTL
+	fresh := modelBonusEligibleCacheFresh()
+	eligible := fresh && modelBonusEligibleMap[modelName]
 	modelBonusEligibleLock.RUnlock()
 	if !fresh {
 		loadModelBonusEligible()
 		modelBonusEligibleLock.RLock()
-		eligible = modelBonusEligibleMap[modelName]
+		eligible = modelBonusEligibleCacheFresh() && modelBonusEligibleMap[modelName]
 		modelBonusEligibleLock.RUnlock()
-		if eligible {
-			return true
-		}
+	}
+	if eligible {
+		return true
 	}
 
 	// 定价缓存未覆盖的模型（如暂无可启用渠道）：回退精确名查询，
@@ -73,6 +68,11 @@ func IsModelBonusEligible(modelName string) bool {
 	return row.BonusEligible != nil && *row.BonusEligible
 }
 
+// Caller must hold modelBonusEligibleLock (read or write).
+func modelBonusEligibleCacheFresh() bool {
+	return !modelBonusEligibleTime.IsZero() && time.Since(modelBonusEligibleTime) < modelBonusEligibleCacheTTL
+}
+
 // loadModelBonusEligible 从定价缓存重建资格映射（与 /api/pricing 同源）。
 func loadModelBonusEligible() {
 	modelBonusEligibleOnce.Lock()
@@ -80,22 +80,30 @@ func loadModelBonusEligible() {
 
 	// 双检：另一个 goroutine 可能已刷新
 	modelBonusEligibleLock.RLock()
-	fresh := !modelBonusEligibleTime.IsZero() && time.Since(modelBonusEligibleTime) < modelBonusEligibleCacheTTL
+	fresh := modelBonusEligibleCacheFresh()
+	generation := modelBonusEligibleGeneration
 	modelBonusEligibleLock.RUnlock()
 	if fresh {
 		return
 	}
 
+	pricingSnapshot, snapshotTime := getPricingSnapshot()
 	loaded := make(map[string]bool)
-	for _, pricing := range GetPricing() {
+	for _, pricing := range pricingSnapshot {
 		if pricing.BonusEligible != nil && *pricing.BonusEligible {
 			loaded[pricing.ModelName] = true
 		}
 	}
 
 	modelBonusEligibleLock.Lock()
-	modelBonusEligibleMap = loaded
-	modelBonusEligibleTime = time.Now()
+	// An invalidation after the query began wins over this older snapshot.
+	// Do not acquire modelBonusEligibleOnce from invalidation: pricing refresh
+	// already holds the pricing lock while this loader may be waiting for it.
+	if generation == modelBonusEligibleGeneration {
+		modelBonusEligibleMap = loaded
+		// Reusing a pricing snapshot must not extend its original TTL.
+		modelBonusEligibleTime = snapshotTime
+	}
 	modelBonusEligibleLock.Unlock()
 }
 
@@ -103,6 +111,7 @@ func loadModelBonusEligible() {
 // 模型元数据（bonus_eligible）发生变更时必须调用，避免资格判定使用旧值。
 func InvalidateModelBonusEligibleCache() {
 	modelBonusEligibleLock.Lock()
+	modelBonusEligibleGeneration++
 	modelBonusEligibleMap = make(map[string]bool)
 	modelBonusEligibleTime = time.Time{}
 	modelBonusEligibleLock.Unlock()

@@ -102,7 +102,6 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({
       title: t('About'),
       href: '/about',
-      documentNavigation: true,
     })
   }
 

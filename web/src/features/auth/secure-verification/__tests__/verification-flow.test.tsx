@@ -64,23 +64,12 @@ function Harness(props: {
   onResult: (proof: SecurityProof | null) => void
   operation?: RequestVerificationOptions
 }) {
+  const verification = useSecureVerification()
   const [client] = useState(
     () => new QueryClient({ defaultOptions: { queries: { retry: false } } })
   )
   return (
     <QueryClientProvider client={client}>
-      <HarnessInner {...props} />
-    </QueryClientProvider>
-  )
-}
-
-function HarnessInner(props: {
-  onResult: (proof: SecurityProof | null) => void
-  operation?: RequestVerificationOptions
-}) {
-  const verification = useSecureVerification()
-  return (
-    <>
       <button
         type='button'
         onClick={async () =>
@@ -96,7 +85,7 @@ function HarnessInner(props: {
         Protected action
       </button>
       <SecureVerificationDialog {...verification.dialogProps} />
-    </>
+    </QueryClientProvider>
   )
 }
 
@@ -117,22 +106,12 @@ afterEach(() => {
 function LoginHarness(props: {
   onResult: (bundle: AuthBundle | null) => void
 }) {
+  const verification = useSecureVerification()
   const [client] = useState(
     () => new QueryClient({ defaultOptions: { queries: { retry: false } } })
   )
   return (
     <QueryClientProvider client={client}>
-      <LoginHarnessInner {...props} />
-    </QueryClientProvider>
-  )
-}
-
-function LoginHarnessInner(props: {
-  onResult: (bundle: AuthBundle | null) => void
-}) {
-  const verification = useSecureVerification()
-  return (
-    <>
       <button
         type='button'
         onClick={async () =>
@@ -152,7 +131,7 @@ function LoginHarnessInner(props: {
         Continue sign-in
       </button>
       <SecureVerificationDialog {...verification.dialogProps} />
-    </>
+    </QueryClientProvider>
   )
 }
 
@@ -337,9 +316,7 @@ it('shows query errors and reloads requirements only when the user retries', asy
   expect(
     await screen.findByLabelText('Password', { selector: 'input' })
   ).toBeVisible()
-  expect(
-    requests.mock.calls.filter(([url]) => url === '/api/verify/methods')
-  ).toHaveLength(2)
+  expect(requests).toHaveBeenCalledTimes(2)
   await user.click(screen.getByRole('button', { name: 'Cancel' }))
   await waitFor(() => expect(result).toHaveBeenCalledWith(null))
 })
@@ -592,58 +569,3 @@ it('verifies with the clicked provider when several linked accounts are availabl
     screen.getByRole('button', { name: 'Continue with Linux DO' })
   ).toBeDisabled()
 })
-
-it.each([
-  ['the ServerAddress origin', (): string => window.location.origin, false],
-  ['another entry origin', (): string => 'https://chuanapi.com', true],
-])(
-  'resolves linked-account availability after status arrives on %s',
-  async (_name, resolveServerAddress, hidden) => {
-    const statusReply = pendingResponse<{
-      data: { success: boolean; data: { server_address: string } }
-    }>()
-    vi.spyOn(api, 'get').mockImplementation((url) => {
-      if (url === '/api/status') return statusReply.promise
-      if (url === '/api/verify/methods') {
-        return Promise.resolve({
-          data: {
-            success: true,
-            data: {
-              ...linkedAccountRequirements,
-              methods: [
-                { method: 'password', available: true },
-                { method: 'oauth', available: true },
-              ],
-            },
-          },
-        })
-      }
-      return Promise.resolve({ data: { success: true, data: {} } })
-    })
-    const user = userEvent.setup()
-    render(<Harness operation={{ scope: '2fa.setup' }} onResult={vi.fn()} />)
-    await user.click(screen.getByText('Protected action'))
-    expect(
-      await screen.findByText('Loading verification methods...')
-    ).toBeVisible()
-    await act(async () => {
-      statusReply.resolve({
-        data: {
-          success: true,
-          data: { server_address: resolveServerAddress() },
-        },
-      })
-      await statusReply.promise
-    })
-    expect(
-      await screen.findByLabelText('Password', { selector: 'input' })
-    ).toBeVisible()
-    if (hidden) {
-      expect(
-        screen.queryByRole('tab', { name: 'Linked account' })
-      ).not.toBeInTheDocument()
-      return
-    }
-    expect(screen.getByRole('tab', { name: 'Linked account' })).toBeVisible()
-  }
-)

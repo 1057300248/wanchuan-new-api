@@ -41,26 +41,6 @@ func TestTokenAllowUserQuotaQueryRoundTripsThroughRedisHashCache(t *testing.T) {
 	assert.Positive(t, server.TTL(getTokenCacheKey(token.Key)))
 }
 
-func TestTokenUpdateRevokesCachedUserQuotaQueryPermission(t *testing.T) {
-	truncateTables(t)
-	useUserCacheMiniRedis(t)
-	token := Token{UserId: 7, Key: "token-user-quota-revoked-key", Name: "user-quota-revoked", Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true, Group: "default", AllowUserQuotaQuery: true}
-	require.NoError(t, token.Insert())
-	require.NoError(t, cacheSetTokenForTest(token))
-	preheated, err := cacheGetTokenByKey(token.Key)
-	require.NoError(t, err)
-	require.True(t, preheated.AllowUserQuotaQuery)
-
-	token.AllowUserQuotaQuery = false
-	require.NoError(t, token.Update())
-	_, err = cacheGetTokenByKey(token.Key)
-	require.Error(t, err, "revocation must invalidate a previously granted cached permission")
-	reloaded, err := GetTokenByKey(token.Key, false)
-	require.NoError(t, err)
-	assert.False(t, reloaded.AllowUserQuotaQuery)
-	assert.NotEmpty(t, reloaded.Key, "permission revocation must preserve the token identity")
-}
-
 func TestTokenUpdateSynchronouslyNarrowsPreheatedAutoGroupsCache(t *testing.T) {
 	truncateTables(t)
 	useUserCacheMiniRedis(t)

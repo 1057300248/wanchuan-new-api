@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/httpx"
 	"github.com/QuantumNous/new-api/pkg/privacy"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -641,7 +642,7 @@ func FetchGeminiModels(baseURL, apiKey string, setting dto.ChannelSettings) ([]s
 
 		request.Header.Set("x-goog-api-key", apiKey)
 
-		response, err := service.DoRequestWithoutRedirects(client, request)
+		response, err := httpx.DoWithoutRedirects(client, request)
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("request failed: %v", err)

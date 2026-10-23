@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -193,14 +194,11 @@ func ApplyOriginTaskAffinity(c *gin.Context, info *relaycommon.RelayInfo) *dto.T
 
 // RelayTaskSubmit 完成 task 提交的全部流程（每次尝试调用一次）：
 // 刷新渠道元数据 → 确定 platform/adaptor → 验证请求 →
-// 估算计费(EstimateBilling) → 计算价格 → 预扣费（重试补足差额）→
+// 估算计费(EstimateBilling) → 计算价格 → 预扣费（重试时补足差额）→
 // 构建/发送/解析上游请求 → 提交后计费调整(AdjustBillingOnSubmit)。
 // 共享控制器编排负责未落库退款、最终额度预留、落库和结算。
 func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitResult, *dto.TaskError) {
 	info.InitChannelMeta(c)
-	// No pricing state from another provider may reach this attempt's hooks.
-	info.TieredBillingSnapshot = nil
-	info.QuotaClamp = nil
 
 	// 1. 确定 platform → 创建适配器 → 验证请求
 	platform := constant.TaskPlatform(c.GetString("platform"))
@@ -249,8 +247,10 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	}
 
-	// Every selected provider is priced afresh, including expression -> per-call retries.
+	// 4. 价格计算：基础模型价格。重试可能换了插件或渠道，每次尝试都重新定价，
+	//    不沿用上一次尝试的表达式快照。
 	info.OriginModelName = modelName
+	info.TieredBillingSnapshot = nil
 	var priceData types.PriceData
 	var err error
 	pluginKey := c.GetString("task_plugin_key")
@@ -285,16 +285,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		} else {
 			facts = provider.ExtractUsageFacts(c, info)
 		}
-		requestInput, requestErr := helper.ResolveIncomingBillingExprRequestInput(c, info)
-		if requestErr != nil {
-			return nil, service.TaskErrorWrapper(requestErr, "model_price_error", http.StatusBadRequest)
-		}
-		requestInput, requestErr = billingexpr.FreezeRequestInput(exprStr, requestInput)
-		if requestErr != nil {
-			return nil, service.TaskErrorWrapper(requestErr, "model_price_error", http.StatusBadRequest)
-		}
-		requestInput.Usage = facts
-		cost, trace, runErr := billingexpr.RunExprWithRequest(exprStr, billingexpr.TokenParams{}, requestInput)
+		cost, trace, runErr := billingexpr.RunExprWithRequest(exprStr, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: facts})
 		if runErr != nil || cost < 0 {
 			if runErr == nil {
 				runErr = fmt.Errorf("negative task expression result")
@@ -305,8 +296,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		quota, clamp := common.QuotaRoundChecked(cost * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 		noteTaskQuotaClamp(info, clamp)
 		priceData = types.PriceData{Quota: quota, QuotaToPreConsume: quota, GroupRatioInfo: groupRatioInfo}
-		requestInput.Usage = nil
-		info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{BillingMode: billing_setting.BillingModeTieredExpr, ModelName: modelName, ExprString: exprStr, ExprHash: billingexpr.ExprHashString(exprStr), GroupRatio: groupRatioInfo.GroupRatio, EstimatedQuotaBeforeGroup: cost * common.QuotaPerUnit, EstimatedQuotaAfterGroup: quota, EstimatedTier: trace.MatchedTier, QuotaPerUnit: common.QuotaPerUnit, ExprVersion: billingexpr.ExprVersion(exprStr), TaskUsageBilling: true, UsageFacts: facts, RequestInput: &requestInput}
+		info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{BillingMode: billing_setting.BillingModeTieredExpr, ModelName: modelName, ExprString: exprStr, ExprHash: billingexpr.ExprHashString(exprStr), GroupRatio: groupRatioInfo.GroupRatio, EstimatedQuotaBeforeGroup: cost * common.QuotaPerUnit, EstimatedQuotaAfterGroup: quota, EstimatedTier: trace.MatchedTier, QuotaPerUnit: common.QuotaPerUnit, ExprVersion: billingexpr.ExprVersion(exprStr), TaskUsageBilling: true, UsageFacts: facts}
 	} else {
 		priceData, err = helper.ModelPriceHelperPerCall(c, info)
 		if err != nil {
@@ -343,7 +333,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		noteTaskQuotaClamp(info, clamp)
 	}
 
-	// Hold the entire new quote before the upstream sees this attempt.
+	// 7. 预扣费：首次尝试创建计费会话；重试时会话已存在，换到更贵的渠道要在
+	//    发起上游请求前补足预扣，余额不足就不发请求。
 	if info.Billing != nil || !info.PriceData.FreeModel {
 		info.ForcePreConsume = true
 		if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
@@ -555,25 +546,16 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 	if adaptor == nil {
 		return nil
 	}
-
-	key := channelModel.Key
-	if task.PrivateData.Key != "" {
-		key = task.PrivateData.Key
-	}
 	adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
-		ChannelType: channelModel.Type, ChannelId: channelModel.Id,
-		ChannelBaseUrl: baseURL, ApiKey: key, ChannelSetting: channelModel.GetSetting(),
+		ChannelType:     channelModel.Type,
+		ChannelId:       channelModel.Id,
+		ChannelBaseUrl:  baseURL,
+		ApiKey:          channelModel.Key,
+		ChannelSetting:  channelModel.GetSetting(),
 		HeadersOverride: channelModel.GetHeaderOverride(),
 	}})
-	if task.HasLegacyBillingIntent() {
-		return nil // Historical custom pending records require operator reconciliation.
-	}
 
-	if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
-		return nil
-	}
-
-	resp, err := adaptor.FetchTask(baseURL, key, task, proxy)
+	resp, err := adaptor.FetchTask(baseURL, channelModel.Key, task, proxy)
 	if err != nil || resp == nil {
 		return nil
 	}
@@ -588,12 +570,35 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 		return nil
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil
-	}
-	if err := service.ApplyTaskPollResult(context.Background(), adaptor, task, ti, body); err != nil {
-		logger.LogError(context.Background(), fmt.Sprintf("realtime task %s update/settlement failed: %v", task.TaskID, err))
-		return nil
+	snap := task.Snapshot()
+	status := model.TaskStatus(ti.Status)
+	finished := status == model.TaskStatusSuccess || status == model.TaskStatusFailure
+	if finished && snap.Status != model.TaskStatusSuccess && snap.Status != model.TaskStatusFailure {
+		// Finishing a task settles or refunds it. Let the poller record the
+		// final status, as it does for every other task, so that happens once.
+		upstreamID := task.GetUpstreamTaskID()
+		_ = service.UpdateVideoTasks(context.Background(), task.Platform,
+			map[int][]string{task.ChannelId: {upstreamID}}, map[string]*model.Task{upstreamID: task})
+	} else {
+		// 将上游最新状态更新到 task
+		if ti.Status != "" {
+			task.Status = status
+		}
+		if ti.Progress != "" {
+			task.Progress = ti.Progress
+		}
+		if strings.HasPrefix(ti.Url, "data:") {
+			// data: URI — kept in Data, not ResultURL
+		} else if ti.Url != "" {
+			task.PrivateData.ResultURL = ti.Url
+		} else if task.Status == model.TaskStatusSuccess {
+			// No URL from adaptor — construct proxy URL using public task ID
+			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+		}
+
+		if !snap.Equal(task.Snapshot()) {
+			_, _ = task.UpdateWithStatus(snap.Status)
+		}
 	}
 
 	// OpenAI Video API 由调用者的 ConvertToOpenAIVideo 分支处理

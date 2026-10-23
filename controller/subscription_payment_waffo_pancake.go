@@ -9,7 +9,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/pkg/paymentcore"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
@@ -22,7 +21,7 @@ type SubscriptionWaffoPancakePayRequest struct {
 }
 
 func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
-	if !paymentcore.RequireCompliance(c) {
+	if !requirePaymentCompliance(c) {
 		return
 	}
 
@@ -45,17 +44,11 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		common.ApiErrorT(c, "WaffoPancakeProductId is not configured for this plan")
 		return
 	}
-	// Plan targets its own Pancake product, so the gateway-level product ID is not
-	// required. Store/environment are required because webhook settlement is bound
-	// to the server-side order snapshot rather than the callback URL alone.
+	// Plan targets its own Pancake product, so we only require credentials
+	// here — not the gateway-level WaffoPancakeProductID.
 	if strings.TrimSpace(setting.WaffoPancakeMerchantID) == "" ||
-		strings.TrimSpace(setting.WaffoPancakePrivateKey) == "" ||
-		strings.TrimSpace(setting.WaffoPancakeStoreID) == "" {
-		common.ApiErrorMsg(c, "Waffo Pancake 未配置或密钥无效")
-		return
-	}
-	if _, err := paymentcore.ConfiguredWaffoPancakeEnvironment(); err != nil {
-		common.ApiErrorMsg(c, "Waffo Pancake 环境配置无效")
+		strings.TrimSpace(setting.WaffoPancakePrivateKey) == "" {
+		common.ApiErrorT(c, "Waffo Pancake is not configured or key is invalid")
 		return
 	}
 
@@ -96,16 +89,9 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
 	}
-	expectedAmount := decimal.NewFromFloat(plan.PriceAmount).StringFixed(2)
-	binding, err := paymentcore.NewWaffoPancakeBinding(tradeNo, paymentcore.OrderBindingKindSubscription, expectedAmount)
-	if err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅绑定配置失败 user_id=%d plan_id=%d trade_no=%s error=%q", userId, plan.Id, tradeNo, err.Error()))
-		common.ApiErrorMsg(c, "支付配置错误")
-		return
-	}
-	if err := paymentcore.InsertSubscriptionOrderWithBinding(order, binding); err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅订单创建失败 user_id=%d plan_id=%d trade_no=%s error=%q", userId, plan.Id, tradeNo, err.Error()))
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
+	if err := order.Insert(); err != nil {
+		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake failed to create subscription order user_id=%d plan_id=%d trade_no=%s error=%q", userId, plan.Id, tradeNo, err.Error()))
+		paymentError(c, common.NewMessage("Failed to create order"))
 		return
 	}
 
@@ -114,7 +100,7 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		ProductID:     plan.WaffoPancakeProductId,
 		BuyerIdentity: service.WaffoPancakeBuyerIdentityFromUserID(user.Id),
 		PriceSnapshot: &service.WaffoPancakePriceSnapshot{
-			Amount:      expectedAmount,
+			Amount:      decimal.NewFromFloat(plan.PriceAmount).StringFixed(2),
 			TaxCategory: "saas",
 		},
 		BuyerEmail:              getWaffoPancakeBuyerEmail(user),
@@ -128,14 +114,7 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		paymentError(c, common.NewMessage("Failed to start payment"))
 		return
 	}
-	if err := paymentcore.BindProviderSessionID(tradeNo, session.SessionID); err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅保存上游会话失败 user_id=%d plan_id=%d trade_no=%s session_id=%s error=%q", userId, plan.Id, tradeNo, session.SessionID, err.Error()))
-		order.Status = common.TopUpStatusFailed
-		_ = order.Update()
-		common.ApiErrorMsg(c, "支付订单绑定失败")
-		return
-	}
-	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅订单创建成功 user_id=%d plan_id=%d trade_no=%s session_id=%s money=%.2f", userId, plan.Id, tradeNo, session.SessionID, plan.PriceAmount))
+	logger.LogInfo(c.Request.Context(), common.LogText("Waffo Pancake subscription order created user_id=%d plan_id=%d trade_no=%s session_id=%s money=%.2f", userId, plan.Id, tradeNo, session.SessionID, plan.PriceAmount))
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",

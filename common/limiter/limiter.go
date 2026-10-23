@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/redis/go-redis/v9"
+	"github.com/go-redis/redis/v8"
 )
 
 //go:embed lua/rate_limit.lua

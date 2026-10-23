@@ -43,8 +43,8 @@ import { Route as AuthenticatedDashboardSectionRouteImport } from './routes/_aut
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
 import { Route as AuthenticatedImageIndexRouteImport } from './routes/_authenticated/image/index'
 import { Route as AuthenticatedKeysIndexRouteImport } from './routes/_authenticated/keys/index'
-import { Route as AuthenticatedModelManagementIndexRouteImport } from './routes/_authenticated/model-management/index'
-import { Route as AuthenticatedModelManagementSectionRouteImport } from './routes/_authenticated/model-management/$section'
+import { Route as AuthenticatedModelsIndexRouteImport } from './routes/_authenticated/models/index'
+import { Route as AuthenticatedModelsSectionRouteImport } from './routes/_authenticated/models/$section'
 import { Route as AuthenticatedPlaygroundIndexRouteImport } from './routes/_authenticated/playground/index'
 import { Route as AuthenticatedProfileIndexRouteImport } from './routes/_authenticated/profile/index'
 import { Route as AuthenticatedRedemptionCodesIndexRouteImport } from './routes/_authenticated/redemption-codes/index'
@@ -252,16 +252,16 @@ const AuthenticatedKeysIndexRoute = AuthenticatedKeysIndexRouteImport.update({
   path: '/keys/',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
-const AuthenticatedModelManagementIndexRoute =
-  AuthenticatedModelManagementIndexRouteImport.update({
-    id: '/model-management/',
-    path: '/model-management/',
+const AuthenticatedModelsIndexRoute =
+  AuthenticatedModelsIndexRouteImport.update({
+    id: '/models/',
+    path: '/models/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
-const AuthenticatedModelManagementSectionRoute =
-  AuthenticatedModelManagementSectionRouteImport.update({
-    id: '/model-management/$section',
-    path: '/model-management/$section',
+const AuthenticatedModelsSectionRoute =
+  AuthenticatedModelsSectionRouteImport.update({
+    id: '/models/$section',
+    path: '/models/$section',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedPlaygroundIndexRoute =
@@ -488,7 +488,7 @@ export interface FileRoutesByFullPath {
   '/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
-  '/model-management/$section': typeof AuthenticatedModelManagementSectionRoute
+  '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/help/guides/$slug': typeof HelpGuidesSlugRoute
@@ -496,7 +496,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/image/': typeof AuthenticatedImageIndexRoute
   '/keys/': typeof AuthenticatedKeysIndexRoute
-  '/model-management/': typeof AuthenticatedModelManagementIndexRoute
+  '/models/': typeof AuthenticatedModelsIndexRoute
   '/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/profile/': typeof AuthenticatedProfileIndexRoute
   '/redemption-codes/': typeof AuthenticatedRedemptionCodesIndexRoute
@@ -556,7 +556,7 @@ export interface FileRoutesByTo {
   '/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
-  '/model-management/$section': typeof AuthenticatedModelManagementSectionRoute
+  '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/help/guides/$slug': typeof HelpGuidesSlugRoute
@@ -564,7 +564,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/image': typeof AuthenticatedImageIndexRoute
   '/keys': typeof AuthenticatedKeysIndexRoute
-  '/model-management': typeof AuthenticatedModelManagementIndexRoute
+  '/models': typeof AuthenticatedModelsIndexRoute
   '/playground': typeof AuthenticatedPlaygroundIndexRoute
   '/profile': typeof AuthenticatedProfileIndexRoute
   '/redemption-codes': typeof AuthenticatedRedemptionCodesIndexRoute
@@ -628,7 +628,7 @@ export interface FileRoutesById {
   '/_authenticated/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/_authenticated/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
-  '/_authenticated/model-management/$section': typeof AuthenticatedModelManagementSectionRoute
+  '/_authenticated/models/$section': typeof AuthenticatedModelsSectionRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/help/guides/$slug': typeof HelpGuidesSlugRoute
@@ -636,7 +636,7 @@ export interface FileRoutesById {
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/image/': typeof AuthenticatedImageIndexRoute
   '/_authenticated/keys/': typeof AuthenticatedKeysIndexRoute
-  '/_authenticated/model-management/': typeof AuthenticatedModelManagementIndexRoute
+  '/_authenticated/models/': typeof AuthenticatedModelsIndexRoute
   '/_authenticated/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/_authenticated/profile/': typeof AuthenticatedProfileIndexRoute
   '/_authenticated/redemption-codes/': typeof AuthenticatedRedemptionCodesIndexRoute
@@ -699,7 +699,7 @@ export interface FileRouteTypes {
     | '/chat/$chatId'
     | '/dashboard/$section'
     | '/errors/$error'
-    | '/model-management/$section'
+    | '/models/$section'
     | '/usage-logs/$section'
     | '/usage-logs/audit'
     | '/help/guides/$slug'
@@ -707,7 +707,7 @@ export interface FileRouteTypes {
     | '/dashboard/'
     | '/image/'
     | '/keys/'
-    | '/model-management/'
+    | '/models/'
     | '/playground/'
     | '/profile/'
     | '/redemption-codes/'
@@ -767,7 +767,7 @@ export interface FileRouteTypes {
     | '/chat/$chatId'
     | '/dashboard/$section'
     | '/errors/$error'
-    | '/model-management/$section'
+    | '/models/$section'
     | '/usage-logs/$section'
     | '/usage-logs/audit'
     | '/help/guides/$slug'
@@ -775,7 +775,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/image'
     | '/keys'
-    | '/model-management'
+    | '/models'
     | '/playground'
     | '/profile'
     | '/redemption-codes'
@@ -838,7 +838,7 @@ export interface FileRouteTypes {
     | '/_authenticated/chat/$chatId'
     | '/_authenticated/dashboard/$section'
     | '/_authenticated/errors/$error'
-    | '/_authenticated/model-management/$section'
+    | '/_authenticated/models/$section'
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/usage-logs/audit'
     | '/help/guides/$slug'
@@ -846,7 +846,7 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard/'
     | '/_authenticated/image/'
     | '/_authenticated/keys/'
-    | '/_authenticated/model-management/'
+    | '/_authenticated/models/'
     | '/_authenticated/playground/'
     | '/_authenticated/profile/'
     | '/_authenticated/redemption-codes/'
@@ -1142,18 +1142,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedKeysIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/model-management/': {
-      id: '/_authenticated/model-management/'
-      path: '/model-management'
-      fullPath: '/model-management/'
-      preLoaderRoute: typeof AuthenticatedModelManagementIndexRouteImport
+    '/_authenticated/models/': {
+      id: '/_authenticated/models/'
+      path: '/models'
+      fullPath: '/models/'
+      preLoaderRoute: typeof AuthenticatedModelsIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/model-management/$section': {
-      id: '/_authenticated/model-management/$section'
-      path: '/model-management/$section'
-      fullPath: '/model-management/$section'
-      preLoaderRoute: typeof AuthenticatedModelManagementSectionRouteImport
+    '/_authenticated/models/$section': {
+      id: '/_authenticated/models/$section'
+      path: '/models/$section'
+      fullPath: '/models/$section'
+      preLoaderRoute: typeof AuthenticatedModelsSectionRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/playground/': {
@@ -1485,14 +1485,14 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedChatChatIdRoute: typeof AuthenticatedChatChatIdRoute
   AuthenticatedDashboardSectionRoute: typeof AuthenticatedDashboardSectionRoute
   AuthenticatedErrorsErrorRoute: typeof AuthenticatedErrorsErrorRoute
-  AuthenticatedModelManagementSectionRoute: typeof AuthenticatedModelManagementSectionRoute
+  AuthenticatedModelsSectionRoute: typeof AuthenticatedModelsSectionRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedUsageLogsAuditRoute: typeof AuthenticatedUsageLogsAuditRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedImageIndexRoute: typeof AuthenticatedImageIndexRoute
   AuthenticatedKeysIndexRoute: typeof AuthenticatedKeysIndexRoute
-  AuthenticatedModelManagementIndexRoute: typeof AuthenticatedModelManagementIndexRoute
+  AuthenticatedModelsIndexRoute: typeof AuthenticatedModelsIndexRoute
   AuthenticatedPlaygroundIndexRoute: typeof AuthenticatedPlaygroundIndexRoute
   AuthenticatedProfileIndexRoute: typeof AuthenticatedProfileIndexRoute
   AuthenticatedRedemptionCodesIndexRoute: typeof AuthenticatedRedemptionCodesIndexRoute
@@ -1513,16 +1513,14 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedChatChatIdRoute: AuthenticatedChatChatIdRoute,
   AuthenticatedDashboardSectionRoute: AuthenticatedDashboardSectionRoute,
   AuthenticatedErrorsErrorRoute: AuthenticatedErrorsErrorRoute,
-  AuthenticatedModelManagementSectionRoute:
-    AuthenticatedModelManagementSectionRoute,
+  AuthenticatedModelsSectionRoute: AuthenticatedModelsSectionRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
   AuthenticatedUsageLogsAuditRoute: AuthenticatedUsageLogsAuditRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
   AuthenticatedImageIndexRoute: AuthenticatedImageIndexRoute,
   AuthenticatedKeysIndexRoute: AuthenticatedKeysIndexRoute,
-  AuthenticatedModelManagementIndexRoute:
-    AuthenticatedModelManagementIndexRoute,
+  AuthenticatedModelsIndexRoute: AuthenticatedModelsIndexRoute,
   AuthenticatedPlaygroundIndexRoute: AuthenticatedPlaygroundIndexRoute,
   AuthenticatedProfileIndexRoute: AuthenticatedProfileIndexRoute,
   AuthenticatedRedemptionCodesIndexRoute:

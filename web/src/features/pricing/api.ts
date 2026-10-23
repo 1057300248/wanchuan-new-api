@@ -33,10 +33,10 @@ export async function getPricing(): Promise<PricingData> {
 
 // Get the anonymous public catalogue. Public pages must use this endpoint
 // instead of downgrading after an authentication failure. The request is
-// deliberately credential-free: `withCredentials: false` keeps cookies off the
-// wire, `preserveAuthorization` stops the request interceptor from attaching a
-// session bearer token, and `skipAuthRefresh` prevents a 401 from starting a
-// refresh cycle for a visitor that never authenticated.
+// configured without cross-origin cookie credentials. `preserveAuthorization`
+// prevents a session bearer token and `skipAuthRefresh` prevents an anonymous
+// 401 from starting a refresh. Browsers may still send same-origin cookies;
+// the public server route must remain independent of those cookies.
 export async function getPublicPricing(): Promise<PricingData> {
   const res = await api.get('/public-api/pricing', {
     withCredentials: false,

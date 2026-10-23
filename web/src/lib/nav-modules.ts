@@ -18,12 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { QueryClient } from '@tanstack/react-query'
 
-import {
-  ensureSharedStatus,
-  readCachedStatus,
-  statusQueryOptions,
-  type StatusRecord,
-} from '@/lib/status-query'
+import { readCachedStatus, statusQueryOptions } from '@/lib/status-query'
 
 export type ModuleAccess = { enabled: boolean; requireAuth: boolean }
 
@@ -149,10 +144,12 @@ export function parseHeaderNavModulesFromStatus(
   return parseHeaderNavModules(status?.HeaderNavModules)
 }
 
-function getCachedStatus(): StatusRecord | null {
-  return readCachedStatus()
-}
-
+/**
+ * Resolve one module's access flags from an already-loaded status payload.
+ *
+ * Falls back to the module's default when status is missing or does not carry
+ * a `HeaderNavModules` entry for it.
+ */
 export function getModuleAccessFromStatus(
   status: Record<string, unknown> | null,
   module: HeaderNavModule
@@ -160,38 +157,48 @@ export function getModuleAccessFromStatus(
   return parseHeaderNavModulesFromStatus(status)[module] ?? DEFAULTS[module]
 }
 
+/**
+ * Read module access synchronously from the persisted status snapshot.
+ *
+ * For render paths that cannot await, such as deciding whether to show a nav
+ * item. Never issues a request; use {@link getModuleAccessForGuard} when the
+ * caller can await.
+ */
 export function getModuleAccess(module: HeaderNavModule): ModuleAccess {
-  return getModuleAccessFromStatus(getCachedStatus(), module)
+  return getModuleAccessFromStatus(readCachedStatus(), module)
 }
 
-export async function getFreshModuleAccess(
-  queryClient: QueryClient,
-  module: HeaderNavModule
-): Promise<ModuleAccess> {
-  try {
-    const status = await ensureSharedStatus(queryClient)
-    if (!status) return { enabled: false, requireAuth: true }
-    return getModuleAccessFromStatus(status, module)
-  } catch {
-    return { enabled: false, requireAuth: true }
-  }
-}
-
-// Navigation must await refreshed access flags, not silently reuse a stale
-// enabled flag when the shared request fails.
+/**
+ * Resolve module access for a router `beforeLoad` guard.
+ *
+ * Reads through the shared `['status']` cache, so a guard on a fresh page load
+ * reuses the request already started during boot instead of issuing its own.
+ *
+ * Fresh entries resolve immediately. Stale or invalidated entries await a
+ * shared refresh before deciding navigation; a background refresh cannot undo
+ * a redirect already made by a guard. The backend still authorizes requests.
+ *
+ * On failure this fails closed, reporting the module as disabled and
+ * auth-required.
+ */
 export async function getModuleAccessForGuard(
   queryClient: QueryClient,
   module: HeaderNavModule
 ): Promise<ModuleAccess> {
   try {
     const status = await queryClient.fetchQuery(statusQueryOptions)
-    if (!status) return { enabled: false, requireAuth: true }
     return getModuleAccessFromStatus(status, module)
   } catch {
     return { enabled: false, requireAuth: true }
   }
 }
 
+/**
+ * Whether an admin sidebar entry is enabled by `SidebarModulesAdmin`.
+ *
+ * Fails open: an absent, blank, or unparsable configuration keeps every module
+ * visible, so a status read that has not landed yet cannot blank the sidebar.
+ */
 export function isSidebarModuleEnabledInStatus(
   status: Record<string, unknown> | null,
   section: string,
@@ -217,11 +224,8 @@ export function isSidebarModuleEnabledInStatus(
   }
 }
 
-export function isSidebarModuleEnabled(
-  section: string,
-  module: string
-): boolean {
-  return isSidebarModuleEnabledInStatus(getCachedStatus(), section, module)
+export function isSidebarModuleEnabled(section: string, module: string): boolean {
+  return isSidebarModuleEnabledInStatus(readCachedStatus(), section, module)
 }
 
 export async function getFreshSidebarModuleEnabled(
@@ -229,7 +233,10 @@ export async function getFreshSidebarModuleEnabled(
   section: string,
   module: string
 ): Promise<boolean> {
-  const status = await ensureSharedStatus(queryClient)
-  if (!status) return false
-  return isSidebarModuleEnabledInStatus(status, section, module)
+  try {
+    const status = await queryClient.fetchQuery(statusQueryOptions)
+    return !!status && isSidebarModuleEnabledInStatus(status, section, module)
+  } catch {
+    return false
+  }
 }

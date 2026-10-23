@@ -27,11 +27,20 @@ const localesDir = resolve(
   '../../../../i18n/locales'
 )
 
+const overridesDir = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../i18n/locales'
+)
+
 function translation(locale: string): Record<string, string> {
   const file = JSON.parse(
     readFileSync(resolve(localesDir, `${locale}.json`), 'utf8')
   )
-  return file.translation as Record<string, string>
+  const overrides = JSON.parse(
+    readFileSync(resolve(overridesDir, `${locale}.json`), 'utf8')
+  )
+  // Match the runtime's feature-only overlay without altering official locales.
+  return { ...file.translation, ...overrides.translation }
 }
 
 describe('invitation rewards copy contract', () => {

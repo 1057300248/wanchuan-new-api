@@ -21,6 +21,7 @@ import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { beforeAll, describe, expect, test, vi } from 'vitest'
 
+import zhOverrides from '@/extensions/chuanapi/i18n/locales/zh.json'
 import zh from '@/i18n/locales/zh.json'
 
 import type { ReferralCommissionItem, UserWalletData } from '../../types'
@@ -58,7 +59,7 @@ beforeAll(async () => {
     fallbackLng: 'en',
     resources: {
       en: { translation: {} },
-      zh: { translation: zh.translation },
+      zh: { translation: { ...zh.translation, ...zhOverrides.translation } },
     },
     interpolation: { escapeValue: false },
   })

@@ -13,7 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting"
-	"github.com/redis/go-redis/v9"
+	"github.com/go-redis/redis/v8"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -33,7 +33,6 @@ var (
 	groupConfigAppliedVersion     atomic.Int64
 	groupConfigVersionInitialized atomic.Bool
 	groupConfigApplyMutex         sync.Mutex
-	groupConfigSubscriberOnce     sync.Once
 )
 
 type groupConfigInvalidationEvent struct {
@@ -280,13 +279,6 @@ func PublishGroupConfigInvalidation(version int64, mappings []GroupRenameMapping
 		return err
 	}
 	return common.RDB.Publish(context.Background(), groupConfigTopic(common.RDB.Options().DB), payload).Err()
-}
-
-func StartGroupConfigSubscriber(ctx context.Context) {
-	if !common.RedisEnabled || common.RDB == nil {
-		return
-	}
-	groupConfigSubscriberOnce.Do(func() { go RunGroupConfigSubscriber(ctx) })
 }
 
 // RunGroupConfigSubscriber blocks until cancellation so the composition root

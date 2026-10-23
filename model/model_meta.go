@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	"gorm.io/gorm"
 )
@@ -248,8 +247,7 @@ func SearchModelsWithChannels(keyword, vendor, status, syncOfficial string, offs
 }
 
 func (mi *Model) Insert() error {
-	defer InvalidateModelBonusEligibleCache()
-	return metadataTransaction(func(tx *gorm.DB) error {
+	err := metadataTransaction(func(tx *gorm.DB) error {
 		if err := validateModelVendor(tx, mi.VendorID); err != nil {
 			return err
 		}
@@ -262,6 +260,11 @@ func (mi *Model) Insert() error {
 		mi.Status, mi.SyncOfficial = status, syncOfficial
 		return tx.Model(&Model{}).Where("id = ?", mi.Id).Updates(map[string]any{"status": status, "sync_official": syncOfficial}).Error
 	})
+	// An error can follow a real COMMIT whose acknowledgement was lost.
+	// Cache invalidation has no money side effect; make either outcome cold.
+	InvalidatePricingCache()
+	InvalidateModelBonusEligibleCache()
+	return err
 }
 
 func IsModelNameDuplicated(id int, name string) (bool, error) {
@@ -274,8 +277,7 @@ func IsModelNameDuplicated(id int, name string) (bool, error) {
 }
 
 func (mi *Model) Update() error {
-	defer InvalidateModelBonusEligibleCache()
-	return metadataTransaction(func(tx *gorm.DB) error {
+	err := metadataTransaction(func(tx *gorm.DB) error {
 		if err := validateModelVendor(tx, mi.VendorID); err != nil {
 			return err
 		}
@@ -283,6 +285,11 @@ func (mi *Model) Update() error {
 		return tx.Model(&Model{}).Where("id = ?", mi.Id).
 			Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "status", "sync_official", "name_rule", "updated_time", "context_length", "max_output_tokens", "knowledge_cutoff", "release_date", "parameter_count", "input_modalities", "output_modalities", "capabilities", "bonus_eligible").Updates(mi).Error
 	})
+	// An error can follow a real COMMIT whose acknowledgement was lost.
+	// Cache invalidation has no money side effect; make either outcome cold.
+	InvalidatePricingCache()
+	InvalidateModelBonusEligibleCache()
+	return err
 }
 
 // ParseModelMetadataArray 将 models 表中的 JSON 数组字符串解析为字符串切片。
@@ -472,48 +479,21 @@ func normalizeLookupValues(values []string) []string {
 	return normalized
 }
 
-// PreferredModelOwner contains public discovery metadata only. The deterministic
-// representative is not a promise about weighted routing or request failover.
-type PreferredModelOwner struct {
-	ChannelType  int
-	ModelOwnedBy string
-}
-
 func GetPreferredModelOwnerChannelTypes(modelNames []string, groups []string) (map[string]int, error) {
-	owners, err := lookupPreferredModelOwners(modelNames, groups)
-	result := make(map[string]int, len(owners))
-	for name, owner := range owners {
-		result[name] = owner.ChannelType
-	}
-	return result, err
-}
-
-// GetPreferredModelOwners is scoped to the caller's visible groups. An empty
-// scope must never turn a public discovery query into a global channel lookup.
-func GetPreferredModelOwners(modelNames []string, groups []string) (map[string]PreferredModelOwner, error) {
-	groups = normalizeLookupValues(groups)
-	if len(groups) == 0 {
-		return map[string]PreferredModelOwner{}, nil
-	}
-	return lookupPreferredModelOwners(modelNames, groups)
-}
-
-func lookupPreferredModelOwners(modelNames []string, groups []string) (map[string]PreferredModelOwner, error) {
-	result := make(map[string]PreferredModelOwner)
+	result := make(map[string]int)
 	modelNames = normalizeLookupValues(modelNames)
 	if len(modelNames) == 0 {
 		return result, nil
 	}
 
 	type row struct {
-		Model          string
-		ChannelType    int
-		ChannelSetting *string
+		Model       string
+		ChannelType int
 	}
 	var rows []row
 
 	query := DB.Table("abilities").
-		Select("abilities.model as model, channels.type as channel_type, channels.setting as channel_setting").
+		Select("abilities.model as model, channels.type as channel_type").
 		Joins("JOIN channels ON abilities.channel_id = channels.id").
 		Where("abilities.model IN ? AND abilities.enabled = ? AND channels.status = ?", modelNames, true, common.ChannelStatusEnabled).
 		Order("COALESCE(abilities.priority, 0) DESC").
@@ -533,16 +513,7 @@ func lookupPreferredModelOwners(modelNames []string, groups []string) (map[strin
 		if _, ok := result[r.Model]; ok {
 			continue
 		}
-		owner := PreferredModelOwner{ChannelType: r.ChannelType}
-		// Decode locally: Channel.GetSetting repairs malformed settings by writing
-		// to the database, which is not appropriate in a public read endpoint.
-		if r.ChannelSetting != nil {
-			var setting dto.ChannelSettings
-			if err := common.UnmarshalJsonStr(*r.ChannelSetting, &setting); err == nil && setting.ValidateModelOwnedBy() == nil {
-				owner.ModelOwnedBy = strings.TrimSpace(setting.ModelOwnedBy)
-			}
-		}
-		result[r.Model] = owner
+		result[r.Model] = r.ChannelType
 	}
 	return result, nil
 }

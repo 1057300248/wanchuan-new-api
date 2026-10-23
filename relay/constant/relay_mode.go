@@ -54,13 +54,9 @@ const (
 	RelayModeToolsFetch
 )
 
-func IsPlaygroundChatPath(path string) bool {
-	return strings.HasPrefix(path, "/pg/chat/completions") || strings.HasPrefix(path, "/api/user/playground/chat")
-}
-
 func Path2RelayMode(path string) int {
 	relayMode := RelayModeUnknown
-	if strings.HasPrefix(path, "/v1/chat/completions") || IsPlaygroundChatPath(path) {
+	if strings.HasPrefix(path, "/v1/chat/completions") || strings.HasPrefix(path, "/pg/chat/completions") {
 		relayMode = RelayModeChatCompletions
 	} else if strings.HasPrefix(path, "/v1/completions") {
 		relayMode = RelayModeCompletions

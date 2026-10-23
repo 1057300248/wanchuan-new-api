@@ -303,3 +303,12 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 	}
 	return nil
 }
+
+// Retained for the official native Responses path; conversion handlers above
+// propagate delivery errors independently.
+func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamResponse, data string) {
+	if data == "" {
+		return
+	}
+	_ = helper.ResponseChunkData(c, streamResponse, data)
+}

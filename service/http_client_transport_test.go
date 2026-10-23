@@ -9,12 +9,16 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -568,4 +572,100 @@ func TestNormalizeHTTPTransportPolicyClampsWithoutPanic(t *testing.T) {
 	assert.Equal(t, HTTPTransportPolicy{Protocol: dto.HTTPProtocolAuto, Shards: 1}, NormalizeHTTPTransportPolicy(dto.ChannelSettings{HTTPProtocol: "http3"}))
 	assert.Equal(t, HTTPTransportPolicy{Protocol: dto.HTTPProtocolAuto, Shards: 1}, NormalizeHTTPTransportPolicy(dto.ChannelSettings{HTTP2ConnectionShards: -3}))
 	assert.Equal(t, HTTPTransportPolicy{Protocol: dto.HTTPProtocolAuto, Shards: 8}, NormalizeHTTPTransportPolicy(dto.ChannelSettings{HTTP2ConnectionShards: 99}))
+}
+
+type redirectTestTransport func(*http.Request) (*http.Response, error)
+
+func (transport redirectTestTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return transport(request)
+}
+
+type redirectTestBody struct {
+	io.Reader
+	closes int
+}
+
+func (body *redirectTestBody) Close() error {
+	body.closes++
+	return nil
+}
+
+func TestMidjourneyRequestKeepsOriginalResponseWithoutFollowingRedirect(t *testing.T) {
+	originalClient := httpClient
+	t.Cleanup(func() { httpClient = originalClient })
+	for _, status := range []int{200, 301, 302, 303, 307, 308} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			const payload = `{"code":1,"description":"fixture response","result":"fixture-result"}`
+			body := &redirectTestBody{Reader: strings.NewReader(payload)}
+			sourceCalls, targetCalls, policyCalls := 0, 0, 0
+			httpClient = &http.Client{
+				Transport: redirectTestTransport(func(request *http.Request) (*http.Response, error) {
+					if request.URL.Host == "redirect.invalid" {
+						targetCalls++
+						return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"code":1,"result":"wrong-target"}`)), Request: request}, nil
+					}
+					sourceCalls++
+					assert.Equal(t, "fixture-only", request.Header.Get("mj-api-secret"))
+					assert.Equal(t, "application/json", request.Header.Get("Content-Type"))
+					_, hasDeadline := request.Context().Deadline()
+					assert.True(t, hasDeadline)
+					return &http.Response{StatusCode: status, Header: http.Header{"Location": {"https://redirect.invalid/next"}}, Body: body, Request: request}, nil
+				}),
+				CheckRedirect: func(*http.Request, []*http.Request) error { policyCalls++; return nil },
+				Timeout:       time.Minute,
+			}
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/mj/submit/imagine", strings.NewReader(`{}`))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			common.SetContextKey(ctx, constant.ContextKeyChannelKey, "Bearer fixture-only")
+			response, raw, err := DoMidjourneyHttpRequest(ctx, time.Minute, "https://origin.invalid/mj/submit/imagine")
+			require.NoError(t, err)
+			require.NotNil(t, response)
+			assert.Equal(t, status, response.StatusCode)
+			assert.Equal(t, payload, string(raw))
+			assert.Equal(t, "fixture-result", response.Response.Result)
+			assert.Equal(t, 1, sourceCalls)
+			assert.Zero(t, targetCalls, "the authenticated request must not reach the redirect target")
+			assert.Equal(t, 1, body.closes, "the caller owns and closes the original response")
+			assert.Zero(t, policyCalls)
+			require.NoError(t, httpClient.CheckRedirect(nil, nil))
+			assert.Equal(t, 1, policyCalls, "the shared client policy must remain unchanged")
+		})
+	}
+}
+
+// A transport owns request-body closure, but the caller always owns the returned
+// response body, including when later reads or inbound-body cleanup fail.
+type midjourneyFailureReader struct{}
+
+func (midjourneyFailureReader) Read([]byte) (int, error) {
+	return 0, fmt.Errorf("fixture read failure")
+}
+
+type midjourneyFailureClosingBody struct{ io.Reader }
+
+func (midjourneyFailureClosingBody) Close() error { return fmt.Errorf("fixture close failure") }
+
+func TestMidjourneyRequestClosesUpstreamResponseOnLaterFailure(t *testing.T) {
+	originalClient := httpClient
+	t.Cleanup(func() { httpClient = originalClient })
+	for _, failure := range []string{"inbound_close", "upstream_read"} {
+		t.Run(failure, func(t *testing.T) {
+			body := &redirectTestBody{Reader: strings.NewReader(`{"code":1}`)}
+			if failure == "upstream_read" {
+				body.Reader = midjourneyFailureReader{}
+			}
+			httpClient = &http.Client{Transport: redirectTestTransport(func(request *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: body, Request: request}, nil
+			})}
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodGet, "http://downstream.invalid/mj", nil)
+			if failure == "inbound_close" {
+				c.Request.Body = midjourneyFailureClosingBody{Reader: strings.NewReader("")}
+			}
+			_, _, err := DoMidjourneyHttpRequest(c, time.Second, "http://upstream.invalid/mj")
+			require.Error(t, err)
+			assert.Equal(t, 1, body.closes, "every returned upstream body must close even on later failure")
+		})
+	}
 }
