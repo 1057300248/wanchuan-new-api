@@ -186,7 +186,7 @@ func TestServeTaskPluginProtocolBackgroundPreservesConcurrentFinancialState(t *t
 				require.True(t, won)
 				require.NoError(t, f.db.First(&stored, outcome.Task.ID).Error)
 				assert.True(t, stored.PrivateData.ResponsesBackground)
-				assert.Equal(t, model.TaskStatusInProgress, stored.Status)
+				assert.Equal(t, model.TaskStatus(model.TaskStatusInProgress), stored.Status)
 				assert.Equal(t, before, readPluginBackgroundFinancialSnapshot(t, f))
 			}
 		})
