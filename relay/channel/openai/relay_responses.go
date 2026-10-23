@@ -181,7 +181,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	if streamErr == nil {
 		streamErr = info.StreamStatus.APIError()
 	}
-	if streamErr == nil {
+	if streamErr == nil && !(terminalSeen && info.StreamStatus.EndReason == relaycommon.StreamEndReasonDone && info.StreamStatus.ResponseOutcome() == string(relaycommon.ResponseOutcomeCompleted)) {
 		streamErr = service.RelayRequestCancellation(c)
 	}
 	if streamErr == nil && info.StreamStatus.EndReason == relaycommon.StreamEndReasonClientGone {
@@ -222,7 +222,6 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			failure := dto.ResponsesStreamResponse{Type: "response.failed", SequenceNumber: &sequenceNumber, Response: &failureResponse}
 			data, err := common.Marshal(failure)
 			if err == nil {
-				helper.ExtendWriteDeadline(c)
 				err = helper.ResponseChunkData(c, failure, string(data))
 			}
 			if err != nil {

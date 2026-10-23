@@ -109,6 +109,9 @@ type responsesWSSession struct {
 	stateMu       sync.Mutex
 	current       *responsesWSCallState
 
+	// clientWriteBudget is guarded by clientWriteMu.
+	clientWriteBudget helper.StreamWriteBudget
+
 	// restricted is fixed when the connection is upgraded: ordinary callers
 	// receive generic errors, while administrator sessions keep diagnostics.
 	restricted bool
@@ -738,7 +741,7 @@ func (s *responsesWSSession) writeClient(kind int, message []byte) error {
 // writeClientLocked applies the client privacy boundary and writes one frame.
 // Callers must hold clientWriteMu.
 func (s *responsesWSSession) writeClientLocked(kind int, message []byte) error {
-	if err := s.client.SetWriteDeadline(time.Now().Add(responsesWSWriteTimeout)); err != nil {
+	if err := s.client.SetWriteDeadline(s.clientWriteBudget.Deadline(time.Now(), len(message))); err != nil {
 		return err
 	}
 	requested, _ := s.outputModel.Load().(string)
