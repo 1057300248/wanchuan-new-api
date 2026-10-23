@@ -19,6 +19,8 @@ DSN_KEYS = ("TEST_MYSQL_DSN", "TEST_MYSQL_LOG_DSN", "TEST_POSTGRES_DSN", "TEST_P
             "TEST_REDIS_DSN", "TEST_REDIS_ADDR", "TEST_TASK_REDIS_ADDR",
             "TEST_FINALIZATION_MODEL_MYSQL_DSN", "TEST_FINALIZATION_MODEL_POSTGRES_DSN",
             "TEST_FINALIZATION_SERVICE_MYSQL_DSN", "TEST_FINALIZATION_SERVICE_POSTGRES_DSN",
+            "TEST_BILLING_RECOVERY_MYSQL_DSN", "TEST_BILLING_RECOVERY_POSTGRES_DSN",
+            "NEW_API_TEST_RECOVERY_RESTART_FILE", "NEW_API_TEST_RECOVERY_RESTART_PHASE", "NEW_API_TEST_RECOVERY_NATIVE_CLAIM",
             "TEST_FINALIZATION_REALTIME_MYSQL_DSN", "TEST_FINALIZATION_REALTIME_POSTGRES_DSN",
             "TEST_REFUND_OPS_MYSQL_DSN", "TEST_REFUND_OPS_POSTGRES_DSN", "TEST_REFUND_QUEUE_PRESSURE",
             "TEST_FINALIZATION_CACHE_MYSQL_DSN", "TEST_FINALIZATION_CACHE_POSTGRES_DSN",
@@ -29,7 +31,7 @@ class RepairServiceEnvironmentTests(unittest.TestCase):
     def run_script(self, dialect, reject_label="", creation_fails=False, *, mode="database",
                    redis_version="8.8.0", redis_info="# Server\r\nredis_version:8.8.0\r\n",
                    redis_info_fails=False, finalization_creation_fails="", refund_operations_creation_fails=False,
-                   task_submission_creation_fails=False):
+                   task_submission_creation_fails=False, billing_recovery_creation_fails=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             tools = root / "bin"
@@ -53,6 +55,8 @@ elif name == "docker" and os.environ.get("MOCK_CREATE_FAIL") == "1" and any("rep
 elif name == "docker" and os.environ.get("MOCK_FINALIZATION_CREATE_FAIL") and any("repair_finalization_" + os.environ["MOCK_FINALIZATION_CREATE_FAIL"] in arg for arg in args):
     raise SystemExit(1)
 elif name == "docker" and os.environ.get("MOCK_TASK_SUBMISSION_CREATE_FAIL") == "1" and any("repair_task_submission" in arg for arg in args):
+    raise SystemExit(1)
+elif name == "docker" and os.environ.get("MOCK_BILLING_RECOVERY_CREATE_FAIL") == "1" and any("repair_billing_recovery" in arg for arg in args):
     raise SystemExit(1)
 elif name == "docker" and os.environ.get("MOCK_REFUND_OPERATIONS_CREATE_FAIL") == "1" and any("repair_refund_operations" in arg for arg in args):
     raise SystemExit(1)
@@ -78,6 +82,11 @@ elif name == "python3":
                    "TEST_FINALIZATION_MODEL_POSTGRES_DSN": "untrusted-ambient-fixture",
                    "TEST_FINALIZATION_SERVICE_MYSQL_DSN": "untrusted-ambient-fixture",
                    "TEST_FINALIZATION_SERVICE_POSTGRES_DSN": "untrusted-ambient-fixture",
+                   "TEST_BILLING_RECOVERY_MYSQL_DSN": "untrusted-ambient-fixture",
+                   "TEST_BILLING_RECOVERY_POSTGRES_DSN": "untrusted-ambient-fixture",
+                   "NEW_API_TEST_RECOVERY_RESTART_FILE": "untrusted-ambient-fixture",
+                   "NEW_API_TEST_RECOVERY_RESTART_PHASE": "resume",
+                   "NEW_API_TEST_RECOVERY_NATIVE_CLAIM": "untrusted-ambient-fixture",
                    "TEST_FINALIZATION_REALTIME_MYSQL_DSN": "untrusted-ambient-fixture",
                    "TEST_FINALIZATION_REALTIME_POSTGRES_DSN": "untrusted-ambient-fixture",
                    "TEST_REFUND_OPS_MYSQL_DSN": "untrusted-ambient-fixture",
@@ -91,6 +100,7 @@ elif name == "python3":
                    "MOCK_REFUND_OPERATIONS_CREATE_FAIL": "1" if refund_operations_creation_fails else "0",
                    "MOCK_FINALIZATION_CREATE_FAIL": finalization_creation_fails,
                    "MOCK_TASK_SUBMISSION_CREATE_FAIL": "1" if task_submission_creation_fails else "0",
+                   "MOCK_BILLING_RECOVERY_CREATE_FAIL": "1" if billing_recovery_creation_fails else "0",
                    "MOCK_TRACE": str(trace), "MOCK_REJECT_LABEL": reject_label,
                    "MOCK_CREATE_FAIL": "1" if creation_fails else "0",
                    "REDIS_ID": "d" * 64, "REDIS_PORT": "16379", "REDIS_EXPECTED_VERSION": redis_version,
@@ -108,6 +118,11 @@ elif name == "python3":
             self.assertEqual(["test", "-race", "-p", "2"], test["args"][:4])
             self.assertEqual(["-count=1", "-timeout=12m", "-json"], test["args"][-3:])
             self.assertEqual(["ops/ci/check_go_test_report.py", "--reject-skipped-descendants"], gate["args"][:2])
+            for key in ("NEW_API_TEST_RECOVERY_RESTART_FILE", "NEW_API_TEST_RECOVERY_RESTART_PHASE", "NEW_API_TEST_RECOVERY_NATIVE_CLAIM"):
+                self.assertEqual("", test["env"][key], "only the test parent may authorize a child phase")
+            if Path(gate["args"][2]).stem != "request-finalization-service":
+                for key in ("TEST_BILLING_RECOVERY_MYSQL_DSN", "TEST_BILLING_RECOVERY_POSTGRES_DSN"):
+                    self.assertEqual("", test["env"][key], "native recovery DSNs must not leak to other reports")
         return {Path(gate["args"][2]).stem: (test, gate) for test, gate in zip(tests, gates)}
 
     def expected_labels(self, dialect):
@@ -197,11 +212,43 @@ elif name == "python3":
                 self.assertNotEqual(0, result.returncode)
                 self.assertFalse(any(row["tool"] == "go" and row["args"] != ["version"] for row in rows))
 
+    def test_recovery_native_database_is_created_once_and_failure_cannot_reuse_it(self):
+        for dialect in ("mysql", "postgres"):
+            with self.subTest(dialect=dialect):
+                result, rows = self.run_script(dialect)
+                self.assertEqual(0, result.returncode, result.stderr)
+                creation = [row for row in rows if row["tool"] == "docker" and any("repair_billing_recovery" in arg for arg in row["args"])]
+                self.assertEqual(1, len(creation))
+                command = " ".join(creation[0]["args"])
+                self.assertNotIn("IF NOT EXISTS", command)
+                self.assertNotIn("DROP", command)
+                tests = [row for row in rows if row["tool"] == "go" and row["args"] != ["version"]]
+                self.assertLess(rows.index(creation[0]), rows.index(tests[0]))
+                result, rows = self.run_script(dialect, billing_recovery_creation_fails=True)
+                self.assertNotEqual(0, result.returncode)
+                self.assertFalse(any(row["tool"] == "go" and row["args"] != ["version"] for row in rows))
+
     def test_finalization_matrices_use_distinct_fresh_databases_and_all_current_leaves(self):
         inventory = json.loads((SCRIPT.parent / "billing_finalization_required_cases.json").read_text())
         suites = {suite["package"]: suite for suite in inventory["suites"]}
         self.assertEqual({"model", "service"}, set(suites))
         self.assertEqual(["settlement_deadline_row_lock"], suites["service"]["native_required_leaf_suffixes"])
+        self.assertEqual({
+            "sqlite": ["TestBillingRecoveryFileRestart"],
+            "mysql": ["TestBillingRecoveryNativeSessionLeaseHandoff", "TestBillingRecoveryNativeSessionLeaseHandoff/mysql"],
+            "postgres": ["TestBillingRecoveryNativeSessionLeaseHandoff", "TestBillingRecoveryNativeSessionLeaseHandoff/postgres"],
+        }, suites["service"]["standalone_required_tests"])
+        recovery = ["recovery_mixed_legacy_progress", "recovery_cursor_write_resume",
+                    "recovery_cursor_write_resume/history_page=true", "recovery_cursor_write_resume/history_page=false",
+                    "recovery_scheduler_create_resume", "unknown_delivery_observability"]
+        for source in ("wallet", "subscription"):
+            recovery.append("unknown_delivery_observability/" + source)
+            recovery += ["unknown_delivery_observability/" + source + "/" + leaf for leaf in (
+                "write_failure", "reservation_probe", "receipt", "commit_rollback", "commit_ack_lost",
+                "success_and_idempotent", "terminal_conflict")]
+        recovery += ["unknown_delivery_observability/unavailable_identity_" + kind for kind in ("missing", "control", "oversized")]
+        for suffix in recovery:
+            self.assertIn(suffix, suites["service"]["required_leaf_suffixes"])
         for suffix in ("legacy_final_more_less/Å", "legacy_final_more_less/ĕ",
                        "commit_boundaries/lost_ack/settlement", "commit_boundaries/rollback/settlement",
                        "real_session_partial_less", "real_session_partial_more", "real_session_trusted",
@@ -233,9 +280,23 @@ elif name == "python3":
                             expected = [prefix] + [prefix + "/" + leaf for leaf in suite["required_leaf_suffixes"]]
                             if dialect != "sqlite":
                                 expected += [prefix + "/" + leaf for leaf in suite.get("native_required_leaf_suffixes", [])]
+                            standalone = suite.get("standalone_required_tests", {}).get(dialect, [])
+                            expected += standalone
                             self.assertEqual(expected, check["args"][3:])
                             self.assertEqual("./" + package, invocation["args"][4])
-                            self.assertEqual(f"^{suite['top']}$/{dialect}$", invocation["args"][6])
+                            pattern = f"^{suite['top']}$/{dialect}$"
+                            if standalone:
+                                pattern = f"^({suite['top']}|{standalone[0]})$/{dialect}$"
+                            self.assertEqual(pattern, invocation["args"][6])
+                    for engine in ("mysql", "postgres"):
+                        key = "TEST_BILLING_RECOVERY_" + engine.upper() + "_DSN"
+                        if label == "request-finalization-service" and dialect == engine:
+                            self.assertIn("/repair_billing_recovery?", env[key])
+                            self.assertIn("127.0.0.1:", env[key])
+                            self.assertNotEqual(env["TEST_DATABASE_DSN"], env[key])
+                            self.assertNotEqual(env["TEST_FINALIZATION_SERVICE_" + engine.upper() + "_DSN"], env[key])
+                        else:
+                            self.assertEqual("", env[key], (label, key))
                 if dialect != "sqlite":
                     for package in suites:
                         matching = [row for row in rows if row["tool"] == "docker" and

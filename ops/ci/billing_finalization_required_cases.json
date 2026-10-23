@@ -172,6 +172,31 @@
         "lifecycle_ready_recovery/subscription",
         "lifecycle_unknown_delivery/wallet",
         "lifecycle_unknown_delivery/subscription",
+        "unknown_delivery_observability",
+        "unknown_delivery_observability/wallet",
+        "unknown_delivery_observability/wallet/write_failure",
+        "unknown_delivery_observability/wallet/reservation_probe",
+        "unknown_delivery_observability/wallet/receipt",
+        "unknown_delivery_observability/wallet/commit_rollback",
+        "unknown_delivery_observability/wallet/commit_ack_lost",
+        "unknown_delivery_observability/wallet/success_and_idempotent",
+        "unknown_delivery_observability/wallet/terminal_conflict",
+        "unknown_delivery_observability/subscription",
+        "unknown_delivery_observability/subscription/write_failure",
+        "unknown_delivery_observability/subscription/reservation_probe",
+        "unknown_delivery_observability/subscription/receipt",
+        "unknown_delivery_observability/subscription/commit_rollback",
+        "unknown_delivery_observability/subscription/commit_ack_lost",
+        "unknown_delivery_observability/subscription/success_and_idempotent",
+        "unknown_delivery_observability/subscription/terminal_conflict",
+        "unknown_delivery_observability/unavailable_identity_missing",
+        "unknown_delivery_observability/unavailable_identity_control",
+        "unknown_delivery_observability/unavailable_identity_oversized",
+        "recovery_mixed_legacy_progress",
+        "recovery_cursor_write_resume",
+        "recovery_cursor_write_resume/history_page=true",
+        "recovery_cursor_write_resume/history_page=false",
+        "recovery_scheduler_create_resume",
         "lifecycle_trusted_zero",
         "lifecycle_reservation_ack/wallet/initial",
         "lifecycle_reservation_ack/wallet/reserve",
@@ -225,7 +250,20 @@
         "unowned_hold/free_task_zero",
         "audio_fixed_price/fixed_price",
         "audio_fixed_price/token_ratios"
-      ]
+      ],
+      "standalone_required_tests": {
+        "sqlite": [
+          "TestBillingRecoveryFileRestart"
+        ],
+        "mysql": [
+          "TestBillingRecoveryNativeSessionLeaseHandoff",
+          "TestBillingRecoveryNativeSessionLeaseHandoff/mysql"
+        ],
+        "postgres": [
+          "TestBillingRecoveryNativeSessionLeaseHandoff",
+          "TestBillingRecoveryNativeSessionLeaseHandoff/postgres"
+        ]
+      }
     }
   ],
   "task_wallet_suite": {

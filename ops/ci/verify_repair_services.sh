@@ -15,6 +15,9 @@ export TEST_FINALIZATION_CACHE_MYSQL_DSN= TEST_FINALIZATION_CACHE_POSTGRES_DSN=
 export TEST_SETTLEMENT_DEADLINE_REDIS_ADDR= TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE=
 export TEST_TASK_REDIS_ADDR=
 export TEST_FINALIZATION_REALTIME_MYSQL_DSN= TEST_FINALIZATION_REALTIME_POSTGRES_DSN=
+export TEST_BILLING_RECOVERY_MYSQL_DSN= TEST_BILLING_RECOVERY_POSTGRES_DSN=
+export NEW_API_TEST_RECOVERY_RESTART_FILE= NEW_API_TEST_RECOVERY_RESTART_PHASE=
+export NEW_API_TEST_RECOVERY_NATIVE_CLAIM=
 
 report() {
   local label=$1 package=$2 pattern=$3
@@ -40,6 +43,7 @@ database)
   export AUDIT_MYSQL_DSN= AUDIT_POSTGRES_DSN=
   token_migration_mysql_dsn= token_migration_postgres_dsn=
   task_submission_mysql_dsn= task_submission_postgres_dsn=
+  billing_recovery_mysql_dsn= billing_recovery_postgres_dsn=
   # Retained model/service matrices still refuse nonempty fixture databases.
   # Never share those fixtures or inherit an ambient database DSN.
   export TEST_FINALIZATION_MODEL_MYSQL_DSN= TEST_FINALIZATION_MODEL_POSTGRES_DSN=
@@ -52,7 +56,7 @@ database)
     : "${MYSQL_ID:?a real MySQL service is required}" "${MYSQL_PORT:?a real MySQL port is required}"
     docker inspect --format '{{.Config.Image}} {{.Image}}' "$MYSQL_ID" > "$OUT/database-image.txt"
     docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'SELECT VERSION(); ALTER DATABASE repair_compat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_compat_log CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_token_migration CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;' > "$OUT/database-version.txt"
-    docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'CREATE DATABASE repair_finalization_model CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_finalization_service CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_finalization_realtime CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_task_submission CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
+    docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'CREATE DATABASE repair_finalization_model CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_finalization_service CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_finalization_realtime CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_task_submission CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_billing_recovery CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
     finalization_model_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_model?charset=utf8mb4&parseTime=true&loc=UTC"
     finalization_service_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_service?charset=utf8mb4&parseTime=true&loc=UTC"
     finalization_realtime_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_realtime?charset=utf8mb4&parseTime=true&loc=UTC"
@@ -61,6 +65,7 @@ database)
     export TEST_DATABASE_DSN="$TEST_MYSQL_DSN" TEST_LOG_DATABASE_DSN="$TEST_MYSQL_LOG_DSN"
     token_migration_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_token_migration?charset=utf8mb4&parseTime=true&loc=UTC"
     task_submission_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_task_submission?charset=utf8mb4&parseTime=true&loc=UTC"
+    billing_recovery_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_billing_recovery?charset=utf8mb4&parseTime=true&loc=UTC"
     ;;
   postgres)
     : "${PG_ID:?a real PostgreSQL service is required}" "${PG_PORT:?a real PostgreSQL port is required}"
@@ -72,6 +77,7 @@ database)
     docker exec "$PG_ID" createdb -U postgres repair_finalization_service
     docker exec "$PG_ID" createdb -U postgres repair_finalization_realtime
     docker exec "$PG_ID" createdb -U postgres repair_task_submission
+    docker exec "$PG_ID" createdb -U postgres repair_billing_recovery
     finalization_model_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_model?sslmode=disable"
     finalization_service_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_service?sslmode=disable"
     finalization_realtime_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_realtime?sslmode=disable"
@@ -80,6 +86,7 @@ database)
     export TEST_DATABASE_DSN="$TEST_POSTGRES_DSN" TEST_LOG_DATABASE_DSN="$TEST_POSTGRES_LOG_DSN"
     token_migration_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_token_migration?sslmode=disable"
     task_submission_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_task_submission?sslmode=disable"
+    billing_recovery_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_billing_recovery?sslmode=disable"
     ;;
   sqlite) ;;
   *) echo "Unsupported database dialect: $DIALECT" >&2; exit 1 ;;
@@ -364,6 +371,31 @@ database)
     'lifecycle_ready_recovery/subscription' \
     'lifecycle_unknown_delivery/wallet' \
     'lifecycle_unknown_delivery/subscription' \
+    'unknown_delivery_observability' \
+    'unknown_delivery_observability/wallet' \
+    'unknown_delivery_observability/wallet/write_failure' \
+    'unknown_delivery_observability/wallet/reservation_probe' \
+    'unknown_delivery_observability/wallet/receipt' \
+    'unknown_delivery_observability/wallet/commit_rollback' \
+    'unknown_delivery_observability/wallet/commit_ack_lost' \
+    'unknown_delivery_observability/wallet/success_and_idempotent' \
+    'unknown_delivery_observability/wallet/terminal_conflict' \
+    'unknown_delivery_observability/subscription' \
+    'unknown_delivery_observability/subscription/write_failure' \
+    'unknown_delivery_observability/subscription/reservation_probe' \
+    'unknown_delivery_observability/subscription/receipt' \
+    'unknown_delivery_observability/subscription/commit_rollback' \
+    'unknown_delivery_observability/subscription/commit_ack_lost' \
+    'unknown_delivery_observability/subscription/success_and_idempotent' \
+    'unknown_delivery_observability/subscription/terminal_conflict' \
+    'unknown_delivery_observability/unavailable_identity_missing' \
+    'unknown_delivery_observability/unavailable_identity_control' \
+    'unknown_delivery_observability/unavailable_identity_oversized' \
+    'recovery_mixed_legacy_progress' \
+    'recovery_cursor_write_resume' \
+    'recovery_cursor_write_resume/history_page=true' \
+    'recovery_cursor_write_resume/history_page=false' \
+    'recovery_scheduler_create_resume' \
     'lifecycle_trusted_zero' \
     'lifecycle_reservation_ack/wallet/initial' \
     'lifecycle_reservation_ack/wallet/reserve' \
@@ -419,11 +451,21 @@ database)
     'audio_fixed_price/token_ratios'; do
     required+=("$prefix/$contract")
   done
-  if [ "$DIALECT" != sqlite ]; then
+  if [ "$DIALECT" = sqlite ]; then
+    # This standalone parent joins two sequential OS children using one SQLite file.
+    standalone=TestBillingRecoveryFileRestart
+    required+=("$standalone")
+  else
     required+=("$prefix/settlement_deadline_row_lock")
+    # Native handoff owns a separate empty DB, not the matrix's fixed-name tables.
+    standalone=TestBillingRecoveryNativeSessionLeaseHandoff
+    required+=("$standalone" "$standalone/$DIALECT")
   fi
+  # Go runs the matching standalone parent even with a dialect subtest selector;
+  # native subtests still select only this dialect, never an unconfigured skip.
   TEST_FINALIZATION_SERVICE_MYSQL_DSN="$finalization_service_mysql_dsn" TEST_FINALIZATION_SERVICE_POSTGRES_DSN="$finalization_service_postgres_dsn" \
-    report request-finalization-service ./service "^TestBillingFinalizationSessionDatabaseMatrix$/$DIALECT$" "${required[@]}"
+    TEST_BILLING_RECOVERY_MYSQL_DSN="$billing_recovery_mysql_dsn" TEST_BILLING_RECOVERY_POSTGRES_DSN="$billing_recovery_postgres_dsn" \
+    report request-finalization-service ./service "^(TestBillingFinalizationSessionDatabaseMatrix|$standalone)$/$DIALECT$" "${required[@]}"
 
   # Dedicated empty database: real WS fixtures may never share another matrix's tables.
   prefix="TestRealtimeFinancialConsistencyDatabaseMatrix/$DIALECT"
