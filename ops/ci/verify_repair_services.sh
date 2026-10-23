@@ -39,6 +39,7 @@ database)
   export TEST_MYSQL_DSN= TEST_MYSQL_LOG_DSN= TEST_POSTGRES_DSN= TEST_POSTGRES_LOG_DSN=
   export AUDIT_MYSQL_DSN= AUDIT_POSTGRES_DSN=
   token_migration_mysql_dsn= token_migration_postgres_dsn=
+  task_submission_mysql_dsn= task_submission_postgres_dsn=
   # Retained model/service matrices still refuse nonempty fixture databases.
   # Never share those fixtures or inherit an ambient database DSN.
   export TEST_FINALIZATION_MODEL_MYSQL_DSN= TEST_FINALIZATION_MODEL_POSTGRES_DSN=
@@ -51,7 +52,7 @@ database)
     : "${MYSQL_ID:?a real MySQL service is required}" "${MYSQL_PORT:?a real MySQL port is required}"
     docker inspect --format '{{.Config.Image}} {{.Image}}' "$MYSQL_ID" > "$OUT/database-image.txt"
     docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'SELECT VERSION(); ALTER DATABASE repair_compat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_compat_log CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_token_migration CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;' > "$OUT/database-version.txt"
-    docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'CREATE DATABASE repair_finalization_model CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_finalization_service CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_finalization_realtime CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
+    docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'CREATE DATABASE repair_finalization_model CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_finalization_service CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_finalization_realtime CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_task_submission CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
     finalization_model_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_model?charset=utf8mb4&parseTime=true&loc=UTC"
     finalization_service_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_service?charset=utf8mb4&parseTime=true&loc=UTC"
     finalization_realtime_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_realtime?charset=utf8mb4&parseTime=true&loc=UTC"
@@ -59,6 +60,7 @@ database)
     export TEST_MYSQL_LOG_DSN="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_compat_log?charset=utf8mb4&parseTime=true&loc=UTC"
     export TEST_DATABASE_DSN="$TEST_MYSQL_DSN" TEST_LOG_DATABASE_DSN="$TEST_MYSQL_LOG_DSN"
     token_migration_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_token_migration?charset=utf8mb4&parseTime=true&loc=UTC"
+    task_submission_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_task_submission?charset=utf8mb4&parseTime=true&loc=UTC"
     ;;
   postgres)
     : "${PG_ID:?a real PostgreSQL service is required}" "${PG_PORT:?a real PostgreSQL port is required}"
@@ -69,6 +71,7 @@ database)
     docker exec "$PG_ID" createdb -U postgres repair_finalization_model
     docker exec "$PG_ID" createdb -U postgres repair_finalization_service
     docker exec "$PG_ID" createdb -U postgres repair_finalization_realtime
+    docker exec "$PG_ID" createdb -U postgres repair_task_submission
     finalization_model_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_model?sslmode=disable"
     finalization_service_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_service?sslmode=disable"
     finalization_realtime_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_realtime?sslmode=disable"
@@ -76,6 +79,7 @@ database)
     export TEST_POSTGRES_LOG_DSN="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_compat_log?sslmode=disable"
     export TEST_DATABASE_DSN="$TEST_POSTGRES_DSN" TEST_LOG_DATABASE_DSN="$TEST_POSTGRES_LOG_DSN"
     token_migration_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_token_migration?sslmode=disable"
+    task_submission_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_task_submission?sslmode=disable"
     ;;
   sqlite) ;;
   *) echo "Unsupported database dialect: $DIALECT" >&2; exit 1 ;;
@@ -196,7 +200,11 @@ database)
   for contract in partial zero larger invalid_usage expression_failure negative_result missing_usage failed official_settlement_failure_after_insert official_upward_shortage_before_insert; do
     required+=("$prefix/$contract")
   done
-  report immediate-settlement ./controller '^TestImmediateTaskSettlementDatabase$' "${required[@]}"
+  # Fixed-name wallet/owner tables bypass this fixture's normal table prefix.
+  # Keep its existing-table refusal: only use a newly created disposable DB,
+  # never delete or reuse tables left by the startup and earlier suites.
+  TEST_MYSQL_DSN="$task_submission_mysql_dsn" TEST_POSTGRES_DSN="$task_submission_postgres_dsn" \
+    report immediate-settlement ./controller '^TestImmediateTaskSettlementDatabase$' "${required[@]}"
 
 
   # Required current-policy leaves are mirrored by offline orchestration tests.

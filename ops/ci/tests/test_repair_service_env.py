@@ -28,7 +28,8 @@ DSN_KEYS = ("TEST_MYSQL_DSN", "TEST_MYSQL_LOG_DSN", "TEST_POSTGRES_DSN", "TEST_P
 class RepairServiceEnvironmentTests(unittest.TestCase):
     def run_script(self, dialect, reject_label="", creation_fails=False, *, mode="database",
                    redis_version="8.8.0", redis_info="# Server\r\nredis_version:8.8.0\r\n",
-                   redis_info_fails=False, finalization_creation_fails="", refund_operations_creation_fails=False):
+                   redis_info_fails=False, finalization_creation_fails="", refund_operations_creation_fails=False,
+                   task_submission_creation_fails=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             tools = root / "bin"
@@ -50,6 +51,8 @@ elif name == "go" and args == ["version"]:
 elif name == "docker" and os.environ.get("MOCK_CREATE_FAIL") == "1" and any("repair_token_migration" in arg for arg in args):
     raise SystemExit(1)
 elif name == "docker" and os.environ.get("MOCK_FINALIZATION_CREATE_FAIL") and any("repair_finalization_" + os.environ["MOCK_FINALIZATION_CREATE_FAIL"] in arg for arg in args):
+    raise SystemExit(1)
+elif name == "docker" and os.environ.get("MOCK_TASK_SUBMISSION_CREATE_FAIL") == "1" and any("repair_task_submission" in arg for arg in args):
     raise SystemExit(1)
 elif name == "docker" and os.environ.get("MOCK_REFUND_OPERATIONS_CREATE_FAIL") == "1" and any("repair_refund_operations" in arg for arg in args):
     raise SystemExit(1)
@@ -87,6 +90,7 @@ elif name == "python3":
                    "TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE": "untrusted-ambient-fixture",
                    "MOCK_REFUND_OPERATIONS_CREATE_FAIL": "1" if refund_operations_creation_fails else "0",
                    "MOCK_FINALIZATION_CREATE_FAIL": finalization_creation_fails,
+                   "MOCK_TASK_SUBMISSION_CREATE_FAIL": "1" if task_submission_creation_fails else "0",
                    "MOCK_TRACE": str(trace), "MOCK_REJECT_LABEL": reject_label,
                    "MOCK_CREATE_FAIL": "1" if creation_fails else "0",
                    "REDIS_ID": "d" * 64, "REDIS_PORT": "16379", "REDIS_EXPECTED_VERSION": redis_version,
@@ -132,8 +136,11 @@ elif name == "python3":
                     if label == "token-migration":
                         self.assertIn("/repair_token_migration?", actual)
                         self.assertNotEqual(main, actual, "legacy migration may never reuse the startup database")
+                    elif label == "immediate-settlement":
+                        self.assertIn("/repair_task_submission?", actual)
+                        self.assertNotEqual(main, actual, "fixed-name task ledger fixtures must not reuse the startup database")
                     else:
-                        self.assertEqual(main, actual, "migration override must not leak into another suite")
+                        self.assertEqual(main, actual, "fresh fixture DSN overrides must not leak into another suite")
                     if label.startswith("performance-"):
                         self.assertEqual(main, env[f"TEST_PERF_{selected}_DSN"])
                     if label in ("native-responses", "converted-responses"):
@@ -171,6 +178,22 @@ elif name == "python3":
         for dialect in ("mysql", "postgres"):
             with self.subTest(dialect=dialect):
                 result, rows = self.run_script(dialect, creation_fails=True)
+                self.assertNotEqual(0, result.returncode)
+                self.assertFalse(any(row["tool"] == "go" and row["args"] != ["version"] for row in rows))
+
+    def test_task_submission_database_is_created_once_and_failure_cannot_reuse_it(self):
+        for dialect in ("mysql", "postgres"):
+            with self.subTest(dialect=dialect):
+                result, rows = self.run_script(dialect)
+                self.assertEqual(0, result.returncode, result.stderr)
+                creation = [row for row in rows if row["tool"] == "docker" and any("repair_task_submission" in arg for arg in row["args"])]
+                self.assertEqual(1, len(creation))
+                command = " ".join(creation[0]["args"])
+                self.assertNotIn("IF NOT EXISTS", command)
+                self.assertNotIn("DROP", command)
+                tests = [row for row in rows if row["tool"] == "go" and row["args"] != ["version"]]
+                self.assertLess(rows.index(creation[0]), rows.index(tests[0]))
+                result, rows = self.run_script(dialect, task_submission_creation_fails=True)
                 self.assertNotEqual(0, result.returncode)
                 self.assertFalse(any(row["tool"] == "go" and row["args"] != ["version"] for row in rows))
 
