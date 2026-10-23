@@ -20,7 +20,7 @@ DSN_KEYS = ("TEST_MYSQL_DSN", "TEST_MYSQL_LOG_DSN", "TEST_POSTGRES_DSN", "TEST_P
             "TEST_FINALIZATION_MODEL_MYSQL_DSN", "TEST_FINALIZATION_MODEL_POSTGRES_DSN",
             "TEST_FINALIZATION_SERVICE_MYSQL_DSN", "TEST_FINALIZATION_SERVICE_POSTGRES_DSN",
             "TEST_BILLING_RECOVERY_MYSQL_DSN", "TEST_BILLING_RECOVERY_POSTGRES_DSN",
-            "TEST_BONUS_AUDIT_MYSQL_DSN", "TEST_BONUS_AUDIT_POSTGRES_DSN", "PAYMENT_STALE_STRIPE_DSN",
+            "TEST_BONUS_AUDIT_MYSQL_DSN", "TEST_BONUS_AUDIT_POSTGRES_DSN", "PAYMENT_STALE_STRIPE_DSN", "PAYMENT_STALE_FIXTURE_CHILD",
             "NEW_API_TEST_RECOVERY_RESTART_FILE", "NEW_API_TEST_RECOVERY_RESTART_PHASE", "NEW_API_TEST_RECOVERY_NATIVE_CLAIM",
             "TEST_FINALIZATION_REALTIME_MYSQL_DSN", "TEST_FINALIZATION_REALTIME_POSTGRES_DSN",
             "TEST_REFUND_OPS_MYSQL_DSN", "TEST_REFUND_OPS_POSTGRES_DSN", "TEST_REFUND_QUEUE_PRESSURE",
@@ -91,6 +91,7 @@ elif name == "python3":
                    "TEST_BONUS_AUDIT_MYSQL_DSN": "untrusted-ambient-fixture",
                    "TEST_BONUS_AUDIT_POSTGRES_DSN": "untrusted-ambient-fixture",
                    "PAYMENT_STALE_STRIPE_DSN": "untrusted-ambient-fixture",
+                   "PAYMENT_STALE_FIXTURE_CHILD": "untrusted-ambient-child",
                    "NEW_API_TEST_RECOVERY_RESTART_FILE": "untrusted-ambient-fixture",
                    "NEW_API_TEST_RECOVERY_RESTART_PHASE": "resume",
                    "NEW_API_TEST_RECOVERY_NATIVE_CLAIM": "untrusted-ambient-fixture",
@@ -135,7 +136,7 @@ elif name == "python3":
                               args=gate["args"][:-1] if require_run else gate["args"])
             self.assertNotIn(label, contracts, "reports cannot silently overwrite one another")
             contracts[label] = (test, normalized)
-            for key in ("NEW_API_TEST_RECOVERY_RESTART_FILE", "NEW_API_TEST_RECOVERY_RESTART_PHASE", "NEW_API_TEST_RECOVERY_NATIVE_CLAIM", "PAYMENT_STALE_STRIPE_DSN"):
+            for key in ("NEW_API_TEST_RECOVERY_RESTART_FILE", "NEW_API_TEST_RECOVERY_RESTART_PHASE", "NEW_API_TEST_RECOVERY_NATIVE_CLAIM", "PAYMENT_STALE_STRIPE_DSN", "PAYMENT_STALE_FIXTURE_CHILD"):
                 self.assertEqual("", test["env"][key], "only the test parent may authorize a child phase")
             if Path(gate["args"][2]).stem != "request-finalization-service":
                 for key in ("TEST_BILLING_RECOVERY_MYSQL_DSN", "TEST_BILLING_RECOVERY_POSTGRES_DSN"):
