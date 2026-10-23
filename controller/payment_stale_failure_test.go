@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -17,8 +18,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -49,6 +52,119 @@ func (f stalePancakeTransport) RoundTrip(request *http.Request) (*http.Response,
 	return f(request)
 }
 
+// The model's quoted-column caches are private process globals. Keep their
+// initialization inside a same-binary child, including when the whole controller
+// package is run: the parent retains only the original test-node topology.
+func runStalePaymentFixtureChild(t *testing.T) bool {
+	t.Helper()
+	const childEnv = "PAYMENT_STALE_FIXTURE_CHILD"
+	if target := os.Getenv(childEnv); target != "" {
+		require.Equal(t, t.Name(), target, "isolated fixture child must match its exact target")
+		return false
+	}
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	budget := 12 * time.Minute
+	if deadline, ok := t.Deadline(); ok {
+		budget = time.Until(deadline) - 5*time.Second
+	}
+	require.Positive(t, budget, "isolated fixture needs time to run and join within the parent deadline")
+	ctx, cancel := context.WithTimeout(t.Context(), budget)
+	defer cancel()
+	parts := strings.Split(t.Name(), "/")
+	for i := range parts {
+		parts[i] = "^" + regexp.QuoteMeta(parts[i]) + "$"
+	}
+	cmd := exec.CommandContext(ctx, executable, "-test.run="+strings.Join(parts, "/"), "-test.count=1", "-test.v=true", "-test.timeout="+budget.String())
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, childEnv+"=") && !strings.HasPrefix(entry, "PAYMENT_STALE_STRIPE_DSN=") {
+			cmd.Env = append(cmd.Env, entry)
+		}
+	}
+	cmd.Env = append(cmd.Env, childEnv+"="+t.Name())
+	cmd.WaitDelay = time.Second
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	pid, exitCode := 0, -1
+	joined := false
+	err = cmd.Start()
+	if err == nil {
+		pid = cmd.Process.Pid
+		t.Cleanup(func() {
+			if !joined {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+			}
+		})
+		err = cmd.Wait()
+		joined = true
+		exitCode = cmd.ProcessState.ExitCode()
+	}
+	expected := []string{strings.SplitN(t.Name(), "/", 2)[0]}
+	if expected[0] != t.Name() {
+		expected = append(expected, t.Name())
+	}
+	runs, passes, fails, skips := map[string]int{}, map[string]int{}, map[string]int{}, map[string]int{}
+	packagePasses, packageFails := 0, 0
+	scanner := bufio.NewScanner(bytes.NewReader(stdout.Bytes()))
+	scanner.Buffer(make([]byte, 4096), 4*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		fields := strings.Fields(line)
+		if len(fields) >= 3 {
+			switch fields[0] + " " + fields[1] {
+			case "=== RUN":
+				runs[fields[2]]++
+			case "--- PASS:":
+				passes[fields[2]]++
+			case "--- FAIL:":
+				fails[fields[2]]++
+			case "--- SKIP:":
+				skips[fields[2]]++
+			}
+		}
+		if line == "PASS" {
+			packagePasses++
+		}
+		if line == "FAIL" {
+			packageFails++
+		}
+	}
+	contextError := ""
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		contextError = "deadline_exceeded"
+	} else if ctx.Err() != nil {
+		contextError = "canceled"
+	}
+	valid := joined && ctx.Err() == nil && err == nil && scanner.Err() == nil && exitCode == 0 && packagePasses == 1 && packageFails == 0 && len(fails) == 0 && len(skips) == 0 && len(runs) == len(expected) && len(passes) == len(expected)
+	for _, name := range expected {
+		valid = valid && runs[name] == 1 && passes[name] == 1
+	}
+	for _, marker := range []string{"WARNING: DATA RACE", "panic:", "fatal error:"} {
+		valid = valid && !strings.Contains(stdout.String(), marker) && !strings.Contains(stderr.String(), marker)
+	}
+	result := map[string]any{"target": t.Name(), "pid": pid, "exit_code": exitCode, "joined": joined, "context_error": contextError, "package_passes": packagePasses, "package_fails": packageFails, "expected_nodes": expected, "runs": runs, "passes": passes, "fails": fails, "skips": skips}
+	if valid {
+		result["stdout_sha256"] = fmt.Sprintf("%x", sha256.Sum256(stdout.Bytes()))
+		result["stderr_sha256"] = fmt.Sprintf("%x", sha256.Sum256(stderr.Bytes()))
+	} else {
+		result["stdout"], result["stderr"] = stdout.String(), stderr.String()
+		if err != nil {
+			result["process_error"] = err.Error()
+		}
+		if scanner.Err() != nil {
+			result["parse_error"] = scanner.Err().Error()
+		}
+	}
+	encoded, encodeErr := common.Marshal(result)
+	require.NoError(t, encodeErr)
+	// JSON quoting keeps child === RUN / --- PASS lines out of the parent's
+	// event stream while preserving the original financial assertion on RED.
+	t.Logf("PAYMENT_STALE_FIXTURE_CHILD_RESULT %s", encoded)
+	require.True(t, valid, "isolated fixture child must exit zero with exact required RUN/PASS and no skipped, failed, or extra nodes")
+	return true
+}
+
 // Every outbound payment request is handled by an in-memory transport. The
 // request/response channels are a barrier, not a timing race: the signed webhook
 // must commit before the creation request receives its delayed failure.
@@ -66,24 +182,32 @@ func stalePaymentFixture(t *testing.T) *gorm.DB {
 	})
 	require.NoError(t, db.AutoMigrate(&model.TopUp{}, &model.SubscriptionOrder{}, &model.Option{}, &paymentcore.PaymentOrderBinding{}, &model.User{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}, &model.SubscriptionPlan{}, &model.UserSubscription{}))
 	confirmPaymentComplianceForTest(t)
-	oldLog, oldRedis, oldKind := model.LOG_DB, common.RedisEnabled, common.MainDatabaseType()
+	oldLog, oldRedis := model.LOG_DB, common.RedisEnabled
+	oldKind, oldLogKind, oldMaster := common.MainDatabaseType(), common.LogDatabaseType(), common.IsMasterNode
 	oldDisplay, oldDiscounts := operation_setting.GetGeneralSetting().QuotaDisplayType, operation_setting.GetPaymentSetting().AmountDiscount
 	oldGroups := common.TopupGroupRatio2JSONString()
-	model.LOG_DB, common.RedisEnabled = db, false
-	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
-	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeUSD
-	operation_setting.GetPaymentSetting().AmountDiscount = map[int]float64{}
-	require.NoError(t, common.UpdateTopupGroupRatioByJSONString(`{"default":1}`))
+	t.Setenv("LOG_SQL_DSN", "")
 	t.Cleanup(func() {
 		model.LOG_DB, common.RedisEnabled = oldLog, oldRedis
-		common.SetMainDatabaseType(oldKind)
+		common.SetDatabaseTypes(oldKind, oldLogKind)
+		common.IsMasterNode = oldMaster
 		operation_setting.GetGeneralSetting().QuotaDisplayType, operation_setting.GetPaymentSetting().AmountDiscount = oldDisplay, oldDiscounts
 		require.NoError(t, common.UpdateTopupGroupRatioByJSONString(oldGroups))
 		model.InvalidateSubscriptionPlanCache(29601)
 	})
+	model.LOG_DB, common.RedisEnabled = db, false
+	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	// The shared, non-master log branch initializes model's quoted columns
+	// without opening another database or running any migrations.
+	common.IsMasterNode = false
+	require.NoError(t, model.InitLogDB())
+	common.IsMasterNode = oldMaster
+	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeUSD
+	operation_setting.GetPaymentSetting().AmountDiscount = map[int]float64{}
+	require.NoError(t, common.UpdateTopupGroupRatioByJSONString(`{"default":1}`))
 	require.NoError(t, db.Create(&model.User{Id: 29600, Username: "stale-payment", Status: common.UserStatusEnabled, Group: "default"}).Error)
 	model.InvalidateSubscriptionPlanCache(29601)
-	require.NoError(t, db.Create(&model.SubscriptionPlan{Id: 29601, Title: "stale payment", PriceAmount: 10, Currency: "USD", Enabled: true, DurationUnit: model.SubscriptionDurationDay, DurationValue: 1, TotalAmount: 1000, WaffoPancakeProductId: "PROD_SYNTHETIC"}).Error)
+	require.NoError(t, db.Create(&model.SubscriptionPlan{Id: 29601, Title: "stale payment", PriceAmount: 10, Currency: "USD", Enabled: true, DurationUnit: model.SubscriptionDurationDay, DurationValue: 1, TotalAmount: 1000, WaffoPancakeProductId: "PROD_AbCdEfGhIjKlMnOpQrStUv"}).Error)
 	return db
 }
 
@@ -151,6 +275,9 @@ func TestWaffoCreationFailurePreservesSuccessfulWebhook(t *testing.T) {
 	require.NoError(t, err)
 	for _, failure := range []string{"transport", "rejected_response", "response_identity", "provider_order_binding"} {
 		t.Run(failure, func(t *testing.T) {
+			if runStalePaymentFixtureChild(t) {
+				return
+			}
 			db := stalePaymentFixture(t)
 			configureStaleWaffo(t, keys.PrivateKey, keys.PublicKey)
 			requestReady := make(chan *waffonet.HttpRequest, 1)
@@ -235,6 +362,9 @@ func TestWaffoCreationFailurePreservesSuccessfulWebhook(t *testing.T) {
 }
 
 func TestWaffoSDKFailureBeforeRequestMarksPendingFailed(t *testing.T) {
+	if runStalePaymentFixtureChild(t) {
+		return
+	}
 	db := stalePaymentFixture(t)
 	configureStaleWaffo(t, "not-used", "not-used")
 	c, recorder := staleCreationContext(`{"amount":10}`)
@@ -262,12 +392,15 @@ func TestPancakeCreationFailurePreservesSuccessfulWebhook(t *testing.T) {
 		}
 		for _, failure := range []string{"transport", "provider_session_binding"} {
 			t.Run(kind+"/"+failure, func(t *testing.T) {
+				if runStalePaymentFixtureChild(t) {
+					return
+				}
 				db := stalePaymentFixture(t)
 				withPancakeBindingConfig(t, "STORE_SYNTHETIC")
 				t.Setenv("WAFFO_WEBHOOK_PROD_PUBLIC_KEY", string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicDER})))
 				oldMerchant, oldPrivate, oldProduct := setting.WaffoPancakeMerchantID, setting.WaffoPancakePrivateKey, setting.WaffoPancakeProductID
 				oldPrice, oldMin, oldClient := setting.WaffoPancakeUnitPrice, setting.WaffoPancakeMinTopUp, http.DefaultClient
-				setting.WaffoPancakeMerchantID, setting.WaffoPancakePrivateKey, setting.WaffoPancakeProductID = "MER_SYNTHETIC", base64.StdEncoding.EncodeToString(privateDER), "PROD_SYNTHETIC"
+				setting.WaffoPancakeMerchantID, setting.WaffoPancakePrivateKey, setting.WaffoPancakeProductID = "MER_AbCdEfGhIjKlMnOpQrStUv", base64.StdEncoding.EncodeToString(privateDER), "PROD_AbCdEfGhIjKlMnOpQrStUv"
 				setting.WaffoPancakeUnitPrice, setting.WaffoPancakeMinTopUp = 1, 1
 				t.Cleanup(func() {
 					setting.WaffoPancakeMerchantID, setting.WaffoPancakePrivateKey, setting.WaffoPancakeProductID = oldMerchant, oldPrivate, oldProduct
@@ -392,6 +525,9 @@ func deliverStaleStripeWebhook(t *testing.T, eventType, tradeNo string) {
 // row-lock concurrency. Neither conflicting provider events nor their production
 // frequency are inferred from this synthetic, correctly signed regression.
 func TestStripeDelayedFailurePreservesSuccessAcrossProcesses(t *testing.T) {
+	if runStalePaymentFixtureChild(t) {
+		return
+	}
 	db := stalePaymentFixture(t)
 	configureStaleStripe(t)
 	const tradeNo = "stripe-cross-process-stale"
@@ -401,7 +537,15 @@ func TestStripeDelayedFailurePreservesSuccessAcrossProcesses(t *testing.T) {
 	require.NotEmpty(t, databaseList)
 	executable, err := os.Executable()
 	require.NoError(t, err)
-	cmd := exec.CommandContext(t.Context(), executable, "-test.run=^TestStripeFailureCrossProcessWorker$", "-test.count=1")
+	workerBudget := 12 * time.Minute
+	if deadline, ok := t.Deadline(); ok {
+		workerBudget = time.Until(deadline) - 5*time.Second
+	}
+	require.Positive(t, workerBudget, "failure worker needs time to run and join within the fixture deadline")
+	workerContext, cancelWorker := context.WithTimeout(t.Context(), workerBudget)
+	defer cancelWorker()
+	cmd := exec.CommandContext(workerContext, executable, "-test.run=^TestStripeFailureCrossProcessWorker$", "-test.count=1", "-test.timeout="+workerBudget.String())
+	cmd.WaitDelay = time.Second
 	cmd.Env = append(os.Environ(), "PAYMENT_STALE_STRIPE_DSN="+databaseList[0].File)
 	stdin, err := cmd.StdinPipe()
 	require.NoError(t, err)
@@ -450,6 +594,7 @@ func TestStripeDelayedFailurePreservesSuccessAcrossProcesses(t *testing.T) {
 	err = cmd.Wait()
 	waited = true
 	require.NoError(t, err, "failure worker: %s %s", output.String(), stderr.String())
+	require.NoError(t, workerContext.Err(), "failure worker must finish within its inherited deadline")
 	assert.Equal(t, before, captureStalePaymentSnapshot(t, db, tradeNo, false))
 }
 
