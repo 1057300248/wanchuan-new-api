@@ -144,3 +144,73 @@ func TestWalletQuotaFromDecimalStrict(t *testing.T) {
 	assert.Equal(t, "WalletQuotaFromDecimal", clamp.Op)
 	assert.Equal(t, QuotaClampOverflow, clamp.Kind)
 }
+
+func TestQuotaClampJSONRoundTrip(t *testing.T) {
+	for _, original := range []float64{3.25, math.MaxFloat64, math.Inf(1), math.Inf(-1), math.NaN()} {
+		t.Run(fmt.Sprintf("%g", original), func(t *testing.T) {
+			clamp := QuotaClamp{Op: "QuotaRound", Kind: QuotaClampOverflow, Original: original, Clamped: MaxQuota}
+			data, err := Marshal(clamp)
+			require.NoError(t, err)
+			pointerData, err := Marshal(&clamp)
+			require.NoError(t, err)
+			assert.JSONEq(t, string(data), string(pointerData))
+			var wire map[string]RawMessage
+			require.NoError(t, Unmarshal(data, &wire))
+			require.Len(t, wire, 4, "audit codec must retain the four existing fields")
+			if math.IsNaN(original) || math.IsInf(original, 0) {
+				var sentinel string
+				require.NoError(t, Unmarshal(wire["original"], &sentinel))
+				assert.Equal(t, fmt.Sprintf("%g", original), sentinel)
+			} else {
+				var numeric float64
+				require.NoError(t, Unmarshal(wire["original"], &numeric), "finite original remains a JSON number")
+				assert.Equal(t, original, numeric)
+			}
+			var restored QuotaClamp
+			require.NoError(t, Unmarshal(data, &restored))
+			assert.Equal(t, clamp.Op, restored.Op)
+			assert.Equal(t, clamp.Kind, restored.Kind)
+			assert.Equal(t, clamp.Clamped, restored.Clamped)
+			if math.IsNaN(original) {
+				assert.True(t, math.IsNaN(restored.Original))
+			} else {
+				assert.Equal(t, original, restored.Original)
+			}
+			audit, err := Marshal(clamp.AuditMap())
+			require.NoError(t, err, "consume logs must remain JSON-safe too")
+			assert.JSONEq(t, string(data), string(audit))
+		})
+	}
+	t.Run("invalid input preserves receiver", func(t *testing.T) {
+		original := QuotaClamp{Op: "existing", Kind: QuotaClampUnderflow, Original: 3.25, Clamped: 17}
+		for _, input := range []string{
+			`{"original":"invalid"}`,
+			`{"original":true}`,
+			`{"original":{}}`,
+			`{"original":1e1000}`,
+			`{"op":42,"original":0}`,
+		} {
+			restored := original
+			require.Error(t, Unmarshal([]byte(input), &restored), input)
+			assert.Equal(t, original, restored, "invalid complete record must not partially replace the receiver")
+		}
+	})
+	t.Run("complete record replacement", func(t *testing.T) {
+		for _, input := range []string{`{}`, `null`, `{"original":7}`} {
+			restored := QuotaClamp{Op: "old", Kind: QuotaClampOverflow, Original: 3.25, Clamped: 17}
+			require.NoError(t, Unmarshal([]byte(input), &restored))
+			want := QuotaClamp{}
+			if input == `{"original":7}` {
+				want.Original = 7
+			}
+			assert.Equal(t, want, restored, "this codec reads complete records, not JSON merge patches")
+		}
+	})
+	t.Run("nil audit", func(t *testing.T) {
+		var clamp *QuotaClamp
+		assert.Nil(t, clamp.AuditMap())
+		data, err := Marshal(clamp)
+		require.NoError(t, err)
+		assert.Equal(t, "null", string(data))
+	})
+}
