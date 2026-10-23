@@ -6,14 +6,16 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
+	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
 )
 
 func (s *BillingSession) durableTerminalSource() bool {
 	capability, ok := s.funding.(moneyport.HostBillingFinalizationSource)
-	return ok && capability.UsesHostBillingFinalization() && s.funding.Source() == BillingSourceWallet
+	return ok && capability.UsesHostBillingFinalization() && (s.funding.Source() == BillingSourceWallet || s.funding.Source() == BillingSourceSubscription)
 }
 
 // Authorization identity is captured before preconsume. The lazy initialization
@@ -65,8 +67,12 @@ func (s *BillingSession) terminalReceiptLocked() (model.BillingFinalization, err
 			}
 		}
 		r.SourceHeld = r.Paid + r.Bonus + r.Reward
+	} else if sub, ok := s.funding.(*SubscriptionFunding); ok {
+		identity := sub.BillingIdentity()
+		r.SubscriptionID, r.SubscriptionPeriod = identity.SubscriptionID, identity.QuotaPeriod
+		r.SourceHeld = int(sub.preConsumed) + sub.reserveDelta
 	} else {
-		return r, errors.New("durable settlement is only used by wallet funding")
+		return r, errors.New("unsupported durable billing funding")
 	}
 	s.terminalReceipt = &r
 	return r, nil
@@ -92,7 +98,7 @@ func (s *BillingSession) settleDurableLocked(actual int) error {
 	defer cancel()
 	applied, err := model.SettleBillingFinalization(ctx, receipt, actual, func(tx *gorm.DB) error {
 		// Wallet delta zero has no money operation.
-		if delta != 0 {
+		if delta != 0 || receipt.Source == BillingSourceSubscription {
 			var err error
 			result, err = funding.SettleInTx(tx, delta)
 			if err != nil {
@@ -102,7 +108,17 @@ func (s *BillingSession) settleDurableLocked(actual int) error {
 				return errors.New("source settlement exists without atomic terminal owner")
 			}
 		}
-		return model.ApplyBillingTokenDeltaTx(tx, &receipt, -delta)
+		if err := model.ApplyBillingTokenDeltaTx(tx, &receipt, -delta); err != nil {
+			return err
+		}
+		if s.realtime != nil && s.realtime.observed {
+			count := 0
+			if s.realtime.usage.TotalTokens > 0 {
+				count = 1
+			}
+			return model.ApplyTaskUsageDeltaTx(tx, receipt.UserID, s.realtime.channelID, actual, count)
+		}
+		return nil
 	})
 	if receipt.Source == BillingSourceWallet && (err != nil || !applied || delta == 0) {
 		// Cache cleanup has its own bounded budget, including after a lost COMMIT
@@ -117,8 +133,14 @@ func (s *BillingSession) settleDurableLocked(actual int) error {
 		return err
 	}
 	s.settlementUncertain = false
-	if applied && delta != 0 {
+	if s.realtime != nil {
+		s.realtime.displayEligible = applied
+	}
+	if applied && (delta != 0 || receipt.Source == BillingSourceSubscription) {
 		funding.ApplySettlementResult(delta, result)
+	}
+	if applied && receipt.Source == BillingSourceSubscription {
+		s.relayInfo.SubscriptionPostDelta += int64(delta)
 	}
 	s.settled, s.fundingSettled = true, true
 	s.actualSettled = actual
@@ -141,6 +163,9 @@ func (s *BillingSession) resolveSettlementBeforeReserveLocked() error {
 		return nil
 	}
 	switch stored.State {
+	case model.BillingHeld:
+		s.terminalReceipt = stored
+		return nil
 	case model.BillingSettled:
 		s.settled = true
 		s.fundingSettled = true
@@ -149,9 +174,45 @@ func (s *BillingSession) resolveSettlementBeforeReserveLocked() error {
 		s.taskOwned = true
 	case model.BillingRefunded:
 		s.refunded = true
-	case model.BillingRefundPending:
+	case model.BillingRefundPending, model.BillingRefundReady, model.BillingRefundReview, model.BillingDeliveryUnknown:
 	default:
 		return errors.New("unknown billing terminal owner")
 	}
 	return model.ErrBillingFinalized
+}
+
+// refundDurableLocked acquires the durable terminal owner synchronously. The
+// worker never has to infer rollback from an error or trust session flags.
+func (s *BillingSession) refundDurableLocked() {
+	receipt, err := s.terminalReceiptLocked()
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		var owner *model.BillingFinalization
+		owner, err = model.RequestBillingRefund(ctx, receipt)
+		cancel()
+		if err == nil {
+			s.settlementUncertain = false
+			switch owner.State {
+			case model.BillingSettled:
+				s.settled, s.fundingSettled, s.actualSettled = true, true, owner.ActualQuota
+				return
+			case model.BillingTaskOwned:
+				s.taskOwned = true
+				return
+			case model.BillingRefunded:
+				s.refunded = true
+				return
+			case model.BillingRefundReady:
+				// This flag means ownership is durable, not that SQL has refunded.
+				s.refunded = true
+				gopool.Go(func() { executeBillingRefund(context.Background(), receipt.RequestID) })
+				return
+			}
+		}
+	}
+	// No money is changed on an unconfirmed admission. A committed v2 intent
+	// remains recoverable by its exact owner key, even if this ACK was lost.
+	s.settlementUncertain = true
+	code, class := model.BillingRefundErrorCode(err)
+	common.SysError(fmt.Sprintf("billing refund admission unresolved: request_id=%s code=%s class=%s", receipt.RequestID, code, class))
 }

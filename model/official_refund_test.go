@@ -8,7 +8,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/bytedance/gopkg/util/gopool"
-	sqliteDriver "github.com/glebarez/go-sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -74,8 +73,8 @@ func TestOfficialTokenRefundUsesAsyncCacheWithoutPrivateFence(t *testing.T) {
 	assert.Equal(t, 1000, token.RemainQuota)
 }
 
-// This is an official-source parity test, not a claim of atomic refund safety.
-// The nested global subscription transaction is intentionally NOT rewritten.
+// The original WAL/deferred partial-commit failure remains in the archived RED
+// evidence. The same fixture must now commit the allowance and receipt together.
 func TestOfficialSubscriptionRefundDatabaseBehavior(t *testing.T) {
 	for _, dialect := range []struct {
 		kind common.DatabaseType
@@ -104,13 +103,13 @@ func TestOfficialSubscriptionRefundDatabaseBehavior(t *testing.T) {
 			InvalidateSubscriptionPlanCache(plan.Id)
 			res, err := PreConsumeUserSubscription("official-receipt", sub.UserId, "model", 0, 100)
 			require.NoError(t, err)
-			assert.Zero(t, res.QuotaPeriod)
-			assert.Zero(t, res.ReservedAmount)
+			assert.Positive(t, res.QuotaPeriod)
+			assert.EqualValues(t, 100, res.ReservedAmount)
 			var before SubscriptionPreConsumeRecord
 			require.NoError(t, db.Where("request_id = ?", "official-receipt").First(&before).Error)
 			assert.EqualValues(t, 100, before.PreConsumed)
-			assert.Zero(t, before.QuotaPeriod)
-			assert.Zero(t, before.ReservedAmount)
+			assert.Equal(t, res.QuotaPeriod, before.QuotaPeriod)
+			assert.EqualValues(t, 100, before.ReservedAmount)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			original := DB
@@ -120,24 +119,13 @@ func TestOfficialSubscriptionRefundDatabaseBehavior(t *testing.T) {
 			var after SubscriptionPreConsumeRecord
 			require.NoError(t, db.First(&after, before.Id).Error)
 			require.NoError(t, db.First(sub, sub.Id).Error)
-			if dialect.kind == common.DatabaseTypeSQLite {
-				require.Error(t, err, "official nested SQLite WAL transactions cannot upgrade the stale receipt snapshot")
-				var sqliteErr *sqliteDriver.Error
-				require.ErrorAs(t, err, &sqliteErr)
-				require.Equal(t, 517, sqliteErr.Code(), "SQLITE_BUSY_SNAPSHOT, not another SQL failure, must explain the outer failure")
-				t.Logf("official SQLite outer receipt error type=%T extended_code=%d", sqliteErr, sqliteErr.Code())
-				assert.NoError(t, ctx.Err(), "known SQLite lock result, not the test watchdog, must explain the error")
-				assert.Equal(t, "consumed", after.Status)
-				assert.Zero(t, sub.AmountUsed, "inner official subscription transaction committed before the outer receipt failed")
-				t.Log("KNOWN OFFICIAL LIMITATION: source credit can commit while receipt remains consumed; this PASS proves parity, not atomic financial safety")
-			} else {
-				require.NoError(t, err)
-				assert.Equal(t, "refunded", after.Status)
-				assert.Zero(t, sub.AmountUsed)
-				require.NoError(t, RefundSubscriptionPreConsume("official-receipt"))
-				require.NoError(t, db.First(sub, sub.Id).Error)
-				assert.Zero(t, sub.AmountUsed)
-			}
+			require.NoError(t, err)
+			assert.NoError(t, ctx.Err(), "the watchdog must not explain a refund failure")
+			assert.Equal(t, "refunded", after.Status)
+			assert.Zero(t, sub.AmountUsed)
+			require.NoError(t, RefundSubscriptionPreConsume("official-receipt"))
+			require.NoError(t, db.First(sub, sub.Id).Error)
+			assert.Zero(t, sub.AmountUsed)
 		})
 	}
 }

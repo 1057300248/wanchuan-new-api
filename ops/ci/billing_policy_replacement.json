@@ -1,8 +1,5 @@
 {
-  "schema_version": 1,
-  "policy": "official-rc46-refund-with-released-093-wallet-adapter",
-  "runtime_source": "efd192eb7caf2b0eec7243334ef4aba29c11aa44",
-  "runtime_tree": "01d413d8bcb789bed923b9cbb68eb192bbd0c3df",
+  "schema_version": 2,
   "official_source": "7d8b91268dab69d7150f345c448b5e250163146a",
   "released_wallet_adapter": "093c7197d5eac50787971fd5ff7553a414142fc7",
   "historical_acceptance_not_reused": true,
@@ -12,7 +9,45 @@
     "billing_refund_followup_required_cases.json": "2340a3f958397e51886ff59859352a846a5f850b17171ccc5742a12863f6e0dd",
     "billing_settlement_cache_required_cases.json": "4b62b0bf93a65ca53458e9e6d6161835429834cd23ca7bdf6a768c25054003bf"
   },
-  "report_transitions": [
+  "retired_databases": [
+    "repair_refund_operations",
+    "repair_finalization_cache"
+  ],
+  "retired_environment_kept_empty": [
+    "TEST_REFUND_OPS_MYSQL_DSN",
+    "TEST_REFUND_OPS_POSTGRES_DSN",
+    "TEST_REFUND_QUEUE_PRESSURE",
+    "TEST_FINALIZATION_CACHE_MYSQL_DSN",
+    "TEST_FINALIZATION_CACHE_POSTGRES_DSN",
+    "TEST_TASK_REDIS_ADDR"
+  ],
+  "upgrade_protocol": {
+    "test": "TestReleaseUpgradePreservesWalletAndIdentity",
+    "phases": [
+      "old093_seed",
+      "candidate_verify_with_actual_restart_and_data_preservation"
+    ],
+    "old_seed_sha256": "d3c5ad24f67e3fd62947aa8c4339fb23ac10cdac08cb65f0b9ebeeff29a494bd",
+    "candidate_fixture_sha256": "3cad5fab1c1dfc47dbc1b7e7c677fc230b8a21ed56b4edbee06f537b09b3ca46",
+    "retired": [
+      "candidate_pending",
+      "candidate_recover",
+      "candidate_replay",
+      "equal_whole_fixture_hash_requirement"
+    ],
+    "note": "Original 093 seed body is unchanged. Candidate fixture includes current identity receipts. The actual two-start native upgrade protocol is required separately; this CI script does not execute it.",
+    "old_seed_hash_scope": "3375 bytes from the leading tab before if phase == \"seed\" through its return and closing brace, including the final newline; old seed body byte-identical.",
+    "historical_seed_hash_without_final_newline": {
+      "bytes": 3374,
+      "sha256": "6eeb734fb2f21d97e2fe91965b090058ef0b4ee19a704a7d053a1136313f43c5",
+      "scope": "Same seed branch excluding only the final newline; not a whole-fixture hash."
+    },
+    "historical_candidate_fixture_sha256": "e0381127d1cd351b940f0c5ae010a2de507f2c431c7533833c6cb988ce6c2e72"
+  },
+  "historical_policy": "official-rc46-refund-with-released-093-wallet-adapter",
+  "historical_runtime_source": "efd192eb7caf2b0eec7243334ef4aba29c11aa44",
+  "historical_runtime_tree": "01d413d8bcb789bed923b9cbb68eb192bbd0c3df",
+  "historical_report_transitions": [
     {
       "label": "request-finalization-model",
       "status": "requirements_replaced",
@@ -488,7 +523,7 @@
       "reason": "Deleted task batch reservation/recovery fixture; not substituted by miniredis. Actual normal native Redis deadline/rate fixtures stay unchanged."
     }
   ],
-  "unchanged_report_order": [
+  "historical_unchanged_report_order": [
     "startup",
     "channel-priority",
     "audit-ordered-index",
@@ -537,19 +572,7 @@
     "token-bucket-script-flush",
     "settlement-deadline-redis"
   ],
-  "retired_databases": [
-    "repair_refund_operations",
-    "repair_finalization_cache"
-  ],
-  "retired_environment_kept_empty": [
-    "TEST_REFUND_OPS_MYSQL_DSN",
-    "TEST_REFUND_OPS_POSTGRES_DSN",
-    "TEST_REFUND_QUEUE_PRESSURE",
-    "TEST_FINALIZATION_CACHE_MYSQL_DSN",
-    "TEST_FINALIZATION_CACHE_POSTGRES_DSN",
-    "TEST_TASK_REDIS_ADDR"
-  ],
-  "normal_coverage_mapping": [
+  "historical_normal_coverage_mapping": [
     {
       "retired": "private refund original_token_identity/*",
       "retained_report": "normal-wallet-settlement",
@@ -605,43 +628,34 @@
       "limit": "Actual native Redis and normal settlement tails retained; deleted refund cache worker is not restored."
     }
   ],
-  "same_named_behavior_changes": {
+  "historical_same_named_behavior_changes": {
     "TestExecuteTaskSubmissionSettlementFailureStaysDurableAndWritesNothing": "Official error after Insert, persisted task not a durable refund owner.",
     "TestExecuteTaskSubmissionRefundsWhenInsertFails": "Direct Insert failure and deferred official Refund, no task owner handoff.",
     "TestTaskWalletReceiptsDatabaseMatrix": "Normal wallet recalculation atomic failures preserved; refund branches assert independent source/token/quota stages.",
     "TestPolicyPreservingRefundIndependentViolationFee": "fee_before_worker/worker_before_fee private ownership cases replaced by fee_before_refund/refund_before_fee official sequence.",
     "TestNeedsRefundUsesOutstandingReserveCapability": "Legacy name only; current predicate is official token/subscription state."
   },
-  "upgrade_protocol": {
-    "test": "TestReleaseUpgradePreservesWalletAndIdentity",
-    "phases": [
-      "old093_seed",
-      "candidate_verify_with_actual_restart_and_data_preservation"
-    ],
-    "old_seed_sha256": "d3c5ad24f67e3fd62947aa8c4339fb23ac10cdac08cb65f0b9ebeeff29a494bd",
-    "candidate_fixture_sha256": "e0381127d1cd351b940f0c5ae010a2de507f2c431c7533833c6cb988ce6c2e72",
-    "retired": [
-      "candidate_pending",
-      "candidate_recover",
-      "candidate_replay",
-      "equal_whole_fixture_hash_requirement"
-    ],
-    "note": "Original seed body unchanged; whole candidate fixture hash intentionally differs. This CI script does not execute the separate release upgrade protocol.",
-    "old_seed_hash_scope": "3375 bytes from the leading tab before if phase == \"seed\" through its return and closing brace, including the final newline; old seed body byte-identical.",
-    "historical_seed_hash_without_final_newline": {
-      "bytes": 3374,
-      "sha256": "6eeb734fb2f21d97e2fe91965b090058ef0b4ee19a704a7d053a1136313f43c5",
-      "scope": "Same seed branch excluding only the final newline; not a whole-fixture hash."
-    }
-  },
-  "limitations": [
+  "historical_limitations": [
     "SQLite official nested subscription refund exact 517 parity can commit credit while receipt remains consumed. Not financial-safety green.",
     "Official asynchronous refund can be lost on process exit; independent stages can partially fail. No durable queue/retry/admission contract is claimed.",
     "Both inherited SplitRefund algorithms and gross task receipt allocation remain unchanged; small remainder and two-refund allocation limitations remain explicit.",
     "Existing tables/fields and historical pending records remain; no automatic consumer or pending rewrite.",
     "Historical 1a74/7035 gates and old 58/86/15 counts are not acceptance of the new policy. Report counts must be derived from actual named orchestration."
   ],
-  "report_order": {
+  "historical_ci_patch_base": "1e590909a9f2bb10d57a685399317d3d647ea987",
+  "historical_added_report_contracts": {
+    "inventory": "billing_refund_followup_required_cases.json",
+    "profile": "sqlite",
+    "labels": [
+      "billing-error-classifier",
+      "official-token-refund",
+      "official-midjourney-refund",
+      "official-wallet-allocation",
+      "normal-wallet-settlement",
+      "official-task-submission"
+    ]
+  },
+  "historical_report_order": {
     "mysql": [
       "startup",
       "channel-priority",
@@ -757,17 +771,165 @@
       "settlement-deadline-redis"
     ]
   },
-  "ci_patch_base": "1e590909a9f2bb10d57a685399317d3d647ea987",
-  "added_report_contracts": {
-    "inventory": "billing_refund_followup_required_cases.json",
-    "profile": "sqlite",
-    "labels": [
+  "policy": "financial-consistency-v2-atomic-source-token-task-ownership",
+  "baseline_source": "526bac8d4b624ea808887b4ea2111052c8ca12d2",
+  "baseline_tree": "8c16fa8f2386ae3616a45a1f86aae85af3d9dc7e",
+  "source_pin_policy": "Requirements are not execution results. Every run must seal its actual immutable commit/tree and source artifact hashes; historical parity PASS does not establish correctness.",
+  "acceptance_inventories": [
+    "billing_finalization_required_cases.json",
+    "billing_refund_followup_required_cases.json",
+    "financial_consistency_required_cases.json",
+    "billing_settlement_cache_required_cases.json"
+  ],
+  "acceptance_requirements": [
+    "Financial source, original token, durable terminal owner and main-DB accounting must commit together; lost ACK requires authoritative replay, not assumed rollback.",
+    "Held/reserved subscription requests retain original user, amount and period; source receipt and token changes must roll back together.",
+    "Task/Midjourney terminal transitions, net source shares, original credential identity, missing metadata quarantine and recovery fairness require their actual current matrix leaves.",
+    "Realtime observed segments reserve the original request; aggregate actual usage is charged once, including modality and cache-presence facts.",
+    "Historical rows with unproved delivery/identity are read-only review data, not authority to compensate balances.",
+    "Dedicated empty native databases, actual dialect selection and strict required-descendant checker remain mandatory.",
+    "Full normal/race/vet/build, nested-module DTO tests/build, and actual frontend build/browser verification are separate required evidence, not inferred from focused test or compile-only embed fixtures."
+  ],
+  "limitations": [
+    "Separate LOG_DB uses a single application emission attempt after a newly applied financial commit, not cross-database atomic delivery. External display may be missing or duplicated; reconcile its stable key against the authoritative main-DB receipt.",
+    "SQLite immediate/deferred behavior is recorded separately; only native multi-connection tests establish row-lock concurrency.",
+    "Owned subprocess assertions count actual child leaves once, never add parent proxies to totals.",
+    "Old failure logs, invalid fixture results and compiler errors remain unaltered and separately classified."
+  ],
+  "report_order": {
+    "mysql": [
+      "startup",
+      "channel-priority",
+      "audit-ordered-index",
+      "setup-aff-code-index",
+      "token-migration",
+      "token-audit",
+      "performance-aggregation",
+      "performance-runtime-flush",
+      "setup-wallet",
+      "task-migration",
+      "dashboard-migration",
+      "midjourney-migration",
+      "wallet",
+      "subscription-financial-consistency",
+      "financial-review-read-only",
+      "subscription-correctness-mysql",
+      "subscription-supplement",
+      "official-subscription-refund",
+      "subscription-period-migration",
+      "owner",
+      "owner-group-settings",
+      "monitor-visibility",
+      "sensitive-group-rename",
+      "converted-responses",
+      "native-responses",
+      "immediate-settlement",
+      "request-finalization-model",
+      "request-finalization-service",
+      "realtime-financial"
+    ],
+    "postgres": [
+      "startup",
+      "channel-priority",
+      "audit-ordered-index",
+      "setup-aff-code-index",
+      "token-migration",
+      "token-audit",
+      "performance-aggregation",
+      "performance-runtime-flush",
+      "setup-wallet",
+      "task-migration",
+      "dashboard-migration",
+      "midjourney-migration",
+      "wallet",
+      "subscription-financial-consistency",
+      "financial-review-read-only",
+      "subscription-correctness-postgres",
+      "subscription-supplement",
+      "official-subscription-refund",
+      "subscription-period-migration",
+      "owner",
+      "owner-group-settings",
+      "monitor-visibility",
+      "sensitive-group-rename",
+      "converted-responses",
+      "native-responses",
+      "immediate-settlement",
+      "request-finalization-model",
+      "request-finalization-service",
+      "realtime-financial"
+    ],
+    "sqlite": [
+      "startup",
+      "channel-priority",
+      "audit-ordered-index",
+      "setup-aff-code-index",
+      "token-migration",
+      "token-audit",
+      "performance-aggregation",
+      "performance-runtime-flush",
+      "setup-wallet",
+      "task-migration",
+      "dashboard-migration",
+      "midjourney-migration",
+      "wallet",
+      "subscription-financial-consistency",
+      "financial-review-read-only",
+      "subscription-correctness-sqlite_immediate",
+      "subscription-correctness-sqlite_deferred",
+      "subscription-supplement",
+      "official-subscription-refund",
+      "subscription-period-migration",
+      "owner",
+      "owner-group-settings",
+      "monitor-visibility",
+      "sensitive-group-rename",
+      "converted-responses",
+      "native-responses",
+      "immediate-settlement",
+      "request-finalization-model",
+      "request-finalization-service",
+      "realtime-financial",
+      "realtime-free-entry",
+      "financial-bonus-cache",
+      "financial-bonus-cache-status",
+      "financial-admin-input",
       "billing-error-classifier",
       "official-token-refund",
       "official-midjourney-refund",
       "official-wallet-allocation",
       "normal-wallet-settlement",
-      "official-task-submission"
+      "official-task-submission",
+      "reminder-option-validation",
+      "reminder-request-validation",
+      "frontend-embedded-assets",
+      "frontend-static-cache",
+      "frontend-static-routing",
+      "token-auth-route-expiry",
+      "newapi-balance-finite",
+      "token-permissions",
+      "token-cache-permissions",
+      "admin-route-authorization",
+      "notification-preferences",
+      "notification-delivery",
+      "transactional-email",
+      "runtime-resources",
+      "runtime-drain",
+      "settlement-clamp",
+      "dashboard-consume-cache",
+      "dashboard-separate-log-cache",
+      "retry",
+      "task-sensitive",
+      "owner-visibility",
+      "group-limits",
+      "sensitive-groups",
+      "sensitive-relay",
+      "sensitive-task-selected-plugin"
+    ],
+    "redis": [
+      "model-script-flush",
+      "token-bucket-script-flush",
+      "settlement-deadline-redis"
     ]
   }
 }

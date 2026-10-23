@@ -163,6 +163,7 @@ func TestRecalculateTaskQuotaUsesEffectiveBillingIdentity(t *testing.T) {
 		seedBonusUser(t, userID, 30, 100)
 		task := makeTask(userID, 1, 100, 0, BillingSourceWallet, 0)
 		task.TaskID = "task-recalc-identity-new"
+		task.PrivateData.WalletDebit = []model.LedgerShare{{Account: model.AccountBonus, Amount: 50}, {Account: model.AccountPaid, Amount: 50}}
 		task.Properties.OriginModelName = "identity-ineligible"
 		task.PrivateData.BillingContext = &model.TaskBillingContext{
 			OriginModelName:  "identity-ineligible",

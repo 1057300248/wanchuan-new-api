@@ -7512,6 +7512,10 @@
     "Channel model owner label": "Libellé du propriétaire du modèle du canal",
     "Stored as channel metadata. Public model lists and details use the site-wide owner setting. This label does not select a routing channel.": "Enregistré comme métadonnée du canal. Les listes et détails publics des modèles utilisent le propriétaire défini pour le site. Ce libellé ne sélectionne pas de canal de routage.",
     "Use channel name as label": "Utiliser le nom du canal comme libellé",
-    "Channel model owner label must be at most 64 characters without control or formatting characters": "Le libellé du propriétaire du modèle du canal est limité à 64 caractères, sans caractères de contrôle ni de formatage"
+    "Channel model owner label must be at most 64 characters without control or formatting characters": "Le libellé du propriétaire du modèle du canal est limité à 64 caractères, sans caractères de contrôle ni de formatage",
+    "Missing upstream task identity; delivery requires operator review": "Identifiant de tâche amont manquant ; la livraison doit être vérifiée par un administrateur",
+    "Missing channel metadata; upstream delivery requires operator review": "Métadonnées du canal manquantes ; la livraison amont doit être vérifiée par un administrateur",
+    "Ambiguous upstream task identity; delivery requires operator review": "Identifiant de tâche amont ambigu ; la livraison doit être vérifiée par un administrateur",
+    "Legacy task billing identity is unavailable; financial review required": "L’identité de facturation d’origine de l’ancienne tâche est indisponible ; une vérification financière est requise"
   }
 }

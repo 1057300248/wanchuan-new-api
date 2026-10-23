@@ -498,6 +498,29 @@ func TestUpdateVideoTasksCanSkipPollingSleepPerChannel(t *testing.T) {
 	assert.Equal(t, 2, adaptor.fetchCount())
 }
 
+// Hold both first responses until each channel has actually entered FetchTask.
+// A serialized channel dispatcher cannot cross this barrier: its first worker
+// cannot finish (or begin its default sleep) before the other worker arrives.
+type taskPollingFirstFetchBarrierAdaptor struct {
+	taskPollingFetchAdaptor
+	firstTaskIDs map[string]bool
+	firstFetched chan string
+	nextFetched  chan string
+	releaseFirst <-chan struct{}
+}
+
+func (a *taskPollingFirstFetchBarrierAdaptor) FetchTask(baseURL string, key string, task *model.Task, proxy string) (*http.Response, error) {
+	resp, err := a.taskPollingFetchAdaptor.FetchTask(baseURL, key, task, proxy)
+	taskID := task.GetUpstreamTaskID()
+	if a.firstTaskIDs[taskID] {
+		a.firstFetched <- taskID
+		<-a.releaseFirst
+	} else {
+		a.nextFetched <- taskID
+	}
+	return resp, err
+}
+
 func TestUpdateVideoTasksDefaultSleepDoesNotBlockOtherChannels(t *testing.T) {
 	truncate(t)
 
@@ -510,32 +533,80 @@ func TestUpdateVideoTasksDefaultSleepDoesNotBlockOtherChannels(t *testing.T) {
 	secondChannelFirst := seedPollingTask(t, secondChannelID, "task_public_7", "upstream_b_1")
 	secondChannelSecond := seedPollingTask(t, secondChannelID, "task_public_8", "upstream_b_2")
 
-	adaptor := &taskPollingFetchAdaptor{}
+	// Freeze identities before polling can replace each Task's PrivateData.
+	firstA, secondA := firstChannelFirst.GetUpstreamTaskID(), firstChannelSecond.GetUpstreamTaskID()
+	firstB, secondB := secondChannelFirst.GetUpstreamTaskID(), secondChannelSecond.GetUpstreamTaskID()
+	taskChannels := map[int][]string{
+		firstChannelID:  {firstA, secondA},
+		secondChannelID: {firstB, secondB},
+	}
+	tasks := map[string]*model.Task{
+		firstA: firstChannelFirst, secondA: firstChannelSecond,
+		firstB: secondChannelFirst, secondB: secondChannelSecond,
+	}
+	releaseFirst := make(chan struct{})
+	adaptor := &taskPollingFirstFetchBarrierAdaptor{
+		firstTaskIDs: map[string]bool{firstA: true, firstB: true},
+		firstFetched: make(chan string, 2), nextFetched: make(chan string, 2),
+		releaseFirst: releaseFirst,
+	}
+	var releaseOnce sync.Once
+	releaseResponses := func() { releaseOnce.Do(func() { close(releaseFirst) }) }
 	previousFactory := GetTaskAdaptorFunc
 	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return adaptor }
-	t.Cleanup(func() { GetTaskAdaptorFunc = previousFactory })
-
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-
-	err := UpdateVideoTasks(ctx, constant.TaskPlatform("kling"), map[int][]string{
-		firstChannelID: {
-			firstChannelFirst.GetUpstreamTaskID(),
-			firstChannelSecond.GetUpstreamTaskID(),
-		},
-		secondChannelID: {
-			secondChannelFirst.GetUpstreamTaskID(),
-			secondChannelSecond.GetUpstreamTaskID(),
-		},
-	}, map[string]*model.Task{
-		firstChannelFirst.GetUpstreamTaskID():   firstChannelFirst,
-		firstChannelSecond.GetUpstreamTaskID():  firstChannelSecond,
-		secondChannelFirst.GetUpstreamTaskID():  secondChannelFirst,
-		secondChannelSecond.GetUpstreamTaskID(): secondChannelSecond,
+	ctx, cancel := context.WithCancel(context.Background())
+	pollingDone := make(chan struct{})
+	var pollingErr error
+	joinPolling := func() {
+		t.Helper()
+		select {
+		case <-pollingDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("owned polling operation did not finish")
+		}
+	}
+	t.Cleanup(func() {
+		cancel()
+		releaseResponses()
+		joinPolling()
+		GetTaskAdaptorFunc = previousFactory
 	})
+	go func() {
+		// UpdateVideoTasks joins its real channel workers before returning.
+		defer close(pollingDone)
+		pollingErr = UpdateVideoTasks(ctx, constant.TaskPlatform("kling"), taskChannels, tasks)
+	}()
 
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.ElementsMatch(t, []string{"upstream_a_1", "upstream_b_1"}, adaptor.fetchedTaskIDs())
+	// Startup/metadata SQL is not part of the 50ms default-sleep assertion.
+	// The bounded arrival barrier still rejects genuinely serialized channels.
+	startup := time.NewTimer(500 * time.Millisecond)
+	defer startup.Stop()
+	firstFetched := make([]string, 0, 2)
+	for len(firstFetched) < 2 {
+		select {
+		case taskID := <-adaptor.firstFetched:
+			firstFetched = append(firstFetched, taskID)
+		case <-pollingDone:
+			t.Fatal("polling finished before both channels reached their first fetch")
+		case <-startup.C:
+			t.Fatal("both channels must reach their first fetch independently")
+		}
+	}
+	require.ElementsMatch(t, []string{firstA, firstB}, firstFetched)
+	observation := time.NewTimer(50 * time.Millisecond)
+	defer observation.Stop()
+	releaseResponses()
+	select {
+	case taskID := <-adaptor.nextFetched:
+		t.Fatalf("default channel sleep was skipped before second fetch %s", taskID)
+	case <-pollingDone:
+		t.Fatal("polling must remain in the default sleep until cancelled")
+	case <-observation.C:
+	}
+	cancel()
+	joinPolling()
+	require.ErrorIs(t, pollingErr, context.Canceled)
+	assert.ElementsMatch(t, []string{firstA, firstB}, adaptor.fetchedTaskIDs())
 }
 
 func TestUpdateVideoTasksSlowChannelDoesNotBlockOtherChannels(t *testing.T) {
@@ -753,8 +824,8 @@ func TestRunTaskPollingOnceDoesNotRefundHistoricalFailedTask(t *testing.T) {
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
-// Official missing-ID/channel handling marks the task failed; it does not
-// invoke RefundTaskQuota. Keep the precharge and its accounting evidence.
+// Missing local metadata cannot establish delivery failure. Keep the precharge
+// and its accounting evidence while the task waits for operator review.
 func assertPollingFailureAccountingUnchanged(t *testing.T, userID, tokenID, channelID, walletQuota, tokenRemain, held int, channelPresent bool) {
 	t.Helper()
 	var user model.User
@@ -788,6 +859,40 @@ func assertPollingFailureAccountingUnchanged(t *testing.T, userID, tokenID, chan
 	assert.Zero(t, logs)
 }
 
+func expectedPollingReviewPrivateData(t *testing.T, task *model.Task, reason string) model.TaskPrivateData {
+	t.Helper()
+	// Freeze before polling: MarkTaskPollingReview reloads and replaces the
+	// caller's task, so comparing against that mutated caller would be vacuous.
+	encoded, err := common.Marshal(task.PrivateData)
+	require.NoError(t, err)
+	var expected model.TaskPrivateData
+	require.NoError(t, common.Unmarshal(encoded, &expected))
+	expected.FinancialReviewReason = reason
+	return expected
+}
+
+func assertPollingReviewSurvivesTimeout(t *testing.T, id int64, progress, reason string, expected model.TaskPrivateData) {
+	t.Helper()
+	oldTimeout := constant.TaskTimeoutMinutes
+	constant.TaskTimeoutMinutes = 1
+	t.Cleanup(func() { constant.TaskTimeoutMinutes = oldTimeout })
+	// Move only the submission timestamp beyond the cutoff; never sleep or
+	// manufacture a terminal outcome to make a refund eligible.
+	require.NoError(t, model.DB.Model(&model.Task{}).Where("id = ?", id).
+		Update("submit_time", time.Now().Add(-2*time.Hour).Unix()).Error)
+	assert.Empty(t, model.GetAllUnFinishSyncTasks(100), "review tasks are excluded from ordinary polling")
+	assert.Empty(t, model.GetTimedOutUnfinishedTasks(time.Now().Add(-time.Minute).Unix(), 100), "review tasks are excluded from timeout selection")
+	sweepTimedOutTasks(context.Background())
+	var persisted model.Task
+	require.NoError(t, model.DB.First(&persisted, id).Error)
+	assert.EqualValues(t, model.TaskStatusUnknown, persisted.Status)
+	assert.Equal(t, progress, persisted.Progress)
+	assert.Equal(t, reason, persisted.FailReason)
+	assert.Equal(t, expected, persisted.PrivateData)
+	assert.Zero(t, persisted.FinishTime)
+	assert.False(t, persisted.SettlementPending)
+}
+
 func TestRunTaskPollingOnceKeepsPrechargeWhenUpstreamIDMissing(t *testing.T) {
 	truncate(t)
 
@@ -803,6 +908,10 @@ func TestRunTaskPollingOnceKeepsPrechargeWhenUpstreamIDMissing(t *testing.T) {
 	task.Platform = constant.TaskPlatformSuno
 	task.Progress = "50%"
 	task.SubmitTime = time.Now().Unix()
+	task.PrivateData.PluginState = []byte(`{"provider_state":"keep-missing-id"}`)
+	task.PrivateData.PollFailures = 2
+	const reason = "Missing upstream task identity; delivery requires operator review"
+	expectedPrivate := expectedPollingReviewPrivateData(t, task, reason)
 	require.NoError(t, model.DB.Create(task).Error)
 
 	previousFactory := GetTaskAdaptorFunc
@@ -814,17 +923,21 @@ func TestRunTaskPollingOnceKeepsPrechargeWhenUpstreamIDMissing(t *testing.T) {
 
 	summary := RunTaskPollingOnce(context.Background(), nil)
 
-	assert.Equal(t, 1, summary.NullTasksFailed)
+	assert.Equal(t, 1, summary.UnfinishedTasks)
+	assert.Zero(t, summary.NullTasksFailed, "unknown delivery must not be reported as proven failure")
 	assert.Equal(t, preConsumedQuota, getTaskQuota(t, task.ID))
 	var persisted model.Task
 	require.NoError(t, model.DB.First(&persisted, task.ID).Error)
-	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), persisted.Status)
-	assert.Equal(t, "100%", persisted.Progress)
-	assert.Empty(t, persisted.FailReason, "the official missing-ID bulk update does not invent a failure reason")
-	assert.Equal(t, task.PrivateData, persisted.PrivateData)
+	assert.EqualValues(t, model.TaskStatusUnknown, persisted.Status)
+	assert.Equal(t, "50%", persisted.Progress)
+	assert.Equal(t, reason, persisted.FailReason)
+	assert.Equal(t, expectedPrivate, persisted.PrivateData)
 	assertPollingFailureAccountingUnchanged(t, userID, tokenID, channelID, initialQuota, tokenRemain, preConsumedQuota, true)
 	summary = RunTaskPollingOnce(context.Background(), nil)
-	assert.Zero(t, summary.NullTasksFailed, "the terminal task is not selected again")
+	assert.Zero(t, summary.UnfinishedTasks, "the review task is not selected again")
+	assert.Zero(t, summary.NullTasksFailed)
+	assertPollingReviewSurvivesTimeout(t, task.ID, "50%", reason, expectedPrivate)
+	assert.Equal(t, preConsumedQuota, getTaskQuota(t, task.ID))
 	assertPollingFailureAccountingUnchanged(t, userID, tokenID, channelID, initialQuota, tokenRemain, preConsumedQuota, true)
 }
 
@@ -842,6 +955,11 @@ func TestUpdateBatchTasksKeepsPrechargeWhenChannelMissing(t *testing.T) {
 	task.TaskID = "task_missing_batch_channel"
 	task.Platform = "batch-plugin"
 	task.PrivateData.UpstreamTaskID = "upstream_missing_batch_channel"
+	task.Progress = "40%"
+	task.PrivateData.PluginState = []byte(`{"provider_state":"keep-missing-batch-channel"}`)
+	task.PrivateData.PollFailures = 2
+	const reason = "Missing channel metadata; upstream delivery requires operator review"
+	expectedPrivate := expectedPollingReviewPrivateData(t, task, reason)
 	require.NoError(t, model.DB.Create(task).Error)
 	require.NoError(t, model.DB.Delete(&model.Channel{}, channelID).Error)
 
@@ -849,17 +967,20 @@ func TestUpdateBatchTasksKeepsPrechargeWhenChannelMissing(t *testing.T) {
 	adaptor := &batchPollingAdaptor{}
 	for range 2 {
 		err := updateBatchTasks(context.Background(), adaptor, channelID, []string{upstreamID}, map[string]*model.Task{upstreamID: task})
-		require.NoError(t, err, "official batch handling returns the successful bulk status update result")
+		require.ErrorIs(t, err, gorm.ErrRecordNotFound, "missing local metadata remains a deferred lookup error")
 		assertPollingFailureAccountingUnchanged(t, userID, tokenID, channelID, initialQuota, tokenRemain, preConsumedQuota, false)
 	}
 	assert.Zero(t, adaptor.batchCalls)
 	assert.Equal(t, preConsumedQuota, getTaskQuota(t, task.ID))
 	var persisted model.Task
 	require.NoError(t, model.DB.First(&persisted, task.ID).Error)
-	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), persisted.Status)
-	assert.Equal(t, "100%", persisted.Progress)
-	assert.Equal(t, "Failed to get the channel information. Please contact the administrator", persisted.FailReason)
-	assert.Equal(t, task.PrivateData, persisted.PrivateData)
+	assert.EqualValues(t, model.TaskStatusUnknown, persisted.Status)
+	assert.Equal(t, "40%", persisted.Progress)
+	assert.Equal(t, reason, persisted.FailReason)
+	assert.Equal(t, expectedPrivate, persisted.PrivateData)
+	assertPollingReviewSurvivesTimeout(t, task.ID, "40%", reason, expectedPrivate)
+	assert.Equal(t, preConsumedQuota, getTaskQuota(t, task.ID))
+	assertPollingFailureAccountingUnchanged(t, userID, tokenID, channelID, initialQuota, tokenRemain, preConsumedQuota, false)
 }
 
 func TestUpdateVideoTasksKeepsPrechargeWhenChannelMissing(t *testing.T) {
@@ -876,6 +997,11 @@ func TestUpdateVideoTasksKeepsPrechargeWhenChannelMissing(t *testing.T) {
 	task.TaskID = "task_missing_video_channel"
 	task.Platform = constant.TaskPlatform("kling")
 	task.PrivateData.UpstreamTaskID = "upstream_missing_video_channel"
+	task.Progress = "60%"
+	task.PrivateData.PluginState = []byte(`{"provider_state":"keep-missing-video-channel"}`)
+	task.PrivateData.PollFailures = 2
+	const reason = "Missing channel metadata; upstream delivery requires operator review"
+	expectedPrivate := expectedPollingReviewPrivateData(t, task, reason)
 	require.NoError(t, model.DB.Create(task).Error)
 	require.NoError(t, model.DB.Delete(&model.Channel{}, channelID).Error)
 
@@ -894,10 +1020,13 @@ func TestUpdateVideoTasksKeepsPrechargeWhenChannelMissing(t *testing.T) {
 	assert.Equal(t, preConsumedQuota, getTaskQuota(t, task.ID))
 	var persisted model.Task
 	require.NoError(t, model.DB.First(&persisted, task.ID).Error)
-	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), persisted.Status)
-	assert.Equal(t, "100%", persisted.Progress)
-	assert.Equal(t, "Failed to get the channel information. Please contact the administrator", persisted.FailReason)
-	assert.Equal(t, task.PrivateData, persisted.PrivateData)
+	assert.EqualValues(t, model.TaskStatusUnknown, persisted.Status)
+	assert.Equal(t, "60%", persisted.Progress)
+	assert.Equal(t, reason, persisted.FailReason)
+	assert.Equal(t, expectedPrivate, persisted.PrivateData)
+	assertPollingReviewSurvivesTimeout(t, task.ID, "60%", reason, expectedPrivate)
+	assert.Equal(t, preConsumedQuota, getTaskQuota(t, task.ID))
+	assertPollingFailureAccountingUnchanged(t, userID, tokenID, channelID, initialQuota, tokenRemain, preConsumedQuota, false)
 }
 
 func TestSweepTimedOutTasksHonorsRefundRolloutBoundary(t *testing.T) {
@@ -905,20 +1034,28 @@ func TestSweepTimedOutTasksHonorsRefundRolloutBoundary(t *testing.T) {
 
 	const (
 		userID          = 403
+		channelID       = 403
 		initialQuota    = 10_000
 		legacyTaskQuota = 1_800
 		modernTaskQuota = 1_200
 	)
 	seedUser(t, userID, initialQuota)
+	seedTaskPollingChannel(t, channelID, true)
+	// These are known historical charges, not new free tasks. Seed their
+	// already-accounted usage so the modern refund leaves only the old usage.
+	seedChargedAccounting(t, userID, channelID, 0, legacyTaskQuota+modernTaskQuota, 2)
 
-	legacyTask := makeTask(userID, 0, legacyTaskQuota, 0, BillingSourceWallet, 0)
+	legacyTask := makeTask(userID, channelID, legacyTaskQuota, 0, BillingSourceWallet, 0)
 	legacyTask.TaskID = "legacy_timeout_without_refund"
+	legacyTask.PrivateData.UpstreamTaskID = "upstream_legacy_timeout"
 	legacyTask.Progress = "50%"
 	legacyTask.SubmitTime = 1771718399 // 2026-02-21 23:59:59 UTC
+	legacyPrivate := expectedPollingReviewPrivateData(t, legacyTask, "")
 	require.NoError(t, model.DB.Create(legacyTask).Error)
 
-	modernTask := makeTask(userID, 0, modernTaskQuota, 0, BillingSourceWallet, 0)
+	modernTask := makeTask(userID, channelID, modernTaskQuota, 0, BillingSourceWallet, 0)
 	modernTask.TaskID = "modern_timeout_with_refund"
+	modernTask.PrivateData.UpstreamTaskID = "upstream_modern_timeout"
 	modernTask.Progress = "50%"
 	modernTask.SubmitTime = 1771718400 // 2026-02-22 00:00:00 UTC
 	require.NoError(t, model.DB.Create(modernTask).Error)
@@ -927,20 +1064,43 @@ func TestSweepTimedOutTasksHonorsRefundRolloutBoundary(t *testing.T) {
 	constant.TaskTimeoutMinutes = 1
 	t.Cleanup(func() { constant.TaskTimeoutMinutes = previousTimeout })
 
-	sweepTimedOutTasks(context.Background())
+	for range 2 {
+		sweepTimedOutTasks(context.Background())
 
-	var reloadedLegacy model.Task
-	var reloadedModern model.Task
-	require.NoError(t, model.DB.First(&reloadedLegacy, legacyTask.ID).Error)
-	require.NoError(t, model.DB.First(&reloadedModern, modernTask.ID).Error)
-	assert.EqualValues(t, model.TaskStatusFailure, reloadedLegacy.Status)
-	assert.EqualValues(t, model.TaskStatusFailure, reloadedModern.Status)
-	assert.Zero(t, reloadedLegacy.Quota)
-	assert.Zero(t, reloadedModern.Quota)
-	assert.Contains(t, reloadedLegacy.FailReason, "old system")
-	assert.Equal(t, "Task timed out", reloadedModern.FailReason)
-	assert.Equal(t, initialQuota+modernTaskQuota, getUserQuota(t, userID))
-	assert.Equal(t, int64(1), countLogs(t))
+		var reloadedLegacy model.Task
+		var reloadedModern model.Task
+		require.NoError(t, model.DB.First(&reloadedLegacy, legacyTask.ID).Error)
+		require.NoError(t, model.DB.First(&reloadedModern, modernTask.ID).Error)
+		assert.EqualValues(t, model.TaskStatusFailure, reloadedLegacy.Status)
+		assert.EqualValues(t, model.TaskStatusFailure, reloadedModern.Status)
+		assert.Equal(t, legacyTaskQuota, reloadedLegacy.Quota, "timeout cannot erase historical financial evidence")
+		assert.Equal(t, legacyPrivate, reloadedLegacy.PrivateData)
+		assert.Zero(t, reloadedModern.Quota)
+		assert.Contains(t, reloadedLegacy.FailReason, "old system")
+		assert.Equal(t, "Task timed out", reloadedModern.FailReason)
+		assert.False(t, reloadedLegacy.SettlementPending)
+		assert.False(t, reloadedModern.SettlementPending)
+		assert.NotEmpty(t, reloadedModern.PrivateData.FinancialOperationID)
+		assert.Equal(t, initialQuota+modernTaskQuota, getUserQuota(t, userID))
+		user := getUserBalances(t, userID)
+		assert.Equal(t, initialQuota+modernTaskQuota, user.QuotaPaid)
+		assertQuotaInvariant(t, user)
+		assert.Equal(t, legacyTaskQuota, user.UsedQuota)
+		assert.Equal(t, 2, user.RequestCount)
+		var channel model.Channel
+		require.NoError(t, model.DB.First(&channel, channelID).Error)
+		assert.EqualValues(t, legacyTaskQuota, channel.UsedQuota)
+		rows := ledgerRowsFor(t, userID)
+		require.Len(t, rows, 1, "only the modern hold can be refunded, even on a repeated sweep")
+		assert.Equal(t, string(model.AccountPaid), rows[0].Account)
+		assert.Equal(t, modernTaskQuota, rows[0].Delta)
+		assert.Equal(t, model.LedgerReasonTaskRefund, rows[0].Reason)
+		assert.Equal(t, int64(1), countLogs(t))
+		log := getLastLog(t)
+		require.NotNil(t, log)
+		assert.Equal(t, model.LogTypeRefund, log.Type)
+		assert.Equal(t, modernTaskQuota, log.Quota)
+	}
 }
 
 type scriptedPollingAdaptor struct {

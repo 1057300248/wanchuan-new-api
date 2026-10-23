@@ -67,9 +67,8 @@ func TestSplitRefundProportionalAndExact(t *testing.T) {
 	assert.Equal(t, 43, shares[0].Amount)
 	assert.Equal(t, 18, shares[1].Amount)
 
-	// 超过总额按全额处理
-	shares = SplitRefund(original, 1000)
-	assert.Equal(t, 100, shares[0].Amount+shares[1].Amount)
+	// An excessive refund is inconsistent provenance, not a full-refund alias.
+	assert.Nil(t, SplitRefund(original, 1000))
 
 	// 空/非正输入
 	assert.Nil(t, SplitRefund(nil, 10))

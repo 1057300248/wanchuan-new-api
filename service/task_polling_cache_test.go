@@ -39,7 +39,7 @@ func TestTaskPollingDefersStaleChannelCache(t *testing.T) {
 						const balance, tokenRemain, reserved = 10_000, 8_000, 1_400
 						db := model.DB
 						t.Cleanup(func() {
-							for _, row := range []any{&model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.Task{}, &model.Log{}, &model.UserSubscription{}, &model.Channel{}, &model.Token{}, &model.User{}} {
+							for _, row := range []any{&model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.Task{}, &model.Log{}, &model.SubscriptionPreConsumeRecord{}, &model.UserSubscription{}, &model.Channel{}, &model.Token{}, &model.User{}} {
 								require.NoError(t, db.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(row).Error)
 							}
 						})
@@ -54,6 +54,9 @@ func TestTaskPollingDefersStaleChannelCache(t *testing.T) {
 						task.Progress = "30%"
 						task.PrivateData.UpstreamTaskID = "upstream_cache_retry"
 						task.PrivateData.PollFailures = 2
+						if funding == BillingSourceSubscription {
+							seedTaskSubscriptionReceipt(t, task)
+						}
 						require.NoError(t, db.Create(task).Error)
 						upstreamID := task.GetUpstreamTaskID()
 						adaptor := &batchPollingAdaptor{}
@@ -119,26 +122,23 @@ func TestTaskPollingDefersStaleChannelCache(t *testing.T) {
 						require.NoError(t, db.First(&persisted, task.ID).Error)
 						assert.Equal(t, model.TaskStatus(model.TaskStatusInProgress), persisted.Status)
 						assert.Equal(t, reserved, persisted.Quota)
-						// Official handling of a genuinely deleted channel updates
-						// task status only. It does not refund precharged accounting.
+						// A deleted local channel leaves delivery unknown, not failed.
+						// Its outstanding charge remains visible for operator review.
 						privateBeforeMissing := persisted.PrivateData
 						replay := *task
 						require.NoError(t, db.Delete(&model.Channel{}, channelID).Error)
 						for range 2 {
 							err := poll()
-							if batch {
-								require.NoError(t, err, "batch returns the successful bulk status update result")
-							} else {
-								require.ErrorIs(t, err, gorm.ErrRecordNotFound)
-							}
+							require.ErrorIs(t, err, gorm.ErrRecordNotFound)
 							assertPollingFailureAccountingUnchanged(t, userID, tokenID, channelID, balance, tokenRemain, reserved, false)
 							task = &replay
 						}
 						require.NoError(t, db.First(&persisted, task.ID).Error)
-						assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), persisted.Status)
+						assert.Equal(t, model.TaskStatus(model.TaskStatusUnknown), persisted.Status)
 						assert.Equal(t, reserved, persisted.Quota)
-						assert.Equal(t, "100%", persisted.Progress)
-						assert.Equal(t, "Failed to get the channel information. Please contact the administrator", persisted.FailReason)
+						assert.Equal(t, "30%", persisted.Progress)
+						assert.Equal(t, "Missing channel metadata; upstream delivery requires operator review", persisted.FailReason)
+						privateBeforeMissing.FinancialReviewReason = persisted.FailReason
 						assert.Equal(t, privateBeforeMissing, persisted.PrivateData)
 						assert.Zero(t, persisted.FinishTime)
 						require.NoError(t, db.First(&subscription, subscriptionID).Error)
@@ -214,5 +214,5 @@ func openTaskPollingSQLFixture(t *testing.T, dialect string) {
 		common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
 	}
 	t.Cleanup(func() { model.DB, model.LOG_DB = oldDB, oldLogDB; common.SetDatabaseTypes(oldType, oldLogType) })
-	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.Task{}, &model.User{}, &model.Token{}, &model.Channel{}, &model.UserSubscription{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}))
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.Task{}, &model.User{}, &model.Token{}, &model.Channel{}, &model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}))
 }

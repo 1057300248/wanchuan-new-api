@@ -124,14 +124,16 @@ type TaskPrivateData struct {
 	// RequestId 提交请求的账本引用（预扣费 reference），用于返利对账。
 	RequestId string `json:"request_id,omitempty"`
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
-	BillingSource           string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
-	SubscriptionId          int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
-	SubscriptionQuotaPeriod int64               `json:"subscription_quota_period,omitempty"`
-	TokenId                 int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
-	NodeName                string              `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
-	BillingContext          *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
+	BillingSource              string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
+	SubscriptionId             int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
+	SubscriptionQuotaPeriod    int64               `json:"subscription_quota_period,omitempty"`
+	SubscriptionReservedAmount int64               `json:"subscription_reserved_amount,omitempty"`
+	TokenFingerprint           string              `json:"token_fingerprint,omitempty"`
+	TokenId                    int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
+	NodeName                   string              `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
+	BillingContext             *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
 	// WalletDebit 钱包计费各账户实际扣减份额（按扣减顺序），异步结算补扣时
-	// 累计更新；退款按此精确退回原账户。为空表示纯 paid 计费（兼容旧数据）。
+	// 累计更新；退款按此精确退回原账户。缺失来源凭证时必须人工对账，不能猜测 paid。
 	WalletDebit []LedgerShare `json:"wallet_debit,omitempty"`
 	// ResponsesBackground records that the openai_responses create request
 	// asked for background:true. Every task is durable and survives client
@@ -152,6 +154,25 @@ type TaskPrivateData struct {
 	// never write it; compatibility guards keep old rows read-only.
 	PendingSettlement   *TaskSettlement `json:"pending_settlement,omitempty"`
 	SubmissionAccounted bool            `json:"submission_accounted,omitempty"`
+	// Version 2 identifies only newly written financial work. Historical
+	// PendingSettlement records are never upgraded or replayed implicitly.
+	FinancialVersion      int                  `json:"financial_version,omitempty"`
+	FinancialIntent       *TaskFinancialIntent `json:"financial_intent,omitempty"`
+	FinancialOperationID  string               `json:"financial_operation_id,omitempty"`
+	FinancialActualQuota  int                  `json:"financial_actual_quota,omitempty"`
+	FinancialReviewReason string               `json:"financial_review_reason,omitempty"`
+}
+
+// TaskFinancialIntent is the current terminal adjustment saved with the task
+// status. Its operation ID is immutable across retries and becomes the receipt
+// proving that funding, token, usage and task state committed together.
+type TaskFinancialIntent struct {
+	Kind          string             `json:"kind"`
+	PreviousQuota int                `json:"previous_quota"`
+	ActualQuota   int                `json:"actual_quota"`
+	OperationID   string             `json:"operation_id"`
+	Reason        *common.Message    `json:"reason,omitempty"`
+	Clamp         *common.QuotaClamp `json:"clamp,omitempty"`
 }
 
 // TaskSettlement decodes historical private-policy intent only. No production
@@ -272,10 +293,10 @@ func (p *TaskPrivateData) Scan(val any) error {
 
 func (p TaskPrivateData) Value() (driver.Value, error) {
 	if p.Key == "" && p.UpstreamTaskID == "" && p.ResultURL == "" && p.Execution == nil &&
-		p.BillingSource == "" && p.SubscriptionId == 0 && p.SubscriptionQuotaPeriod == 0 && p.TokenId == 0 &&
+		p.BillingSource == "" && p.SubscriptionId == 0 && p.SubscriptionQuotaPeriod == 0 && p.SubscriptionReservedAmount == 0 && p.TokenId == 0 && p.TokenFingerprint == "" &&
 		p.NodeName == "" && p.BillingContext == nil && len(p.WalletDebit) == 0 &&
 		p.RequestId == "" && !p.ResponsesBackground &&
-		len(p.PluginState) == 0 && p.PollFailures == 0 && !p.ResultDiscarded && p.PendingSettlement == nil && !p.SubmissionAccounted {
+		len(p.PluginState) == 0 && p.PollFailures == 0 && !p.ResultDiscarded && p.PendingSettlement == nil && !p.SubmissionAccounted && p.FinancialVersion == 0 && p.FinancialIntent == nil && p.FinancialOperationID == "" && p.FinancialActualQuota == 0 && p.FinancialReviewReason == "" {
 		return nil, nil
 	}
 	// 同 Properties.Value:string 避免 PG simple protocol 的 bytea 编码。
@@ -427,7 +448,7 @@ func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) []*
 // HasLegacyBillingIntent identifies historical custom settlement records.
 // It is a compatibility read guard, not a new official task state machine.
 func (t *Task) HasLegacyBillingIntent() bool {
-	return t.SettlementPending || t.PrivateData.PendingSettlement != nil
+	return t != nil && (t.PrivateData.PendingSettlement != nil || t.SettlementPending && t.PrivateData.FinancialVersion != 2)
 }
 
 func excludeLegacyBillingTasks(tasks []*Task) []*Task {
@@ -443,7 +464,7 @@ func excludeLegacyBillingTasks(tasks []*Task) []*Task {
 func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {
 	var tasks []*Task
 	err := DB.Where("settlement_pending = ? OR settlement_pending IS NULL", false).Where("progress != ?", "100%").
-		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess}).
+		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess, TaskStatusUnknown}).
 		Where("submit_time < ?", cutoffUnix).
 		Order("submit_time").
 		Limit(limit).
@@ -458,7 +479,7 @@ func GetAllUnFinishSyncTasks(limit int) []*Task {
 	var tasks []*Task
 	var err error
 	// get all tasks progress is not 100%
-	err = DB.Where("settlement_pending = ? OR settlement_pending IS NULL", false).Where("progress != ?", "100%").Where("status != ?", TaskStatusFailure).Where("status != ?", TaskStatusSuccess).Limit(limit).Order("id").Find(&tasks).Error
+	err = DB.Where("settlement_pending = ? OR settlement_pending IS NULL", false).Where("progress != ?", "100%").Where("status != ?", TaskStatusFailure).Where("status != ?", TaskStatusSuccess).Where("status != ?", TaskStatusUnknown).Limit(limit).Order("id").Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
@@ -476,6 +497,7 @@ func HasUnfinishedSyncTasks() bool {
 		Where("progress != ?", "100%").
 		Where("status != ?", TaskStatusFailure).
 		Where("status != ?", TaskStatusSuccess).
+		Where("status != ?", TaskStatusUnknown).
 		Limit(1).
 		Pluck("id", &id).Error
 	return err == nil && id != 0
@@ -613,9 +635,10 @@ func (t *Task) Snapshot() taskSnapshot {
 	}
 }
 
-func (Task *Task) Update() error {
-	var err error
-	err = DB.Save(Task).Error
+// Update is a compatibility observation write, never a financial write. New
+// polling callers should use UpdateWithStatus with their observed status.
+func (t *Task) Update() error {
+	_, err := t.updateObservation(nil)
 	return err
 }
 
@@ -628,7 +651,7 @@ func (t *Task) UpdateQuota() error {
 // subscription adjustment twice. A failed update rolls back the caller's funds.
 func (t *Task) UpdateBillingStateTx(tx *gorm.DB, previousQuota int) error {
 	result := tx.Model(&Task{}).Where("id = ? AND quota = ?", t.ID, previousQuota).
-		Select("quota", "private_data").Updates(t)
+		Select("quota", "private_data", "settlement_pending").Updates(t)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -638,38 +661,65 @@ func (t *Task) UpdateBillingStateTx(tx *gorm.DB, previousQuota int) error {
 	return nil
 }
 
-// UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).
-// Returns (true, nil) if this caller won the update, (false, nil) if
-// another process already moved the task out of fromStatus. MySQL commonly
-// reports changed rows rather than matched rows, so a same-value no-op update
-// can also return false even when the status predicate still matched.
-//
-// Uses Model().Select("*").Updates() instead of Save() because GORM's Save
-// falls back to INSERT ON CONFLICT when the WHERE-guarded UPDATE matches
-// zero rows, which silently bypasses the CAS guard.
+// UpdateWithStatus locks and merges only observation fields. In particular a
+// stale poll cannot replace a newer source receipt, review reason or financial
+// intent embedded in private_data, even when its status still matches.
 func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
-	if t.HasLegacyBillingIntent() {
-		return false, nil
-	}
-	result := DB.Model(t).Where("status = ?", fromStatus).Where("settlement_pending = ? OR settlement_pending IS NULL", false).Select("*").Updates(t)
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected > 0, nil
+	return t.updateObservation(&fromStatus)
 }
 
-// TaskBulkUpdateByID performs an unconditional bulk UPDATE by primary key IDs.
-// WARNING: This function has NO CAS (Compare-And-Swap) guard — it will overwrite
-// any concurrent status changes. DO NOT use in billing/quota lifecycle flows
-// (e.g., timeout, success, failure transitions that trigger refunds or settlements).
-// For status transitions that involve billing, use Task.UpdateWithStatus() instead.
+func (t *Task) updateObservation(fromStatus *TaskStatus) (bool, error) {
+	if t == nil || t.ID <= 0 || t.UserId <= 0 {
+		return false, fmt.Errorf("invalid task observation identity")
+	}
+	won := false
+	var current *Task
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		stored, err := LoadTaskFinancialTx(tx, t.ID, t.UserId)
+		if err != nil {
+			return err
+		}
+		current = stored
+		if stored.TaskID != t.TaskID {
+			return ErrTaskFinancialReview
+		}
+		if stored.HasLegacyBillingIntent() || stored.SettlementPending || stored.Status == TaskStatusSuccess || stored.Status == TaskStatusFailure || fromStatus != nil && stored.Status != *fromStatus {
+			return nil
+		}
+		stored.Status, stored.Progress, stored.FailReason = t.Status, t.Progress, t.FailReason
+		stored.SubmitTime, stored.StartTime, stored.FinishTime = t.SubmitTime, t.StartTime, t.FinishTime
+		stored.Data = t.Data
+		stored.PrivateData.ResultURL = t.PrivateData.ResultURL
+		stored.PrivateData.PluginState = t.PrivateData.PluginState
+		stored.PrivateData.PollFailures = t.PrivateData.PollFailures
+		stored.PrivateData.BillingContext = t.PrivateData.BillingContext
+		result := tx.Model(stored).Select("status", "progress", "fail_reason", "submit_time", "start_time", "finish_time", "data", "private_data").Updates(stored)
+		if result.Error != nil {
+			return result.Error
+		}
+		won = result.RowsAffected > 0
+		return nil
+	})
+	if err == nil && current != nil {
+		*t = *current
+	}
+	return won && err == nil, err
+}
+
+// TaskBulkUpdateByID preserves concurrent terminal observations for any status
+// update. Financial transitions should still use the per-task terminal intent
+// transaction; this guard prevents a stale compatibility caller from reverting
+// an already successful or failed task.
 func TaskBulkUpdateByID(ids []int64, params map[string]any) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	return DB.Model(&Task{}).
-		Where("id in (?)", ids).
-		Updates(params).Error
+	query := DB.Model(&Task{}).Where("id IN ?", ids)
+	if _, changesStatus := params["status"]; changesStatus {
+		query = query.Where("status NOT IN ?", []TaskStatus{TaskStatusSuccess, TaskStatusFailure}).
+			Where("settlement_pending = ? OR settlement_pending IS NULL", false)
+	}
+	return query.Updates(params).Error
 }
 
 type TaskQuotaUsage struct {

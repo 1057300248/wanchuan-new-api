@@ -106,42 +106,16 @@ func appendShares(current []relaycommon.WalletDebitShare, result *model.LedgerRe
 	return next
 }
 
-// SplitRefund 把 refundAmount 按原始扣款份额比例拆分为各账户退款份额：
-// 每个账户份额向下取整，余数归顺序第一位的账户；份额总和恒等于 refundAmount。
-// 任意多次部分退款与最终全额退款叠加后，各账户累计退款与原始扣款精确一致。
+// SplitRefund allocates one refund from an outstanding debit receipt. Invalid
+// or missing receipts fail closed. Callers performing multiple refunds must
+// persist the complementary receipt or call model.AllocateWalletRefund with
+// cumulative prior credits; reusing a gross receipt is not safe.
 func SplitRefund(original []model.LedgerShare, refundAmount int) []model.LedgerShare {
-	if refundAmount <= 0 || len(original) == 0 {
+	shares, err := model.AllocateWalletRefund(original, nil, refundAmount)
+	if err != nil {
 		return nil
 	}
-	total := 0
-	for _, share := range original {
-		total += share.Amount
-	}
-	if total <= 0 {
-		return nil
-	}
-	if refundAmount >= total {
-		return append([]model.LedgerShare(nil), original...)
-	}
-	out := make([]model.LedgerShare, 0, len(original))
-	remaining := refundAmount
-	for _, share := range original {
-		part := int(int64(share.Amount) * int64(refundAmount) / int64(total))
-		if part <= 0 {
-			continue
-		}
-		out = append(out, model.LedgerShare{Account: share.Account, Amount: part})
-		remaining -= part
-	}
-	// 余数归顺序第一位账户，保证份额总和精确等于 refundAmount
-	if remaining > 0 {
-		if len(out) > 0 {
-			out[0].Amount += remaining
-		} else {
-			out = append(out, model.LedgerShare{Account: original[0].Account, Amount: remaining})
-		}
-	}
-	return out
+	return shares
 }
 
 // DescribeWalletShares 生成份额的调试/日志描述。

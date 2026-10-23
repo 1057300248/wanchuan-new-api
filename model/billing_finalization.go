@@ -21,13 +21,17 @@ const (
 	BillingRefunded      = "refunded"
 	BillingSettled       = "settled"
 	BillingTaskOwned     = "task_owned"
+	// Only these versioned intents are eligible for the new refund executor.
+	// Historical refund_pending rows always require operator review.
+	BillingRefundReady  = "refund_ready_v2"
+	BillingRefundReview = "refund_review_v2"
 )
 
 var ErrBillingFinalized = errors.New("request billing already has a different terminal owner")
 
-// BillingFinalization remains the normal wallet-settlement receipt. Historical
-// refund/task ownership rows and columns are retained for read-only inspection;
-// no refund or task-owner writer/recovery loop consumes them in the official path.
+// BillingFinalization is the unique request financial owner. New versioned
+// held/refund-ready receipts are executable only through their explicit state
+// transitions. Historical refund_pending rows remain read-only.
 // Never delete historical rows while their original financial receipts survive.
 type BillingFinalization struct {
 	RequestID string `gorm:"type:varchar(64);primaryKey;index:idx_billing_refund_due,priority:3"`
@@ -144,7 +148,7 @@ func claimBillingFinalizationTx(tx *gorm.DB, receipt BillingFinalization) (*Bill
 		stored.State = "building"
 	} else {
 		switch stored.State {
-		case BillingRefundPending, BillingRefunded, BillingSettled, BillingTaskOwned:
+		case BillingRefundPending, BillingRefunded, BillingSettled, BillingTaskOwned, BillingRefundReady, BillingRefundReview, BillingHeld, BillingDeliveryUnknown:
 		default:
 			return nil, billingRefundReviewError("receipt_invalid", "invalid persisted billing finalization state")
 		}
@@ -156,8 +160,18 @@ func claimBillingFinalizationTx(tx *gorm.DB, receipt BillingFinalization) (*Bill
 // source locks, never from a current balance. Terminal-owner replays bypass it:
 // successful settlement/task processing legitimately changes the source later.
 func validateBillingSourceTx(tx *gorm.DB, r *BillingFinalization) error {
+	if err := LockFinancialUserTx(tx, r.UserID); err != nil {
+		return err
+	}
+	if r.Source == "subscription" {
+		identity, err := GetSubscriptionBillingIdentityTx(tx, r.RequestID, r.UserID, r.SubscriptionID, r.SubscriptionPeriod, int64(r.SourceHeld))
+		if err != nil {
+			return err
+		}
+		return ValidateSubscriptionPreConsumeTx(tx, identity, int64(r.SourceHeld))
+	}
 	if r.Source != "wallet" {
-		return billingRefundReviewError("source_evidence", "only wallet normal settlement uses billing finalization")
+		return billingRefundReviewError("source_evidence", "unsupported billing finalization source")
 	}
 	var user User
 	if err := lockForUpdate(tx).First(&user, r.UserID).Error; err != nil {
@@ -276,7 +290,12 @@ func SettleBillingFinalization(ctx context.Context, receipt BillingFinalization,
 			}
 			return nil
 		}
-		if r.State != "building" {
+		if r.State == "building" {
+			// In particular, Settle(0) must not bypass refund admission by
+			// reconstructing an unrecorded token hold from a legacy caller.
+			return billingRefundReviewError("owner_missing", "settlement requires an atomically reserved request owner")
+		}
+		if r.State != BillingHeld {
 			return ErrBillingFinalized
 		}
 		if err = validateBillingSourceTx(tx, r); err != nil {

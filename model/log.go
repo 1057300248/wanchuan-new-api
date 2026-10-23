@@ -433,16 +433,19 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 }
 
 type RecordTaskBillingLogParams struct {
-	UserId    int
-	LogType   int
-	Content   []*common.Message
-	ChannelId int
-	ModelName string
-	Quota     int
-	TokenId   int
-	Group     string
-	Other     *LogOther
-	NodeName  string // 任务发起节点；为空时回退当前节点
+	// OperationID links this non-authoritative display log to a committed
+	// financial receipt. It never authorizes or replays a money operation.
+	OperationID string
+	UserId      int
+	LogType     int
+	Content     []*common.Message
+	ChannelId   int
+	ModelName   string
+	Quota       int
+	TokenId     int
+	Group       string
+	Other       *LogOther
+	NodeName    string // 任务发起节点；为空时回退当前节点
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
@@ -458,6 +461,12 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 	createdAt := common.GetTimestamp()
 	other := params.Other
+	if other == nil {
+		other = NewLogOther()
+	}
+	if params.OperationID != "" {
+		other.SetAdmin("financial_operation_id", params.OperationID)
+	}
 	log := &Log{
 		UserId:    params.UserId,
 		Username:  username,
@@ -471,6 +480,9 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		TokenId:   params.TokenId,
 		Group:     params.Group,
 		Other:     other.JSONString(),
+	}
+	if params.OperationID != "" {
+		log.RequestId = BillingTokenFingerprint(params.OperationID)
 	}
 	err := createLog(log)
 	if err != nil {

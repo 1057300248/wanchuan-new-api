@@ -3,7 +3,6 @@ package wallet
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
@@ -14,12 +13,11 @@ import (
 // runtime contract. Billing orchestration owns token quota; this type owns only
 // wallet ledger/account mutations and receipt state.
 type Funding struct {
-	userID            int
-	requestID         string
-	consumed          int
-	debitOrder        []model.LedgerAccount
-	debitShares       map[model.LedgerAccount]int
-	receiptOperations map[string]struct{}
+	userID      int
+	requestID   string
+	consumed    int
+	debitOrder  []model.LedgerAccount
+	debitShares map[model.LedgerAccount]int
 }
 
 var (
@@ -28,7 +26,7 @@ var (
 	_ moneyport.FundingReceipt    = (*Funding)(nil)
 )
 
-var ErrMissingDebitReceipt = errors.New("wallet funding: consumed quota has no debit receipt")
+var ErrMissingDebitReceipt = model.ErrMissingWalletDebitReceipt
 
 func NewFunding(request moneyport.FactoryRequest) (*Funding, error) {
 	order := make([]model.LedgerAccount, 0, len(request.AccountOrder))
@@ -61,6 +59,18 @@ func (w *Funding) PreConsume(amount int) error {
 	if amount <= 0 {
 		return nil
 	}
+	return w.commitReservation(amount, w.PreConsumeInTx)
+}
+
+// PreConsumeInTx participates in the host's reservation transaction. Receipt
+// and cache state are applied only by ApplyReservationResult after COMMIT.
+func (w *Funding) PreConsumeInTx(tx *gorm.DB, amount int) (moneyport.SettlementResult, error) {
+	if tx == nil {
+		return moneyport.SettlementResult{}, errors.New("wallet reservation transaction is nil")
+	}
+	if amount <= 0 {
+		return moneyport.SettlementResult{ReceiptKnown: true}, nil
+	}
 	operationID := "billing:preconsume:" + w.requestID
 	entry := model.LedgerEntry{
 		UserId:         w.userID,
@@ -71,13 +81,7 @@ func (w *Funding) PreConsume(amount int) error {
 		RequestId:      w.requestID,
 		IdempotencyKey: operationID,
 	}
-	result, err := model.DebitQuota(entry, w.debitOrder...)
-	if err != nil {
-		return w.mapInsufficient(err)
-	}
-	w.consumed = amount
-	w.recordLedgerDebitOperation(operationID, result)
-	return nil
+	return w.debitInTx(tx, entry)
 }
 
 func (w *Funding) Settle(delta int) error {
@@ -126,28 +130,35 @@ func (w *Funding) SettleInTx(tx *gorm.DB, delta int) (moneyport.SettlementResult
 		entry.Delta = delta
 		entry.IdempotencyKey = fmt.Sprintf("billing:settle:%s:%d", w.requestID, delta)
 		result, err := model.DebitQuotaTx(tx, entry, w.debitOrder...)
-		return settlementResultFromLedger(result), w.mapInsufficient(err)
+		if err != nil {
+			return moneyport.SettlementResult{}, w.mapInsufficient(err)
+		}
+		receipt, err := model.WalletRequestReceiptTx(tx, w.userID, w.requestID)
+		return settlementResultFromLedger(result, receipt), err
 	}
 
 	refund := -delta
-	entry.IdempotencyKey = fmt.Sprintf("billing:settle_refund:%s:%d", w.requestID, refund)
-	if shares := w.refundShares(refund); len(shares) > 0 {
-		result, err := model.CreditQuotaSharesTx(tx, entry, shares)
-		return settlementResultFromLedger(result), err
+	if w.consumed > 0 && len(w.debitShares) == 0 {
+		return moneyport.SettlementResult{}, ErrMissingDebitReceipt
 	}
-	return moneyport.SettlementResult{}, ErrMissingDebitReceipt
+	entry.IdempotencyKey = fmt.Sprintf("billing:settle_refund:%s:%d", w.requestID, refund)
+	result, receipt, err := model.CreditWalletRefundTx(tx, entry, refund)
+	return settlementResultFromLedger(result, receipt), err
 }
 
 func (w *Funding) ApplySettlementResult(delta int, result moneyport.SettlementResult) {
 	model.RefreshUserQuotaCacheAfterBillingFinalization(w.userID)
-	if delta > 0 {
-		w.recordMoneyportDebitOperation(fmt.Sprintf("billing:settle:%s:%d", w.requestID, delta), result.DebitShares)
+	if result.ReceiptKnown {
+		w.replaceReceipt(result.OutstandingShares)
 	}
 }
 
 func (w *Funding) Refund() error {
 	if w.consumed <= 0 {
 		return nil
+	}
+	if _, err := model.AllocateWalletRefund(w.debitSharesInOrder(), nil, w.consumed); err != nil {
+		return ErrMissingDebitReceipt
 	}
 	entry := model.LedgerEntry{
 		UserId:         w.userID,
@@ -158,35 +169,63 @@ func (w *Funding) Refund() error {
 		RequestId:      w.requestID,
 		IdempotencyKey: "billing:refund:" + w.requestID,
 	}
-	if shares := w.refundShares(w.consumed); len(shares) > 0 {
-		_, err := model.CreditQuotaShares(entry, shares)
+	var result moneyport.SettlementResult
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		err = model.DB.Transaction(func(tx *gorm.DB) error {
+			ledger, receipt, refundErr := model.CreditWalletRefundTx(tx, entry, 0)
+			result = settlementResultFromLedger(ledger, receipt)
+			return refundErr
+		})
+		if !errors.Is(err, model.ErrLedgerDuplicate) {
+			break
+		}
+	}
+	if err != nil {
 		return err
 	}
-	return ErrMissingDebitReceipt
+	w.ApplySettlementResult(-w.consumed, result)
+	return nil
 }
 
 func (w *Funding) Reserve(targetQuota int) error {
-	if targetQuota <= w.consumed {
+	if targetQuota <= 0 {
 		return nil
 	}
-	delta := targetQuota - w.consumed
-	operationID := fmt.Sprintf("billing:reserve:%s:%d", w.requestID, targetQuota)
+	// Another reconstructed funding object may have changed the outstanding
+	// amount. Only the locked durable receipt can establish a positive no-op.
+	return w.commitReservation(targetQuota, w.ReserveInTx)
+}
+
+func (w *Funding) ReserveInTx(tx *gorm.DB, targetQuota int) (moneyport.SettlementResult, error) {
+	if tx == nil {
+		return moneyport.SettlementResult{}, errors.New("wallet reservation transaction is nil")
+	}
+	receipt, err := model.WalletRequestReceiptTx(tx, w.userID, w.requestID)
+	if err != nil && err != model.ErrMissingWalletDebitReceipt {
+		return moneyport.SettlementResult{}, err
+	}
+	current := 0
+	for _, share := range receipt {
+		current += share.Amount
+	}
+	if targetQuota <= current {
+		return settlementResultFromLedger(&model.LedgerResult{Replayed: true}, receipt), nil
+	}
 	entry := model.LedgerEntry{
 		UserId:         w.userID,
-		Delta:          delta,
+		Delta:          targetQuota - current,
 		Reason:         model.LedgerReasonBillingReserve,
 		ReferenceType:  "relay",
 		ReferenceId:    w.requestID,
 		RequestId:      w.requestID,
-		IdempotencyKey: operationID,
+		IdempotencyKey: fmt.Sprintf("billing:reserve:%s:%d", w.requestID, targetQuota),
 	}
-	result, err := model.DebitQuota(entry, w.debitOrder...)
-	if err != nil {
-		return w.mapInsufficient(err)
-	}
-	w.consumed = targetQuota
-	w.recordLedgerDebitOperation(operationID, result)
-	return nil
+	return w.debitInTx(tx, entry)
+}
+
+func (w *Funding) ApplyReservationResult(target int, result moneyport.SettlementResult) {
+	w.ApplySettlementResult(0, result)
 }
 
 func (w *Funding) Receipt() []moneyport.AccountShare {
@@ -225,137 +264,78 @@ func (w *Funding) bonusEligible() bool {
 	return false
 }
 
-func (w *Funding) addSharesFromLedger(result *model.LedgerResult) {
-	if result == nil {
-		return
+// debitInTx keeps a debit and its authoritative net receipt together. In
+// particular, reconstructing a preconsume after an earlier partial refund must
+// not hydrate the old gross receipt and make it refundable again.
+func (w *Funding) debitInTx(tx *gorm.DB, entry model.LedgerEntry) (moneyport.SettlementResult, error) {
+	ledger, err := model.DebitQuotaTx(tx, entry, w.debitOrder...)
+	if err != nil {
+		return moneyport.SettlementResult{}, w.mapInsufficient(err)
 	}
-	if w.debitShares == nil {
-		w.debitShares = make(map[model.LedgerAccount]int)
-	}
-	for _, row := range result.Rows {
-		if row.Delta < 0 {
-			w.debitShares[model.LedgerAccount(row.Account)] += -row.Delta
-		}
-	}
+	receipt, err := model.WalletRequestReceiptTx(tx, w.userID, w.requestID)
+	return settlementResultFromLedger(ledger, receipt), err
 }
 
-func (w *Funding) addMoneyportShares(shares []moneyport.AccountShare) {
-	if len(shares) == 0 {
-		return
+func (w *Funding) commitReservation(target int, apply func(*gorm.DB, int) (moneyport.SettlementResult, error)) error {
+	var result moneyport.SettlementResult
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		err = model.DB.Transaction(func(tx *gorm.DB) error {
+			var reservationErr error
+			result, reservationErr = apply(tx, target)
+			return reservationErr
+		})
+		if !errors.Is(err, model.ErrLedgerDuplicate) {
+			break
+		}
 	}
-	if w.debitShares == nil {
-		w.debitShares = make(map[model.LedgerAccount]int)
+	if err != nil {
+		return w.mapInsufficient(err)
 	}
+	w.ApplyReservationResult(target, result)
+	return nil
+}
+
+func (w *Funding) replaceReceipt(shares []moneyport.AccountShare) {
+	w.debitShares = make(map[model.LedgerAccount]int, len(shares))
+	w.consumed = 0
 	for _, share := range shares {
-		if share.Amount > 0 {
-			w.debitShares[model.LedgerAccount(share.Account)] += share.Amount
-		}
+		w.debitShares[model.LedgerAccount(share.Account)] = share.Amount
+		w.consumed += share.Amount
 	}
-}
-
-func (w *Funding) recordLedgerDebitOperation(operationID string, result *model.LedgerResult) {
-	if result == nil || !w.markReceiptOperation(operationID) {
-		return
-	}
-	w.addSharesFromLedger(result)
-}
-
-func (w *Funding) recordMoneyportDebitOperation(operationID string, shares []moneyport.AccountShare) {
-	if !w.markReceiptOperation(operationID) {
-		return
-	}
-	w.addMoneyportShares(shares)
-}
-
-func (w *Funding) markReceiptOperation(operationID string) bool {
-	operationID = strings.TrimSpace(operationID)
-	if operationID == "" {
-		return false
-	}
-	if w.receiptOperations == nil {
-		w.receiptOperations = make(map[string]struct{})
-	}
-	if _, exists := w.receiptOperations[operationID]; exists {
-		return false
-	}
-	w.receiptOperations[operationID] = struct{}{}
-	return true
-}
-
-func (w *Funding) refundShares(amount int) []model.LedgerShare {
-	if len(w.debitShares) == 0 {
-		return nil
-	}
-	return splitRefund(w.debitSharesInOrder(), amount)
 }
 
 func (w *Funding) debitSharesInOrder() []model.LedgerShare {
 	if len(w.debitShares) == 0 {
 		return nil
 	}
-	if len(w.debitOrder) > 0 {
-		out := make([]model.LedgerShare, 0, len(w.debitOrder))
-		for _, account := range w.debitOrder {
-			if amount := w.debitShares[account]; amount > 0 {
-				out = append(out, model.LedgerShare{Account: account, Amount: amount})
-			}
-		}
-		return out
-	}
 	out := make([]model.LedgerShare, 0, len(w.debitShares))
-	for account, amount := range w.debitShares {
-		if amount > 0 {
+	seen := make(map[model.LedgerAccount]bool)
+	order := append([]model.LedgerAccount(nil), w.debitOrder...)
+	order = append(order, model.AccountBonus, model.AccountReward, model.AccountPaid)
+	for _, account := range order {
+		if amount := w.debitShares[account]; amount > 0 && !seen[account] {
 			out = append(out, model.LedgerShare{Account: account, Amount: amount})
+			seen[account] = true
 		}
 	}
 	return out
 }
 
-func splitRefund(original []model.LedgerShare, refundAmount int) []model.LedgerShare {
-	if refundAmount <= 0 || len(original) == 0 {
-		return nil
-	}
-	total := 0
-	for _, share := range original {
-		total += share.Amount
-	}
-	if total <= 0 {
-		return nil
-	}
-	if refundAmount > total {
-		return nil
-	}
-	if refundAmount == total {
-		return append([]model.LedgerShare(nil), original...)
-	}
-	out := make([]model.LedgerShare, 0, len(original))
-	remaining := refundAmount
-	for _, share := range original {
-		part := int(int64(share.Amount) * int64(refundAmount) / int64(total))
-		if part <= 0 {
-			continue
-		}
-		out = append(out, model.LedgerShare{Account: share.Account, Amount: part})
-		remaining -= part
-	}
-	if remaining > 0 {
-		if len(out) > 0 {
-			out[0].Amount += remaining
-		} else {
-			out = append(out, model.LedgerShare{Account: original[0].Account, Amount: remaining})
-		}
-	}
-	return out
-}
-
-func settlementResultFromLedger(result *model.LedgerResult) moneyport.SettlementResult {
+func settlementResultFromLedger(result *model.LedgerResult, receipt []model.LedgerShare) moneyport.SettlementResult {
 	if result == nil {
 		return moneyport.SettlementResult{}
 	}
-	out := moneyport.SettlementResult{Replayed: result.Replayed, TotalAfter: result.TotalAfter}
+	out := moneyport.SettlementResult{Replayed: result.Replayed, TotalAfter: result.TotalAfter, ReceiptKnown: true}
+	for _, share := range receipt {
+		out.SourceHeld += share.Amount
+		out.OutstandingShares = append(out.OutstandingShares, moneyport.AccountShare{Account: string(share.Account), Amount: share.Amount})
+	}
 	for _, row := range result.Rows {
 		if row.Delta < 0 {
 			out.DebitShares = append(out.DebitShares, moneyport.AccountShare{Account: row.Account, Amount: -row.Delta})
+		} else if row.Delta > 0 {
+			out.CreditShares = append(out.CreditShares, moneyport.AccountShare{Account: row.Account, Amount: row.Delta})
 		}
 	}
 	return out

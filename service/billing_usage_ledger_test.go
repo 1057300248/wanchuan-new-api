@@ -30,6 +30,8 @@ func TestPostTextConsumeQuotaLedgerMatchesOfficialQuotaFromBillingUsage(t *testi
 	ctx.Set(common.RequestIdKey, "billing-usage-ledger-1")
 	relayInfo := &relaycommon.RelayInfo{
 		UserId:          userID,
+		UserQuota:       initialQuota,
+		UserSetting:     dto.UserSetting{QuotaWarningEnabled: boolPtr(false)},
 		RequestId:       "billing-usage-ledger-1",
 		OriginModelName: "billing-usage-model",
 		IsPlayground:    true,

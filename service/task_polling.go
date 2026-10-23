@@ -22,6 +22,7 @@ import (
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/samber/lo"
+	"gorm.io/gorm"
 )
 
 // TaskPollingAdaptor 定义轮询所需的最小适配器接口，避免 service -> relay 的循环依赖
@@ -84,7 +85,17 @@ func sweepTimedOutTasks(ctx context.Context) {
 	timedOutCount := 0
 
 	for _, task := range tasks {
-		if task != nil && task.HasLegacyBillingIntent() {
+		if task == nil || task.HasLegacyBillingIntent() || task.PrivateData.FinancialReviewReason != "" {
+			continue
+		}
+		if task.GetUpstreamTaskID() == "" {
+			_ = model.MarkTaskPollingReview(ctx, task, "Missing upstream task identity; delivery requires operator review")
+			continue
+		}
+		if _, err := model.GetChannelById(task.ChannelId, false); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				_ = model.MarkTaskPollingReview(ctx, task, "Missing channel metadata; upstream delivery requires operator review")
+			}
 			continue
 		}
 		isLegacy := task.SubmitTime > 0 && task.SubmitTime < model.TaskRefundLegacyCutoff
@@ -95,14 +106,21 @@ func sweepTimedOutTasks(ctx context.Context) {
 		task.FinishTime = now
 		if isLegacy {
 			task.FailReason = legacyReason
-			// 旧系统任务明确不退款，随终态 CAS 一并清掉 quota，
-			// 避免留下可再次退款的计费状态。
-			task.Quota = 0
+			// Historical holds are retained for read-only reconciliation; a timeout
+			// is not authority to erase their financial evidence.
 		} else {
 			task.FailReason = reason
 		}
 
-		won, err := task.UpdateWithStatus(oldStatus)
+		var won bool
+		var err error
+		if isLegacy {
+			// A timeout is not authority to erase a historical financial hold.
+			won, err = task.UpdateWithStatus(oldStatus)
+		} else {
+			intent := &model.TaskFinancialIntent{Kind: "refund", PreviousQuota: task.Quota, ActualQuota: 0, OperationID: fmt.Sprintf("task:financial:%d:refund:0", task.ID), Reason: common.NewMessage(reason)}
+			won, err = model.CommitTaskTerminalFinancial(ctx, task, oldStatus, intent)
+		}
 		if err != nil {
 			logger.LogError(ctx, common.LogText("sweepTimedOutTasks CAS update error for task %s: %v", task.TaskID, err))
 			continue
@@ -112,7 +130,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 			continue
 		}
 		timedOutCount++
-		if !isLegacy && task.Quota != 0 {
+		if !isLegacy && task.Quota != 0 && task.PrivateData.FinancialReviewReason == "" {
 			RefundTaskQuota(ctx, task, reason)
 		}
 	}
@@ -168,38 +186,55 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 		}
 		summary.PlatformsScanned++
 		taskChannelM := make(map[int][]string)
-		taskM := make(map[string]*model.Task)
-		nullTaskIds := make([]int64, 0)
+		tasksByChannel := make(map[int]map[string]*model.Task)
+		nullTasks := make([]*model.Task, 0)
 		for _, task := range tasks {
-			if task != nil && task.HasLegacyBillingIntent() {
+			if task != nil && (task.HasLegacyBillingIntent() || task.PrivateData.FinancialReviewReason != "") {
 				continue
 			}
 			upstreamID := task.GetUpstreamTaskID()
 			if upstreamID == "" {
 				// 统计失败的未完成任务
-				nullTaskIds = append(nullTaskIds, task.ID)
+				nullTasks = append(nullTasks, task)
 				continue
 			}
-			taskM[upstreamID] = task
-			taskChannelM[task.ChannelId] = append(taskChannelM[task.ChannelId], upstreamID)
+			if tasksByChannel[task.ChannelId] == nil {
+				tasksByChannel[task.ChannelId] = make(map[string]*model.Task)
+			}
+			if previous, exists := tasksByChannel[task.ChannelId][upstreamID]; exists {
+				if previous != nil {
+					_ = model.MarkTaskPollingReview(ctx, previous, "Ambiguous upstream task identity; delivery requires operator review")
+				}
+				_ = model.MarkTaskPollingReview(ctx, task, "Ambiguous upstream task identity; delivery requires operator review")
+				tasksByChannel[task.ChannelId][upstreamID] = nil
+				continue
+			}
+			tasksByChannel[task.ChannelId][upstreamID] = task
 		}
-		if len(nullTaskIds) > 0 {
-			summary.NullTasksFailed += len(nullTaskIds)
-			err := model.TaskBulkUpdateByID(nullTaskIds, map[string]any{
-				"status":   "FAILURE",
-				"progress": "100%",
-			})
-			if err != nil {
-				logger.LogError(ctx, common.LogText("Fix null task_id task error: %v", err))
-			} else {
-				logger.LogInfo(ctx, common.LogText("Fix null task_id task success: %v", nullTaskIds))
+		for _, task := range nullTasks {
+			if err := model.MarkTaskPollingReview(ctx, task, "Missing upstream task identity; delivery requires operator review"); err != nil {
+				logger.LogError(ctx, "failed to record task identity review")
 			}
 		}
-		if len(taskChannelM) == 0 {
-			continue
+		var channelWG sync.WaitGroup
+		channelSlots := make(chan struct{}, 5)
+		for channelID, scoped := range tasksByChannel {
+			for upstreamID, task := range scoped {
+				if task != nil {
+					taskChannelM[channelID] = append(taskChannelM[channelID], upstreamID)
+				}
+			}
+			if len(taskChannelM[channelID]) != 0 {
+				channelWG.Add(1)
+				channelSlots <- struct{}{}
+				go func(channelID int, ids []string, scoped map[string]*model.Task) {
+					defer channelWG.Done()
+					defer func() { <-channelSlots }()
+					DispatchPlatformUpdate(ctx, platform, map[int][]string{channelID: ids}, scoped)
+				}(channelID, taskChannelM[channelID], scoped)
+			}
 		}
-
-		DispatchPlatformUpdate(ctx, platform, taskChannelM, taskM)
+		channelWG.Wait()
 	}
 	if report != nil && ctx.Err() == nil {
 		report(totalPlatforms, totalPlatforms)
@@ -251,27 +286,20 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 		return nil
 	}
 	ch, err := model.CacheGetChannel(channelId)
+	if errors.Is(err, model.ErrChannelCacheMiss) {
+		ch, err = model.GetChannelById(channelId, false)
+	}
 	if err != nil {
-		if errors.Is(err, model.ErrChannelCacheStale) {
-			return err // A stale cache says nothing about the upstream task.
-		}
-		common.SysLog(common.LogText("CacheGetChannel: %v", err))
-		// Collect DB primary key IDs for bulk update (taskIds are upstream IDs, not task_id column values)
-		var failedIDs []int64
-		for _, upstreamID := range taskIds {
-			if t, ok := taskM[upstreamID]; ok && t != nil && !t.HasLegacyBillingIntent() {
-				failedIDs = append(failedIDs, t.ID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			for _, id := range taskIds {
+				if task := taskM[id]; task != nil {
+					if markErr := model.MarkTaskPollingReview(ctx, task, "Missing channel metadata; upstream delivery requires operator review"); markErr != nil {
+						return markErr
+					}
+				}
 			}
 		}
-		err = model.TaskBulkUpdateByID(failedIDs, map[string]any{
-			"fail_reason": "Failed to get the channel information. Please contact the administrator",
-			"status":      "FAILURE",
-			"progress":    "100%",
-		})
-		if err != nil {
-			common.SysLog(common.LogText("UpdateSunoTask error: %v", err))
-		}
-		return err
+		return err // absent or transient local metadata is not upstream failure
 	}
 	proxy := ch.GetSetting().Proxy
 	baseURL := ch.GetBaseURL()
@@ -280,9 +308,12 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 	}
 	tasks := make([]*model.Task, 0, len(taskIds))
 	for _, upstreamID := range taskIds {
-		if task := taskM[upstreamID]; task != nil {
+		if task := taskM[upstreamID]; task != nil && task.ChannelId == channelId && !task.HasLegacyBillingIntent() && task.PrivateData.FinancialReviewReason == "" {
 			tasks = append(tasks, task)
 		}
+	}
+	if len(tasks) == 0 {
+		return nil
 	}
 	// The channel type tells plugin adaptors whether the upstream is another
 	// New API gateway, the same signal submission derives from the request.
@@ -304,7 +335,7 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 	switch classifyPollHTTP(resp.StatusCode) {
 	case pollClassNotFound:
 		for _, task := range tasks {
-			if task != nil && task.HasLegacyBillingIntent() {
+			if task != nil && (task.HasLegacyBillingIntent() || task.PrivateData.FinancialReviewReason != "") {
 				continue
 			}
 			if task != nil {
@@ -327,11 +358,11 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 			return ctx.Err()
 		}
 		task := taskM[upstreamID]
-		if task == nil {
+		if task == nil || task.ChannelId != channelId {
 			logger.LogWarn(ctx, common.LogText("Batch task response ignored: unknown task_id=%s", upstreamID))
 			continue
 		}
-		if task.HasLegacyBillingIntent() {
+		if task.HasLegacyBillingIntent() || task.PrivateData.FinancialReviewReason != "" {
 			continue
 		}
 		snap := task.Snapshot()
@@ -436,26 +467,20 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	}
 	adaptor := GetTaskAdaptorFunc(platform)
 	cacheGetChannel, err := model.CacheGetChannel(channelId)
+	if errors.Is(err, model.ErrChannelCacheMiss) {
+		cacheGetChannel, err = model.GetChannelById(channelId, false)
+	}
 	if err != nil {
-		if errors.Is(err, model.ErrChannelCacheStale) {
-			return err // A stale cache says nothing about the upstream task.
-		}
-		// Collect DB primary key IDs for bulk update (taskIds are upstream IDs, not task_id column values)
-		var failedIDs []int64
-		for _, upstreamID := range taskIds {
-			if t, ok := taskM[upstreamID]; ok && t != nil && !t.HasLegacyBillingIntent() {
-				failedIDs = append(failedIDs, t.ID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			for _, upstreamID := range taskIds {
+				if task := taskM[upstreamID]; task != nil {
+					if reviewErr := model.MarkTaskPollingReview(ctx, task, "Missing channel metadata; upstream delivery requires operator review"); reviewErr != nil {
+						logger.LogError(ctx, "failed to record missing-channel task review")
+					}
+				}
 			}
 		}
-		errUpdate := model.TaskBulkUpdateByID(failedIDs, map[string]any{
-			"fail_reason": "Failed to get the channel information. Please contact the administrator",
-			"status":      "FAILURE",
-			"progress":    "100%",
-		})
-		if errUpdate != nil {
-			common.SysLog(common.LogText("UpdateVideoTask error: %v", errUpdate))
-		}
-		return fmt.Errorf("CacheGetChannel failed: %w", err)
+		return fmt.Errorf("channel lookup deferred: %w", err)
 	}
 	if adaptor == nil {
 		return fmt.Errorf("video adaptor not found")
@@ -503,11 +528,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	proxy := ch.GetSetting().Proxy
 
 	task := taskM[taskId]
-	if task == nil {
+	if task == nil || task.ChannelId != ch.Id {
 		logger.LogError(ctx, common.LogText("Task %s not found in taskM", taskId))
 		return fmt.Errorf("task %s not found", taskId)
 	}
-	if task.HasLegacyBillingIntent() {
+	if task.HasLegacyBillingIntent() || task.PrivateData.FinancialReviewReason != "" {
 		return nil // Historical custom pending records are not automatically migrated.
 	}
 	if !isNonTerminalPollStatus(task.Status) {
@@ -575,7 +600,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 // ApplyTaskPollResult handles an already-fetched result for both background
 // polling and Gemini/Vertex realtime queries. It never issues a second request.
 func ApplyTaskPollResult(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo, responseBody []byte) error {
-	if task.HasLegacyBillingIntent() {
+	if task.HasLegacyBillingIntent() || task.PrivateData.FinancialReviewReason != "" {
 		return nil // Historical custom pending records are not automatically migrated.
 	}
 	if !isNonTerminalPollStatus(task.Status) {
@@ -643,22 +668,40 @@ func ApplyTaskPollResult(ctx context.Context, adaptor TaskPollingAdaptor, task *
 // CommitTaskTerminalResult shares official CAS-winner finalization between
 // background polling and an already-fetched realtime result.
 func CommitTaskTerminalResult(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, result *relaycommon.TaskInfo, fromStatus model.TaskStatus) error {
-	if !isNonTerminalPollStatus(fromStatus) || task.HasLegacyBillingIntent() {
+	if !isNonTerminalPollStatus(fromStatus) || (task.HasLegacyBillingIntent() || task.PrivateData.FinancialReviewReason != "") {
 		return nil
 	}
-	won, err := task.UpdateWithStatus(fromStatus)
+	adjustment, handled := taskCompletionSettlement(ctx, adaptor, task, result)
+	kind, actual := "settle", task.Quota
+	var reason *common.Message
+	var clamp *common.QuotaClamp
+	if handled {
+		actual, reason, clamp = adjustment.Quota, adjustment.Reason, adjustment.Clamp
+	} else if task.Status == model.TaskStatusFailure {
+		kind, actual, reason = "refund", 0, common.NewMessage(task.FailReason)
+	}
+	intent := &model.TaskFinancialIntent{Kind: kind, PreviousQuota: task.Quota, ActualQuota: actual, OperationID: fmt.Sprintf("task:financial:%d:%s:%d", task.ID, kind, actual), Reason: reason, Clamp: clamp}
+	won, err := model.CommitTaskTerminalFinancial(ctx, task, fromStatus, intent)
 	if err != nil {
 		return err
 	}
 	if !won {
-		return model.DB.First(task, task.ID).Error
+		return nil
 	}
-	finalizeTerminalTask(ctx, adaptor, task, result)
+	perfmetrics.RecordTaskResult(task, result)
+	if task.PrivateData.FinancialReviewReason != "" {
+		return nil
+	}
+	if kind == "refund" {
+		RefundTaskQuota(ctx, task, task.FailReason)
+	} else {
+		RecalculateTaskQuota(ctx, task, actual, reason, clamp)
+	}
 	return nil
 }
 
 func finalizeTerminalTask(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
-	if task.HasLegacyBillingIntent() {
+	if task.HasLegacyBillingIntent() || task.PrivateData.FinancialReviewReason != "" {
 		return
 	}
 	perfmetrics.RecordTaskResult(task, taskResult)
@@ -811,7 +854,7 @@ func unrecognizedPollDetail(reason string, body []byte) string {
 }
 
 func recordPollFailure(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, fromStatus model.TaskStatus, class string, statusCode int, detail string) error {
-	if task.HasLegacyBillingIntent() {
+	if task.HasLegacyBillingIntent() || task.PrivateData.FinancialReviewReason != "" {
 		return nil
 	}
 	task.PrivateData.PollFailures++
@@ -837,7 +880,7 @@ func recordPollFailure(ctx context.Context, adaptor TaskPollingAdaptor, task *mo
 func recordPollFailureForTasks(ctx context.Context, adaptor TaskPollingAdaptor, tasks []*model.Task, class string, statusCode int, detail string) error {
 	var firstErr error
 	for _, task := range tasks {
-		if task != nil && task.HasLegacyBillingIntent() {
+		if task != nil && (task.HasLegacyBillingIntent() || task.PrivateData.FinancialReviewReason != "") {
 			continue
 		}
 		if task == nil {
@@ -851,7 +894,7 @@ func recordPollFailureForTasks(ctx context.Context, adaptor TaskPollingAdaptor, 
 }
 
 func failTaskFromPoll(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, fromStatus model.TaskStatus, reason string) error {
-	if task.HasLegacyBillingIntent() {
+	if task.HasLegacyBillingIntent() || task.PrivateData.FinancialReviewReason != "" {
 		return nil
 	}
 	now := time.Now().Unix()
@@ -867,7 +910,7 @@ func failTaskFromPoll(ctx context.Context, adaptor TaskPollingAdaptor, task *mod
 func failTasksFromPoll(ctx context.Context, adaptor TaskPollingAdaptor, tasks []*model.Task, reason string) error {
 	var firstErr error
 	for _, task := range tasks {
-		if task != nil && task.HasLegacyBillingIntent() {
+		if task != nil && (task.HasLegacyBillingIntent() || task.PrivateData.FinancialReviewReason != "") {
 			continue
 		}
 		if task == nil {

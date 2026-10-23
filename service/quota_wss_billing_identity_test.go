@@ -97,6 +97,7 @@ func TestPreWssConsumeQuotaUsesBillingModelIdentity(t *testing.T) {
 	ctx := testGinContext(t)
 	relayInfo := &relaycommon.RelayInfo{
 		UserId:           userID,
+		ChannelMeta:      &relaycommon.ChannelMeta{},
 		TokenId:          tokenID,
 		TokenKey:         tokenKey,
 		RequestId:        requestID,
@@ -106,7 +107,14 @@ func TestPreWssConsumeQuotaUsesBillingModelIdentity(t *testing.T) {
 		BillingModelName: wssBillingModel,
 		IsPlayground:     true,
 		BillingSource:    BillingSourceWallet,
+		ForcePreConsume:  true,
 	}
+
+	relayInfo.UserQuota = 200
+	relayInfo.UserSetting = dto.UserSetting{BillingPreference: "wallet_only", QuotaWarningThreshold: -1, QuotaWarningEnabled: boolPtr(false)}
+	relayInfo.PriceData.GroupRatioInfo.GroupRatio = 1
+	ctx.Set("token_quota", 10_000)
+	require.Nil(t, PreConsumeBilling(ctx, 0, relayInfo))
 
 	require.NoError(t, PreWssConsumeQuota(ctx, relayInfo, wssBillingIdentityUsage()))
 	assertUserBalances(t, userID, 200-wssExpectedQuota, 0, 0)
@@ -114,8 +122,8 @@ func TestPreWssConsumeQuotaUsesBillingModelIdentity(t *testing.T) {
 	assert.Equal(t, []ledgerRow{{
 		Account:        string(model.AccountBonus),
 		Delta:          -wssExpectedQuota,
-		Reason:         model.LedgerReasonBillingSettle,
-		IdempotencyKey: "billing:settle:" + requestID + ":wss:1:96",
+		Reason:         model.LedgerReasonBillingReserve,
+		IdempotencyKey: "billing:reserve:" + requestID + ":96",
 	}}, ledgerRowsFor(t, userID))
 }
 
@@ -135,6 +143,7 @@ func TestPreWssConsumeQuotaChargesEqualSegmentsExactlyOnceEach(t *testing.T) {
 	ctx := testGinContext(t)
 	relayInfo := &relaycommon.RelayInfo{
 		UserId:           userID,
+		ChannelMeta:      &relaycommon.ChannelMeta{},
 		TokenId:          tokenID,
 		TokenKey:         tokenKey,
 		RequestId:        requestID,
@@ -143,7 +152,14 @@ func TestPreWssConsumeQuotaChargesEqualSegmentsExactlyOnceEach(t *testing.T) {
 		OriginModelName:  wssOriginModel,
 		BillingModelName: wssBillingModel,
 		BillingSource:    BillingSourceWallet,
+		ForcePreConsume:  true,
 	}
+
+	relayInfo.UserQuota = 1000
+	relayInfo.UserSetting = dto.UserSetting{BillingPreference: "wallet_only", QuotaWarningThreshold: -1, QuotaWarningEnabled: boolPtr(false)}
+	relayInfo.PriceData.GroupRatioInfo.GroupRatio = 1
+	ctx.Set("token_quota", 10_000)
+	require.Nil(t, PreConsumeBilling(ctx, 0, relayInfo))
 
 	require.NoError(t, PreWssConsumeQuota(ctx, relayInfo, wssBillingIdentityUsage()))
 	require.NoError(t, PreWssConsumeQuota(ctx, relayInfo, wssBillingIdentityUsage()))
@@ -155,8 +171,8 @@ func TestPreWssConsumeQuotaChargesEqualSegmentsExactlyOnceEach(t *testing.T) {
 	assert.Equal(t, 10_000-2*wssExpectedQuota, token.RemainQuota)
 	assert.Equal(t, 2*wssExpectedQuota, token.UsedQuota)
 	assert.Equal(t, []ledgerRow{
-		{Account: string(model.AccountBonus), Delta: -wssExpectedQuota, Reason: model.LedgerReasonBillingSettle, IdempotencyKey: "billing:settle:" + requestID + ":wss:1:96"},
-		{Account: string(model.AccountBonus), Delta: -wssExpectedQuota, Reason: model.LedgerReasonBillingSettle, IdempotencyKey: "billing:settle:" + requestID + ":wss:2:96"},
+		{Account: string(model.AccountBonus), Delta: -wssExpectedQuota, Reason: model.LedgerReasonBillingReserve, IdempotencyKey: "billing:reserve:" + requestID + ":96"},
+		{Account: string(model.AccountBonus), Delta: -wssExpectedQuota, Reason: model.LedgerReasonBillingReserve, IdempotencyKey: "billing:reserve:" + requestID + ":192"},
 	}, ledgerRowsFor(t, userID))
 }
 
@@ -185,12 +201,14 @@ func TestPostWssConsumeQuotaUsesBillingModelIdentity(t *testing.T) {
 		BillingModelName: wssBillingModel,
 		IsPlayground:     true,
 		BillingSource:    BillingSourceWallet,
+		ForcePreConsume:  true,
 		UserQuota:        200,
 		UserSetting: dto.UserSetting{
 			// Keep this billing-identity fixture out of the asynchronous quota
 			// notification path so the package race suite cannot leak a
 			// PaymentReturnURL read into the following return-path test.
 			QuotaWarningThreshold: -1,
+			QuotaWarningEnabled:   boolPtr(false),
 		},
 		StartTime: time.Now(),
 		PriceData: types.PriceData{

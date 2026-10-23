@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -33,6 +35,29 @@ func legacyRefundSession(t *testing.T, request string, sourceHold, tokenHold int
 	return &BillingSession{relayInfo: &relaycommon.RelayInfo{UserId: 31201, TokenId: 31202, TokenKey: "synthetic-original-refund-token", RequestId: request}, funding: funding, preConsumedQuota: sourceHold, tokenConsumed: tokenHold}
 }
 
+// currentRefundSession uses the actual reservation API and its held_v2 owner.
+// legacyRefundSession above remains an explicit historical/manual fixture; it
+// must not be made to masquerade as a freshly atomically reserved request.
+func currentRefundSession(t *testing.T, request string, amount int) *BillingSession {
+	t.Helper()
+	truncate(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Ability{}))
+	seedBonusUser(t, 31201, 0, 1000)
+	seedToken(t, 31202, 31201, "synthetic-original-refund-token", 1000)
+	seedBonusEligibleModel(t, "current-refund-model", boolPtr(false))
+	setting := operation_setting.GetQuotaSetting()
+	oldTrust := setting.TrustQuotaUSD
+	setting.TrustQuotaUSD = 0
+	t.Cleanup(func() { setting.TrustQuotaUSD = oldTrust })
+	c := testGinContext(t)
+	c.Set("token_quota", 1000)
+	info := &relaycommon.RelayInfo{UserId: 31201, TokenId: 31202, TokenKey: "synthetic-original-refund-token", RequestId: request, OriginModelName: "current-refund-model", ForcePreConsume: true, UserSetting: dto.UserSetting{BillingPreference: "wallet_only", QuotaWarningEnabled: boolPtr(false)}}
+	session, apiErr := NewBillingSession(c, info, amount)
+	require.Nil(t, apiErr)
+	info.Billing = session
+	return session
+}
+
 func waitRefundCallback(t *testing.T, _ *BillingSession) {
 	t.Helper()
 	// These consumers run in an owned child containing no notification daemon.
@@ -45,20 +70,31 @@ func TestPolicyPreservingRefundSeparateHeldAmounts(t *testing.T) {
 	if runRefundFixtureChild(t) {
 		return
 	}
+	// This historical split hold has no atomically created v2 owner. Never
+	// synthesize authority from these in-memory amounts to authorize a credit.
 	s := legacyRefundSession(t, "separate-source-token", 100, 70)
 	s.Refund(testGinContext(t))
 	waitRefundCallback(t, s)
-	require.False(t, s.NeedsRefund())
-	assertUserBalances(t, 31201, 0, 1000, 0)
+	var user model.User
+	require.NoError(t, model.DB.First(&user, 31201).Error)
+	assert.Equal(t, 900, user.QuotaPaid, "missing held authority cannot credit source")
+	assert.Equal(t, 900, user.Quota)
+	assert.Zero(t, user.QuotaBonus)
+	assert.Zero(t, user.QuotaReward)
 	var token model.Token
 	require.NoError(t, model.DB.First(&token, 31202).Error)
-	require.Equal(t, 1000, token.RemainQuota)
+	assert.Equal(t, 930, token.RemainQuota)
+	assert.Equal(t, 70, token.UsedQuota)
+	var count int64
+	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Count(&count).Error)
+	assert.Zero(t, count, "no new owner is fabricated for an old manual hold")
+	assert.True(t, s.NeedsRefund(), "unknown historical delivery remains for review")
 }
 
 func TestPolicyPreservingSettlementFinalMoreLessAndReplay(t *testing.T) {
 	for _, actual := range []int{0, 100, 180} {
 		t.Run(string(rune('a'+actual)), func(t *testing.T) {
-			s := legacyRefundSession(t, "legacy-final-adjustment", 100, 100)
+			s := currentRefundSession(t, "current-final-adjustment", 100)
 			require.NoError(t, s.Settle(actual))
 			require.NoError(t, s.Settle(actual))
 			require.Error(t, s.Settle(actual+1))
@@ -76,7 +112,7 @@ func TestPolicyPreservingFailedSettlementCanReserveThenRefund(t *testing.T) {
 	if runRefundFixtureChild(t) {
 		return
 	}
-	s := legacyRefundSession(t, "failed-settle-then-reserve", 100, 100)
+	s := currentRefundSession(t, "failed-settle-then-reserve", 100)
 	name := "fail_settle_token"
 	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(name, func(tx *gorm.DB) {
 		if tx.Statement.Table == "tokens" {
@@ -173,7 +209,7 @@ func TestPolicyPreservingRollbackProbeFailureDoesNotReserve(t *testing.T) {
 	if runRefundFixtureChild(t) {
 		return
 	}
-	s := legacyRefundSession(t, "probe-failure", 100, 100)
+	s := currentRefundSession(t, "probe-failure", 100)
 	name := "fail_settlement_token_before_probe"
 	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(name, func(tx *gorm.DB) {
 		if tx.Statement.Table == "tokens" {
@@ -182,21 +218,25 @@ func TestPolicyPreservingRollbackProbeFailureDoesNotReserve(t *testing.T) {
 	}))
 	require.Error(t, s.Settle(200))
 	require.NoError(t, model.DB.Callback().Update().Remove(name))
-	name = "fail_probe_create"
-	require.NoError(t, model.DB.Callback().Create().Before("gorm:create").Register(name, func(tx *gorm.DB) {
-		if tx.Statement.Table == "billing_finalizations" {
+	name = "fail_probe_authority_read"
+	probeHits := 0
+	require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(name, func(tx *gorm.DB) {
+		if tx.Statement.Schema != nil && tx.Statement.Schema.ModelType == reflect.TypeOf(model.BillingFinalization{}) {
+			probeHits++
 			tx.AddError(errors.New("probe unavailable"))
 		}
 	}))
+	t.Cleanup(func() { require.NoError(t, model.DB.Callback().Query().Remove(name)) })
 	require.ErrorContains(t, s.Reserve(150), "probe unavailable")
-	require.NoError(t, model.DB.Callback().Create().Remove(name))
+	require.Equal(t, 1, probeHits, "authority read was actually reached before any reservation")
+	require.NoError(t, model.DB.Callback().Query().Remove(name))
 	assertUserBalances(t, 31201, 0, 900, 0)
 	var token model.Token
 	require.NoError(t, model.DB.First(&token, 31202).Error)
 	require.Equal(t, 900, token.RemainQuota)
 	var count int64
 	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Count(&count).Error)
-	require.Zero(t, count)
+	require.EqualValues(t, 1, count, "original held owner survives the rejected reservation")
 	require.NoError(t, s.Reserve(150))
 	s.Refund(testGinContext(t))
 	waitRefundCallback(t, s)
@@ -209,7 +249,7 @@ func TestPolicyPreservingRefundIndependentViolationFee(t *testing.T) {
 	}
 	for _, order := range []string{"fee_before_refund", "refund_before_fee"} {
 		t.Run(order, func(t *testing.T) {
-			s := legacyRefundSession(t, "refund-independent-fee", 100, 100)
+			s := currentRefundSession(t, "refund-independent-fee", 100)
 			s.relayInfo.Billing = s
 			s.relayInfo.BillingSource = BillingSourceWallet
 			s.relayInfo.ChannelMeta = &relaycommon.ChannelMeta{}
@@ -272,7 +312,7 @@ func TestPolicyPreservingRealtimeIncrementAndTerminal(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(encoded)))
 			t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldRatios)) })
-			info := &relaycommon.RelayInfo{UserId: 31201, TokenId: 31202, TokenKey: "synthetic-original-refund-token", RequestId: "realtime-" + terminal, OriginModelName: "terminal-wss", UsingGroup: "default", UserGroup: "default", StartTime: time.Now(), ChannelMeta: &relaycommon.ChannelMeta{}, UserSetting: dto.UserSetting{BillingPreference: "wallet_only", QuotaWarningThreshold: -1}}
+			info := &relaycommon.RelayInfo{UserId: 31201, TokenId: 31202, TokenKey: "synthetic-original-refund-token", RequestId: "realtime-" + terminal, ForcePreConsume: true, OriginModelName: "terminal-wss", UsingGroup: "default", UserGroup: "default", StartTime: time.Now(), ChannelMeta: &relaycommon.ChannelMeta{}, UserSetting: dto.UserSetting{BillingPreference: "wallet_only", QuotaWarningThreshold: -1, QuotaWarningEnabled: boolPtr(false)}}
 			info.PriceData.GroupRatioInfo.GroupRatio = 1
 			c := testGinContext(t)
 			c.Set("token_quota", 1000)
@@ -285,21 +325,23 @@ func TestPolicyPreservingRealtimeIncrementAndTerminal(t *testing.T) {
 			assertUserBalances(t, 31201, 0, 880, 0)
 			if terminal == "failed_final_then_refund" {
 				name := "fail_realtime_final_token"
+				hits := 0
 				require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(name, func(tx *gorm.DB) {
-					if tx.Statement.Table == "tokens" {
+					if tx.Statement.Schema != nil && tx.Statement.Schema.ModelType == reflect.TypeOf(model.Token{}) {
+						hits++
 						tx.AddError(errors.New("realtime final token failed"))
 					}
 				}))
 				require.Error(t, s.Settle(20))
+				require.Equal(t, 1, hits)
 				require.NoError(t, model.DB.Callback().Update().Remove(name))
 				assertUserBalances(t, 31201, 0, 880, 0)
 			}
 			expected := 980
 			if terminal == "final_settle" {
-				// Preserve the existing incremental charge PLUS final actual-minus-initial
-				// adjustment. This repair does not redesign realtime's pricing arithmetic.
+				// The observed segment is an absolute held reservation, not an
+				// independent charge on top of the final aggregate usage.
 				PostWssConsumeQuota(c, info, "terminal-wss", usage, nil)
-				expected = 960
 			} else {
 				s.Refund(c)
 				waitRefundCallback(t, s)
@@ -310,6 +352,15 @@ func TestPolicyPreservingRealtimeIncrementAndTerminal(t *testing.T) {
 			var token model.Token
 			require.NoError(t, model.DB.First(&token, 31202).Error)
 			require.Equal(t, expected, token.RemainQuota)
+			require.Equal(t, 20, token.UsedQuota)
+			var owner model.BillingFinalization
+			require.NoError(t, model.DB.Where("request_id = ?", info.RequestId).First(&owner).Error)
+			require.Equal(t, model.BillingSettled, owner.State)
+			require.Equal(t, 20, owner.ActualQuota)
+			PostWssConsumeQuota(c, info, "terminal-wss", usage, nil)
+			s.Refund(c)
+			waitRefundCallback(t, s)
+			assertUserBalances(t, 31201, 0, expected, 0)
 		})
 	}
 }
@@ -318,7 +369,7 @@ func TestPolicyPreservingZeroTokenDeltaRetainsReplacementCounter(t *testing.T) {
 	for _, hold := range []int{0, 100} {
 		for _, change := range []string{"key", "owner"} {
 			t.Run(fmt.Sprintf("hold_%d/%s", hold, change), func(t *testing.T) {
-				s := legacyRefundSession(t, "zero-delta-original-identity", hold, hold)
+				s := currentRefundSession(t, "zero-delta-original-identity", hold)
 				update := map[string]any{"remain_quota": 777, "used_quota": 23}
 				if change == "key" {
 					update["key"] = "synthetic-replacement"

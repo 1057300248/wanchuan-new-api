@@ -1,6 +1,7 @@
 package model
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"strings"
@@ -96,6 +97,9 @@ func TestMidjourneyWalletReceiptMigrationDatabaseMatrix(t *testing.T) {
 						require.NoError(t, tableDB.AutoMigrate(&Midjourney{}))
 					}
 					require.True(t, db.Migrator().HasColumn(table, "wallet_debit"))
+					for _, column := range []string{"token_fingerprint", "billing_accounted", "billing_request_id", "billing_original_quota"} {
+						require.True(t, db.Migrator().HasColumn(table, column), "financial provenance column %s must survive two migrations", column)
+					}
 					for _, column := range []string{"user_id", "action", "mj_id", "submit_time", "start_time", "finish_time", "status", "progress"} {
 						assert.True(t, db.Migrator().HasIndex(table, db.NamingStrategy.IndexName(table, column)), "index %s must survive migration", column)
 					}
@@ -113,7 +117,23 @@ func TestMidjourneyWalletReceiptMigrationDatabaseMatrix(t *testing.T) {
 						assert.Equal(t, "preserved prompt", preserved.Prompt)
 						assert.JSONEq(t, `{"legacy":true}`, preserved.Properties)
 						assert.EqualValues(t, 1788600000, preserved.SubmitTime)
-						assert.Nil(t, preserved.WalletDebit, "old tasks must retain paid-only NULL semantics")
+						assert.Nil(t, preserved.WalletDebit, "NULL is unknown historical provenance, never a paid-only refund receipt")
+						assert.Empty(t, preserved.TokenFingerprint)
+						assert.False(t, preserved.BillingAccounted)
+						assert.Empty(t, preserved.BillingRequestID)
+						assert.Zero(t, preserved.BillingOriginalQuota, "the old displayed quota is not evidence of an accounted debit")
+						assert.False(t, preserved.HasCurrentBillingIdentity())
+						var unknown struct {
+							TokenFingerprint     sql.NullString
+							BillingAccounted     sql.NullBool
+							BillingRequestID     sql.NullString
+							BillingOriginalQuota sql.NullInt64
+						}
+						require.NoError(t, tableDB.Select("token_fingerprint, billing_accounted, billing_request_id, billing_original_quota").Where("id = ?", 41).Scan(&unknown).Error)
+						assert.False(t, unknown.TokenFingerprint.Valid, "migration must not guess a current token key")
+						assert.False(t, unknown.BillingAccounted.Valid, "migration must not fabricate historical accounting")
+						assert.False(t, unknown.BillingRequestID.Valid)
+						assert.False(t, unknown.BillingOriginalQuota.Valid)
 						require.Error(t, tableDB.Create(&Midjourney{Id: 41, MjId: "duplicate-primary-key"}).Error, "primary key uniqueness must survive migration")
 					}
 					for _, receipt := range []struct {
@@ -125,6 +145,13 @@ func TestMidjourneyWalletReceiptMigrationDatabaseMatrix(t *testing.T) {
 						{"charged-mixed", []LedgerShare{{Account: AccountBonus, Amount: 100}, {Account: AccountReward, Amount: 50}, {Account: AccountPaid, Amount: 150}}},
 					} {
 						task := Midjourney{UserId: 9, MjId: receipt.name, Quota: 300, WalletDebit: receipt.shares}
+						if receipt.name == "charged-mixed" {
+							task.TokenId = 17
+							task.TokenFingerprint = BillingTokenFingerprint("synthetic-migration-original-token")
+							task.BillingAccounted = true
+							task.BillingRequestID = "synthetic-migration-request"
+							task.BillingOriginalQuota = 300
+						}
 						require.NoError(t, tableDB.Create(&task).Error)
 						for range 2 {
 							require.NoError(t, tableDB.AutoMigrate(&Midjourney{}))
@@ -132,9 +159,23 @@ func TestMidjourneyWalletReceiptMigrationDatabaseMatrix(t *testing.T) {
 						var reloaded Midjourney
 						require.NoError(t, tableDB.First(&reloaded, task.Id).Error)
 						assert.Equal(t, receipt.shares, reloaded.WalletDebit, receipt.name)
+						assert.Equal(t, task.TokenFingerprint, reloaded.TokenFingerprint)
+						assert.Equal(t, task.BillingAccounted, reloaded.BillingAccounted)
+						assert.Equal(t, task.BillingRequestID, reloaded.BillingRequestID)
+						assert.Equal(t, task.BillingOriginalQuota, reloaded.BillingOriginalQuota)
+						if task.BillingAccounted {
+							require.Len(t, reloaded.TokenFingerprint, 64)
+							assert.True(t, reloaded.HasCurrentBillingIdentity())
+						}
 						encoded, err := common.Marshal(reloaded)
 						require.NoError(t, err)
 						assert.NotContains(t, string(encoded), "wallet_debit")
+						for _, private := range []string{"token_fingerprint", "billing_accounted", "billing_request_id", "billing_original_quota", "synthetic-migration-original-token", "synthetic-migration-request"} {
+							assert.NotContains(t, string(encoded), private)
+						}
+						if task.TokenFingerprint != "" {
+							assert.NotContains(t, string(encoded), task.TokenFingerprint)
+						}
 					}
 				})
 			}

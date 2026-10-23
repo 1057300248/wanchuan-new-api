@@ -1,11 +1,16 @@
 package relay_test
 
 import (
+	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -220,7 +225,6 @@ func TestNativeResponsesFailureFixedAccountingDatabaseMatrix(t *testing.T) {
 				c, info, user, token := nativeResponsesBillingReservation(t, db)
 				info.StreamStatus.MarkFailed("server_error", "", 0)
 				var failed atomic.Bool
-				refunded := make(chan struct{}, 1)
 				callback := "native_zero_settlement_" + info.RequestId
 				require.NoError(t, db.Callback().Update().Before("gorm:update").Register(callback, func(tx *gorm.DB) {
 					if tx.Statement.Table == "tokens" && !failed.Swap(true) {
@@ -228,22 +232,10 @@ func TestNativeResponsesFailureFixedAccountingDatabaseMatrix(t *testing.T) {
 					}
 				}))
 				t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove(callback)) })
-				require.NoError(t, db.Callback().Update().After("gorm:commit_or_rollback_transaction").Register(callback+"_refunded", func(tx *gorm.DB) {
-					if tx.Statement.Table == "tokens" && tx.Error == nil {
-						select {
-						case refunded <- struct{}{}:
-						default:
-						}
-					}
-				}))
-				t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove(callback+"_refunded")) })
+				completion := observeNativeResponsesRefund(t, db, info.RequestId, true)
 				relay.ConsumeResponsesQuota(c, info, nil)
 				require.True(t, failed.Load(), "the real wallet/token settlement must encounter the injected rollback")
-				select {
-				case <-refunded:
-				case <-time.After(5 * time.Second):
-					t.Fatal("failed zero settlement did not refund the reservation")
-				}
+				completion.join(t)
 				assertNativeResponsesBillingBalance(t, db, user, token, 0)
 				info.Billing.Refund(c)
 				assertNativeResponsesBillingBalance(t, db, user, token, 0)
@@ -283,17 +275,7 @@ func runNativeResponsesRequestBilling(t *testing.T, db, logDB *gorm.DB, body str
 	} {
 		common.SetContextKey(c, key, value)
 	}
-	refunded := make(chan struct{}, 1)
-	callback := "native_request_refund_" + info.RequestId
-	require.NoError(t, db.Callback().Update().After("gorm:commit_or_rollback_transaction").Register(callback, func(tx *gorm.DB) {
-		if tx.Statement.Table == "tokens" && tx.Error == nil {
-			select {
-			case refunded <- struct{}{}:
-			default:
-			}
-		}
-	}))
-	t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove(callback)) })
+	completion := observeNativeResponsesRefund(t, db, info.RequestId, wantQuota == 0)
 	apiErr := relay.ResponsesHelper(c, info)
 	if wantError {
 		require.NotNil(t, apiErr)
@@ -307,13 +289,7 @@ func runNativeResponsesRequestBilling(t *testing.T, db, logDB *gorm.DB, body str
 		require.Nil(t, apiErr)
 	}
 	relay.RefundFailedRequestBilling(c, info, apiErr)
-	if wantQuota == 0 {
-		select {
-		case <-refunded:
-		case <-time.After(5 * time.Second):
-			t.Fatal("the native HTTP failure did not finish refunding its reservation")
-		}
-	}
+	completion.join(t)
 	assert.Equal(t, int32(1), calls.Load())
 	assertNativeResponsesBillingBalance(t, db, user, token, wantQuota)
 	if wantError {
@@ -348,9 +324,10 @@ func nativeResponsesBillingReservation(t *testing.T, db *gorm.DB) (*gin.Context,
 	require.Equal(t, 5000, reservation)
 	info := &relaycommon.RelayInfo{
 		RequestId: identity, UserId: user.Id, TokenId: token.Id, TokenKey: token.Key,
+		UserQuota:       user.Quota,
 		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channel.Id, ChannelType: constant.ChannelTypeOpenAI, UpstreamModelName: "gpt-4o"},
 		OriginModelName: "native-responses-fixed", UsingGroup: "default", UserGroup: "default",
-		UserSetting: dto.UserSetting{BillingPreference: "wallet_only"}, ForcePreConsume: true,
+		UserSetting: dto.UserSetting{BillingPreference: "wallet_only", QuotaWarningEnabled: new(bool)}, ForcePreConsume: true,
 		StartTime: time.Now(), IsStream: true, DisablePing: true, RelayFormat: types.RelayFormatOpenAIResponses,
 		StreamStatus:          relaycommon.NewStreamStatus(),
 		PriceData:             hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}},
@@ -376,4 +353,227 @@ func assertNativeResponsesBillingBalance(t *testing.T, db *gorm.DB, user model.U
 	assert.Equal(t, 50100-charge, user.Quota)
 	assert.Equal(t, 50000-charge, token.RemainQuota)
 	assert.Equal(t, charge, token.UsedQuota)
+}
+
+// A token UPDATE callback runs before the outer transaction and post-commit
+// cache work finish. Observe the real driver's result and the request-owned
+// refund context instead; unrelated default-pool workers are not join evidence.
+type nativeResponsesRefundCompletion struct {
+	requestID string
+	db        *gorm.DB
+	expect    bool
+	mu        sync.Mutex
+	records   map[context.Context]*nativeResponsesRefundTransaction
+	next      string
+	admitted  bool
+	invalid   error
+	refund    chan *nativeResponsesRefundTransaction
+	metadata  chan *nativeResponsesRefundTransaction
+	once      sync.Once
+	joined    bool
+	err       error
+}
+
+type nativeResponsesRefundPool struct {
+	*sql.DB
+	completion *nativeResponsesRefundCompletion
+}
+
+type nativeResponsesRefundTransaction struct {
+	*sql.Tx
+	completion *nativeResponsesRefundCompletion
+	ctx        context.Context
+	role       string
+	finished   chan struct{}
+	once       sync.Once
+	committed  bool
+	err        error
+}
+
+func (p *nativeResponsesRefundPool) GetDBConn() (*sql.DB, error) { return p.DB, nil }
+
+func (p *nativeResponsesRefundPool) BeginTx(ctx context.Context, options *sql.TxOptions) (gorm.ConnPool, error) {
+	r := &nativeResponsesRefundTransaction{completion: p.completion, ctx: ctx, finished: make(chan struct{})}
+	p.completion.mu.Lock()
+	p.completion.records[ctx] = r
+	p.completion.mu.Unlock()
+	var err error
+	r.Tx, err = p.DB.BeginTx(ctx, options)
+	if err != nil {
+		r.finish(false, err)
+		return nil, err
+	}
+	return r, nil
+}
+
+func (r *nativeResponsesRefundTransaction) Commit() error {
+	err := r.Tx.Commit()
+	r.finish(err == nil, err)
+	return err
+}
+
+func (r *nativeResponsesRefundTransaction) Rollback() error {
+	err := r.Tx.Rollback()
+	r.finish(false, err)
+	return err
+}
+
+func (r *nativeResponsesRefundTransaction) finish(committed bool, err error) {
+	r.once.Do(func() {
+		m := r.completion
+		m.mu.Lock()
+		r.committed, r.err = committed, err
+		if r.role == "admission" && committed {
+			m.admitted, m.next = true, "refund"
+		} else if r.role == "refund" && !committed {
+			m.next = "metadata"
+		}
+		m.mu.Unlock()
+		close(r.finished)
+	})
+}
+
+func observeNativeResponsesRefund(t *testing.T, db *gorm.DB, requestID string, expect bool) *nativeResponsesRefundCompletion {
+	t.Helper()
+	driver, err := db.DB()
+	require.NoError(t, err)
+	m := &nativeResponsesRefundCompletion{requestID: requestID, db: db, expect: expect,
+		records: make(map[context.Context]*nativeResponsesRefundTransaction),
+		refund:  make(chan *nativeResponsesRefundTransaction, 1), metadata: make(chan *nativeResponsesRefundTransaction, 1)}
+	previous := model.DB
+	// A non-nil Context clones Statement as well as Config; do not mutate the
+	// original DB's connection pool or change its actual driver/transactions.
+	observed := previous.Session(&gorm.Session{NewDB: true, Context: context.Background()})
+	pool := &nativeResponsesRefundPool{DB: driver, completion: m}
+	observed.ConnPool, observed.Statement.ConnPool = pool, pool
+	model.DB = observed
+	callback := "native_refund_completion_" + requestID
+	require.NoError(t, db.Callback().Update().After("gorm:update").Register(callback, func(tx *gorm.DB) {
+		owner, ok := tx.Statement.Model.(*model.BillingFinalization)
+		values, mapped := tx.Statement.Dest.(map[string]any)
+		if !ok || owner.RequestID != requestID || !mapped || values["state"] != model.BillingRefundReady || tx.Error != nil || tx.RowsAffected != 1 {
+			return
+		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if r := m.records[tx.Statement.Context]; r != nil {
+			r.role = "admission"
+		} else {
+			m.invalid = errors.New("refund admission bypassed the observed real transaction")
+		}
+	}))
+	require.NoError(t, db.Callback().Query().After("gorm:query").Register(callback, func(tx *gorm.DB) {
+		if _, ok := tx.Statement.Model.(*model.BillingFinalization); !ok {
+			return
+		}
+		matches := false
+		for _, value := range tx.Statement.Vars {
+			if key, ok := value.(string); ok && key == requestID {
+				matches = true
+			}
+		}
+		if !matches {
+			return
+		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.next == "" {
+			return
+		}
+		r := m.records[tx.Statement.Context]
+		if r == nil {
+			m.invalid = errors.New("refund request query bypassed the observed real transaction")
+			return
+		}
+		r.role, m.next = m.next, ""
+		if r.role == "refund" {
+			m.refund <- r
+		} else {
+			m.metadata <- r
+		}
+	}))
+	// Registered after the fault callback and DB fixture: even Fatal paths join
+	// before removing callbacks, restoring model.DB, closing DBs or globals.
+	t.Cleanup(func() {
+		m.join(t)
+		require.NoError(t, db.Callback().Query().Remove(callback))
+		require.NoError(t, db.Callback().Update().Remove(callback))
+		model.DB = previous
+	})
+	return m
+}
+
+func (m *nativeResponsesRefundCompletion) wait() (bool, error) {
+	m.mu.Lock()
+	admitted, invalid := m.admitted, m.invalid
+	m.mu.Unlock()
+	if invalid != nil || m.expect && !admitted {
+		return false, fmt.Errorf("admission: expected=%t admitted=%t observation=%v", m.expect, admitted, invalid)
+	}
+	if !admitted {
+		return true, nil // Synchronous settlement has already returned.
+	}
+	// Production has a 5 s refund transaction, at most 500 ms post-commit
+	// compensation, then a separate 1 s error-metadata transaction. No sleep or
+	// SQL-visible balance is treated as callback completion.
+	budget, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	phase := "refund"
+	for channel := m.refund; ; channel = m.metadata {
+		var r *nativeResponsesRefundTransaction
+		select {
+		case r = <-channel:
+		case <-budget.Done():
+			return false, fmt.Errorf("%s transaction observation: %w", phase, budget.Err())
+		}
+		select {
+		case <-r.finished:
+		case <-budget.Done():
+			return false, fmt.Errorf("%s real driver completion: %w", phase, budget.Err())
+		}
+		if phase == "refund" && !r.committed {
+			// The original context is cancelled BEFORE retry metadata is written.
+			// Joining it alone would leave another transaction using this fixture.
+			phase = "metadata"
+			continue
+		}
+		select {
+		case <-r.ctx.Done():
+		case <-budget.Done():
+			return false, fmt.Errorf("%s post-commit tail: %w", phase, budget.Err())
+		}
+		if !errors.Is(r.ctx.Err(), context.Canceled) {
+			return false, fmt.Errorf("%s deadline is not an owned tail completion: %v", phase, r.ctx.Err())
+		}
+		m.mu.Lock()
+		invalid = m.invalid
+		m.mu.Unlock()
+		if invalid != nil {
+			return false, fmt.Errorf("%s observation invalidated: %w", phase, invalid)
+		}
+		if phase == "metadata" {
+			return true, fmt.Errorf("refund transaction failed; its error-metadata tail finished (commit=%t error=%v)", r.committed, r.err)
+		}
+		var owner model.BillingFinalization
+		if err := m.db.Where("request_id = ?", m.requestID).First(&owner).Error; err != nil {
+			return true, err
+		}
+		if owner.State != model.BillingRefunded {
+			return true, fmt.Errorf("completed transaction did not refund this owner: %s", owner.State)
+		}
+		return true, nil
+	}
+}
+
+func (m *nativeResponsesRefundCompletion) join(t *testing.T) {
+	t.Helper()
+	m.once.Do(func() { m.joined, m.err = m.wait() })
+	if !m.joined {
+		// Continuing t.Cleanup after an unproved join would reproduce the race.
+		// Fail ONLY this owned Go test process; the outer native runner observes
+		// nonzero/missing terminal events and still performs its SQL cleanup.
+		fmt.Fprintf(os.Stderr, "native-responses refund worker unjoined: request=%s error=%v\n", m.requestID, m.err)
+		os.Exit(1)
+	}
+	assert.NoError(t, m.err)
 }

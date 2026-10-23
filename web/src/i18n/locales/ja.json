@@ -7512,6 +7512,10 @@
     "Channel model owner label": "チャネルのモデル所有者ラベル",
     "Stored as channel metadata. Public model lists and details use the site-wide owner setting. This label does not select a routing channel.": "チャネルのメタデータとして保存されます。公開モデルの一覧と詳細にはサイト全体の所有者設定が使用されます。このラベルはルーティング先のチャネルを選択しません。",
     "Use channel name as label": "チャネル名をラベルとして使用",
-    "Channel model owner label must be at most 64 characters without control or formatting characters": "チャネルのモデル所有者ラベルは64文字以内で、制御文字や書式制御文字を含めることはできません"
+    "Channel model owner label must be at most 64 characters without control or formatting characters": "チャネルのモデル所有者ラベルは64文字以内で、制御文字や書式制御文字を含めることはできません",
+    "Missing upstream task identity; delivery requires operator review": "上流タスクの識別子がありません。配信状況を管理者が確認する必要があります",
+    "Missing channel metadata; upstream delivery requires operator review": "チャネルのメタデータがありません。上流の配信状況を管理者が確認する必要があります",
+    "Ambiguous upstream task identity; delivery requires operator review": "上流タスクの識別子が一意ではありません。配信状況を管理者が確認する必要があります",
+    "Legacy task billing identity is unavailable; financial review required": "旧タスクの元の課金識別情報がありません。会計の確認が必要です"
   }
 }

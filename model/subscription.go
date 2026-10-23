@@ -1,6 +1,8 @@
 package model
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -14,6 +16,7 @@ import (
 	"github.com/samber/hot"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Subscription duration units
@@ -340,7 +343,8 @@ type UserSubscription struct {
 	AmountTotal int64 `json:"amount_total" gorm:"type:bigint;not null;default:0"`
 	AmountUsed  int64 `json:"amount_used" gorm:"type:bigint;not null;default:0"`
 	// QuotaPeriod identifies an allowance generation, independently of reset timestamps.
-	// Zero is legacy/unknown; official rc.46 request receipts do not populate it.
+	// Zero is legacy/unknown. New reservations establish a positive generation;
+	// historical zero-period receipts are never assigned to it retroactively.
 	QuotaPeriod int64 `json:"quota_period" gorm:"type:bigint;not null;default:0"`
 
 	StartTime int64  `json:"start_time" gorm:"bigint"`
@@ -1073,9 +1077,18 @@ func AdminInvalidateUserSubscription(userSubscriptionId int) (*common.Message, e
 		if err := lockGroupNamespace(tx); err != nil {
 			return err
 		}
+		// Obtain the immutable owner before taking subscription locks, matching
+		// financial source/token/stat transactions (namespace -> user -> sub).
+		var owner UserSubscription
+		if err := tx.Select("id", "user_id").First(&owner, userSubscriptionId).Error; err != nil {
+			return err
+		}
+		if err := LockFinancialUserTx(tx, owner.UserId); err != nil {
+			return err
+		}
 		var sub UserSubscription
 		if err := lockForUpdate(tx).
-			Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
+			Where("id = ? AND user_id = ?", userSubscriptionId, owner.UserId).First(&sub).Error; err != nil {
 			return err
 		}
 		userId = sub.UserId
@@ -1121,9 +1134,18 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (*common.Message, error
 		if err := lockGroupNamespace(tx); err != nil {
 			return err
 		}
+		// Obtain the immutable owner before taking subscription locks, matching
+		// financial source/token/stat transactions (namespace -> user -> sub).
+		var owner UserSubscription
+		if err := tx.Select("id", "user_id").First(&owner, userSubscriptionId).Error; err != nil {
+			return err
+		}
+		if err := LockFinancialUserTx(tx, owner.UserId); err != nil {
+			return err
+		}
 		var sub UserSubscription
 		if err := lockForUpdate(tx).
-			Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
+			Where("id = ? AND user_id = ?", userSubscriptionId, owner.UserId).First(&sub).Error; err != nil {
 			return err
 		}
 		userId = sub.UserId
@@ -1315,6 +1337,9 @@ func ExpireDueSubscriptions(limit int) (int, error) {
 			if err := lockGroupNamespace(tx); err != nil {
 				return err
 			}
+			if err := LockFinancialUserTx(tx, userId); err != nil {
+				return err
+			}
 			res := tx.Model(&UserSubscription{}).
 				Where("user_id = ? AND status = ? AND end_time > 0 AND end_time <= ?", userId, "active", now).
 				Updates(map[string]any{
@@ -1453,134 +1478,407 @@ func maybeResetUserSubscriptionWithPlanTx(tx *gorm.DB, sub *UserSubscription, pl
 	return tx.Select("amount_used", "quota_period", "last_reset_time", "next_reset_time", "updated_at").Updates(sub).Error
 }
 
-// PreConsumeUserSubscription uses the official rc.46 request lifecycle.
+// SubscriptionBillingIdentity binds an operation to the immutable reservation,
+// not to whichever allowance happens to be current when a delayed reply arrives.
+type SubscriptionBillingIdentity struct {
+	RequestID      string
+	UserID         int
+	SubscriptionID int
+	QuotaPeriod    int64
+	PreConsumed    int64
+}
+
+func (r *SubscriptionPreConsumeRecord) billingIdentity() SubscriptionBillingIdentity {
+	return SubscriptionBillingIdentity{
+		RequestID: r.RequestId, UserID: r.UserId, SubscriptionID: r.UserSubscriptionId,
+		QuotaPeriod: r.QuotaPeriod, PreConsumed: r.PreConsumed,
+	}
+}
+
+func (r *SubscriptionPreConsumeRecord) validateBillingReceipt() error {
+	if r.RequestId == "" || strings.TrimSpace(r.RequestId) != r.RequestId || len(r.RequestId) > 64 || r.UserId <= 0 || r.UserSubscriptionId <= 0 || r.PreConsumed <= 0 || r.PreConsumed > common.MaxQuota {
+		return billingRefundReviewError("receipt_invalid", "invalid subscription reservation identity")
+	}
+	if r.QuotaPeriod <= 0 {
+		// A migration default does not prove which allowance held the debit.
+		// In particular, a reset timestamp cannot distinguish a manual reset.
+		return billingRefundReviewError("subscription_period_unknown", "subscription reservation has no original quota period; manual reconciliation required")
+	}
+	if r.ReservedAmount < r.PreConsumed || r.ReservedAmount > common.MaxQuota || r.SettledAmount < 0 || r.SettledAmount > common.MaxQuota {
+		return billingRefundReviewError("receipt_invalid", "invalid subscription reservation amounts")
+	}
+	switch r.Status {
+	case "consumed", "refunded":
+		if r.SettledAmount != 0 {
+			return billingRefundReviewError("receipt_invalid", "unsettled subscription reservation has a settled amount")
+		}
+	case "settled":
+	default:
+		return billingRefundReviewError("receipt_invalid", "invalid subscription reservation state")
+	}
+	return nil
+}
+
+func lockSubscriptionBillingReceiptTx(tx *gorm.DB, identity SubscriptionBillingIdentity) (*SubscriptionPreConsumeRecord, error) {
+	if tx == nil {
+		return nil, errors.New("nil subscription billing transaction")
+	}
+	var record SubscriptionPreConsumeRecord
+	if err := lockForUpdate(tx).Where("request_id = ?", identity.RequestID).First(&record).Error; err != nil {
+		return nil, err
+	}
+	if err := record.validateBillingReceipt(); err != nil {
+		return nil, err
+	}
+	if record.billingIdentity() != identity {
+		return nil, billingRefundReviewError("identity_mismatch", "subscription reservation identity mismatch")
+	}
+	return &record, nil
+}
+
+// GetSubscriptionBillingIdentityTx recovers the immutable base from authoritative
+// evidence for callers whose task/terminal receipt stores the total held amount.
+// The caller must supply the original user, subscription, period and exact hold.
+func GetSubscriptionBillingIdentityTx(tx *gorm.DB, requestID string, userID, subscriptionID int, period, held int64) (SubscriptionBillingIdentity, error) {
+	var record SubscriptionPreConsumeRecord
+	if tx == nil {
+		return SubscriptionBillingIdentity{}, errors.New("nil subscription billing transaction")
+	}
+	if err := lockForUpdate(tx).Where("request_id = ?", requestID).First(&record).Error; err != nil {
+		return SubscriptionBillingIdentity{}, err
+	}
+	if err := record.validateBillingReceipt(); err != nil {
+		return SubscriptionBillingIdentity{}, err
+	}
+	if record.RequestId != requestID || record.UserId != userID || record.UserSubscriptionId != subscriptionID || record.QuotaPeriod != period || record.ReservedAmount != held {
+		return SubscriptionBillingIdentity{}, billingRefundReviewError("identity_mismatch", "subscription held evidence mismatch")
+	}
+	return record.billingIdentity(), nil
+}
+
+func ValidateSubscriptionPreConsumeTx(tx *gorm.DB, identity SubscriptionBillingIdentity, held int64) error {
+	record, err := lockSubscriptionBillingReceiptTx(tx, identity)
+	if err != nil {
+		return err
+	}
+	if record.Status != "consumed" {
+		return ErrBillingFinalized
+	}
+	if record.ReservedAmount != held {
+		return billingRefundReviewError("source_evidence", "subscription held amount mismatch")
+	}
+	return nil
+}
+
+// ReadSubscriptionPreConsumeTx returns the current authoritative reservation.
+// Callers use it inside the host-owned transaction, before updating local state.
+func ReadSubscriptionPreConsumeTx(tx *gorm.DB, identity SubscriptionBillingIdentity) (*SubscriptionPreConsumeResult, error) {
+	record, err := lockSubscriptionBillingReceiptTx(tx, identity)
+	if err != nil {
+		return nil, err
+	}
+	if record.Status != "consumed" {
+		return nil, ErrBillingFinalized
+	}
+	var sub UserSubscription
+	if err := lockForUpdate(tx).Where("id = ?", identity.SubscriptionID).First(&sub).Error; err != nil {
+		return nil, err
+	}
+	if sub.UserId != identity.UserID {
+		return nil, billingRefundReviewError("identity_mismatch", "subscription owner mismatch")
+	}
+	return &SubscriptionPreConsumeResult{
+		UserSubscriptionId: sub.Id, QuotaPeriod: record.QuotaPeriod, Replayed: true,
+		PreConsumed: record.PreConsumed, ReservedAmount: record.ReservedAmount,
+		AmountTotal: sub.AmountTotal, AmountUsedBefore: sub.AmountUsed, AmountUsedAfter: sub.AmountUsed,
+	}, nil
+}
+
+// PreConsumeUserSubscription claims the request ID before taking an allowance
+// lock. ON CONFLICT keeps PostgreSQL races usable, and the locking read also
+// observes a MySQL winner without relying on an earlier repeatable-read snapshot.
 func PreConsumeUserSubscription(requestId string, userId int, modelName string, quotaType int, amount int64) (*SubscriptionPreConsumeResult, error) {
-	if userId <= 0 {
-		return nil, errors.New("invalid userId")
-	}
-	if strings.TrimSpace(requestId) == "" {
-		return nil, errors.New("requestId is empty")
-	}
-	if amount <= 0 {
-		return nil, errors.New("amount must be > 0")
-	}
-	now := GetDBTimestamp()
-
-	returnValue := &SubscriptionPreConsumeResult{}
-
+	var result *SubscriptionPreConsumeResult
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		var existing SubscriptionPreConsumeRecord
-		query := tx.Where("request_id = ?", requestId).Limit(1).Find(&existing)
-		if query.Error != nil {
-			return query.Error
-		}
-		if query.RowsAffected > 0 {
-			if existing.Status == "refunded" {
-				return errors.New("subscription pre-consume already refunded")
-			}
-			var sub UserSubscription
-			if err := tx.Where("id = ?", existing.UserSubscriptionId).First(&sub).Error; err != nil {
-				return err
-			}
-			returnValue.UserSubscriptionId = sub.Id
-			returnValue.PreConsumed = existing.PreConsumed
-			returnValue.AmountTotal = sub.AmountTotal
-			returnValue.AmountUsedBefore = sub.AmountUsed
-			returnValue.AmountUsedAfter = sub.AmountUsed
-			return nil
-		}
-
-		var subs []UserSubscription
-		if err := lockForUpdate(tx).
-			Where("user_id = ? AND status = ? AND end_time > ?", userId, "active", now).
-			Order("end_time asc, id asc").
-			Find(&subs).Error; err != nil {
-			return errors.New("no active subscription")
-		}
-		if len(subs) == 0 {
-			return errors.New("no active subscription")
-		}
-		for _, candidate := range subs {
-			sub := candidate
-			plan, err := getSubscriptionPlanByIdTx(tx, sub.PlanId)
-			if err != nil {
-				return err
-			}
-			if err := maybeResetUserSubscriptionWithPlanTx(tx, &sub, plan, now); err != nil {
-				return err
-			}
-			usedBefore := sub.AmountUsed
-			if sub.AmountTotal > 0 {
-				remain := sub.AmountTotal - usedBefore
-				if remain < amount {
-					continue
-				}
-			}
-			record := &SubscriptionPreConsumeRecord{
-				RequestId:          requestId,
-				UserId:             userId,
-				UserSubscriptionId: sub.Id,
-				PreConsumed:        amount,
-				Status:             "consumed",
-			}
-			if err := tx.Create(record).Error; err != nil {
-				var dup SubscriptionPreConsumeRecord
-				if err2 := tx.Where("request_id = ?", requestId).First(&dup).Error; err2 == nil {
-					if dup.Status == "refunded" {
-						return errors.New("subscription pre-consume already refunded")
-					}
-					returnValue.UserSubscriptionId = sub.Id
-					returnValue.PreConsumed = dup.PreConsumed
-					returnValue.AmountTotal = sub.AmountTotal
-					returnValue.AmountUsedBefore = sub.AmountUsed
-					returnValue.AmountUsedAfter = sub.AmountUsed
-					return nil
-				}
-				return err
-			}
-			sub.AmountUsed += amount
-			if err := tx.Save(&sub).Error; err != nil {
-				return err
-			}
-			returnValue.UserSubscriptionId = sub.Id
-			returnValue.PreConsumed = amount
-			returnValue.AmountTotal = sub.AmountTotal
-			returnValue.AmountUsedBefore = usedBefore
-			returnValue.AmountUsedAfter = sub.AmountUsed
-			return nil
-		}
-		return fmt.Errorf("subscription quota insufficient, need=%d", amount)
+		var err error
+		result, err = PreConsumeUserSubscriptionTx(tx, requestId, userId, modelName, quotaType, amount)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return returnValue, nil
+	return result, nil
 }
 
-// RefundSubscriptionPreConsume is the official rc.46 request-id refund.
-// Historical period/held columns remain untouched, not consumed by a new worker.
+// PreConsumeUserSubscriptionTx permits source, token and host reservation owner
+// to commit together. It never opens a nested/global database transaction.
+func PreConsumeUserSubscriptionTx(tx *gorm.DB, requestId string, userId int, modelName string, quotaType int, amount int64) (*SubscriptionPreConsumeResult, error) {
+	if tx == nil {
+		return nil, errors.New("nil subscription pre-consume transaction")
+	}
+	if userId <= 0 || requestId == "" || strings.TrimSpace(requestId) != requestId || len(requestId) > 64 {
+		return nil, errors.New("invalid subscription request identity")
+	}
+	if amount <= 0 || amount > common.MaxQuota {
+		return nil, errors.New("invalid subscription pre-consume amount")
+	}
+	var nonce [8]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return nil, err
+	}
+	building := "b:" + hex.EncodeToString(nonce[:])
+	result := &SubscriptionPreConsumeResult{}
+	claim := SubscriptionPreConsumeRecord{RequestId: requestId, UserId: userId, PreConsumed: amount, Status: building}
+	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "request_id"}}, DoNothing: true}).Create(&claim).Error; err != nil {
+		return nil, err
+	}
+	var record SubscriptionPreConsumeRecord
+	if err := lockForUpdate(tx).Where("request_id = ?", requestId).First(&record).Error; err != nil {
+		return nil, err
+	}
+	// Always verify caller identity, including conflict/replay/terminal paths.
+	if record.RequestId != requestId || record.UserId != userId || record.PreConsumed != amount {
+		return nil, billingRefundReviewError("identity_mismatch", "subscription pre-consume replay identity mismatch")
+	}
+	if record.Status != building {
+		if err := record.validateBillingReceipt(); err != nil {
+			return nil, err
+		}
+		if record.Status != "consumed" {
+			return nil, ErrBillingFinalized
+		}
+		var sub UserSubscription
+		if err := lockForUpdate(tx).Where("id = ?", record.UserSubscriptionId).First(&sub).Error; err != nil {
+			return nil, err
+		}
+		if sub.UserId != userId {
+			return nil, billingRefundReviewError("identity_mismatch", "subscription owner mismatch")
+		}
+		*result = SubscriptionPreConsumeResult{
+			UserSubscriptionId: sub.Id, QuotaPeriod: record.QuotaPeriod, Replayed: true,
+			PreConsumed: record.PreConsumed, ReservedAmount: record.ReservedAmount,
+			AmountTotal: sub.AmountTotal, AmountUsedBefore: sub.AmountUsed, AmountUsedAfter: sub.AmountUsed,
+		}
+		return result, nil
+	}
+
+	now := GetDBTimestamp(tx)
+	var subs []UserSubscription
+	if err := lockForUpdate(tx).Where("user_id = ? AND status = ? AND end_time > ?", userId, "active", now).
+		Order("end_time asc, id asc").Find(&subs).Error; err != nil {
+		return nil, err
+	}
+	if len(subs) == 0 {
+		return nil, errors.New("no active subscription")
+	}
+	for _, sub := range subs {
+		plan, err := getSubscriptionPlanByIdTx(tx, sub.PlanId)
+		if err != nil {
+			return nil, err
+		}
+		if err := maybeResetUserSubscriptionWithPlanTx(tx, &sub, plan, now); err != nil {
+			return nil, err
+		}
+		if sub.QuotaPeriod < 0 || sub.AmountUsed < 0 || sub.AmountTotal < 0 || sub.AmountUsed > math.MaxInt64-amount {
+			return nil, billingRefundReviewError("source_evidence", "invalid subscription allowance")
+		}
+		if sub.AmountTotal > 0 && (sub.AmountUsed > sub.AmountTotal || amount > sub.AmountTotal-sub.AmountUsed) {
+			continue
+		}
+		if sub.QuotaPeriod == 0 {
+			sub.QuotaPeriod = 1
+		}
+		usedBefore := sub.AmountUsed
+		sub.AmountUsed += amount
+		if err := tx.Select("amount_used", "quota_period", "updated_at").Updates(&sub).Error; err != nil {
+			return nil, err
+		}
+		record.UserSubscriptionId, record.QuotaPeriod = sub.Id, sub.QuotaPeriod
+		record.ReservedAmount, record.Status = amount, "consumed"
+		if err := tx.Select("user_subscription_id", "quota_period", "reserved_amount", "status", "updated_at").Updates(&record).Error; err != nil {
+			return nil, err
+		}
+		*result = SubscriptionPreConsumeResult{
+			UserSubscriptionId: sub.Id, QuotaPeriod: sub.QuotaPeriod, PreConsumed: amount, ReservedAmount: amount,
+			AmountTotal: sub.AmountTotal, AmountUsedBefore: usedBefore, AmountUsedAfter: sub.AmountUsed,
+		}
+		return result, nil
+	}
+	return nil, fmt.Errorf("subscription quota insufficient, need=%d", amount)
+}
+
+// applySubscriptionReceiptDeltaTx changes only the original allowance. A reset
+// retires that allowance: closing its receipt must not debit or credit the new
+// period. Current-period underflow is corrupt evidence, never a clamp-to-zero.
+func applySubscriptionReceiptDeltaTx(tx *gorm.DB, record *SubscriptionPreConsumeRecord, delta int64) error {
+	return AdjustSubscriptionQuotaPeriodTx(tx, record.UserId, record.UserSubscriptionId, record.QuotaPeriod, delta)
+}
+
+// AdjustSubscriptionQuotaPeriodTx is for adjustments owned by another atomic
+// financial operation (for example an independent fee). It is not idempotent by
+// itself: the caller must hold and commit its unique operation/terminal marker.
+func AdjustSubscriptionQuotaPeriodTx(tx *gorm.DB, userID, subscriptionID int, period, delta int64) error {
+	if tx == nil || userID <= 0 || subscriptionID <= 0 || period <= 0 || delta < -common.MaxQuota || delta > common.MaxQuota {
+		return billingRefundReviewError("receipt_invalid", "invalid subscription period adjustment")
+	}
+	var sub UserSubscription
+	if err := lockForUpdate(tx).Where("id = ?", subscriptionID).First(&sub).Error; err != nil {
+		return err
+	}
+	if sub.UserId != userID || sub.QuotaPeriod < period {
+		return billingRefundReviewError("identity_mismatch", "subscription allowance identity mismatch")
+	}
+	if sub.QuotaPeriod != period {
+		if delta > 0 {
+			// The retired period's total usage is no longer available. Charging
+			// the new period or assuming free capacity would both invent policy.
+			return billingRefundReviewError("subscription_period_changed", "cannot increase usage in a retired subscription allowance")
+		}
+		return nil
+	}
+	if sub.AmountUsed < 0 || sub.AmountTotal < 0 || delta > 0 && sub.AmountUsed > math.MaxInt64-delta || delta < 0 && sub.AmountUsed < -delta {
+		return billingRefundReviewError("source_evidence", "subscription allowance cannot apply reservation delta")
+	}
+	newUsed := sub.AmountUsed + delta
+	if sub.AmountTotal > 0 && newUsed > sub.AmountTotal {
+		return fmt.Errorf("subscription used exceeds total, used=%d total=%d", newUsed, sub.AmountTotal)
+	}
+	sub.AmountUsed = newUsed
+	return tx.Select("amount_used", "updated_at").Updates(&sub).Error
+}
+
+// AdjustSubscriptionTaskQuotaTx reconciles a previously settled request after
+// asynchronous task completion. The caller must lock its original task, verify
+// the task's ownership, and persist its terminal marker in this transaction.
+// A changed expected amount is a conflict, never evidence of a safe replay.
+func AdjustSubscriptionTaskQuotaTx(tx *gorm.DB, identity SubscriptionBillingIdentity, previousQuota, actualQuota int64) error {
+	if previousQuota < 0 || previousQuota > common.MaxQuota || actualQuota < 0 || actualQuota > common.MaxQuota {
+		return errors.New("invalid subscription task amount")
+	}
+	record, err := lockSubscriptionBillingReceiptTx(tx, identity)
+	if err != nil {
+		return err
+	}
+	if record.Status != "settled" || record.SettledAmount != previousQuota {
+		return billingRefundReviewError("source_evidence", "subscription task settled evidence mismatch")
+	}
+	if err := applySubscriptionReceiptDeltaTx(tx, record, actualQuota-previousQuota); err != nil {
+		return err
+	}
+	record.SettledAmount = actualQuota
+	return tx.Select("settled_amount", "updated_at").Updates(record).Error
+}
+
+// ReserveSubscriptionPreConsume raises an absolute durable hold. A retry after
+// a lost commit ACK therefore cannot reserve the same increment a second time.
+func ReserveSubscriptionPreConsume(identity SubscriptionBillingIdentity, target int64) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		return ReserveSubscriptionPreConsumeTx(tx, identity, target)
+	})
+}
+
+func ReserveSubscriptionPreConsumeTx(tx *gorm.DB, identity SubscriptionBillingIdentity, target int64) error {
+	if target < 0 || target > common.MaxQuota {
+		return errors.New("invalid subscription reserve target")
+	}
+	record, err := lockSubscriptionBillingReceiptTx(tx, identity)
+	if err != nil {
+		return err
+	}
+	if record.Status != "consumed" {
+		return ErrBillingFinalized
+	}
+	if target <= record.ReservedAmount {
+		return nil
+	}
+	var sub UserSubscription
+	if err := lockForUpdate(tx).Where("id = ?", record.UserSubscriptionId).First(&sub).Error; err != nil {
+		return err
+	}
+	plan, err := getSubscriptionPlanByIdTx(tx, sub.PlanId)
+	if err != nil {
+		return err
+	}
+	now := GetDBTimestamp(tx)
+	if err := maybeResetUserSubscriptionWithPlanTx(tx, &sub, plan, now); err != nil {
+		return err
+	}
+	if sub.UserId != identity.UserID || sub.QuotaPeriod != identity.QuotaPeriod || sub.Status != "active" || sub.EndTime <= now {
+		return billingRefundReviewError("subscription_period_changed", "cannot reserve a retired subscription allowance")
+	}
+	if err := applySubscriptionReceiptDeltaTx(tx, record, target-record.ReservedAmount); err != nil {
+		return err
+	}
+	record.ReservedAmount = target
+	return tx.Select("reserved_amount", "updated_at").Updates(record).Error
+}
+
+// SettleSubscriptionPreConsumeTx finalizes the source in the caller's transaction
+// so its token/terminal owner can commit with the same absolute final amount.
+func SettleSubscriptionPreConsumeTx(tx *gorm.DB, identity SubscriptionBillingIdentity, actual int64) (bool, error) {
+	if actual < 0 || actual > common.MaxQuota {
+		return false, errors.New("invalid subscription settled amount")
+	}
+	record, err := lockSubscriptionBillingReceiptTx(tx, identity)
+	if err != nil {
+		return false, err
+	}
+	if record.Status == "settled" {
+		if record.SettledAmount != actual {
+			return false, billingRefundReviewError("identity_mismatch", "subscription settlement replay amount mismatch")
+		}
+		return false, nil
+	}
+	if record.Status != "consumed" {
+		return false, ErrBillingFinalized
+	}
+	if err := applySubscriptionReceiptDeltaTx(tx, record, actual-record.ReservedAmount); err != nil {
+		return false, err
+	}
+	record.Status, record.SettledAmount = "settled", actual
+	if err := tx.Select("status", "settled_amount", "updated_at").Updates(record).Error; err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func RefundSubscriptionPreConsumeTx(tx *gorm.DB, identity SubscriptionBillingIdentity) (bool, error) {
+	record, err := lockSubscriptionBillingReceiptTx(tx, identity)
+	if err != nil {
+		return false, err
+	}
+	if record.Status == "refunded" {
+		return false, nil
+	}
+	if record.Status != "consumed" {
+		return false, ErrBillingFinalized
+	}
+	if err := applySubscriptionReceiptDeltaTx(tx, record, -record.ReservedAmount); err != nil {
+		return false, err
+	}
+	record.Status = "refunded"
+	if err := tx.Select("status", "updated_at").Updates(record).Error; err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// RefundSubscriptionPreConsume is the request-only compatibility entry point.
+// Both the allowance and its receipt commit together; a retry is a true no-op.
 func RefundSubscriptionPreConsume(requestId string) error {
-	if strings.TrimSpace(requestId) == "" {
-		return errors.New("requestId is empty")
+	if requestId == "" || strings.TrimSpace(requestId) != requestId || len(requestId) > 64 {
+		return errors.New("invalid subscription request identity")
 	}
 	return DB.Transaction(func(tx *gorm.DB) error {
 		var record SubscriptionPreConsumeRecord
-		if err := lockForUpdate(tx).
-			Where("request_id = ?", requestId).First(&record).Error; err != nil {
+		if err := lockForUpdate(tx).Where("request_id = ?", requestId).First(&record).Error; err != nil {
 			return err
 		}
-		if record.Status == "refunded" {
-			return nil
+		if record.RequestId != requestId {
+			return billingRefundReviewError("identity_mismatch", "subscription refund request identity mismatch")
 		}
-		if record.PreConsumed <= 0 {
-			record.Status = "refunded"
-			return tx.Save(&record).Error
-		}
-		if err := PostConsumeUserSubscriptionDelta(record.UserSubscriptionId, -record.PreConsumed); err != nil {
-			return err
-		}
-		record.Status = "refunded"
-		return tx.Save(&record).Error
+		_, err := RefundSubscriptionPreConsumeTx(tx, record.billingIdentity())
+		return err
 	})
 }
 
@@ -1664,7 +1962,8 @@ func GetSubscriptionPlanInfoByUserSubscriptionId(userSubscriptionId int) (*Subsc
 	return info, nil
 }
 
-// PostConsumeUserSubscriptionDelta uses the official rc.46 subscription delta semantics.
+// PostConsumeUserSubscriptionDelta is a legacy, periodless compatibility API.
+// Request billing must use the receipt-bound APIs above, never this delta API.
 func PostConsumeUserSubscriptionDelta(userSubscriptionId int, delta int64) error {
 	if userSubscriptionId <= 0 {
 		return errors.New("invalid userSubscriptionId")
@@ -1678,6 +1977,9 @@ func PostConsumeUserSubscriptionDelta(userSubscriptionId int, delta int64) error
 			Where("id = ?", userSubscriptionId).
 			First(&sub).Error; err != nil {
 			return err
+		}
+		if sub.AmountUsed < 0 || delta > 0 && sub.AmountUsed > math.MaxInt64-delta || delta == math.MinInt64 {
+			return errors.New("invalid subscription quota delta")
 		}
 		newUsed := max(sub.AmountUsed+delta, 0)
 		if sub.AmountTotal > 0 && newUsed > sub.AmountTotal {

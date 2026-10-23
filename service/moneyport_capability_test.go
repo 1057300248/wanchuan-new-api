@@ -42,6 +42,51 @@ func ledgerRowsFor(t *testing.T, userID int) []ledgerRow {
 	return rows
 }
 
+// recordedWalletTestSession exercises the same atomic source/token/held entry
+// as production. A source-only debit is not authority to extend a request hold.
+func recordedWalletTestSession(t *testing.T, info *relaycommon.RelayInfo, amount int) *BillingSession {
+	t.Helper()
+	require.NoError(t, model.DB.AutoMigrate(&model.Ability{}))
+	if info.RequestId == "" {
+		info.RequestId = "recorded-wallet-" + model.BillingTokenFingerprint(t.Name())[:32]
+	}
+	if info.OriginModelName == "" {
+		info.OriginModelName = "recorded-wallet-model"
+	}
+	seedBonusEligibleModel(t, info.OriginModelName, boolPtr(false))
+	if info.ChannelMeta == nil {
+		info.ChannelMeta = &relaycommon.ChannelMeta{}
+	}
+	info.ForcePreConsume = true
+	info.UserSetting.BillingPreference = "wallet_only"
+	c := testGinContext(t)
+	c.Set("token_quota", 1_000_000)
+	s, apiErr := NewBillingSession(c, info, amount)
+	require.Nil(t, apiErr)
+	info.Billing = s
+	assertRecordedWalletHold(t, s, amount)
+	return s
+}
+
+func assertRecordedWalletHold(t *testing.T, s *BillingSession, amount int) {
+	t.Helper()
+	var held model.BillingFinalization
+	require.NoError(t, model.DB.Where("request_id = ?", s.relayInfo.RequestId).First(&held).Error)
+	require.Equal(t, model.BillingHeld, held.State)
+	assert.Equal(t, s.relayInfo.UserId, held.UserID)
+	assert.Equal(t, BillingSourceWallet, held.Source)
+	assert.Equal(t, amount, held.PreConsumed)
+	assert.Equal(t, amount, held.SourceHeld)
+	assert.Equal(t, amount, held.Paid)
+	assert.Zero(t, held.Bonus)
+	assert.Zero(t, held.Reward)
+	wantToken := amount
+	if s.relayInfo.IsPlayground {
+		wantToken = 0
+	}
+	assert.Equal(t, wantToken, held.TokenHeld)
+}
+
 // fundingWithoutCapabilities 只实现 FundingSource，不具备任何 moneyport 能力，
 // 用于验证能力缺失时 BillingSession 必须 fail-closed 而非静默降级。
 type fundingWithoutCapabilities struct{}
@@ -92,19 +137,9 @@ func TestWalletReserveLedgerSequenceUnchanged(t *testing.T) {
 	const requestID = "moneyport-wallet-reserve-1"
 	seedBonusUser(t, userID, 0, 20_000)
 
-	funding := &WalletFunding{
-		userId:     userID,
-		requestId:  requestID,
-		debitOrder: []model.LedgerAccount{model.AccountPaid},
-	}
-	require.NoError(t, funding.PreConsume(2_000))
-
-	session := &BillingSession{
-		relayInfo:        &relaycommon.RelayInfo{IsPlayground: true},
-		funding:          funding,
-		preConsumedQuota: 2_000,
-		tokenConsumed:    2_000,
-	}
+	session := recordedWalletTestSession(t, &relaycommon.RelayInfo{
+		UserId: userID, RequestId: requestID, IsPlayground: true,
+	}, 2_000)
 
 	// 逐级抬升目标：每级只补差额，幂等键由目标预扣值派生。
 	require.NoError(t, session.Reserve(5_000))
@@ -120,9 +155,10 @@ func TestWalletReserveLedgerSequenceUnchanged(t *testing.T) {
 	}, ledgerRowsFor(t, userID))
 
 	assert.Equal(t, 12_000, getUserQuota(t, userID))
-	assert.Equal(t, 8_000, funding.consumed)
+	assert.Equal(t, []model.LedgerShare{{Account: model.AccountPaid, Amount: 8_000}}, session.WalletDebitShares())
 	assert.Equal(t, 8_000, session.preConsumedQuota)
-	assert.Equal(t, 6_000, session.extraReserved)
+	// The durable full hold replaces a wallet's unused subscription-extra field.
+	assertRecordedWalletHold(t, session, 8_000)
 }
 
 // ---------------------------------------------------------------------------
@@ -197,32 +233,25 @@ func TestSubscriptionReserveUsesTargetDeltaWithoutDoubleCount(t *testing.T) {
 
 	const userID, subID = 8812, 5501
 	seedBonusUser(t, userID, 0, 1_000)
-	// 订阅已预扣 2000，模拟 PreConsume 完成后的状态。
-	seedSubscription(t, subID, userID, 100_000, 2_000)
+	// Start before pre-consume; the real factory atomically creates both receipts.
+	seedSubscription(t, subID, userID, 100_000, 0)
 	plan := &model.SubscriptionPlan{Title: "moneyport reserve", QuotaResetPeriod: model.SubscriptionResetNever}
 	require.NoError(t, model.DB.Create(plan).Error)
 	model.InvalidateSubscriptionPlanCache(plan.Id)
 	t.Cleanup(func() { model.InvalidateSubscriptionPlanCache(plan.Id) })
-	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", subID).Update("plan_id", plan.Id).Error)
-	require.NoError(t, model.DB.Create(&model.SubscriptionPreConsumeRecord{RequestId: "moneyport-sub-reserve-1", UserId: userID, UserSubscriptionId: subID, PreConsumed: 2000, Status: "consumed"}).Error)
-
-	funding := &SubscriptionFunding{
-		requestId:       "moneyport-sub-reserve-1",
-		userId:          userID,
-		modelName:       "test-model",
-		amount:          2_000,
-		subscriptionId:  subID,
-		preConsumed:     2_000,
-		AmountTotal:     100_000,
-		AmountUsedAfter: 2_000,
-	}
-	relayInfo := &relaycommon.RelayInfo{IsPlayground: true}
-	session := &BillingSession{
-		relayInfo:        relayInfo,
-		funding:          funding,
-		preConsumedQuota: 2_000,
-		tokenConsumed:    2_000,
-	}
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", subID).Updates(map[string]any{"plan_id": plan.Id, "quota_period": 1}).Error)
+	relayInfo := &relaycommon.RelayInfo{IsPlayground: true, RequestId: "moneyport-sub-reserve-1", UserId: userID, ForcePreConsume: true}
+	relayInfo.UserSetting.BillingPreference = "subscription_only"
+	session, apiErr := NewBillingSession(testGinContext(t), relayInfo, 2_000)
+	require.Nil(t, apiErr)
+	funding, ok := session.funding.(*SubscriptionFunding)
+	require.True(t, ok)
+	require.EqualValues(t, 2_000, getSubscriptionUsed(t, subID))
+	var held model.BillingFinalization
+	require.NoError(t, model.DB.Where("request_id = ?", relayInfo.RequestId).First(&held).Error)
+	require.Equal(t, model.BillingHeld, held.State)
+	require.Equal(t, 2_000, held.SourceHeld)
+	require.Zero(t, held.TokenHeld)
 
 	// 只补 target 与预扣基线（amount + reserveDelta）的差额。
 	require.NoError(t, session.Reserve(5_000))
@@ -249,16 +278,15 @@ func TestSubscriptionReserveUsesTargetDeltaWithoutDoubleCount(t *testing.T) {
 	assert.EqualValues(t, 8_000, relayInfo.SubscriptionAmountUsedAfterPreConsume)
 	assert.Equal(t, 8_000, relayInfo.FinalPreConsumedQuota)
 	assert.Equal(t, subID, relayInfo.SubscriptionId)
-	// The official replay returns the base receipt; in-memory extra reserve
-	// remains separate, with no private persisted reservation total.
+	// A replay returns the same original identity and durable absolute reserve.
 	require.NoError(t, funding.PreConsume(2_000))
 	assert.EqualValues(t, 2_000, funding.preConsumed)
 	assert.Equal(t, 6_000, funding.reserveDelta)
 	assert.Equal(t, 8_000, int(funding.amount)+funding.reserveDelta)
 	var receipt model.SubscriptionPreConsumeRecord
 	require.NoError(t, model.DB.Where("request_id = ?", funding.requestId).First(&receipt).Error)
-	assert.Zero(t, receipt.QuotaPeriod)
-	assert.Zero(t, receipt.ReservedAmount)
+	assert.EqualValues(t, 1, receipt.QuotaPeriod)
+	assert.EqualValues(t, 8000, receipt.ReservedAmount)
 	assert.EqualValues(t, 2000, receipt.PreConsumed)
 	assert.EqualValues(t, 8_000, getSubscriptionUsed(t, subID))
 }
@@ -267,9 +295,9 @@ func TestSubscriptionReserveUsesTargetDeltaWithoutDoubleCount(t *testing.T) {
 // Reserve 生命周期：资金失败 -> 令牌回滚 -> 同目标重试真实扣款
 // ---------------------------------------------------------------------------
 
-// TestReserveFundingFailureRollsBackTokenAndRetryDebitsFresh 锁定 token-first
-// reserve 顺序的生命周期不变量：
-//  1. 资金 reserve 失败时已扣令牌额度必须回滚，会话状态不前进；
+// TestReserveFundingFailureRollsBackTokenAndRetryDebitsFresh verifies atomic
+// source/token reserve and same-target retries:
+//  1. 资金 reserve 失败时源/令牌均不变，会话状态不前进；
 //  2. 失败的尝试不落账本（无幂等键占位）；
 //  3. 充值后同目标重试必须发生真实扣款，不得被旧幂等键重放吞掉；
 //  4. 全程钱包余额 / 令牌额度 / 账本一致，无免费用量。
@@ -283,24 +311,10 @@ func TestReserveFundingFailureRollsBackTokenAndRetryDebitsFresh(t *testing.T) {
 	seedToken(t, tokenID, userID, tokenKey, 10_000)
 
 	const requestID = "moneyport-reserve-retry-1"
-	funding := &WalletFunding{
-		userId:     userID,
-		requestId:  requestID,
-		debitOrder: []model.LedgerAccount{model.AccountPaid},
-	}
-	// 生产路径：初始预扣 2_000 已完成（钱包 4_000 -> 2_000）。
-	require.NoError(t, funding.PreConsume(2_000))
-
-	session := &BillingSession{
-		relayInfo: &relaycommon.RelayInfo{
-			UserId:   userID,
-			TokenId:  tokenID,
-			TokenKey: tokenKey,
-		},
-		funding:          funding,
-		preConsumedQuota: 2_000,
-		tokenConsumed:    2_000,
-	}
+	// Production initial preconsume debits both wallet and token by 2_000.
+	session := recordedWalletTestSession(t, &relaycommon.RelayInfo{
+		UserId: userID, TokenId: tokenID, TokenKey: tokenKey, RequestId: requestID,
+	}, 2_000)
 
 	// 1. 同目标补充预扣 3_000：钱包仅剩 2_000，资金失败。
 	err := session.Reserve(5_000)
@@ -308,11 +322,12 @@ func TestReserveFundingFailureRollsBackTokenAndRetryDebitsFresh(t *testing.T) {
 	assert.ErrorIs(t, err, ErrModelBonusNotSupported,
 		"paid-only 扣减顺序下余额不足映射为赠金不可用哨兵错误")
 
-	// 2. 先令牌后资金：资金失败必须回滚已扣令牌，钱包分文未动。
-	assert.Equal(t, 10_000, getTokenRemainQuota(t, tokenID), "令牌额度必须回滚")
+	// 2. Failed reserve changes neither side of the original atomic hold.
+	assert.Equal(t, 8_000, getTokenRemainQuota(t, tokenID), "原始预扣之外不得再扣令牌")
 	assert.Equal(t, initialPaid-2_000, getUserBalances(t, userID).QuotaPaid, "资金失败不得扣减钱包")
 	assert.Equal(t, 2_000, session.preConsumedQuota)
 	assert.Zero(t, session.extraReserved)
+	assertRecordedWalletHold(t, session, 2_000)
 	assert.Equal(t, []ledgerRow{
 		{Account: "paid", Delta: -2_000, Reason: model.LedgerReasonBillingPreConsume, IdempotencyKey: "billing:preconsume:" + requestID},
 	}, ledgerRowsFor(t, userID), "失败的 reserve 尝试不得留下账本条目")
@@ -324,19 +339,19 @@ func TestReserveFundingFailureRollsBackTokenAndRetryDebitsFresh(t *testing.T) {
 	}).Error)
 	require.NoError(t, session.Reserve(5_000), "同目标重试必须真实扣款，不得被旧幂等键重放吞掉")
 
-	assert.Equal(t, 7_000, getTokenRemainQuota(t, tokenID), "令牌扣减 3_000")
+	assert.Equal(t, 5_000, getTokenRemainQuota(t, tokenID), "原始 2_000 + 补扣 3_000")
 	assert.Equal(t, initialPaid+2_000-2_000-3_000, getUserBalances(t, userID).QuotaPaid)
 	assert.Equal(t, []ledgerRow{
 		{Account: "paid", Delta: -2_000, Reason: model.LedgerReasonBillingPreConsume, IdempotencyKey: "billing:preconsume:" + requestID},
 		{Account: "paid", Delta: -3_000, Reason: model.LedgerReasonBillingReserve, IdempotencyKey: "billing:reserve:" + requestID + ":5000"},
 	}, ledgerRowsFor(t, userID))
 	assert.Equal(t, 5_000, session.preConsumedQuota)
-	assert.Equal(t, 3_000, session.extraReserved)
-	assert.Equal(t, 5_000, funding.consumed)
+	assertRecordedWalletHold(t, session, 5_000)
+	assert.Equal(t, []model.LedgerShare{{Account: model.AccountPaid, Amount: 5_000}}, session.WalletDebitShares())
 
 	// 4. 达到目标后重复 Reserve 是 no-op：钱包 / 令牌 / 账本完全一致。
 	require.NoError(t, session.Reserve(5_000))
-	assert.Equal(t, 7_000, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, 5_000, getTokenRemainQuota(t, tokenID))
 	assert.Equal(t, initialPaid-3_000, getUserBalances(t, userID).QuotaPaid)
 }
 

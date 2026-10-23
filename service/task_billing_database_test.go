@@ -93,7 +93,7 @@ func seedReceiptActors(t *testing.T, bonus, reward int) (*model.User, *model.Tok
 	channel := &model.Channel{Name: "receipt-channel", Key: "unused", Status: common.ChannelStatusEnabled}
 	require.NoError(t, model.DB.Create(channel).Error)
 	t.Cleanup(func() {
-		for _, entity := range []any{&model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.Task{}, &model.Midjourney{}, &model.UserSubscription{}} {
+		for _, entity := range []any{&model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.SubscriptionPreConsumeRecord{}, &model.Task{}, &model.Midjourney{}, &model.UserSubscription{}} {
 			require.NoError(t, model.DB.Unscoped().Where("user_id = ?", user.Id).Delete(entity).Error)
 		}
 		require.NoError(t, model.LOG_DB.Where("user_id = ?", user.Id).Delete(&model.Log{}).Error)
@@ -129,9 +129,21 @@ func seedReceiptTask(t *testing.T, user *model.User, token *model.Token, channel
 	task.TaskID = fmt.Sprintf("receipt-task-%d", user.Id)
 	task.Status = model.TaskStatusSuccess
 	task.PrivateData.WalletDebit = appendTaskShares(nil, receipt)
+	task.PrivateData.TokenFingerprint = model.BillingTokenFingerprint(token.Key)
+	task.PrivateData.FinancialVersion = 2
+	task.PrivateData.SubmissionAccounted = true
 	require.NoError(t, model.DB.Create(task).Error)
 	seedChargedAccounting(t, user.Id, channel.Id, token.Id, quota, 1)
 	return task
+}
+
+// Only a known provider failure can authorize a failed-task refund. This
+// fixture transition occurs before fault injection and cannot overwrite a
+// concurrent SUCCESS through the production polling API.
+func markReceiptTaskFailed(t *testing.T, task *model.Task) {
+	t.Helper()
+	task.Status = model.TaskStatusFailure
+	require.NoError(t, model.DB.Model(task).Update("status", task.Status).Error)
 }
 
 func failReceiptUpdates(t *testing.T, table string) func() {
@@ -225,17 +237,17 @@ func runTaskWalletReceiptCases(t *testing.T) {
 		assert.Equal(t, persisted.PrivateData.WalletDebit, stale.PrivateData.WalletDebit)
 
 		stale = persisted
-		require.True(t, RefundTaskQuota(t.Context(), &persisted, "receipt refund"))
-		require.True(t, RefundTaskQuota(t.Context(), &stale, "stale refund replay"))
-		assertUserBalances(t, user.Id, 100, 1000, 40)
-		assert.Equal(t, 2300, getTokenRemainQuota(t, token.Id), "official repeated caller refund repeats the independent token step")
-		assert.Equal(t, -300, getTokenUsedQuota(t, token.Id))
-		assert.EqualValues(t, 3, countReceiptLogs(t, user.Id))
+		require.False(t, RefundTaskQuota(t.Context(), &persisted, "successful terminal settlement cannot become a refund"))
+		require.False(t, RefundTaskQuota(t.Context(), &stale, "stale conflicting terminal decision"))
+		assertUserBalances(t, user.Id, 0, 840, 0)
+		assert.Equal(t, 1700, getTokenRemainQuota(t, token.Id))
+		assert.Equal(t, 300, getTokenUsedQuota(t, token.Id))
+		assert.EqualValues(t, 1, countReceiptLogs(t, user.Id))
 		require.NoError(t, model.DB.First(&persisted, task.ID).Error)
-		assert.Zero(t, persisted.Quota)
+		assert.Equal(t, 300, persisted.Quota)
 		assert.Equal(t, stale.PrivateData.WalletDebit, persisted.PrivateData.WalletDebit)
 		used, requests := getUserUsageAccounting(t, user.Id)
-		assert.Equal(t, -300, used)
+		assert.Equal(t, 300, used)
 		assert.Equal(t, 1, requests)
 	})
 
@@ -265,18 +277,21 @@ func runTaskWalletReceiptCases(t *testing.T) {
 		assert.Equal(t, []model.LedgerShare{{Account: model.AccountPaid, Amount: 1000}, {Account: model.AccountReward, Amount: 40}}, persisted.PrivateData.WalletDebit)
 	})
 
-	t.Run("legacy_paid_charge_is_included_in_first_receipt", func(t *testing.T) {
+	t.Run("legacy_missing_receipt_fails_closed", func(t *testing.T) {
 		user, token, channel := seedReceiptActors(t, 0, 0)
 		task := seedReceiptTask(t, user, token, channel, 100, model.AccountPaid)
 		task.PrivateData.WalletDebit = nil
 		require.NoError(t, model.DB.Model(task).Select("private_data").Updates(task).Error)
-		RecalculateTaskQuota(t.Context(), task, 300, common.NewMessage("legacy paid settlement"))
+		RecalculateTaskQuota(t.Context(), task, 300, common.NewMessage("cannot invent legacy paid source"))
 		var persisted model.Task
 		require.NoError(t, model.DB.First(&persisted, task.ID).Error)
-		assert.Equal(t, []model.LedgerShare{{Account: model.AccountPaid, Amount: 300}}, persisted.PrivateData.WalletDebit)
-		require.True(t, RefundTaskQuota(t.Context(), &persisted, "legacy paid refund"))
-		assertUserBalances(t, user.Id, 0, 1000, 0)
-		assert.Equal(t, 2000, getTokenRemainQuota(t, token.Id))
+		assert.Nil(t, persisted.PrivateData.WalletDebit)
+		assert.Equal(t, 100, persisted.Quota)
+		markReceiptTaskFailed(t, &persisted)
+		require.False(t, RefundTaskQuota(t.Context(), &persisted, "missing source requires review"))
+		assertUserBalances(t, user.Id, 0, 900, 0)
+		assert.Equal(t, 1900, getTokenRemainQuota(t, token.Id))
+		assert.Zero(t, countReceiptLogs(t, user.Id))
 	})
 
 	for _, table := range []string{"tokens", "tasks"} {
@@ -299,52 +314,73 @@ func runTaskWalletReceiptCases(t *testing.T) {
 			assert.Equal(t, 300, task.Quota)
 			assert.Equal(t, 1700, getTokenRemainQuota(t, token.Id))
 		})
-		t.Run("official_refund_independent_"+table+"_failure", func(t *testing.T) {
+		t.Run("refund_atomic_"+table+"_failure", func(t *testing.T) {
 			user, token, channel := seedReceiptActors(t, 100, 40)
 			task := seedReceiptTask(t, user, token, channel, 300)
+			markReceiptTaskFailed(t, task)
 			fault := injectOfficialUpdateFault(t, table, officialFailureBeforeSQL)
-			require.True(t, RefundTaskQuota(t.Context(), task, "official independent refund"))
+			require.False(t, RefundTaskQuota(t.Context(), task, "atomic refund failure"))
 			fault.requireOneHit(t)
-			assertUserBalances(t, user.Id, 100, 1000, 40)
+			assertUserBalances(t, user.Id, 0, 840, 0)
+			assert.Equal(t, 1700, getTokenRemainQuota(t, token.Id))
 			var persisted model.Task
 			require.NoError(t, model.DB.First(&persisted, task.ID).Error)
+			assert.Equal(t, 300, persisted.Quota)
 			assert.Equal(t, task.PrivateData.WalletDebit, persisted.PrivateData.WalletDebit)
 			var count int64
-			require.NoError(t, model.DB.Model(&model.BalanceLedgerOperation{}).Where("idempotency_key = ?", "task:refund:"+task.TaskID).Count(&count).Error)
-			assert.EqualValues(t, 1, count)
-			if table == "tokens" {
-				assert.Equal(t, 1700, getTokenRemainQuota(t, token.Id))
-				assert.Zero(t, persisted.Quota)
-			} else {
-				assert.Equal(t, 2000, getTokenRemainQuota(t, token.Id))
-				assert.Equal(t, 300, persisted.Quota)
-				fault.disable()
-				require.True(t, RefundTaskQuota(t.Context(), &persisted, "explicit repeated call"))
-				fault.requireOneHit(t)
-				assert.Equal(t, 2300, getTokenRemainQuota(t, token.Id))
-				assertUserBalances(t, user.Id, 100, 1000, 40)
-			}
+			require.NoError(t, model.DB.Model(&model.BalanceLedger{}).Where("user_id = ? AND reason = ?", user.Id, model.LedgerReasonTaskRefund).Count(&count).Error)
+			assert.Zero(t, count)
+			assert.Zero(t, countReceiptLogs(t, user.Id))
+			fault.disable()
+			require.True(t, RefundTaskQuota(t.Context(), &persisted, "retry after rollback"))
+			require.True(t, RefundTaskQuota(t.Context(), task, "stale repeat after commit"))
+			fault.requireOneHit(t)
+			assert.Equal(t, 2000, getTokenRemainQuota(t, token.Id))
+			assertUserBalances(t, user.Id, 100, 1000, 40)
+			assert.EqualValues(t, 1, countReceiptLogs(t, user.Id))
 		})
 	}
 
-	t.Run("official_subscription_settlement_survives_token_failure", func(t *testing.T) {
+	t.Run("subscription_settlement_rolls_back_with_token_failure", func(t *testing.T) {
 		user, token, channel := seedReceiptActors(t, 0, 0)
-		sub := model.UserSubscription{UserId: user.Id, AmountTotal: 5000, AmountUsed: 100, Status: "active"}
+		plan := &model.SubscriptionPlan{Title: "task receipt subscription", TotalAmount: 5000, QuotaResetPeriod: model.SubscriptionResetNever}
+		require.NoError(t, model.DB.Session(&gorm.Session{SkipHooks: true}).Create(plan).Error)
+		model.InvalidateSubscriptionPlanCache(plan.Id)
+		t.Cleanup(func() {
+			model.InvalidateSubscriptionPlanCache(plan.Id)
+			require.NoError(t, model.DB.Session(&gorm.Session{SkipHooks: true}).Delete(plan).Error)
+		})
+		now := model.GetDBTimestamp()
+		sub := model.UserSubscription{UserId: user.Id, PlanId: plan.Id, AmountTotal: 5000, QuotaPeriod: 1, Status: "active", StartTime: now - 10, EndTime: now + 3600}
 		require.NoError(t, model.DB.Create(&sub).Error)
-		task := makeTask(user.Id, channel.Id, 100, token.Id, BillingSourceSubscription, sub.Id)
-		require.NoError(t, model.DB.Create(task).Error)
-		restore := failReceiptUpdates(t, "tokens")
-		RecalculateTaskQuota(t.Context(), task, 300, common.NewMessage("subscription settlement"))
+		info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, RequestId: fmt.Sprintf("subscription-task-%d", user.Id), ForcePreConsume: true, ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}}
+		info.UserSetting.BillingPreference = "subscription_only"
+		c := testGinContext(t)
+		c.Set("token_quota", token.RemainQuota)
+		session, apiErr := NewBillingSession(c, info, 100)
+		require.Nil(t, apiErr)
+		info.Billing = session
+		task := financialTaskForSubmission(info, 100)
+		require.NoError(t, PersistTaskBilling(info, task))
+		fault := injectOfficialUpdateFault(t, "tokens", officialFailureBeforeSQL)
+		RecalculateTaskQuota(t.Context(), task, 300, common.NewMessage("subscription terminal settlement"))
+		fault.requireOneHit(t)
+		require.NoError(t, model.DB.First(&sub, sub.Id).Error)
+		assert.EqualValues(t, 100, sub.AmountUsed)
+		assert.Equal(t, 1900, getTokenRemainQuota(t, token.Id))
+		assert.Equal(t, 100, task.Quota)
+		fault.disable()
+		RecalculateTaskQuota(t.Context(), task, 300, common.NewMessage("retry terminal settlement"))
 		require.NoError(t, model.DB.First(&sub, sub.Id).Error)
 		assert.EqualValues(t, 300, sub.AmountUsed)
-		assert.Equal(t, 2000, getTokenRemainQuota(t, token.Id))
+		assert.Equal(t, 1700, getTokenRemainQuota(t, token.Id))
 		assert.Equal(t, 300, task.Quota)
-		restore()
 	})
 }
 
 func receiptMidjourneyInfo(user *model.User, token *model.Token, channel *model.Channel) *relaycommon.RelayInfo {
 	info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, RequestId: fmt.Sprintf("receipt-mj-%d", user.Id), UserQuota: user.Quota, BillingSource: BillingSourceWallet, BillingModelName: "mj_imagine", ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}}
+	info.UserSetting.QuotaWarningEnabled = boolPtr(false)
 	info.UserSetting.QuotaWarningThreshold = -1 // Keep synthetic finance fixtures notification-free on 093.
 	return info
 }
@@ -378,10 +414,9 @@ func runMidjourneyWalletReceiptCases(t *testing.T) {
 
 		billed, err = SettleMidjourneyTaskBilling(info, task, true)
 		require.NoError(t, err)
-		require.True(t, billed)
+		require.False(t, billed, "replay must not emit another submission log")
 		assertUserBalances(t, user.Id, 0, 850, 0)
 		assert.Equal(t, 1700, getTokenRemainQuota(t, token.Id))
-		seedChargedAccounting(t, user.Id, channel.Id, token.Id, 300, 1)
 
 		// The observer predates the debit. Its status update must preserve the
 		// receipt, and its subsequent refund must load that committed receipt.
@@ -396,7 +431,7 @@ func runMidjourneyWalletReceiptCases(t *testing.T) {
 		assert.Equal(t, 2000, getTokenRemainQuota(t, token.Id))
 		assert.Zero(t, getTokenUsedQuota(t, token.Id))
 		assert.Zero(t, getMidjourneyTask(t, task.Id).Quota)
-		assert.Equal(t, persisted.WalletDebit, getMidjourneyTask(t, task.Id).WalletDebit)
+		assert.Empty(t, getMidjourneyTask(t, task.Id).WalletDebit)
 		var logs int64
 		require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("user_id = ?", user.Id).Count(&logs).Error)
 		assert.EqualValues(t, 1, logs)
@@ -428,37 +463,34 @@ func runMidjourneyWalletReceiptCases(t *testing.T) {
 	}
 
 	for _, table := range []string{"tokens", "midjourneys"} {
-		t.Run("official_midjourney_refund_independent_"+table+"_failure", func(t *testing.T) {
+		t.Run("midjourney_refund_atomic_"+table+"_failure", func(t *testing.T) {
 			user, token, channel := seedReceiptActors(t, 100, 50)
 			info := receiptMidjourneyInfo(user, token, channel)
 			task := prepareReceiptMidjourney(t, info)
 			billed, err := SettleMidjourneyTaskBilling(info, task, true)
 			require.NoError(t, err)
 			require.True(t, billed)
-			seedChargedAccounting(t, user.Id, channel.Id, token.Id, 300, 1)
 			receipt := append([]model.LedgerShare(nil), task.WalletDebit...)
 			require.NoError(t, model.DB.Model(task).Update("status", "FAILURE").Error)
 			fault := injectOfficialUpdateFault(t, table, officialFailureBeforeSQL)
-			require.True(t, RefundMidjourneyQuota(t.Context(), task, "official independent failure"))
+			require.False(t, RefundMidjourneyQuota(t.Context(), task, "atomic refund failure"))
 			fault.requireOneHit(t)
-			assertUserBalances(t, user.Id, 100, 1000, 50)
+			assertUserBalances(t, user.Id, 0, 850, 0)
+			assert.Equal(t, 1700, getTokenRemainQuota(t, token.Id))
 			persisted := getMidjourneyTask(t, task.Id)
+			assert.Equal(t, 300, persisted.Quota)
 			assert.Equal(t, receipt, persisted.WalletDebit)
 			var refunds int64
-			require.NoError(t, model.DB.Model(&model.BalanceLedgerOperation{}).Where("idempotency_key = ?", "midjourney:refund:"+task.MjId).Count(&refunds).Error)
-			assert.EqualValues(t, 1, refunds)
-			if table == "tokens" {
-				assert.Equal(t, 1700, getTokenRemainQuota(t, token.Id))
-				assert.Zero(t, persisted.Quota)
-			} else {
-				assert.Equal(t, 2000, getTokenRemainQuota(t, token.Id))
-				assert.Equal(t, 300, persisted.Quota)
-				fault.disable()
-				require.True(t, RefundMidjourneyQuota(t.Context(), &persisted, "explicit repeated call"))
-				fault.requireOneHit(t)
-				assert.Equal(t, 2300, getTokenRemainQuota(t, token.Id))
-				assertUserBalances(t, user.Id, 100, 1000, 50)
-			}
+			require.NoError(t, model.DB.Model(&model.BalanceLedgerOperation{}).Where("idempotency_key = ?", fmt.Sprintf("midjourney:financial-refund:%d", task.Id)).Count(&refunds).Error)
+			assert.Zero(t, refunds)
+			assert.Zero(t, countReceiptLogs(t, user.Id))
+			fault.disable()
+			require.True(t, RefundMidjourneyQuota(t.Context(), &persisted, "retry after rollback"))
+			require.True(t, RefundMidjourneyQuota(t.Context(), task, "stale repeat after commit"))
+			fault.requireOneHit(t)
+			assert.Equal(t, 2000, getTokenRemainQuota(t, token.Id))
+			assertUserBalances(t, user.Id, 100, 1000, 50)
+			assert.EqualValues(t, 1, countReceiptLogs(t, user.Id))
 		})
 	}
 

@@ -181,10 +181,23 @@ func assertSettlementBalances(t *testing.T, wallet, token int) {
 	require.Equal(t, 1000-token, stored.UsedQuota)
 }
 
+// Current entry has already committed a durable hold before the attempted
+// settlement. A failed deadline may preserve that receipt, never invent a
+// terminal record or mutate the original identity/source/token amounts.
+func settlementDeadlineHeldReceipt(t *testing.T, request string) model.BillingFinalization {
+	t.Helper()
+	var receipts []model.BillingFinalization
+	require.NoError(t, model.DB.Where("request_id = ?", request).Find(&receipts).Error)
+	require.Len(t, receipts, 1)
+	require.Equal(t, model.BillingHeld, receipts[0].State)
+	return receipts[0]
+}
+
 func TestBillingSettlementDeadlineDriverAndConnectionWait(t *testing.T) {
 	for _, mode := range []string{"driver", "connection"} {
 		t.Run(mode, func(t *testing.T) {
 			s, cancelClient := settlementDeadlineSession(t, "settlement-wait-"+mode, true, BillingSourceWallet)
+			initialReceipt := settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId)
 			cancelClient()
 			sqlDB, err := model.DB.DB()
 			require.NoError(t, err)
@@ -225,14 +238,12 @@ func TestBillingSettlementDeadlineDriverAndConnectionWait(t *testing.T) {
 				require.NoError(t, held.Close())
 				held = nil
 			}
-			require.True(t, s.NeedsRefund(), "mutex is reusable; no owner was proved")
+			require.True(t, s.NeedsRefund(), "mutex is reusable; no terminal commit was proved")
 			require.True(t, s.settlementUncertain)
 			assertSettlementBalances(t, 900, 900)
-			var owners int64
-			require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Where("request_id = ?", s.relayInfo.RequestId).Count(&owners).Error)
-			require.Zero(t, owners)
-			// Only the existing exact-identity probe proves absence and allows the
-			// original reserve path. The timeout itself did not authorize it.
+			require.Equal(t, initialReceipt, settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId), "failed settlement must leave the original hold byte-for-field unchanged and nonterminal")
+			// Only the exact-identity probe of the unchanged held receipt allows
+			// reserve to continue. The timeout itself did not authorize it.
 			require.NoError(t, s.Reserve(150))
 			require.False(t, s.settlementUncertain)
 			require.NoError(t, s.Settle(200))
@@ -248,6 +259,7 @@ func TestBillingSettlementDeadlineNativeRowLock(t *testing.T) {
 		t.Skip("SQLite has no SELECT FOR UPDATE; real connection-wait coverage is separate")
 	}
 	s, cancelClient := settlementDeadlineSession(t, "settlement-held-native-row", true, BillingSourceWallet)
+	initialReceipt := settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId)
 	cancelClient()
 	sqlDB, err := model.DB.DB()
 	require.NoError(t, err)
@@ -275,9 +287,7 @@ func TestBillingSettlementDeadlineNativeRowLock(t *testing.T) {
 	require.NoError(t, held.Rollback().Error)
 	require.True(t, s.NeedsRefund())
 	assertSettlementBalances(t, 900, 900)
-	var owners int64
-	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Where("request_id = ?", s.relayInfo.RequestId).Count(&owners).Error)
-	require.Zero(t, owners)
+	require.Equal(t, initialReceipt, settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId), "failed settlement must leave the original hold byte-for-field unchanged and nonterminal")
 	require.NoError(t, s.Reserve(150))
 	require.NoError(t, s.Settle(200))
 	require.NoError(t, s.Settle(200))
@@ -380,6 +390,7 @@ func TestBillingSettlementDeadlineRedisBoundaries(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			withToken := mode != "postcommit_cache"
 			s, cancelClient := settlementDeadlineSession(t, "settlement-redis-"+mode, withToken, BillingSourceWallet)
+			initialReceipt := settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId)
 			cancelClient()
 			actual := 200
 			if mode == "zero_delta_cache" {
@@ -441,9 +452,7 @@ func TestBillingSettlementDeadlineRedisBoundaries(t *testing.T) {
 				require.ErrorIs(t, err, context.DeadlineExceeded)
 				require.True(t, s.NeedsRefund())
 				assertSettlementBalances(t, 900, 900)
-				var owners int64
-				require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Where("request_id = ?", s.relayInfo.RequestId).Count(&owners).Error)
-				require.Zero(t, owners, "expired Redis fence budget must prevent token SQL and terminal commit")
+				require.Equal(t, initialReceipt, settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId), "failed settlement must leave the original hold byte-for-field unchanged and nonterminal")
 				require.NoError(t, s.Reserve(150))
 			} else {
 				require.NoError(t, err, "cache failure, while work context is live or after commit, preserves the financial policy")
@@ -477,6 +486,7 @@ func TestBillingSettlementDeadlineNativeRedisFence(t *testing.T) {
 		t.Skip("dedicated TEST_SETTLEMENT_DEADLINE_REDIS_ADDR and TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE=1 required")
 	}
 	s, cancelClient := settlementDeadlineSession(t, "settlement-native-redis-fence", true, BillingSourceWallet)
+	initialReceipt := settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId)
 	cancelClient()
 	client := redis.NewClient(&redis.Options{Addr: address, ReadTimeout: -1, WriteTimeout: -1, MaxRetries: -1, ContextTimeoutEnabled: true, DisableIdentity: true, Protocol: 2})
 	admin := redis.NewClient(&redis.Options{Addr: address, MaxRetries: -1, ContextTimeoutEnabled: true, DisableIdentity: true, Protocol: 2})
@@ -524,9 +534,7 @@ func TestBillingSettlementDeadlineNativeRedisFence(t *testing.T) {
 	common.RedisEnabled = false
 	require.True(t, s.NeedsRefund())
 	assertSettlementBalances(t, 900, 900)
-	var owners int64
-	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Where("request_id = ?", s.relayInfo.RequestId).Count(&owners).Error)
-	require.Zero(t, owners)
+	require.Equal(t, initialReceipt, settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId), "failed settlement must leave the original hold byte-for-field unchanged and nonterminal")
 	require.NoError(t, s.Reserve(150))
 	require.NoError(t, s.Settle(200))
 	require.NoError(t, s.Settle(200))
@@ -564,11 +572,11 @@ func TestOfficialRefundBeforeLostACKReadbackKeepsOfficialSequence(t *testing.T) 
 	require.Equal(t, 200, before.ActualQuota)
 	s.Refund(testGinContext(t))
 	waitRefundCallback(t, s)
-	require.False(t, s.NeedsRefund(), "official flag closes after scheduling regardless of readback")
-	assertSettlementBalances(t, 900, 900)
+	require.False(t, s.NeedsRefund(), "the authoritative settled owner wins over refund")
+	assertSettlementBalances(t, 800, 800)
 	var after model.BillingFinalization
 	require.NoError(t, model.DB.Where("request_id = ?", before.RequestID).First(&after).Error)
 	require.Equal(t, before, after, "official Refund does not rewrite the normal settlement evidence")
-	require.ErrorIs(t, s.Settle(200), model.ErrBillingFinalized)
-	t.Log("KNOWN OFFICIAL SEQUENCE LIMITATION: successful lost-ACK settlement can be followed by returning the initial100 hold; durable normal owner is not a refund guard")
+	require.NoError(t, s.Settle(200))
+	assertSettlementBalances(t, 800, 800)
 }

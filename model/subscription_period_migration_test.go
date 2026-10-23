@@ -128,7 +128,7 @@ ORDER BY n`, subTable, "idx_user_sub_active").Scan(&columns).Error)
 						_, sub := subscriptionPeriodSeed(t, db)
 						reserve, err := PreConsumeUserSubscription("fresh-period", sub.UserId, "fixture", 0, 100)
 						require.NoError(t, err)
-						assert.Zero(t, reserve.QuotaPeriod, "official receipts do not claim a private period")
+						assert.Positive(t, reserve.QuotaPeriod, "new receipts capture their original allowance period")
 						return
 					}
 					var sub UserSubscription
@@ -148,7 +148,7 @@ ORDER BY n`, subTable, "idx_user_sub_active").Scan(&columns).Error)
 					assert.EqualValues(t, now-50, record.CreatedAt)
 					fresh, err := PreConsumeUserSubscription("after-upgrade", sub.UserId, "fixture", 0, 100)
 					require.NoError(t, err)
-					assert.Zero(t, fresh.QuotaPeriod, "official receipts do not claim a private period")
+					assert.Positive(t, fresh.QuotaPeriod, "new receipts capture their original allowance period")
 					require.NoError(t, db.First(&sub, 92).Error)
 					assert.EqualValues(t, 450, sub.AmountUsed)
 					// Repeated startup never guesses legacy ownership, nor rewinds a new epoch.

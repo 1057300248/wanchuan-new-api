@@ -7512,6 +7512,10 @@
     "Channel model owner label": "Nhãn chủ sở hữu mô hình của kênh",
     "Stored as channel metadata. Public model lists and details use the site-wide owner setting. This label does not select a routing channel.": "Được lưu dưới dạng siêu dữ liệu của kênh. Danh sách và thông tin mô hình công khai dùng thiết lập chủ sở hữu của toàn trang. Nhãn này không chọn kênh định tuyến.",
     "Use channel name as label": "Dùng tên kênh làm nhãn",
-    "Channel model owner label must be at most 64 characters without control or formatting characters": "Nhãn chủ sở hữu mô hình của kênh không được quá 64 ký tự và không chứa ký tự điều khiển hoặc định dạng"
+    "Channel model owner label must be at most 64 characters without control or formatting characters": "Nhãn chủ sở hữu mô hình của kênh không được quá 64 ký tự và không chứa ký tự điều khiển hoặc định dạng",
+    "Missing upstream task identity; delivery requires operator review": "Thiếu mã tác vụ phía nhà cung cấp; quản trị viên cần kiểm tra trạng thái bàn giao",
+    "Missing channel metadata; upstream delivery requires operator review": "Thiếu siêu dữ liệu kênh; quản trị viên cần kiểm tra trạng thái bàn giao phía nhà cung cấp",
+    "Ambiguous upstream task identity; delivery requires operator review": "Mã tác vụ phía nhà cung cấp không rõ ràng; quản trị viên cần kiểm tra trạng thái bàn giao",
+    "Legacy task billing identity is unavailable; financial review required": "Tác vụ cũ thiếu thông tin định danh tính phí ban đầu; cần kiểm tra tài chính"
   }
 }

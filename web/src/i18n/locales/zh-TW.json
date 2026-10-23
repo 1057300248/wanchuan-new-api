@@ -7512,6 +7512,10 @@
     "Channel model owner label": "渠道模型擁有者標籤",
     "Stored as channel metadata. Public model lists and details use the site-wide owner setting. This label does not select a routing channel.": "僅作為渠道中繼資料儲存。公開模型清單和詳細資料使用網站統一的擁有者設定。此標籤不會用於選擇路由渠道。",
     "Use channel name as label": "使用渠道名稱作為標籤",
-    "Channel model owner label must be at most 64 characters without control or formatting characters": "渠道模型擁有者標籤最多為 64 個字元，且不得包含控制字元或格式字元"
+    "Channel model owner label must be at most 64 characters without control or formatting characters": "渠道模型擁有者標籤最多為 64 個字元，且不得包含控制字元或格式字元",
+    "Missing upstream task identity; delivery requires operator review": "缺少上游工作識別碼；交付狀態需要管理員核查",
+    "Missing channel metadata; upstream delivery requires operator review": "缺少渠道中繼資料；上游交付狀態需要管理員核查",
+    "Ambiguous upstream task identity; delivery requires operator review": "上游工作識別碼不唯一；交付狀態需要管理員核查",
+    "Legacy task billing identity is unavailable; financial review required": "舊工作缺少原計費身分，需要財務核查"
   }
 }

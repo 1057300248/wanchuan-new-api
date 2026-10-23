@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -460,6 +461,29 @@ func ApplyTokenQuotaDeltaTx(tx *gorm.DB, id int, key string, delta int) error {
 	if delta == 0 {
 		return nil
 	}
+	// Unscoped() is a chainable GORM statement. A SELECT on that same
+	// statement would leak FROM/WHERE clauses into UPDATE (including SQLite
+	// UPDATE ... FROM tokens). Keep each query fresh on the SAME transaction.
+	fresh := func() *gorm.DB {
+		query := tx.Session(&gorm.Session{NewDB: true})
+		if tx.Statement.Unscoped {
+			query = query.Unscoped()
+		}
+		return query
+	}
+	var token Token
+	if err := lockForUpdate(fresh()).First(&token, id).Error; err != nil {
+		return err
+	}
+	if token.Key != key {
+		return errors.New("token quota identity mismatch")
+	}
+	// SQLite silently promotes overflowing INTEGER arithmetic to REAL. Check
+	// both signed counters before SQL so all supported engines fail closed.
+	if delta > 0 && (token.RemainQuota > math.MaxInt-delta || token.UsedQuota < math.MinInt+delta) ||
+		delta < 0 && (token.RemainQuota < math.MinInt-delta || token.UsedQuota > math.MaxInt+delta) {
+		return billingRefundReviewError("token_counter_bounds", "token quota counter is out of integer range")
+	}
 	ctx := tx.Statement.Context
 	if err := invalidateTokenCacheForMutationContext(ctx, key); err != nil {
 		code, class := BillingRefundErrorCode(err)
@@ -475,7 +499,7 @@ func ApplyTokenQuotaDeltaTx(tx *gorm.DB, id int, key string, delta int) error {
 	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
 		return context.DeadlineExceeded
 	}
-	result := tx.Model(&Token{}).Where("id = ?", id).Updates(
+	result := fresh().Model(&Token{}).Where("id = ?", id).Updates(
 		map[string]any{
 			"remain_quota":  gorm.Expr("remain_quota + ?", delta),
 			"used_quota":    gorm.Expr("used_quota - ?", delta),

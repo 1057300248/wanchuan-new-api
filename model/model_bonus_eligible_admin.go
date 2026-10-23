@@ -108,10 +108,12 @@ func BatchUpdateModelBonusEligible(modelIDs []int, target *bool, operatorId int,
 		}
 		return nil
 	})
+	// A failed acknowledgement does not prove the revocation rolled back.
+	InvalidatePricingCache()
+	InvalidateModelBonusEligibleCache()
 	if err != nil {
 		return 0, err
 	}
-	InvalidateModelBonusEligibleCache()
 	return changed, nil
 }
 

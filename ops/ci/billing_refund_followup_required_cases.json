@@ -1,7 +1,5 @@
 {
-  "pin": "efd192eb7caf2b0eec7243334ef4aba29c11aa44",
-  "tree": "01d413d8bcb789bed923b9cbb68eb192bbd0c3df",
-  "policy": "official-rc46-refund-with-released-093-wallet-adapter",
+  "policy": "financial-consistency-v2-atomic-source-token-task-ownership",
   "database_suite": {
     "label": "official-subscription-refund",
     "package": "model",
@@ -12,7 +10,7 @@
     },
     "fixture_isolation": "subscriptionPeriodDatabase creates unique owned tables and PostgreSQL schema, refuses existing fixture tables, and preserves the pre-existing public index",
     "required_leaf_suffixes": [],
-    "sqlite_result": "Exact SQLite 517 SQLITE_BUSY_SNAPSHOT with source credit committed and receipt still consumed: parity only, NOT financial-safety acceptance."
+    "sqlite_result": "Atomic source and receipt rollback/replay is required; historical SQLITE_BUSY_SNAPSHOT parity is not acceptance."
   },
   "sqlite_only_suites": [
     {
@@ -71,7 +69,7 @@
     {
       "label": "normal-wallet-settlement",
       "package": "service",
-      "selector": "^(TestWalletSettlementSurvivesTokenDeletion|TestWalletSettlementRejectsChangedTokenIdentity|TestPostConsumeQuotaIdempotencyCoversWalletAndToken|TestPostConsumeQuotaRefundIdempotencyCoversWalletAndToken|TestPostConsumeQuotaRollsBackWalletWhenTokenUpdateFails|TestBillingSessionWalletSettleRollsBackFundingWhenTokenUpdateFails|TestBillingSessionWalletRefundSettleRollsBackFundingWhenTokenUpdateFails|TestWalletSettleFailsClosedWithoutTransactionalSettlementCapability|TestWalletReserveLedgerSequenceUnchanged|TestWalletReceiptOrderValuesAndDefensiveCopy|TestReceiptNilForFundingWithoutReceiptCapability|TestSubscriptionReserveUsesTargetDeltaWithoutDoubleCount|TestReserveFundingFailureRollsBackTokenAndRetryDebitsFresh|TestNeedsRefundUsesOutstandingReserveCapability|TestReserveFailsClosedWithoutReservableCapability|TestStreamFailurePartialUsageSettlesOnceAndNeverRefunds|TestStreamFailureWithoutUsageRefundsReservationOnce)$",
+      "selector": "^(TestWalletSettlementSurvivesTokenDeletion|TestWalletSettlementRejectsChangedTokenIdentity|TestPostConsumeQuotaIdempotencyCoversWalletAndToken|TestPostConsumeQuotaRefundIdempotencyCoversWalletAndToken|TestPostConsumeQuotaRefundRequiresDebitReceipt|TestPostConsumeQuotaRollsBackWalletWhenTokenUpdateFails|TestBillingSessionWalletSettleRollsBackFundingWhenTokenUpdateFails|TestBillingSessionWalletRefundSettleRollsBackFundingWhenTokenUpdateFails|TestWalletSettleFailsClosedWithoutTransactionalSettlementCapability|TestWalletReserveLedgerSequenceUnchanged|TestWalletReceiptOrderValuesAndDefensiveCopy|TestReceiptNilForFundingWithoutReceiptCapability|TestSubscriptionReserveUsesTargetDeltaWithoutDoubleCount|TestReserveFundingFailureRollsBackTokenAndRetryDebitsFresh|TestNeedsRefundUsesOutstandingReserveCapability|TestReserveFailsClosedWithoutReservableCapability|TestStreamFailurePartialUsageSettlesOnceAndNeverRefunds|TestStreamFailureWithoutUsageRefundsReservationOnce)$",
       "required_tests": [
         "TestWalletSettlementSurvivesTokenDeletion",
         "TestWalletSettlementSurvivesTokenDeletion/soft/trusted",
@@ -85,6 +83,7 @@
         "TestWalletSettlementRejectsChangedTokenIdentity/credential",
         "TestPostConsumeQuotaIdempotencyCoversWalletAndToken",
         "TestPostConsumeQuotaRefundIdempotencyCoversWalletAndToken",
+        "TestPostConsumeQuotaRefundRequiresDebitReceipt",
         "TestPostConsumeQuotaRollsBackWalletWhenTokenUpdateFails",
         "TestBillingSessionWalletSettleRollsBackFundingWhenTokenUpdateFails",
         "TestBillingSessionWalletRefundSettleRollsBackFundingWhenTokenUpdateFails",
@@ -103,28 +102,32 @@
     {
       "label": "official-task-submission",
       "package": "controller",
-      "selector": "^(TestPresentTaskSubmissionUsesNativePresenterAfterPersistence|TestPresentTaskSubmissionFallbackUsesPersistedPublicID|TestPresentTaskSubmissionUsesHostOpenAIVideoCreateReceipt|TestExecuteTaskSubmissionRefundsWhenInsertFails|TestExecuteTaskSubmissionSettlementFailureStaysDurableAndWritesNothing|TestExecuteTaskSubmissionPersistsPinnedPluginProvenance|TestExecuteTaskSubmissionPersistsExecutionOnlyRequestID|TestExecuteTaskSubmissionHonorsRouteRetainResult|TestExecuteTaskSubmissionRefundsCancellationBeforeDurableBarrier|TestExecuteTaskSubmissionDisconnectBeforeUpstreamAcceptanceSkipsSubmitAndRefunds|TestExecuteTaskSubmissionCallerCancellationDuringSubmitRefundsBeforeDurableBarrier|TestExecuteTaskSubmissionDisconnectAfterDurableInsertDoesNotRefund|TestAcceptedSubmitStreamNeverRetries|TestRespondTaskSubmissionErrorWithoutCause|TestExecuteTaskSubmissionRefundsWhenFinalReserveFails)$",
+      "selector": "^(TestPresentTaskSubmissionUsesNativePresenterAfterPersistence|TestPresentTaskSubmissionFallbackUsesPersistedPublicID|TestPresentTaskSubmissionUsesHostOpenAIVideoCreateReceipt|TestExecuteTaskSubmissionPreservesHoldWhenAcceptedInsertFails|TestExecuteTaskSubmissionRollsBackInsertedTaskWhenHandoffFails|TestExecuteTaskSubmissionRejectsUnsupportedAtomicBilling|TestExecuteTaskSubmissionPersistsPinnedPluginProvenance|TestExecuteTaskSubmissionPersistsExecutionOnlyRequestID|TestExecuteTaskSubmissionHonorsRouteRetainResult|TestExecuteTaskSubmissionPreservesHoldOnCancellationAfterUpstreamAcceptance|TestExecuteTaskSubmissionDisconnectBeforeUpstreamAcceptanceSkipsSubmitAndRefunds|TestExecuteTaskSubmissionCallerCancellationDuringSubmitRefundsBeforeDurableBarrier|TestExecuteTaskSubmissionDisconnectAfterDurableInsertDoesNotRefund|TestAcceptedSubmitStreamNeverRetries|TestRespondTaskSubmissionErrorWithoutCause|TestExecuteTaskSubmissionPreservesHoldWhenAcceptedFinalReserveFails)$",
       "required_tests": [
         "TestPresentTaskSubmissionUsesNativePresenterAfterPersistence",
         "TestPresentTaskSubmissionFallbackUsesPersistedPublicID",
         "TestPresentTaskSubmissionUsesHostOpenAIVideoCreateReceipt",
-        "TestExecuteTaskSubmissionRefundsWhenInsertFails",
-        "TestExecuteTaskSubmissionSettlementFailureStaysDurableAndWritesNothing",
+        "TestExecuteTaskSubmissionPreservesHoldWhenAcceptedInsertFails",
+        "TestExecuteTaskSubmissionRollsBackInsertedTaskWhenHandoffFails",
+        "TestExecuteTaskSubmissionRejectsUnsupportedAtomicBilling",
         "TestExecuteTaskSubmissionPersistsPinnedPluginProvenance",
         "TestExecuteTaskSubmissionPersistsExecutionOnlyRequestID",
         "TestExecuteTaskSubmissionHonorsRouteRetainResult",
         "TestExecuteTaskSubmissionHonorsRouteRetainResult/immediate_success_is_discarded",
         "TestExecuteTaskSubmissionHonorsRouteRetainResult/immediate_failure_is_discarded",
         "TestExecuteTaskSubmissionHonorsRouteRetainResult/asynchronous_result_is_retained",
-        "TestExecuteTaskSubmissionRefundsCancellationBeforeDurableBarrier",
+        "TestExecuteTaskSubmissionPreservesHoldOnCancellationAfterUpstreamAcceptance",
         "TestExecuteTaskSubmissionDisconnectBeforeUpstreamAcceptanceSkipsSubmitAndRefunds",
         "TestExecuteTaskSubmissionCallerCancellationDuringSubmitRefundsBeforeDurableBarrier",
         "TestExecuteTaskSubmissionDisconnectAfterDurableInsertDoesNotRefund",
         "TestAcceptedSubmitStreamNeverRetries",
         "TestRespondTaskSubmissionErrorWithoutCause",
-        "TestExecuteTaskSubmissionRefundsWhenFinalReserveFails"
+        "TestExecuteTaskSubmissionPreservesHoldWhenAcceptedFinalReserveFails"
       ]
     }
   ],
-  "scope": "The request/task official sequence and historical pending read-only cases are required in request-finalization-service on every actual dialect. The normal-wallet refund-named tests exercise negative Settle/PostConsume, not the canceled official Refund transaction guarantee."
+  "scope": "Current v2 financial correctness plus retained compatibility boundaries; new exact native and SQLite configuration cases are listed in financial_consistency_required_cases.json.",
+  "baseline_pin": "efd192eb7caf2b0eec7243334ef4aba29c11aa44",
+  "baseline_tree": "01d413d8bcb789bed923b9cbb68eb192bbd0c3df",
+  "source_pin_policy": "Every execution must record and verify the immutable actual commit, tree and tracked-file hashes; this inventory is part of that tree."
 }

@@ -81,6 +81,43 @@ func TestBillingFinalizationDatabaseMatrix(t *testing.T) {
 				}
 				return r
 			}
+			// Source-evidence rejections must start behind a genuine held owner;
+			// otherwise a missing-owner rejection could make these tests falsely green.
+			seedHeld := func(t *testing.T, amount int) BillingFinalization {
+				t.Helper()
+				serial++
+				id := 41000 + serial
+				request := fmt.Sprintf("terminal-held-%d", id)
+				key := fmt.Sprintf("synthetic-held-token-%d", id)
+				require.NoError(t, db.Create(&User{Id: id, Username: request, AffCode: request, Quota: 1000, QuotaPaid: 500, QuotaBonus: 300, QuotaReward: 200}).Error)
+				require.NoError(t, db.Create(&Token{Id: id, UserId: id, Key: key, RemainQuota: 1000}).Error)
+				authorization := BillingFinalization{RequestID: request, UserID: id, Source: "wallet", TokenID: id, TokenFingerprint: BillingTokenFingerprint(key)}
+				r, applied, err := ReserveBillingFinalization(t.Context(), authorization, nil, amount, func(tx *gorm.DB, held *BillingFinalization) error {
+					result, err := DebitQuotaTx(tx, LedgerEntry{UserId: id, Delta: amount, Reason: LedgerReasonBillingPreConsume, ReferenceType: "relay", ReferenceId: request, RequestId: request, IdempotencyKey: "billing:preconsume:" + request}, AccountPaid, AccountBonus, AccountReward)
+					if err != nil {
+						return err
+					}
+					for _, row := range result.Rows {
+						switch LedgerAccount(row.Account) {
+						case AccountPaid:
+							held.Paid -= row.Delta
+						case AccountBonus:
+							held.Bonus -= row.Delta
+						case AccountReward:
+							held.Reward -= row.Delta
+						}
+					}
+					if err := ReserveBillingTokenTx(tx, held, amount, false); err != nil {
+						return err
+					}
+					held.SourceHeld, held.TokenHeld = amount, amount
+					return nil
+				})
+				require.NoError(t, err)
+				require.True(t, applied)
+				require.Equal(t, BillingHeld, r.State)
+				return r
+			}
 			balances := func(t *testing.T, r BillingFinalization, wallet, tokenQuota int) {
 				t.Helper()
 				var u User
@@ -91,8 +128,15 @@ func TestBillingFinalizationDatabaseMatrix(t *testing.T) {
 				require.Equal(t, tokenQuota, token.RemainQuota)
 			}
 
+			t.Run("token_counter_bounds", runFinancialTokenCounterBoundsCases)
+			if dialect.name != common.DatabaseTypeSQLite {
+				t.Run("subscription_wallet_lock_order", runFinancialSubscriptionLockOrderCases)
+			}
+
+			t.Run("wallet_refund_sequence", runFinancialWalletReceiptCases)
+
 			t.Run("receipt_mismatch_and_legacy_replay", func(t *testing.T) {
-				r := seed(t, 100, 100)
+				r := seedHeld(t, 100)
 				bad := r
 				bad.Paid = 99
 				bad.SourceHeld = 99
@@ -103,16 +147,20 @@ func TestBillingFinalizationDatabaseMatrix(t *testing.T) {
 				require.NoError(t, err)
 				_, err = SettleBillingFinalization(context.Background(), r, r.PreConsumed, func(*gorm.DB) error { return nil })
 				require.Error(t, err)
+				code, _ := BillingRefundErrorCode(err)
+				require.Equal(t, "source_evidence", code)
 				balances(t, r, 1000, 900)
 			})
 			t.Run("near_miss_realtime_key_rejected", func(t *testing.T) {
 				for _, suffix := range []string{"wss:01:20", "wss:+1:20", "wss:0:20", "wss:1:21", "wss:18446744073709551616:20"} {
 					t.Run(suffix, func(t *testing.T) {
-						r := seed(t, 100, 100)
+						r := seedHeld(t, 100)
 						_, err := DebitQuota(LedgerEntry{UserId: r.UserID, Delta: 20, Reason: LedgerReasonBillingSettle, ReferenceType: "relay", ReferenceId: r.RequestID, RequestId: r.RequestID, IdempotencyKey: "billing:settle:" + r.RequestID + ":" + suffix}, AccountPaid)
 						require.NoError(t, err)
 						_, err = SettleBillingFinalization(context.Background(), r, r.PreConsumed, func(*gorm.DB) error { return nil })
 						require.Error(t, err)
+						code, _ := BillingRefundErrorCode(err)
+						require.Equal(t, "source_evidence", code)
 						balances(t, r, 880, 900)
 					})
 				}

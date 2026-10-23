@@ -17,7 +17,7 @@ import (
 )
 
 // Dedicated fresh databases only, separate from the model matrix.
-// This matrix covers retained normal settlement and official refund sequencing.
+// This matrix requires atomic financial outcomes and keeps historical pending work read-only.
 func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 	for _, dialect := range []struct {
 		name common.DatabaseType
@@ -66,6 +66,32 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 			}
 			require.NoError(t, db.Raw(q).Scan(&version).Error)
 			t.Logf("terminal session matrix: %s %s", dialect.name, version)
+			t.Run("financial_lost_ack", TestFinancialConsistencyLostACKRefund)
+			t.Run("financial_task_refund", TestFinancialConsistencyTaskRefundAtomic)
+			t.Run("financial_mj_refund", TestFinancialConsistencyMidjourneyRefundAtomic)
+			t.Run("financial_stale_success", TestFinancialConsistencyStaleChannelFailurePreservesSuccess)
+			t.Run("financial_metadata", TestFinancialConsistencyUnknownMetadataNeverBlindRefunds)
+			t.Run("financial_submit", TestFinancialConsistencyTaskSubmitNetReceipt)
+			t.Run("financial_task_identity", TestFinancialConsistencyTaskOriginalTokenIdentity)
+			t.Run("task_atomic", TestTaskFinancialAtomic)
+			t.Run("mj_atomic", TestMidjourneyFinancialAtomic)
+			t.Run("separate_log", TestTaskFinancialSeparateLogFailureIsAtMostOnce)
+			t.Run("lifecycle_initial", TestBillingLifecycleInitialReservationRollback)
+			t.Run("lifecycle_reserve", TestBillingLifecycleReserveRollback)
+			t.Run("lifecycle_admission_failure", TestBillingLifecycleRefundAdmissionFailurePreservesHeld)
+			t.Run("lifecycle_ready_recovery", TestBillingLifecycleReadyRefundRecoversWithoutRequestWorker)
+			t.Run("lifecycle_unknown_delivery", TestBillingLifecycleUnknownDeliveryNeverAdmitsRefund)
+			t.Run("lifecycle_trusted_zero", TestBillingLifecycleTrustedZeroHasDurableHeldReceipt)
+			t.Run("lifecycle_reservation_ack", TestBillingLifecycleReservationCommitAckRecovery)
+			t.Run("mj_request_owner", TestMidjourneyFinancialRequestOwner)
+			t.Run("mj_zero_refund_identity", TestMidjourneyFinancialZeroRefundIdentity)
+			t.Run("financial_contention", TestFinancialConsistencyTerminalContention)
+			t.Run("review_failure_usage", TestTaskFinancialReviewFailureUsageCommitAndRecovery)
+			t.Run("review_legacy_terminal", TestTaskFinancialReviewLegacyTerminalObservation)
+			t.Run("review_zero_price_usage", TestTaskFinancialReviewFailureZeroPriceUsage)
+			t.Run("review_task_recovery_fairness", TestTaskFinancialReviewRecoveryFairness)
+			t.Run("review_mj_recovery_fairness", TestMidjourneyFinancialReviewRecoveryFairness)
+			t.Run("review_quota_export", TestTaskFinancialReviewQuotaExportParity)
 			t.Run("separate_held_amounts", TestPolicyPreservingRefundSeparateHeldAmounts)
 			t.Run("official_request_source_failure", TestOfficialRequestRefundMarksBeforeSourceAndDoesNotRetry)
 			t.Run("official_request_token_failure", TestOfficialRequestRefundTokenFailureKeepsSourceCredit)
@@ -88,6 +114,11 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 			t.Run("probe_failure", TestPolicyPreservingRollbackProbeFailureDoesNotReserve)
 			t.Run("independent_violation_fee", TestPolicyPreservingRefundIndependentViolationFee)
 			t.Run("realtime_increment_terminal", TestPolicyPreservingRealtimeIncrementAndTerminal)
+			t.Run("realtime_lifecycle", TestRealtimeBillingLifecycle)
+			t.Run("realtime_trusted", TestRealtimeBillingTrustedObservedOnly)
+			t.Run("subscription_snapshot_unknown", TestSubscriptionReservationOldPeriodSnapshotUnknown)
+			t.Run("unowned_hold", TestBillingUnownedHoldRequiresReview)
+			t.Run("audio_fixed_price", TestAudioFixedPriceBilling)
 			t.Run("failed_settle_reserve_refund", TestPolicyPreservingFailedSettlementCanReserveThenRefund)
 			t.Run("legacy_final_more_less", TestPolicyPreservingSettlementFinalMoreLessAndReplay)
 			for _, scenario := range []string{"partial_more", "partial_less", "trusted", "playground", "unlimited", "subscription_zero_delta", "subscription_zero_delta_replaced_token"} {
@@ -160,7 +191,8 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 						require.Equal(t, int64(500+actual), getSubscriptionUsed(t, 31203))
 						var r model.SubscriptionPreConsumeRecord
 						require.NoError(t, db.First(&r, "request_id = ?", info.RequestId).Error)
-						require.Equal(t, "consumed", r.Status, "official normal settlement does not close the base preconsume receipt")
+						require.Equal(t, "settled", r.Status)
+						require.EqualValues(t, actual, r.SettledAmount)
 					} else {
 						var u model.User
 						require.NoError(t, db.First(&u, 31201).Error)

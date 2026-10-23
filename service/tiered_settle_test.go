@@ -377,10 +377,14 @@ func TestPrepareTieredBillingForSelectedGroupStartsBillingAfterFreeGroup(t *test
 	gin.SetMode(gin.TestMode)
 
 	const userID = 700
+	const requestID = "tiered-free-to-paid"
+	require.NoError(t, model.DB.AutoMigrate(&model.Ability{}))
 	seedUser(t, userID, 500_000)
+	seedBonusEligibleModel(t, "gpt-test", boolPtr(false))
 
 	relayInfo := &relaycommon.RelayInfo{
 		UserId:          userID,
+		RequestId:       requestID,
 		IsPlayground:    true,
 		ForcePreConsume: true,
 		OriginModelName: "gpt-test",
@@ -402,6 +406,7 @@ func TestPrepareTieredBillingForSelectedGroupStartsBillingAfterFreeGroup(t *test
 	}
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Set(common.RequestIdKey, requestID)
 
 	require.Nil(t, PrepareTieredBillingForSelectedGroup(ctx, relayInfo))
 	require.NotNil(t, relayInfo.Billing)
@@ -413,6 +418,14 @@ func TestPrepareTieredBillingForSelectedGroupStartsBillingAfterFreeGroup(t *test
 	userQuota, err := model.GetUserQuota(userID, false)
 	require.NoError(t, err)
 	assert.Equal(t, 400_000, userQuota)
+	var held model.BillingFinalization
+	require.NoError(t, model.DB.Where("request_id = ?", requestID).First(&held).Error)
+	assert.Equal(t, model.BillingHeld, held.State)
+	assert.Equal(t, userID, held.UserID)
+	assert.Equal(t, BillingSourceWallet, held.Source)
+	assert.Equal(t, 100_000, held.SourceHeld)
+	assert.Zero(t, held.TokenHeld, "the original playground request has no token hold")
+	assert.Empty(t, held.TokenFingerprint)
 }
 
 func TestPrepareTieredBillingForSelectedGroupPaidToFreeKeepsFreeModelFalse(t *testing.T) {
@@ -451,9 +464,8 @@ func TestPrepareTieredBillingForSelectedGroupReserveInsufficientRejects(t *testi
 	truncate(t)
 
 	const userID = 701
-	// Balance covers the initial 50k pre-consume (already deducted before this
-	// test's seed) but not the 50k top-up to the more expensive retry group.
-	seedUser(t, userID, 20_000)
+	// Real initial 50k pre-consume leaves 20k: insufficient for another 50k.
+	seedUser(t, userID, 70_000)
 
 	relayInfo := &relaycommon.RelayInfo{
 		UserId:                userID,
@@ -472,17 +484,15 @@ func TestPrepareTieredBillingForSelectedGroupReserveInsufficientRejects(t *testi
 			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 0.20},
 		},
 	}
-	session := &BillingSession{
-		relayInfo:        relayInfo,
-		funding:          &WalletFunding{userId: userID, consumed: 50_000},
-		preConsumedQuota: 50_000,
-	}
-	relayInfo.Billing = session
+	session := recordedWalletTestSession(t, relayInfo, 50_000)
+	require.Equal(t, 20_000, getUserQuota(t, userID))
 
 	// 余额 20k 不足以补充预扣 50k：请求必须被拒绝，余额保持原值不为负。
 	apiErr := PrepareTieredBillingForSelectedGroup(nil, relayInfo)
 	require.NotNil(t, apiErr)
 	assert.NotEmpty(t, apiErr.GetErrorCode())
+	assert.ErrorIs(t, apiErr, ErrModelBonusNotSupported, "must reach the actual insufficient source, not a missing-owner guard")
+	assertRecordedWalletHold(t, session, 50_000)
 
 	assert.Equal(t, 50_000, session.GetPreConsumedQuota())
 	userQuota, err := model.GetUserQuota(userID, false)
@@ -494,17 +504,14 @@ func TestBillingSessionReserveWalletTopUpDecrementsBalance(t *testing.T) {
 	truncate(t)
 
 	const userID = 702
-	seedUser(t, userID, 500_000)
+	seedUser(t, userID, 550_000)
 
 	relayInfo := &relaycommon.RelayInfo{
 		UserId:       userID,
 		IsPlayground: true,
 	}
-	session := &BillingSession{
-		relayInfo:        relayInfo,
-		funding:          &WalletFunding{userId: userID, consumed: 50_000},
-		preConsumedQuota: 50_000,
-	}
+	session := recordedWalletTestSession(t, relayInfo, 50_000)
+	require.Equal(t, 500_000, getUserQuota(t, userID))
 
 	require.NoError(t, session.Reserve(100_000))
 

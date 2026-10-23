@@ -71,7 +71,7 @@ func TestPolicyPreservingTerminalCommitBoundaries(t *testing.T) {
 	for _, mode := range []int32{1, 2} {
 		t.Run(map[int32]string{1: "rollback", 2: "lost_ack"}[mode], func(t *testing.T) {
 			t.Run("settlement", func(t *testing.T) {
-				s := legacyRefundSession(t, "settle-commit-boundary", 100, 100)
+				s := currentRefundSession(t, "settle-commit-boundary", 100)
 				terminalCommitFault(t, mode)
 				require.Error(t, s.Settle(200))
 				if mode == 1 {

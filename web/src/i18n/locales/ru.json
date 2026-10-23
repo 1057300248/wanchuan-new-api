@@ -7512,6 +7512,10 @@
     "Channel model owner label": "Метка владельца модели канала",
     "Stored as channel metadata. Public model lists and details use the site-wide owner setting. This label does not select a routing channel.": "Сохраняется как метаданные канала. Публичные списки и сведения о моделях используют владельца, заданного для всего сайта. Эта метка не выбирает канал маршрутизации.",
     "Use channel name as label": "Использовать имя канала как метку",
-    "Channel model owner label must be at most 64 characters without control or formatting characters": "Метка владельца модели канала должна содержать не более 64 символов без управляющих символов и символов форматирования"
+    "Channel model owner label must be at most 64 characters without control or formatting characters": "Метка владельца модели канала должна содержать не более 64 символов без управляющих символов и символов форматирования",
+    "Missing upstream task identity; delivery requires operator review": "Отсутствует идентификатор задачи провайдера; требуется проверка результата администратором",
+    "Missing channel metadata; upstream delivery requires operator review": "Отсутствуют метаданные канала; требуется проверка результата провайдера администратором",
+    "Ambiguous upstream task identity; delivery requires operator review": "Неоднозначный идентификатор задачи провайдера; требуется проверка результата администратором",
+    "Legacy task billing identity is unavailable; financial review required": "Исходные платёжные данные старой задачи отсутствуют; требуется финансовая проверка"
   }
 }

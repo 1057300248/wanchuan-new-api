@@ -248,8 +248,7 @@ func SearchModelsWithChannels(keyword, vendor, status, syncOfficial string, offs
 }
 
 func (mi *Model) Insert() error {
-	defer InvalidateModelBonusEligibleCache()
-	return metadataTransaction(func(tx *gorm.DB) error {
+	err := metadataTransaction(func(tx *gorm.DB) error {
 		if err := validateModelVendor(tx, mi.VendorID); err != nil {
 			return err
 		}
@@ -262,6 +261,11 @@ func (mi *Model) Insert() error {
 		mi.Status, mi.SyncOfficial = status, syncOfficial
 		return tx.Model(&Model{}).Where("id = ?", mi.Id).Updates(map[string]any{"status": status, "sync_official": syncOfficial}).Error
 	})
+	// A transaction error can be a lost COMMIT acknowledgement. Cache eviction
+	// is safe even after rollback; retaining a possibly revoked grant is not.
+	InvalidatePricingCache()
+	InvalidateModelBonusEligibleCache()
+	return err
 }
 
 func IsModelNameDuplicated(id int, name string) (bool, error) {
@@ -274,8 +278,7 @@ func IsModelNameDuplicated(id int, name string) (bool, error) {
 }
 
 func (mi *Model) Update() error {
-	defer InvalidateModelBonusEligibleCache()
-	return metadataTransaction(func(tx *gorm.DB) error {
+	err := metadataTransaction(func(tx *gorm.DB) error {
 		if err := validateModelVendor(tx, mi.VendorID); err != nil {
 			return err
 		}
@@ -283,6 +286,11 @@ func (mi *Model) Update() error {
 		return tx.Model(&Model{}).Where("id = ?", mi.Id).
 			Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "status", "sync_official", "name_rule", "updated_time", "context_length", "max_output_tokens", "knowledge_cutoff", "release_date", "parameter_count", "input_modalities", "output_modalities", "capabilities", "bonus_eligible").Updates(mi).Error
 	})
+	// A transaction error can be a lost COMMIT acknowledgement. Cache eviction
+	// is safe even after rollback; retaining a possibly revoked grant is not.
+	InvalidatePricingCache()
+	InvalidateModelBonusEligibleCache()
+	return err
 }
 
 // ParseModelMetadataArray 将 models 表中的 JSON 数组字符串解析为字符串切片。
@@ -405,6 +413,9 @@ func DeleteModelMetadata(ids []int, removeFromChannels, removePricing bool) (Mod
 	} else {
 		err = metadataTransaction(deleteRecords)
 	}
+	// Either transaction may have committed before its acknowledgement failed.
+	InvalidatePricingCache()
+	InvalidateModelBonusEligibleCache()
 	if err != nil {
 		return ModelDeleteResult{}, err
 	}

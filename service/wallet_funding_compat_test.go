@@ -68,6 +68,19 @@ func (w *WalletFunding) Receipt() []moneyport.AccountShare {
 	return w.inner.Receipt()
 }
 
+func (w *WalletFunding) PreConsumeInTx(tx *gorm.DB, amount int) (moneyport.SettlementResult, error) {
+	return w.ensure().PreConsumeInTx(tx, amount)
+}
+
+func (w *WalletFunding) ReserveInTx(tx *gorm.DB, target int) (moneyport.SettlementResult, error) {
+	return w.ensure().ReserveInTx(tx, target)
+}
+
+func (w *WalletFunding) ApplyReservationResult(target int, result moneyport.SettlementResult) {
+	w.ensure().ApplyReservationResult(target, result)
+	w.consumed = w.inner.ReservedQuota()
+}
+
 func (w *WalletFunding) SettleInTx(tx *gorm.DB, delta int) (moneyport.SettlementResult, error) {
 	return w.ensure().SettleInTx(tx, delta)
 }

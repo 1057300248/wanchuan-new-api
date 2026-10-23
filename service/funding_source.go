@@ -1,10 +1,13 @@
 package service
 
 import (
+	"errors"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
+	"gorm.io/gorm"
 )
 
 // FundingSource is retained as a service compatibility alias while ownership
@@ -12,8 +15,10 @@ import (
 type FundingSource = moneyport.FundingSource
 
 var (
-	_ FundingSource               = (*SubscriptionFunding)(nil)
-	_ moneyport.ReservableFunding = (*SubscriptionFunding)(nil)
+	_ FundingSource                           = (*SubscriptionFunding)(nil)
+	_ moneyport.ReservableFunding             = (*SubscriptionFunding)(nil)
+	_ transactionalSettlementFunding          = (*SubscriptionFunding)(nil)
+	_ moneyport.HostBillingFinalizationSource = (*SubscriptionFunding)(nil)
 )
 
 // ---------------------------------------------------------------------------
@@ -26,58 +31,123 @@ type SubscriptionFunding struct {
 	modelName      string
 	amount         int64 // 预扣的订阅额度（subConsume）
 	subscriptionId int
+	quotaPeriod    int64
 	preConsumed    int64
-	// reserveDelta 通过 Reserve 累计补充预扣的增量；预扣基线是 amount，
-	// 故当前预扣目标为 amount + reserveDelta。它只负责把 Reserve 的绝对目标值
-	// 换算回订阅侧需要的增量：与它同值的 BillingSession.extraReserved 才是
-	// RelayInfo 同步与补充预扣回滚的唯一依据，两者不得叠加。
+	// reserveDelta mirrors the durable receipt's extra reservation. Refund owns
+	// the entire receipt; BillingSession must not return this amount separately.
 	reserveDelta int
 	// 以下字段在 PreConsume 成功后填充，供 RelayInfo 同步使用
 	AmountTotal     int64
 	AmountUsedAfter int64
+	SnapshotUnknown bool
 	PlanId          int
 	PlanTitle       string
 }
 
 func (s *SubscriptionFunding) Source() string { return BillingSourceSubscription }
 
-func (s *SubscriptionFunding) PreConsume(_ int) error {
-	// amount 参数被忽略，使用内部 s.amount（已在构造时根据 preConsumedQuota 计算）
-	res, err := model.PreConsumeUserSubscription(s.requestId, s.userId, s.modelName, 0, s.amount)
+func (s *SubscriptionFunding) UsesHostBillingFinalization() bool { return true }
+
+func (s *SubscriptionFunding) BillingIdentity() model.SubscriptionBillingIdentity {
+	return model.SubscriptionBillingIdentity{
+		RequestID: s.requestId, UserID: s.userId, SubscriptionID: s.subscriptionId,
+		QuotaPeriod: s.quotaPeriod, PreConsumed: s.preConsumed,
+	}
+}
+
+func (s *SubscriptionFunding) PreConsume(amount int) error {
+	var result moneyport.SettlementResult
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		var err error
+		result, err = s.PreConsumeInTx(tx, amount)
+		return err
+	})
 	if err != nil {
 		return err
 	}
-	s.subscriptionId = res.UserSubscriptionId
-	s.preConsumed = res.PreConsumed
-	s.AmountTotal = res.AmountTotal
-	s.AmountUsedAfter = res.AmountUsedAfter
-	// 获取订阅计划信息
-	if planInfo, err := model.GetSubscriptionPlanInfoByUserSubscriptionId(res.UserSubscriptionId); err == nil && planInfo != nil {
-		s.PlanId = planInfo.PlanId
-		s.PlanTitle = planInfo.PlanTitle
-	}
+	s.ApplyReservationResult(amount, result)
 	return nil
+}
+
+// PreConsumeInTx does not publish mutable funding state before the host-owned
+// source/token/held receipt transaction has actually committed.
+func (s *SubscriptionFunding) PreConsumeInTx(tx *gorm.DB, _ int) (moneyport.SettlementResult, error) {
+	res, err := model.PreConsumeUserSubscriptionTx(tx, s.requestId, s.userId, s.modelName, 0, s.amount)
+	if err != nil {
+		return moneyport.SettlementResult{}, err
+	}
+	return moneyport.SettlementResult{
+		Replayed: res.Replayed, SourceID: res.UserSubscriptionId, SourcePeriod: res.QuotaPeriod,
+		SourceHeld: int(res.ReservedAmount), OriginalAmount: int(res.PreConsumed),
+		AmountTotal: res.AmountTotal, AmountUsedAfter: res.AmountUsedAfter,
+	}, nil
+}
+
+func (s *SubscriptionFunding) ApplyReservationResult(_ int, result moneyport.SettlementResult) {
+	s.subscriptionId, s.quotaPeriod = result.SourceID, result.SourcePeriod
+	s.preConsumed = int64(result.OriginalAmount)
+	s.reserveDelta = result.SourceHeld - result.OriginalAmount
+	s.AmountTotal = result.AmountTotal
+	// RelayInfo currently adds extraReserved when displaying the preconsume
+	// snapshot. Store the base here so replay/Reserve cannot double that extra.
+	s.AmountUsedAfter = result.AmountUsedAfter - int64(s.reserveDelta)
+	s.SnapshotUnknown = result.SnapshotUnknown
+	s.PlanId, s.PlanTitle = result.SourcePlanID, result.SourcePlanTitle
 }
 
 func (s *SubscriptionFunding) Settle(delta int) error {
-	if delta == 0 {
-		return nil
-	}
-	return model.PostConsumeUserSubscriptionDelta(s.subscriptionId, int64(delta))
+	return model.DB.Transaction(func(tx *gorm.DB) error {
+		_, err := s.SettleInTx(tx, delta)
+		return err
+	})
 }
 
-// Reserve adapts the host absolute target to official subscription delta accounting.
-// Only the base pre-consumption belongs to Refund; BillingSession returns the extra.
-func (s *SubscriptionFunding) Reserve(target int) error {
-	current := int(s.amount) + s.reserveDelta
-	if target <= current {
-		return nil
+func (s *SubscriptionFunding) SettleInTx(tx *gorm.DB, delta int) (moneyport.SettlementResult, error) {
+	if s.amount <= 0 || s.amount > common.MaxQuota || s.preConsumed != s.amount || s.reserveDelta < 0 || int64(s.reserveDelta) > common.MaxQuota-s.amount || delta < -common.MaxQuota || delta > common.MaxQuota {
+		return moneyport.SettlementResult{}, errors.New("invalid subscription settlement delta")
 	}
-	if err := model.PostConsumeUserSubscriptionDelta(s.subscriptionId, int64(target-current)); err != nil {
+	actual := s.amount + int64(s.reserveDelta) + int64(delta)
+	applied, err := model.SettleSubscriptionPreConsumeTx(tx, s.BillingIdentity(), actual)
+	return moneyport.SettlementResult{Replayed: !applied}, err
+}
+
+// The receipt is the authoritative state; no separate cache mirrors allowances.
+func (s *SubscriptionFunding) ApplySettlementResult(_ int, _ moneyport.SettlementResult) {}
+
+// Reserve persists an absolute target, including on replay from a new object.
+func (s *SubscriptionFunding) Reserve(target int) error {
+	var result moneyport.SettlementResult
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		var err error
+		result, err = s.ReserveInTx(tx, target)
+		return err
+	})
+	if err != nil {
 		return err
 	}
-	s.reserveDelta = target - int(s.amount)
+	s.ApplyReservationResult(target, result)
 	return nil
+}
+
+func (s *SubscriptionFunding) ReserveInTx(tx *gorm.DB, target int) (moneyport.SettlementResult, error) {
+	identity := s.BillingIdentity()
+	before, err := model.ReadSubscriptionPreConsumeTx(tx, identity)
+	if err != nil {
+		return moneyport.SettlementResult{}, err
+	}
+	if err := model.ReserveSubscriptionPreConsumeTx(tx, identity, int64(target)); err != nil {
+		return moneyport.SettlementResult{}, err
+	}
+	after, err := model.ReadSubscriptionPreConsumeTx(tx, identity)
+	if err != nil {
+		return moneyport.SettlementResult{}, err
+	}
+	return moneyport.SettlementResult{
+		Replayed: after.ReservedAmount == before.ReservedAmount,
+		SourceID: after.UserSubscriptionId, SourcePeriod: after.QuotaPeriod,
+		SourceHeld: int(after.ReservedAmount), OriginalAmount: int(after.PreConsumed),
+		AmountTotal: after.AmountTotal, AmountUsedAfter: after.AmountUsedAfter,
+	}, nil
 }
 
 func (s *SubscriptionFunding) Refund() error {
@@ -85,7 +155,10 @@ func (s *SubscriptionFunding) Refund() error {
 		return nil
 	}
 	return refundWithRetry(func() error {
-		return model.RefundSubscriptionPreConsume(s.requestId)
+		return model.DB.Transaction(func(tx *gorm.DB) error {
+			_, err := model.RefundSubscriptionPreConsumeTx(tx, s.BillingIdentity())
+			return err
+		})
 	})
 }
 

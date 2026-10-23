@@ -30,22 +30,25 @@ import (
 // BillingSession 封装单次请求的预扣费/结算/退款生命周期。
 // 实现 relaycommon.BillingSettler 接口。
 type BillingSession struct {
-	relayInfo           *relaycommon.RelayInfo
-	funding             FundingSource
-	preConsumedQuota    int  // 实际预扣额度（信任用户可能为 0）
-	tokenConsumed       int  // 令牌额度实际扣减量
-	extraReserved       int  // 发送前补充预扣的额度（订阅退款时单独回滚）
-	trusted             bool // 是否命中信任额度旁路
-	fundingSettled      bool // 资金结算已成功提交（钱包可能经事务能力而非 FundingSource.Settle）
-	settled             bool // Settle 全部完成（资金 + 令牌）
-	refunded            bool // Refund has been called, as in official rc.46.
-	taskOwned           bool
-	actualSettled       int
-	billingIdentity     *model.BillingFinalization
-	terminalReceipt     *model.BillingFinalization
-	settlementUncertain bool
-	lang                string // Request language; keep custom funding factories and atomic ledger settlement.
-	mu                  sync.Mutex
+	relayInfo               *relaycommon.RelayInfo
+	funding                 FundingSource
+	preConsumedQuota        int  // 实际预扣额度（信任用户可能为 0）
+	tokenConsumed           int  // 令牌额度实际扣减量
+	extraReserved           int  // 发送前补充预扣的额度（订阅退款时单独回滚）
+	trusted                 bool // 是否命中信任额度旁路
+	fundingSettled          bool // 资金结算已成功提交（钱包可能经事务能力而非 FundingSource.Settle）
+	settled                 bool // Settle 全部完成（资金 + 令牌）
+	refunded                bool // durable refund ownership accepted, or completed for a custom source.
+	taskOwned               bool
+	actualSettled           int
+	billingIdentity         *model.BillingFinalization
+	terminalReceipt         *model.BillingFinalization
+	settlementUncertain     bool
+	reservationUncertain    bool
+	subscriptionSupplements map[string]bool
+	realtime                *realtimeBillingState
+	lang                    string // Request language; keep custom funding factories and atomic ledger settlement.
+	mu                      sync.Mutex
 }
 
 // 编译期能力断言。会话把资金来源的扣减回执转发给异步任务持久化路径，
@@ -66,11 +69,15 @@ type transactionalSettlementFunding interface {
 }
 
 // Settle preserves the original actual-minus-preconsume arithmetic. Built-in
-// wallets retain their atomic source/token terminal settlement. Subscriptions
-// use the official independent source/token steps.
+// wallets and subscriptions share atomic source/token terminal settlement.
 func (s *BillingSession) Settle(actualQuota int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.reservationUncertain {
+		if err := s.resolveReservationLocked(); err != nil {
+			return err
+		}
+	}
 	if s.settled {
 		if s.actualSettled != actualQuota {
 			return errors.New("billing settlement replay amount mismatch")
@@ -167,7 +174,29 @@ func (s *BillingSession) settleWalletAndToken(funding transactionalSettlementFun
 // Refund 退还所有预扣费，幂等安全，异步执行。
 func (s *BillingSession) Refund(c *gin.Context) {
 	s.mu.Lock()
-	if s.settled || s.refunded || !s.needsRefundLocked() {
+	if s.reservationUncertain {
+		if err := s.resolveReservationLocked(); err != nil {
+			common.SysError("billing refund held evidence is unresolved")
+			s.mu.Unlock()
+			return
+		}
+	}
+	if !s.settled && !s.refunded && !s.taskOwned && s.realtime != nil && s.realtime.observed {
+		// Partial delivery is not a failed unused hold. Settle measured aggregate
+		// exactly once; failure/unknown ACK preserves the held evidence for review.
+		s.realtime.final = true
+		if err := s.settleDurableLocked(s.realtime.actual); err != nil {
+			common.SysError("partial realtime settlement remains unresolved")
+		}
+		s.mu.Unlock()
+		return
+	}
+	if s.settled || s.refunded || s.taskOwned || !s.needsRefundLocked() {
+		s.mu.Unlock()
+		return
+	}
+	if s.durableTerminalSource() {
+		s.refundDurableLocked()
 		s.mu.Unlock()
 		return
 	}
@@ -216,11 +245,14 @@ func (s *BillingSession) NeedsRefund() bool {
 }
 
 func (s *BillingSession) needsRefundLocked() bool {
-	if s.settled || s.refunded || s.fundingSettled {
+	if s.settled || s.refunded || s.fundingSettled || s.taskOwned {
 		// fundingSettled 时资金来源已提交结算，不能再退预扣费
 		return false
 	}
 	if s.tokenConsumed > 0 {
+		return true
+	}
+	if s.terminalReceipt != nil && s.terminalReceipt.SourceHeld > 0 {
 		return true
 	}
 	// 订阅可能在 tokenConsumed=0 时仍预扣了额度
@@ -290,6 +322,11 @@ func (s *BillingSession) ReserveBeforeSubmit(targetQuota int) error {
 func (s *BillingSession) reserve(targetQuota int, requireAvailableQuota bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.reservationUncertain {
+		if err := s.resolveReservationLocked(); err != nil {
+			return err
+		}
+	}
 
 	if s.relayInfo != nil {
 		_, imageRequest := s.relayInfo.Request.(*dto.ImageRequest)
@@ -309,6 +346,15 @@ func (s *BillingSession) reserve(targetQuota int, requireAvailableQuota bool) er
 
 	delta := targetQuota - s.preConsumedQuota
 	if delta <= 0 {
+		return nil
+	}
+	if s.durableTerminalSource() {
+		if err := s.reserveDurableLocked(targetQuota, false); err != nil {
+			return err
+		}
+		if requireAvailableQuota {
+			s.trusted = false
+		}
 		return nil
 	}
 
@@ -357,18 +403,30 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 		logger.LogInfo(c, common.LogText("user %d needs pre-consume %s (funding=%s)", s.relayInfo.UserId, logger.FormatQuota(effectiveQuota), s.funding.Source()))
 	}
 
-	// ---- 1) 预扣令牌额度 ----
-	if effectiveQuota > 0 {
-		if err := PreConsumeTokenQuota(s.relayInfo, effectiveQuota); err != nil {
-			return types.NewErrorWithStatusCode(err, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+	var fundingErr error
+	if s.durableTerminalSource() {
+		fundingErr = s.reserveDurableLocked(effectiveQuota, true)
+		if fundingErr == nil {
+			return nil
 		}
-		s.tokenConsumed = effectiveQuota
-	}
+		if errors.Is(fundingErr, model.ErrBillingTokenInsufficient) {
+			return types.NewErrorWithStatusCode(fundingErr, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+		}
+	} else {
+		// ---- 1) Alternate funding retains its declared independent contract. ----
+		if effectiveQuota > 0 {
+			if err := PreConsumeTokenQuota(s.relayInfo, effectiveQuota); err != nil {
+				return types.NewErrorWithStatusCode(err, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			}
+			s.tokenConsumed = effectiveQuota
+		}
 
-	// ---- 2) 预扣资金来源 ----
-	if err := s.funding.PreConsume(effectiveQuota); err != nil {
+		// ---- 2) 预扣资金来源 ----
+		fundingErr = s.funding.PreConsume(effectiveQuota)
+	}
+	if err := fundingErr; err != nil {
 		// 预扣费失败，回滚令牌额度
-		if s.tokenConsumed > 0 && !s.relayInfo.IsPlayground {
+		if !s.durableTerminalSource() && s.tokenConsumed > 0 && !s.relayInfo.IsPlayground {
 			if rollbackErr := model.IncreaseTokenQuota(s.relayInfo.TokenId, s.relayInfo.TokenKey, s.tokenConsumed); rollbackErr != nil {
 				common.SysLog(common.LogText("error rolling back token quota (userId=%d, tokenId=%d, amount=%d, fundingErr=%s): %s",
 					s.relayInfo.UserId, s.relayInfo.TokenId, s.tokenConsumed, err.Error(), rollbackErr.Error()))
@@ -490,9 +548,10 @@ func (s *BillingSession) syncRelayInfo() {
 
 	if sub, ok := s.funding.(*SubscriptionFunding); ok {
 		info.SubscriptionId = sub.subscriptionId
-		info.SubscriptionQuotaPeriod = 0
+		info.SubscriptionQuotaPeriod = sub.quotaPeriod
 		info.SubscriptionPreConsumed = sub.preConsumed + int64(s.extraReserved)
 		info.SubscriptionPostDelta = 0
+		info.SubscriptionSnapshotUnknown = sub.SnapshotUnknown
 		info.SubscriptionAmountTotal = sub.AmountTotal
 		info.SubscriptionAmountUsedAfterPreConsume = sub.AmountUsedAfter + int64(s.extraReserved)
 		info.SubscriptionPlanId = sub.PlanId

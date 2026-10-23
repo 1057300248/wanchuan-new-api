@@ -1058,14 +1058,28 @@ type ManageRequest struct {
 
 // ManageUser Only admin user can do this
 func ManageUser(c *gin.Context) {
-	var req ManageRequest
-	err := common.DecodeJson(c.Request.Body, &req)
+	// Keep explicit zero distinct from omitted/null quota input. In particular,
+	// JSON.stringify(non-finite numbers) produces null, not an intentional reset.
+	// Non-quota management actions retain their existing optional-value contract.
+	var input struct {
+		ManageRequest
+		Value *int `json:"value"`
+	}
+	err := common.DecodeJson(c.Request.Body, &input)
 
 	if err != nil {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
+	req := input.ManageRequest
+	if input.Value != nil {
+		req.Value = *input.Value
+	}
 	if req.Action == "add_quota" {
+		if input.Value == nil {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
+		}
 		manageUserQuota(c, req)
 		return
 	}

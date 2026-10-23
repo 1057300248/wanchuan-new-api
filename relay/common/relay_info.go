@@ -171,6 +171,7 @@ type RelayInfo struct {
 	// （paid/bonus/affiliate）。
 	WalletDebitShares []WalletDebitShare
 	// SubscriptionAmountTotal / SubscriptionAmountUsedAfterPreConsume are used to compute remaining in logs.
+	SubscriptionSnapshotUnknown           bool // Never derive old-period remaining quota from a new period.
 	SubscriptionAmountTotal               int64
 	SubscriptionAmountUsedAfterPreConsume int64
 	IsClaudeBetaQuery                     bool // /v1/messages?beta=true

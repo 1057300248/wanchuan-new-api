@@ -14,6 +14,7 @@ export TEST_REFUND_OPS_MYSQL_DSN= TEST_REFUND_OPS_POSTGRES_DSN= TEST_REFUND_QUEU
 export TEST_FINALIZATION_CACHE_MYSQL_DSN= TEST_FINALIZATION_CACHE_POSTGRES_DSN=
 export TEST_SETTLEMENT_DEADLINE_REDIS_ADDR= TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE=
 export TEST_TASK_REDIS_ADDR=
+export TEST_FINALIZATION_REALTIME_MYSQL_DSN= TEST_FINALIZATION_REALTIME_POSTGRES_DSN=
 
 report() {
   local label=$1 package=$2 pattern=$3
@@ -44,14 +45,16 @@ database)
   export TEST_FINALIZATION_SERVICE_MYSQL_DSN= TEST_FINALIZATION_SERVICE_POSTGRES_DSN=
   finalization_model_mysql_dsn= finalization_model_postgres_dsn=
   finalization_service_mysql_dsn= finalization_service_postgres_dsn=
+  finalization_realtime_mysql_dsn= finalization_realtime_postgres_dsn=
   case "$DIALECT" in
   mysql)
     : "${MYSQL_ID:?a real MySQL service is required}" "${MYSQL_PORT:?a real MySQL port is required}"
     docker inspect --format '{{.Config.Image}} {{.Image}}' "$MYSQL_ID" > "$OUT/database-image.txt"
     docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'SELECT VERSION(); ALTER DATABASE repair_compat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_compat_log CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_token_migration CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;' > "$OUT/database-version.txt"
-    docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'CREATE DATABASE repair_finalization_model CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_finalization_service CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
+    docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'CREATE DATABASE repair_finalization_model CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_finalization_service CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE repair_finalization_realtime CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
     finalization_model_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_model?charset=utf8mb4&parseTime=true&loc=UTC"
     finalization_service_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_service?charset=utf8mb4&parseTime=true&loc=UTC"
+    finalization_realtime_mysql_dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_finalization_realtime?charset=utf8mb4&parseTime=true&loc=UTC"
     export TEST_MYSQL_DSN="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_compat?charset=utf8mb4&parseTime=true&loc=UTC"
     export TEST_MYSQL_LOG_DSN="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/repair_compat_log?charset=utf8mb4&parseTime=true&loc=UTC"
     export TEST_DATABASE_DSN="$TEST_MYSQL_DSN" TEST_LOG_DATABASE_DSN="$TEST_MYSQL_LOG_DSN"
@@ -65,8 +68,10 @@ database)
     docker exec "$PG_ID" createdb -U postgres repair_token_migration
     docker exec "$PG_ID" createdb -U postgres repair_finalization_model
     docker exec "$PG_ID" createdb -U postgres repair_finalization_service
+    docker exec "$PG_ID" createdb -U postgres repair_finalization_realtime
     finalization_model_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_model?sslmode=disable"
     finalization_service_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_service?sslmode=disable"
+    finalization_realtime_postgres_dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_finalization_realtime?sslmode=disable"
     export TEST_POSTGRES_DSN="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_compat?sslmode=disable"
     export TEST_POSTGRES_LOG_DSN="postgres://postgres:compat@127.0.0.1:$PG_PORT/repair_compat_log?sslmode=disable"
     export TEST_DATABASE_DSN="$TEST_POSTGRES_DSN" TEST_LOG_DATABASE_DSN="$TEST_POSTGRES_LOG_DSN"
@@ -118,16 +123,16 @@ database)
   prefix="TestTaskWalletReceiptsDatabaseMatrix/$DIALECT"
   required=("$prefix")
   for contract in \
-    'legacy_paid_charge_is_included_in_first_receipt' \
+    'legacy_missing_receipt_fails_closed' \
     'midjourney_charge_rolls_back_on_midjourneys_failure' \
     'midjourney_charge_rolls_back_on_tokens_failure' \
     'midjourney_failure_before_charge_never_debits' \
     'midjourney_restores_original_accounts_from_stale_observer' \
-    'official_midjourney_refund_independent_midjourneys_failure' \
-    'official_midjourney_refund_independent_tokens_failure' \
-    'official_refund_independent_tasks_failure' \
-    'official_refund_independent_tokens_failure' \
-    'official_subscription_settlement_survives_token_failure' \
+    'midjourney_refund_atomic_midjourneys_failure' \
+    'midjourney_refund_atomic_tokens_failure' \
+    'refund_atomic_tasks_failure' \
+    'refund_atomic_tokens_failure' \
+    'subscription_settlement_rolls_back_with_token_failure' \
     'partial_refund_persists_remaining_accounts' \
     'settlement_falls_back_and_persists_cumulative_receipt' \
     'settlement_keeps_existing_bonus_exclusion' \
@@ -136,8 +141,28 @@ database)
     required+=("$prefix/$contract")
   done
   report wallet ./service "^TestTaskWalletReceiptsDatabaseMatrix$/$DIALECT$" "${required[@]}"
-  # Official nested subscription behavior uses the existing unique owned table/schema helper.
-  # SQLite's exact 517 result proves parity/partial-credit risk, not financial safety.
+  # Current atomic subscription requirements reuse uniquely owned table/schema helpers.
+  # The old nested-transaction parity evidence is historical, never a GREEN oracle.
+  prefix="TestSubscriptionFinancialConsistencyDatabaseMatrix/$DIALECT"
+  required=("$prefix")
+  for contract in 'absolute_reserve_and_terminal_identity' 'real_commit_lost_ack_replay' 'receipt_write_failure_rolls_back_reserve_and_settle' 'caller_transaction_rollback_preserves_reservation' 'retired_period_rejects_growth_and_closes_old_settlement' 'task_adjustment_requires_exact_prior_evidence' 'unknown_legacy_period_requires_review' 'overflow_cannot_credit_or_publish_a_receipt' 'concurrent_request_claims_validate_the_winner/same_identity' 'concurrent_request_claims_validate_the_winner/different_user' 'concurrent_request_claims_validate_the_winner/different_amount' 'concurrent_settle_and_refund_have_one_terminal_owner'; do required+=("$prefix/$contract"); done
+  report subscription-financial-consistency ./model "^TestSubscriptionFinancialConsistencyDatabaseMatrix$/$DIALECT$" "${required[@]}"
+  prefix="TestFinancialReviewReportDatabaseMatrix/$DIALECT"
+  required=("$prefix")
+  for contract in 'pending_identity_redaction_and_no_writes' 'undeployed_and_partial_schemas_are_not_clean_history'; do required+=("$prefix/$contract"); done
+  report financial-review-read-only ./model "^TestFinancialReviewReportDatabaseMatrix$/$DIALECT$" "${required[@]}"
+  financial_modes=("$DIALECT")
+  if [ "$DIALECT" = sqlite ]; then financial_modes=(sqlite_immediate sqlite_deferred); fi
+  for mode in "${financial_modes[@]}"; do
+    prefix="TestFinancialConsistencySubscriptionDatabaseMatrix/$mode"
+    report "subscription-correctness-$mode" ./model "^TestFinancialConsistencySubscriptionDatabaseMatrix$/$mode$" "$prefix/request_identity" "$prefix/refund_receipt_write_failure" "$prefix/old_period_refund"
+  done
+
+  prefix="TestSubscriptionSupplementDatabaseMatrix/$DIALECT"
+  required=("$prefix")
+  for contract in 'same_operation_and_independent_segments' 'concurrent_same_operation_has_one_owner' 'amount_and_full_identity_conflicts' 'token_sql_error' 'terminal_receipt_sql_error' 'real_commit_lost_ack_replay' 'retired_period_rejects_new_charge_but_keeps_prior_replay' 'invalid_input_and_replacement_token_fail_closed'; do required+=("$prefix/$contract"); done
+  report subscription-supplement ./model "^TestSubscriptionSupplementDatabaseMatrix$/$DIALECT$" "${required[@]}"
+
   prefix="TestOfficialSubscriptionRefundDatabaseBehavior/$DIALECT"
   report official-subscription-refund ./model "^TestOfficialSubscriptionRefundDatabaseBehavior$/$DIALECT$" TestOfficialSubscriptionRefundDatabaseBehavior "$prefix"
   prefix="TestSubscriptionPeriodMigrationDatabaseMatrix/$DIALECT"
@@ -185,9 +210,22 @@ database)
     'near_miss_realtime_key_rejected/wss:18446744073709551616:20' \
     'near_miss_realtime_key_rejected/wss:1:21' \
     'receipt_mismatch_and_legacy_replay' \
-    'rollback_probe_no_permanent_owner'; do
+    'rollback_probe_no_permanent_owner' \
+    'wallet_refund_sequence/partial_remaining_replay' \
+    'wallet_refund_sequence/rollback_then_retry' \
+    'wallet_refund_sequence/legacy_overcredit_rejected' \
+    'token_counter_bounds/remaining_overflow' \
+    'token_counter_bounds/remaining_underflow' \
+    'token_counter_bounds/used_overflow' \
+    'token_counter_bounds/used_underflow' \
+    'token_counter_bounds/exact_integer_boundary' \
+    'token_counter_bounds/unscoped_debit_active' \
+    'token_counter_bounds/unscoped_debit_soft_deleted'; do
     required+=("$prefix/$contract")
   done
+  if [ "$DIALECT" != sqlite ]; then
+    required+=("$prefix/subscription_wallet_lock_order/supplement_vs_wallet_same_user_token")
+  fi
   TEST_FINALIZATION_MODEL_MYSQL_DSN="$finalization_model_mysql_dsn" TEST_FINALIZATION_MODEL_POSTGRES_DSN="$finalization_model_postgres_dsn" \
     report request-finalization-model ./model "^TestBillingFinalizationDatabaseMatrix$/$DIALECT$" "${required[@]}"
 
@@ -246,7 +284,131 @@ database)
     'inherited_093_allocation_limits/small_three_account_remainder' \
     'inherited_093_allocation_limits/submit_before_task_refund' \
     'inherited_093_allocation_limits/task_refund_before_submit' \
-    'official_refund_before_lost_ack_readback'; do
+    'official_refund_before_lost_ack_readback' \
+    'financial_lost_ack/readable' \
+    'financial_lost_ack/read_failure' \
+    'financial_task_refund/batch_false/tokens' \
+    'financial_task_refund/batch_false/tasks' \
+    'financial_task_refund/batch_true/tokens' \
+    'financial_task_refund/batch_true/tasks' \
+    'financial_mj_refund' \
+    'financial_stale_success' \
+    'financial_metadata/both_ids' \
+    'financial_metadata/channel' \
+    'financial_submit/trusted_zero' \
+    'financial_submit/preconsume_more' \
+    'financial_submit/preconsume_less' \
+    'financial_submit/reserved' \
+    'financial_submit/submit_rollback' \
+    'financial_submit/submit_lost_ack' \
+    'financial_task_identity/hard_delete' \
+    'financial_task_identity/same_id_new_key' \
+    'task_atomic/refund_rollback_source' \
+    'task_atomic/refund_rollback_token' \
+    'task_atomic/refund_rollback_user_usage' \
+    'task_atomic/refund_rollback_channel_usage' \
+    'task_atomic/refund_rollback_task_receipt' \
+    'task_atomic/refund_rollback_main_log' \
+    'task_atomic/commit_boundary_refund_false_mode_1' \
+    'task_atomic/commit_boundary_refund_false_mode_2' \
+    'task_atomic/commit_boundary_refund_true_mode_1' \
+    'task_atomic/commit_boundary_refund_true_mode_2' \
+    'task_atomic/settlement_more_retains_exact_net_receipt' \
+    'task_atomic/concurrent_fresh_snapshots' \
+    'task_atomic/fail_closed_wallet_receipt' \
+    'task_atomic/fail_closed_token_fingerprint' \
+    'task_atomic/fail_closed_source_only_refund' \
+    'task_atomic/fail_closed_legacy_no_token' \
+    'task_atomic/soft_deleted_original_token' \
+    'mj_atomic/charge_quota_0_commit_mode_1' \
+    'mj_atomic/charge_quota_0_commit_mode_2' \
+    'mj_atomic/charge_quota_300_commit_mode_1' \
+    'mj_atomic/charge_quota_300_commit_mode_2' \
+    'mj_atomic/refund_tokens' \
+    'mj_atomic/refund_channels' \
+    'mj_atomic/refund_midjourneys' \
+    'mj_atomic/refund_logs' \
+    'mj_atomic/refund_lost_ack' \
+    'mj_atomic/concurrent_refund_fresh_snapshots' \
+    'mj_atomic/fail_closed_missing_identity' \
+    'mj_atomic/fail_closed_missing_receipt' \
+    'mj_atomic/fail_closed_source_only_refund' \
+    'mj_atomic/fail_closed_source_only_charge' \
+    'mj_atomic/uncharged_failure_never_refunds' \
+    'mj_atomic/no_token_uses_explicit_identity' \
+    'separate_log/midjourney_false' \
+    'separate_log/midjourney_true' \
+    'lifecycle_initial/wallet/source_receipt' \
+    'lifecycle_initial/wallet/token' \
+    'lifecycle_initial/wallet/held' \
+    'lifecycle_initial/subscription/source_receipt' \
+    'lifecycle_initial/subscription/token' \
+    'lifecycle_initial/subscription/held' \
+    'lifecycle_reserve/wallet/source_receipt' \
+    'lifecycle_reserve/wallet/token' \
+    'lifecycle_reserve/wallet/held' \
+    'lifecycle_reserve/subscription/source_receipt' \
+    'lifecycle_reserve/subscription/token' \
+    'lifecycle_reserve/subscription/held' \
+    'lifecycle_admission_failure/wallet' \
+    'lifecycle_admission_failure/subscription' \
+    'lifecycle_ready_recovery/wallet' \
+    'lifecycle_ready_recovery/subscription' \
+    'lifecycle_unknown_delivery/wallet' \
+    'lifecycle_unknown_delivery/subscription' \
+    'lifecycle_trusted_zero' \
+    'lifecycle_reservation_ack/wallet/initial' \
+    'lifecycle_reservation_ack/wallet/reserve' \
+    'lifecycle_reservation_ack/subscription/initial' \
+    'lifecycle_reservation_ack/subscription/reserve' \
+    'mj_request_owner/same_request_same_amount' \
+    'mj_request_owner/same_request_different_amount' \
+    'mj_request_owner/same_request_other_user' \
+    'mj_request_owner/zero_request_duplicate' \
+    'mj_request_owner/canceled_request_cannot_recharge' \
+    'mj_request_owner/source_only_different_amount_fails_closed' \
+    'mj_zero_refund_identity' \
+    'financial_contention/wallet_settle_refund' \
+    'financial_contention/task_refund' \
+    'financial_contention/midjourney_refund' \
+    'review_failure_usage/token_write_fault=false' \
+    'review_failure_usage/token_write_fault=true' \
+    'review_legacy_terminal/SUCCESS' \
+    'review_legacy_terminal/FAILURE' \
+    'review_zero_price_usage' \
+    'review_task_recovery_fairness' \
+    'review_mj_recovery_fairness' \
+    'review_quota_export/separate_log=false' \
+    'review_quota_export/separate_log=true' \
+    'realtime_lifecycle/wallet/aggregate' \
+    'realtime_lifecycle/wallet/segment_rollback' \
+    'realtime_lifecycle/wallet/segment_lost_ack' \
+    'realtime_lifecycle/wallet/final_lost_ack' \
+    'realtime_lifecycle/wallet/partial_refund' \
+    'realtime_lifecycle/wallet/zero_usage' \
+    'realtime_lifecycle/wallet/zero_price' \
+    'realtime_lifecycle/wallet/fixed_price' \
+    'realtime_lifecycle/wallet/missing_total' \
+    'realtime_lifecycle/subscription/aggregate' \
+    'realtime_lifecycle/subscription/segment_rollback' \
+    'realtime_lifecycle/subscription/segment_lost_ack' \
+    'realtime_lifecycle/subscription/final_lost_ack' \
+    'realtime_lifecycle/subscription/partial_refund' \
+    'realtime_lifecycle/subscription/zero_usage' \
+    'realtime_lifecycle/subscription/zero_price' \
+    'realtime_lifecycle/subscription/fixed_price' \
+    'realtime_lifecycle/subscription/missing_total' \
+    'realtime_trusted' \
+    'subscription_snapshot_unknown/fresh_replay' \
+    'subscription_snapshot_unknown/reserve_lost_ack' \
+    'unowned_hold/refund' \
+    'unowned_hold/settle_zero' \
+    'unowned_hold/settle_more' \
+    'unowned_hold/handoff_zero' \
+    'unowned_hold/handoff_more' \
+    'unowned_hold/free_task_zero' \
+    'audio_fixed_price/fixed_price' \
+    'audio_fixed_price/token_ratios'; do
     required+=("$prefix/$contract")
   done
   if [ "$DIALECT" != sqlite ]; then
@@ -254,6 +416,22 @@ database)
   fi
   TEST_FINALIZATION_SERVICE_MYSQL_DSN="$finalization_service_mysql_dsn" TEST_FINALIZATION_SERVICE_POSTGRES_DSN="$finalization_service_postgres_dsn" \
     report request-finalization-service ./service "^TestBillingFinalizationSessionDatabaseMatrix$/$DIALECT$" "${required[@]}"
+
+  # Dedicated empty database: real WS fixtures may never share another matrix's tables.
+  prefix="TestRealtimeFinancialConsistencyDatabaseMatrix/$DIALECT"
+  required=("$prefix")
+  for contract in 'financial/multiple_response_done' 'financial/segment_sql_failure_observed_once' 'financial/tiered_audio_and_cache_facts' 'financial/tiered_image_cache_presence' 'financial/tiered_mixed_cache_presence/known_first' 'financial/tiered_mixed_cache_presence/missing_first' 'termination/request_cancel' 'termination/upstream_close' 'termination/client_close'; do required+=("$prefix/$contract"); done
+  TEST_FINALIZATION_REALTIME_MYSQL_DSN="$finalization_realtime_mysql_dsn" TEST_FINALIZATION_REALTIME_POSTGRES_DSN="$finalization_realtime_postgres_dsn" \
+    report realtime-financial ./relay/channel/openai "^TestRealtimeFinancialConsistencyDatabaseMatrix$/$DIALECT$" "${required[@]}"
+  if [ "$DIALECT" = sqlite ]; then
+    required=('TestPrepareFreeRealtimeBilling/wallet_only/model' 'TestPrepareFreeRealtimeBilling/wallet_only/group' 'TestPrepareFreeRealtimeBilling/subscription_only/model' 'TestPrepareFreeRealtimeBilling/subscription_only/group')
+    report realtime-free-entry ./relay '^(TestPrepareFreeRealtimeBilling)$' "${required[@]}"
+    required=('TestBonusEligibilityExpiresPreviouslyTrueCache' 'TestBonusEligibilityDoesNotRepublishInvalidatedSnapshot' 'TestBonusEligibilityCommittedMetadataRefreshControls/update' 'TestBonusEligibilityCommittedMetadataRefreshControls/sync' 'TestBonusEligibilityCommittedMetadataRefreshControls/delete' 'TestBonusEligibilityDoesNotExtendPricingSnapshotLifetime' 'TestBonusEligibilityModelUpdateInvalidatesAfterCommit' 'TestBonusEligibilityRejectedMutationKeepsEligibility' 'TestBonusEligibilityCommitACKLossInvalidates' 'TestBonusEligibilityMutationCommitBoundaries/batch_commit' 'TestBonusEligibilityMutationCommitBoundaries/batch_lost_ack' 'TestBonusEligibilityMutationCommitBoundaries/delete_lost_ack' 'TestBonusEligibilityMutationCommitBoundaries/delete_pricing_lost_ack' 'TestBonusEligibilityMutationCommitBoundaries/sync_bonus_lost_ack' 'TestBonusEligibilityMutationCommitBoundaries/sync_name_rule_lost_ack')
+    report financial-bonus-cache ./model '^(TestBonusEligibilityExpiresPreviouslyTrueCache|TestBonusEligibilityDoesNotRepublishInvalidatedSnapshot|TestBonusEligibilityCommittedMetadataRefreshControls|TestBonusEligibilityDoesNotExtendPricingSnapshotLifetime|TestBonusEligibilityModelUpdateInvalidatesAfterCommit|TestBonusEligibilityRejectedMutationKeepsEligibility|TestBonusEligibilityCommitACKLossInvalidates|TestBonusEligibilityMutationCommitBoundaries)$' "${required[@]}"
+    report financial-bonus-cache-status ./controller '^TestModelBonusCacheStatusOnlyCommitACKLoss$' TestModelBonusCacheStatusOnlyCommitACKLoss
+    required=('TestManageUserQuotaInputPresenceAndType/missing_override' 'TestManageUserQuotaInputPresenceAndType/null_override' 'TestManageUserQuotaInputPresenceAndType/explicit_zero_override' 'TestManageUserQuotaInputPresenceAndType/fractional_override' 'TestManageUserQuotaInputPresenceAndType/nonfinite_exponent_override' 'TestManageUserQuotaInputPresenceAndType/unsafe_integer_override' 'TestManageUserQuotaInputPresenceAndType/numeric_string_override' 'TestManageUserQuotaInputPresenceAndType/missing_nonquota' 'TestManageUserQuotaInputPresenceAndType/null_nonquota')
+    report financial-admin-input ./controller '^TestManageUserQuotaInputPresenceAndType$' "${required[@]}"
+  fi
 
   # Canceled refund dispatcher/cache/period/pending-recovery reports and their
   # databases are retired in billing_policy_replacement.json, never relabeled.
@@ -308,6 +486,7 @@ database)
       'TestWalletSettlementRejectsChangedTokenIdentity/credential'
       'TestPostConsumeQuotaIdempotencyCoversWalletAndToken'
       'TestPostConsumeQuotaRefundIdempotencyCoversWalletAndToken'
+      'TestPostConsumeQuotaRefundRequiresDebitReceipt'
       'TestPostConsumeQuotaRollsBackWalletWhenTokenUpdateFails'
       'TestBillingSessionWalletSettleRollsBackFundingWhenTokenUpdateFails'
       'TestBillingSessionWalletRefundSettleRollsBackFundingWhenTokenUpdateFails'
@@ -322,28 +501,29 @@ database)
       'TestStreamFailurePartialUsageSettlesOnceAndNeverRefunds'
       'TestStreamFailureWithoutUsageRefundsReservationOnce'
     )
-    report normal-wallet-settlement ./service '^(TestWalletSettlementSurvivesTokenDeletion|TestWalletSettlementRejectsChangedTokenIdentity|TestPostConsumeQuotaIdempotencyCoversWalletAndToken|TestPostConsumeQuotaRefundIdempotencyCoversWalletAndToken|TestPostConsumeQuotaRollsBackWalletWhenTokenUpdateFails|TestBillingSessionWalletSettleRollsBackFundingWhenTokenUpdateFails|TestBillingSessionWalletRefundSettleRollsBackFundingWhenTokenUpdateFails|TestWalletSettleFailsClosedWithoutTransactionalSettlementCapability|TestWalletReserveLedgerSequenceUnchanged|TestWalletReceiptOrderValuesAndDefensiveCopy|TestReceiptNilForFundingWithoutReceiptCapability|TestSubscriptionReserveUsesTargetDeltaWithoutDoubleCount|TestReserveFundingFailureRollsBackTokenAndRetryDebitsFresh|TestNeedsRefundUsesOutstandingReserveCapability|TestReserveFailsClosedWithoutReservableCapability|TestStreamFailurePartialUsageSettlesOnceAndNeverRefunds|TestStreamFailureWithoutUsageRefundsReservationOnce)$' "${required[@]}"
+    report normal-wallet-settlement ./service '^(TestWalletSettlementSurvivesTokenDeletion|TestWalletSettlementRejectsChangedTokenIdentity|TestPostConsumeQuotaIdempotencyCoversWalletAndToken|TestPostConsumeQuotaRefundIdempotencyCoversWalletAndToken|TestPostConsumeQuotaRefundRequiresDebitReceipt|TestPostConsumeQuotaRollsBackWalletWhenTokenUpdateFails|TestBillingSessionWalletSettleRollsBackFundingWhenTokenUpdateFails|TestBillingSessionWalletRefundSettleRollsBackFundingWhenTokenUpdateFails|TestWalletSettleFailsClosedWithoutTransactionalSettlementCapability|TestWalletReserveLedgerSequenceUnchanged|TestWalletReceiptOrderValuesAndDefensiveCopy|TestReceiptNilForFundingWithoutReceiptCapability|TestSubscriptionReserveUsesTargetDeltaWithoutDoubleCount|TestReserveFundingFailureRollsBackTokenAndRetryDebitsFresh|TestNeedsRefundUsesOutstandingReserveCapability|TestReserveFailsClosedWithoutReservableCapability|TestStreamFailurePartialUsageSettlesOnceAndNeverRefunds|TestStreamFailureWithoutUsageRefundsReservationOnce)$' "${required[@]}"
     required=(
       'TestPresentTaskSubmissionUsesNativePresenterAfterPersistence'
       'TestPresentTaskSubmissionFallbackUsesPersistedPublicID'
       'TestPresentTaskSubmissionUsesHostOpenAIVideoCreateReceipt'
-      'TestExecuteTaskSubmissionRefundsWhenInsertFails'
-      'TestExecuteTaskSubmissionSettlementFailureStaysDurableAndWritesNothing'
+      'TestExecuteTaskSubmissionPreservesHoldWhenAcceptedInsertFails'
+      'TestExecuteTaskSubmissionRollsBackInsertedTaskWhenHandoffFails'
+      'TestExecuteTaskSubmissionRejectsUnsupportedAtomicBilling'
       'TestExecuteTaskSubmissionPersistsPinnedPluginProvenance'
       'TestExecuteTaskSubmissionPersistsExecutionOnlyRequestID'
       'TestExecuteTaskSubmissionHonorsRouteRetainResult'
       'TestExecuteTaskSubmissionHonorsRouteRetainResult/immediate_success_is_discarded'
       'TestExecuteTaskSubmissionHonorsRouteRetainResult/immediate_failure_is_discarded'
       'TestExecuteTaskSubmissionHonorsRouteRetainResult/asynchronous_result_is_retained'
-      'TestExecuteTaskSubmissionRefundsCancellationBeforeDurableBarrier'
+      'TestExecuteTaskSubmissionPreservesHoldOnCancellationAfterUpstreamAcceptance'
       'TestExecuteTaskSubmissionDisconnectBeforeUpstreamAcceptanceSkipsSubmitAndRefunds'
       'TestExecuteTaskSubmissionCallerCancellationDuringSubmitRefundsBeforeDurableBarrier'
       'TestExecuteTaskSubmissionDisconnectAfterDurableInsertDoesNotRefund'
       'TestAcceptedSubmitStreamNeverRetries'
       'TestRespondTaskSubmissionErrorWithoutCause'
-      'TestExecuteTaskSubmissionRefundsWhenFinalReserveFails'
+      'TestExecuteTaskSubmissionPreservesHoldWhenAcceptedFinalReserveFails'
     )
-    report official-task-submission ./controller '^(TestPresentTaskSubmissionUsesNativePresenterAfterPersistence|TestPresentTaskSubmissionFallbackUsesPersistedPublicID|TestPresentTaskSubmissionUsesHostOpenAIVideoCreateReceipt|TestExecuteTaskSubmissionRefundsWhenInsertFails|TestExecuteTaskSubmissionSettlementFailureStaysDurableAndWritesNothing|TestExecuteTaskSubmissionPersistsPinnedPluginProvenance|TestExecuteTaskSubmissionPersistsExecutionOnlyRequestID|TestExecuteTaskSubmissionHonorsRouteRetainResult|TestExecuteTaskSubmissionRefundsCancellationBeforeDurableBarrier|TestExecuteTaskSubmissionDisconnectBeforeUpstreamAcceptanceSkipsSubmitAndRefunds|TestExecuteTaskSubmissionCallerCancellationDuringSubmitRefundsBeforeDurableBarrier|TestExecuteTaskSubmissionDisconnectAfterDurableInsertDoesNotRefund|TestAcceptedSubmitStreamNeverRetries|TestRespondTaskSubmissionErrorWithoutCause|TestExecuteTaskSubmissionRefundsWhenFinalReserveFails)$' "${required[@]}"
+    report official-task-submission ./controller '^(TestPresentTaskSubmissionUsesNativePresenterAfterPersistence|TestPresentTaskSubmissionFallbackUsesPersistedPublicID|TestPresentTaskSubmissionUsesHostOpenAIVideoCreateReceipt|TestExecuteTaskSubmissionPreservesHoldWhenAcceptedInsertFails|TestExecuteTaskSubmissionRollsBackInsertedTaskWhenHandoffFails|TestExecuteTaskSubmissionRejectsUnsupportedAtomicBilling|TestExecuteTaskSubmissionPersistsPinnedPluginProvenance|TestExecuteTaskSubmissionPersistsExecutionOnlyRequestID|TestExecuteTaskSubmissionHonorsRouteRetainResult|TestExecuteTaskSubmissionPreservesHoldOnCancellationAfterUpstreamAcceptance|TestExecuteTaskSubmissionDisconnectBeforeUpstreamAcceptanceSkipsSubmitAndRefunds|TestExecuteTaskSubmissionCallerCancellationDuringSubmitRefundsBeforeDurableBarrier|TestExecuteTaskSubmissionDisconnectAfterDurableInsertDoesNotRefund|TestAcceptedSubmitStreamNeverRetries|TestRespondTaskSubmissionErrorWithoutCause|TestExecuteTaskSubmissionPreservesHoldWhenAcceptedFinalReserveFails)$' "${required[@]}"
     report reminder-option-validation ./model '^TestQuotaReminderThresholdOptionsRejectInvalidWithoutMutation$' TestQuotaReminderThresholdOptionsRejectInvalidWithoutMutation
     report reminder-request-validation ./controller '^(TestQuotaReminderProfileThresholdValidationPreservesLegacyFractions|TestQuotaReminderSiteOptionRejectsMalformedWireWithoutWrites)$' TestQuotaReminderProfileThresholdValidationPreservesLegacyFractions TestQuotaReminderSiteOptionRejectsMalformedWireWithoutWrites
     report frontend-embedded-assets ./common '^TestEmbeddedFrontendOnlyExposesRegularAssets$' TestEmbeddedFrontendOnlyExposesRegularAssets

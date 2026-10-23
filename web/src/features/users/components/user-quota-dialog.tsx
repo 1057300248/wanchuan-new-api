@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -30,7 +30,7 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
 
 import { adjustUserQuota } from '../api'
-import type { QuotaAdjustMode } from '../types'
+import type { ManageUserQuotaPayload, QuotaAdjustMode } from '../types'
 
 interface UserQuotaDialogProps {
   open: boolean
@@ -51,6 +51,8 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
   const [mode, setMode] = useState<QuotaAdjustMode>('add')
   const [amount, setAmount] = useState('')
   const [loading, setLoading] = useState(false)
+  const inFlight = useRef(false)
+  const intent = useRef<ManageUserQuotaPayload | null>(null)
 
   const { meta: currencyMeta } = getCurrencyDisplay()
   const currencyLabel = getCurrencyLabel()
@@ -77,21 +79,43 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
   }
 
   const handleConfirm = async () => {
+    // State alone cannot exclude a second Enter/click in the same render turn.
+    if (inFlight.current) return
     if (!amount && mode !== 'override') return
     if (quotaValue <= 0 && mode !== 'override') return
+    const value =
+      mode === 'override'
+        ? parseQuotaFromDollars(amountValue)
+        : Math.abs(quotaValue)
+    // The display conversion can overflow after multiplying by quota units.
+    // Never let a non-representable number become JSON null (an apparent zero).
+    if (!Number.isFinite(amountValue) || !Number.isSafeInteger(value)) {
+      handleServerError(undefined, t('Please enter a valid number'))
+      return
+    }
 
+    inFlight.current = true
     setLoading(true)
     try {
-      const value =
-        mode === 'override' ? parseQuotaFromDollars(amountValue) : quotaValue
-      const result = await adjustUserQuota({
-        id: props.userId,
-        action: 'add_quota',
-        mode,
-        value: mode === 'override' ? value : Math.abs(value),
-        request_id: globalThis.crypto.randomUUID(),
-      })
+      // Preserve an unresolved operation across retries, but not a new target,
+      // amount or mode. The backend binds this key to the same target, mode and value.
+      if (
+        !intent.current ||
+        intent.current.id !== props.userId ||
+        intent.current.mode !== mode ||
+        intent.current.value !== value
+      ) {
+        intent.current = {
+          id: props.userId,
+          action: 'add_quota',
+          request_id: globalThis.crypto.randomUUID(),
+          mode,
+          value,
+        }
+      }
+      const result = await adjustUserQuota(intent.current)
       if (result.success) {
+        intent.current = null
         toast.success(t('Quota adjusted successfully'))
         setAmount('')
         setMode('add')
@@ -103,11 +127,13 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
     } catch (e: unknown) {
       handleServerError(e, t('Failed to adjust quota'))
     } finally {
+      inFlight.current = false
       setLoading(false)
     }
   }
 
   const handleCancel = () => {
+    intent.current = null
     setAmount('')
     setMode('add')
     props.onOpenChange(false)
@@ -120,7 +146,10 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
   return (
     <Dialog
       open={props.open}
-      onOpenChange={props.onOpenChange}
+      onOpenChange={(open) => {
+        if (!open) intent.current = null
+        props.onOpenChange(open)
+      }}
       title={t('Adjust Quota')}
       description={t('Select an operation mode and enter the amount')}
       contentHeight='auto'
@@ -153,6 +182,7 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
                     'bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
                 )}
                 onClick={() => {
+                  intent.current = null
                   setMode(m)
                   setAmount('')
                 }}
@@ -173,7 +203,18 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
             min={mode === 'override' ? undefined : 0}
             placeholder={placeholder}
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={(e) => {
+              const nextAmount = e.target.value
+              const nextNumeric = Number.parseFloat(nextAmount) || 0
+              const nextQuota = parseQuotaFromDollars(
+                mode === 'override' ? nextNumeric : Math.abs(nextNumeric)
+              )
+              const nextValue =
+                mode === 'override' ? nextQuota : Math.abs(nextQuota)
+              // Formatting alone does not create a different backend operation.
+              if (nextValue !== intent.current?.value) intent.current = null
+              setAmount(nextAmount)
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleConfirm()
             }}

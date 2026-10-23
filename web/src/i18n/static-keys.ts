@@ -939,4 +939,9 @@ export const STATIC_I18N_KEYS = [
   'Channel priorities changed. Refresh and try again.',
   'Invalid channel priority move',
   'Channel priority is outside the sortable range',
+  // Ambiguous task delivery is never an automatic refund decision.
+  'Missing upstream task identity; delivery requires operator review',
+  'Missing channel metadata; upstream delivery requires operator review',
+  'Ambiguous upstream task identity; delivery requires operator review',
+  'Legacy task billing identity is unavailable; financial review required',
 ] as const

@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/bits"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -63,6 +65,7 @@ var (
 	ErrLedgerInvalidEntry        = errors.New("invalid ledger entry")
 	ErrLedgerInsufficientBalance = errors.New("insufficient balance")
 	ErrLedgerIdempotencyConflict = errors.New("ledger idempotency key conflict: same key with different parameters")
+	ErrMissingWalletDebitReceipt = errors.New("wallet funding: consumed quota has no valid debit receipt")
 	// ErrLedgerDuplicate 仅表示并发插入幂等键撞库，由入口函数在事务回滚后转为重放/冲突判定。
 	ErrLedgerDuplicate = errors.New("ledger duplicate idempotency key")
 )
@@ -121,6 +124,262 @@ func (BalanceLedger) TableName() string {
 type LedgerShare struct {
 	Account LedgerAccount `json:"account"`
 	Amount  int           `json:"amount"`
+}
+
+// AllocateWalletRefund returns an incremental refund from the still-outstanding
+// part of a debit receipt. refunded is the cumulative amount already credited to
+// each original account, not another desired refund. Callers must persist or
+// atomically update that receipt together with the credit; allocation alone does
+// not make a refund idempotent. Missing or inconsistent provenance fails closed.
+func AllocateWalletRefund(original, refunded []LedgerShare, amount int) ([]LedgerShare, error) {
+	if amount < 0 || amount > common.MaxWalletQuota {
+		return nil, fmt.Errorf("%w: refund amount out of range", ErrLedgerInvalidEntry)
+	}
+	remaining := append([]LedgerShare(nil), original...)
+	index := make(map[LedgerAccount]int, len(remaining))
+	total := 0
+	for i, share := range remaining {
+		if !validAccount(share.Account) || share.Amount <= 0 || share.Amount > common.MaxWalletQuota-total {
+			return nil, fmt.Errorf("%w: invalid original wallet receipt", ErrLedgerInvalidEntry)
+		}
+		if _, exists := index[share.Account]; exists {
+			return nil, fmt.Errorf("%w: duplicate original wallet account", ErrLedgerInvalidEntry)
+		}
+		index[share.Account] = i
+		total += share.Amount
+	}
+	seen := make(map[LedgerAccount]bool, len(refunded))
+	for _, share := range refunded {
+		i, exists := index[share.Account]
+		if !exists || seen[share.Account] || share.Amount <= 0 || share.Amount > remaining[i].Amount {
+			return nil, fmt.Errorf("%w: refund exceeds original wallet account", ErrLedgerInvalidEntry)
+		}
+		seen[share.Account] = true
+		remaining[i].Amount -= share.Amount
+		total -= share.Amount
+	}
+	if amount > total {
+		return nil, fmt.Errorf("%w: refund exceeds outstanding wallet receipt", ErrLedgerInvalidEntry)
+	}
+	if amount == 0 {
+		return nil, nil
+	}
+	allocated := make([]int, len(remaining))
+	remainder := amount
+	for i, share := range remaining {
+		// The wallet bound fits uint64, but amount*share may not. The exact
+		// 128-bit product avoids both signed overflow and float rounding.
+		hi, lo := bits.Mul64(uint64(share.Amount), uint64(amount))
+		part, _ := bits.Div64(hi, lo, uint64(total))
+		allocated[i] = int(part) // part <= share.Amount <= MaxWalletQuota.
+		remainder -= allocated[i]
+	}
+	// Sum of floors leaves fewer units than accounts. Give at most one to
+	// each account in receipt order, never above that account's capacity.
+	for i, share := range remaining {
+		if remainder > 0 && allocated[i] < share.Amount {
+			allocated[i]++
+			remainder--
+		}
+	}
+	out := make([]LedgerShare, 0, len(remaining))
+	for i, share := range remaining {
+		if allocated[i] > 0 {
+			out = append(out, LedgerShare{Account: share.Account, Amount: allocated[i]})
+		}
+	}
+	return out, nil
+}
+
+// WalletRequestReceiptTx reads the outstanding principal of a relay request
+// under its user's accounting lock. Only canonical, internally consistent
+// billing operations are accepted. Independent fees/realtime segments require
+// their existing explicit evidence; an unrecognized historical row is never
+// guessed to be refundable paid balance.
+func WalletRequestReceiptTx(tx *gorm.DB, userID int, requestID string) ([]LedgerShare, error) {
+	shares, _, err := walletRequestReceiptTx(tx, userID, requestID)
+	return shares, err
+}
+
+func walletRequestReceiptTx(tx *gorm.DB, userID int, requestID string) ([]LedgerShare, *User, error) {
+	if tx == nil || userID <= 0 || strings.TrimSpace(requestID) == "" {
+		return nil, nil, ErrMissingWalletDebitReceipt
+	}
+	var user User
+	if err := lockForUpdate(tx).First(&user, userID).Error; err != nil {
+		return nil, nil, err
+	}
+	var rows []BalanceLedger
+	if err := lockForUpdate(tx).Where("user_id = ? AND reference_type = ? AND reference_id = ?", userID, "relay", requestID).Order("id").Find(&rows).Error; err != nil {
+		return nil, nil, err
+	}
+	checked := make(map[string]bool)
+	remaining := make(map[LedgerAccount]int)
+	var order []LedgerAccount
+	totalRemaining := 0
+	foundDebit := false
+	identity := &BillingFinalization{UserID: userID, RequestID: requestID}
+	for _, row := range rows {
+		if checked[row.IdempotencyKey] {
+			continue
+		}
+		checked[row.IdempotencyKey] = true
+		if independent, err := verifiedIndependentBillingDebitTx(tx, identity, row); err != nil {
+			return nil, nil, err
+		} else if independent {
+			continue
+		}
+		op, details, err := loadLedgerOperation(lockForUpdate(tx), row.IdempotencyKey)
+		if err != nil {
+			return nil, nil, err
+		}
+		debit := row.Delta < 0
+		operation := string(ledgerOpCredit)
+		if debit {
+			operation = string(ledgerOpDebit)
+		}
+		if op.UserId != userID || op.Id != row.OperationId || op.Operation != operation || len(details) == 0 {
+			return nil, nil, fmt.Errorf("%w: wallet operation identity mismatch", ErrMissingWalletDebitReceipt)
+		}
+		total := 0
+		seen := make(map[LedgerAccount]bool)
+		for _, detail := range details {
+			account := LedgerAccount(detail.Account)
+			if detail.UserId != userID || detail.RequestId != requestID || detail.ReferenceType != "relay" || detail.ReferenceId != requestID || detail.OperationId != op.Id || detail.IdempotencyKey != row.IdempotencyKey || detail.Reason != row.Reason || detail.Metadata != "" || !validAccount(account) || seen[account] || detail.Delta == 0 || (detail.Delta < 0) != debit || detail.Delta < -common.MaxWalletQuota || detail.Delta > common.MaxWalletQuota || detail.TotalBefore != op.TotalBefore || detail.TotalAfter != op.TotalAfter || detail.BalanceBefore < 0 || detail.BalanceBefore > common.MaxWalletQuota || detail.BalanceAfter < 0 || detail.BalanceAfter > common.MaxWalletQuota || detail.BalanceAfter-detail.BalanceBefore != detail.Delta {
+				return nil, nil, fmt.Errorf("%w: wallet operation rows mismatch", ErrMissingWalletDebitReceipt)
+			}
+			seen[account] = true
+			amount := detail.Delta
+			if debit {
+				amount = -amount
+			}
+			if amount > common.MaxWalletQuota-total {
+				return nil, nil, fmt.Errorf("%w: wallet operation amount out of range", ErrMissingWalletDebitReceipt)
+			}
+			total += amount
+		}
+		if op.TotalBefore < 0 || op.TotalBefore > common.MaxWalletQuota || op.TotalAfter < 0 || op.TotalAfter > common.MaxWalletQuota || debit && op.TotalBefore-op.TotalAfter != total || !debit && op.TotalAfter-op.TotalBefore != total {
+			return nil, nil, fmt.Errorf("%w: wallet operation totals mismatch", ErrMissingWalletDebitReceipt)
+		}
+		expectedKey := ""
+		switch row.Reason {
+		case LedgerReasonBillingPreConsume:
+			if debit {
+				expectedKey = "billing:preconsume:" + requestID
+			}
+		case LedgerReasonBillingReserve:
+			prefix := "billing:reserve:" + requestID + ":"
+			if debit && strings.HasPrefix(row.IdempotencyKey, prefix) {
+				target, err := strconv.ParseInt(strings.TrimPrefix(row.IdempotencyKey, prefix), 10, 64)
+				if err == nil && target > 0 && target <= common.MaxWalletQuota && int64(total) <= target {
+					expectedKey = fmt.Sprintf("%s%d", prefix, target)
+				}
+			}
+		case LedgerReasonBillingSettle:
+			if debit {
+				expectedKey = fmt.Sprintf("billing:settle:%s:%d", requestID, total)
+			} else {
+				expectedKey = fmt.Sprintf("billing:settle_refund:%s:%d", requestID, total)
+			}
+		case LedgerReasonBillingRefund:
+			if !debit {
+				expectedKey = "billing:refund:" + requestID
+			}
+		}
+		if expectedKey == "" || expectedKey != row.IdempotencyKey {
+			return nil, nil, fmt.Errorf("%w: noncanonical wallet operation", ErrMissingWalletDebitReceipt)
+		}
+		for _, detail := range details {
+			account := LedgerAccount(detail.Account)
+			if debit {
+				if -detail.Delta > common.MaxWalletQuota-totalRemaining {
+					return nil, nil, fmt.Errorf("%w: wallet receipt amount out of range", ErrMissingWalletDebitReceipt)
+				}
+				if _, exists := remaining[account]; !exists {
+					order = append(order, account)
+				}
+				remaining[account] -= detail.Delta
+				totalRemaining -= detail.Delta
+				foundDebit = true
+			} else {
+				if detail.Delta > remaining[account] {
+					return nil, nil, fmt.Errorf("%w: historical wallet refund exceeds source", ErrMissingWalletDebitReceipt)
+				}
+				remaining[account] -= detail.Delta
+				totalRemaining -= detail.Delta
+			}
+		}
+	}
+	if !foundDebit {
+		return nil, nil, ErrMissingWalletDebitReceipt
+	}
+	out := make([]LedgerShare, 0, len(order))
+	for _, account := range order {
+		if remaining[account] > 0 {
+			out = append(out, LedgerShare{Account: account, Amount: remaining[account]})
+		}
+	}
+	return out, &user, nil
+}
+
+// CreditWalletRefundTx atomically allocates a refund from authoritative request
+// history and returns its post-credit outstanding receipt. A zero amount means
+// "all remaining" only for the canonical failure-refund operation. Replays use
+// the stored credit shares rather than reapportioning an already reduced source.
+func CreditWalletRefundTx(tx *gorm.DB, entry LedgerEntry, amount int) (*LedgerResult, []LedgerShare, error) {
+	if entry.ReferenceType != "relay" || entry.ReferenceId != entry.RequestId || amount < 0 || amount > common.MaxWalletQuota || entry.Metadata != "" {
+		return nil, nil, ErrLedgerInvalidEntry
+	}
+	expectedKey := "billing:refund:" + entry.RequestId
+	if entry.Reason == LedgerReasonBillingSettle && amount > 0 {
+		expectedKey = fmt.Sprintf("billing:settle_refund:%s:%d", entry.RequestId, amount)
+	} else if entry.Reason != LedgerReasonBillingRefund {
+		return nil, nil, ErrLedgerInvalidEntry
+	}
+	if entry.IdempotencyKey != expectedKey {
+		return nil, nil, ErrLedgerInvalidEntry
+	}
+	outstanding, user, err := walletRequestReceiptTx(tx, entry.UserId, entry.RequestId)
+	if err != nil {
+		return nil, nil, err
+	}
+	operation, rows, err := loadLedgerOperation(lockForUpdate(tx), entry.IdempotencyKey)
+	if err == nil {
+		shares := make([]LedgerShare, 0, len(rows))
+		total := 0
+		for _, row := range rows {
+			if row.Delta <= 0 || row.Delta > common.MaxWalletQuota-total {
+				return nil, nil, ErrLedgerIdempotencyConflict
+			}
+			total += row.Delta
+			shares = append(shares, LedgerShare{Account: LedgerAccount(row.Account), Amount: row.Delta})
+		}
+		entry.Delta, entry.CreditShares = total, shares
+		if len(shares) == 0 || amount > 0 && amount != total || !verifyReplay(operation, entry, ledgerOpCredit) {
+			return nil, nil, ErrLedgerIdempotencyConflict
+		}
+		return replayResult(operation, rows), outstanding, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil, err
+	}
+	total := sharesTotal(outstanding) // receipt validation already bounded the sum.
+	if amount == 0 {
+		amount = total
+	}
+	if amount == 0 {
+		return &LedgerResult{Replayed: true, TotalBefore: user.Quota, TotalAfter: user.Quota}, outstanding, nil
+	}
+	shares, err := AllocateWalletRefund(outstanding, nil, amount)
+	if err != nil {
+		return nil, nil, err
+	}
+	result, err := CreditQuotaSharesTx(tx, entry, shares)
+	if err != nil {
+		return nil, nil, err
+	}
+	remaining, err := AllocateWalletRefund(outstanding, shares, total-amount)
+	return result, remaining, err
 }
 
 // LedgerEntry 描述一次账户资金变动。IdempotencyKey 为空时：
@@ -674,6 +933,15 @@ func verifyReplay(operation *BalanceLedgerOperation, entry LedgerEntry, op ledge
 func normalizeLegacyQuotaTx(tx *gorm.DB, user *User) error {
 	if user.Quota == 0 || user.QuotaPaid != 0 || user.QuotaBonus != 0 || user.QuotaReward != 0 {
 		return nil
+	}
+	// Validate before creating even an idempotency header. A malformed legacy
+	// balance must remain untouched for explicit review, never become usable
+	// paid credit merely because a migration or the first debit touched it.
+	if user.Quota < 0 {
+		return fmt.Errorf("%w: negative legacy quota for user %d", ErrLedgerInvalidEntry, user.Id)
+	}
+	if user.Quota > common.MaxWalletQuota {
+		return fmt.Errorf("%w: legacy quota for user %d exceeds max %d", ErrWalletQuotaLimitExceeded, user.Id, common.MaxWalletQuota)
 	}
 	key := fmt.Sprintf("migration:legacy_quota:%d", user.Id)
 	entry := LedgerEntry{

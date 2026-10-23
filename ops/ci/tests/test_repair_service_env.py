@@ -19,6 +19,7 @@ DSN_KEYS = ("TEST_MYSQL_DSN", "TEST_MYSQL_LOG_DSN", "TEST_POSTGRES_DSN", "TEST_P
             "TEST_REDIS_DSN", "TEST_REDIS_ADDR", "TEST_TASK_REDIS_ADDR",
             "TEST_FINALIZATION_MODEL_MYSQL_DSN", "TEST_FINALIZATION_MODEL_POSTGRES_DSN",
             "TEST_FINALIZATION_SERVICE_MYSQL_DSN", "TEST_FINALIZATION_SERVICE_POSTGRES_DSN",
+            "TEST_FINALIZATION_REALTIME_MYSQL_DSN", "TEST_FINALIZATION_REALTIME_POSTGRES_DSN",
             "TEST_REFUND_OPS_MYSQL_DSN", "TEST_REFUND_OPS_POSTGRES_DSN", "TEST_REFUND_QUEUE_PRESSURE",
             "TEST_FINALIZATION_CACHE_MYSQL_DSN", "TEST_FINALIZATION_CACHE_POSTGRES_DSN",
             "TEST_SETTLEMENT_DEADLINE_REDIS_ADDR", "TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE")
@@ -74,6 +75,8 @@ elif name == "python3":
                    "TEST_FINALIZATION_MODEL_POSTGRES_DSN": "untrusted-ambient-fixture",
                    "TEST_FINALIZATION_SERVICE_MYSQL_DSN": "untrusted-ambient-fixture",
                    "TEST_FINALIZATION_SERVICE_POSTGRES_DSN": "untrusted-ambient-fixture",
+                   "TEST_FINALIZATION_REALTIME_MYSQL_DSN": "untrusted-ambient-fixture",
+                   "TEST_FINALIZATION_REALTIME_POSTGRES_DSN": "untrusted-ambient-fixture",
                    "TEST_REFUND_OPS_MYSQL_DSN": "untrusted-ambient-fixture",
                    "TEST_REFUND_OPS_POSTGRES_DSN": "untrusted-ambient-fixture",
                    "TEST_REFUND_QUEUE_PRESSURE": "untrusted-ambient-fixture",
@@ -156,7 +159,8 @@ elif name == "python3":
 
     def test_required_rejection_fails_job_but_keeps_independent_evidence(self):
         for label in ("token-migration", "token-audit", "official-subscription-refund", "subscription-period-migration",
-                      "request-finalization-model", "request-finalization-service"):
+                      "request-finalization-model", "request-finalization-service", "realtime-financial",
+                      "subscription-financial-consistency", "subscription-supplement", "financial-review-read-only"):
             with self.subTest(label=label):
                 result, rows = self.run_script("postgres", reject_label=label)
                 self.assertNotEqual(0, result.returncode)
@@ -221,7 +225,7 @@ elif name == "python3":
 
     def test_finalization_database_creation_failure_stops_before_tests(self):
         for dialect in ("mysql", "postgres"):
-            for package in ("model", "service"):
+            for package in ("model", "service", "realtime"):
                 with self.subTest(dialect=dialect, package=package):
                     result, rows = self.run_script(dialect, finalization_creation_fails=package)
                     self.assertNotEqual(0, result.returncode)
@@ -243,7 +247,7 @@ elif name == "python3":
                         self.assertIn("/repair_compat?", invocation["env"][key])
                     else:
                         self.assertEqual("", invocation["env"][key])
-                self.assertIn("NOT financial-safety", suite["sqlite_result"])
+                self.assertIn("Atomic source and receipt rollback/replay is required", suite["sqlite_result"])
 
     def test_task_wallet_and_immediate_settlement_require_all_current_outcomes(self):
         inventory = json.loads((SCRIPT.parent / "billing_finalization_required_cases.json").read_text())
@@ -266,7 +270,7 @@ elif name == "python3":
 
     def test_retired_policy_reports_databases_and_optins_cannot_be_reactivated_by_ambient_env(self):
         policy = json.loads((SCRIPT.parent / "billing_policy_replacement.json").read_text())
-        retired = {item["label"] for item in policy["report_transitions"] if item["status"] in ("retired", "replaced")}
+        retired = {item["label"] for item in policy["historical_report_transitions"] if item["status"] in ("retired", "replaced")}
         for dialect in ("sqlite", "mysql", "postgres", "redis"):
             with self.subTest(dialect=dialect):
                 result, rows = self.run_script("" if dialect == "redis" else dialect,
@@ -293,6 +297,24 @@ elif name == "python3":
         self.assertEqual([classifier] + [classifier + "/" + case for case in (
             "nil", "unknown_secret", "wrapped_unknown_secret", "timeout", "cancel", "identity", "missing",
             "terminal_owner", "ledger_conflict", "ledger_invalid")], suites["billing-error-classifier"]["required_tests"])
+        task_required = suites["official-task-submission"]["required_tests"]
+        # Keep all four scenario boundaries under their current v2 semantics,
+        # and require rejection of a custom session without atomic handoff.
+        for current in (
+            "TestExecuteTaskSubmissionPreservesHoldWhenAcceptedInsertFails",
+            "TestExecuteTaskSubmissionRollsBackInsertedTaskWhenHandoffFails",
+            "TestExecuteTaskSubmissionPreservesHoldOnCancellationAfterUpstreamAcceptance",
+            "TestExecuteTaskSubmissionPreservesHoldWhenAcceptedFinalReserveFails",
+            "TestExecuteTaskSubmissionRejectsUnsupportedAtomicBilling",
+        ):
+            self.assertIn(current, task_required)
+        for historical in (
+            "TestExecuteTaskSubmissionRefundsWhenInsertFails",
+            "TestExecuteTaskSubmissionSettlementFailureStaysDurableAndWritesNothing",
+            "TestExecuteTaskSubmissionRefundsCancellationBeforeDurableBarrier",
+            "TestExecuteTaskSubmissionRefundsWhenFinalReserveFails",
+        ):
+            self.assertNotIn(historical, task_required)
         for dialect in ("sqlite", "mysql", "postgres"):
             with self.subTest(dialect=dialect):
                 result, rows = self.run_script(dialect)
@@ -319,6 +341,7 @@ elif name == "python3":
             self.assertIn("TestWalletSettlementRejectsChangedTokenIdentity/" + identity, required)
         for top in ("TestPostConsumeQuotaIdempotencyCoversWalletAndToken",
                     "TestPostConsumeQuotaRefundIdempotencyCoversWalletAndToken",
+                    "TestPostConsumeQuotaRefundRequiresDebitReceipt",
                     "TestPostConsumeQuotaRollsBackWalletWhenTokenUpdateFails"):
             self.assertIn(top, required)
 
@@ -343,6 +366,10 @@ elif name == "python3":
         followup = json.loads((SCRIPT.parent / "billing_refund_followup_required_cases.json").read_text())
         labels = {"request-finalization-model", "request-finalization-service", "wallet", "immediate-settlement",
                   followup["database_suite"]["label"]} | {suite["label"] for suite in followup["sqlite_only_suites"]}
+        current = json.loads((SCRIPT.parent / "financial_consistency_required_cases.json").read_text())
+        labels |= {suite["label"] for suite in current["model_suites"] if suite["label"] != "subscription-correctness"}
+        labels |= {"subscription-correctness-sqlite_immediate", "subscription-correctness-sqlite_deferred", "subscription-correctness-mysql", "subscription-correctness-postgres", current["realtime_suite"]["label"]}
+        labels |= {suite["label"] for suite in current["sqlite_only_suites"]}
         # Synthetic evidence only: this verifies the exact checker, not product behavior.
         for dialect in ("sqlite", "mysql", "postgres"):
             result, rows = self.run_script(dialect)
@@ -367,6 +394,54 @@ elif name == "python3":
                         {"Action": "skip", "Package": "offline/fixture", "Test": required[0] + "/unexpected_skipped_contract"}]))
                     with self.assertRaisesRegex(ValueError, "descendant was skipped"):
                         checker.validate_report(report, required, True)
+
+    def test_current_financial_reports_select_every_required_leaf_and_isolate_realtime(self):
+        inventory = json.loads((SCRIPT.parent / "financial_consistency_required_cases.json").read_text())
+        realtime = inventory["realtime_suite"]
+        for dialect in ("sqlite", "mysql", "postgres"):
+            with self.subTest(dialect=dialect):
+                result, rows = self.run_script(dialect)
+                self.assertEqual(0, result.returncode, result.stderr)
+                contracts = self.report_contracts(rows)
+                for suite in inventory["model_suites"]:
+                    modes = suite.get("sqlite_modes", [dialect]) if dialect == "sqlite" else [dialect]
+                    for selected in modes:
+                        label = suite["label"] + ("-" + selected if suite["label"] == "subscription-correctness" else "")
+                        invocation, check = contracts[label]
+                        prefix = suite["top"] + "/" + selected
+                        leaves = [prefix + "/" + leaf for leaf in suite["required_leaf_suffixes"]]
+                        self.assertEqual(leaves if suite.get("existing_report") or suite["label"] == "subscription-correctness" else [prefix] + leaves,
+                                         check["args"][3:])
+                        self.assertEqual("./" + suite["package"], invocation["args"][4])
+                        self.assertEqual(f"^{suite['top']}$/{selected}$", invocation["args"][6])
+                for label, (invocation, check) in contracts.items():
+                    for engine, key in realtime["dsn_env"].items():
+                        if label == realtime["label"] and dialect == engine:
+                            self.assertIn("/repair_finalization_realtime?", invocation["env"][key])
+                            self.assertIn("127.0.0.1:", invocation["env"][key])
+                            self.assertNotEqual(invocation["env"]["TEST_DATABASE_DSN"], invocation["env"][key])
+                        else:
+                            self.assertEqual("", invocation["env"][key], (label, key))
+                invocation, check = contracts[realtime["label"]]
+                prefix = realtime["top"] + "/" + dialect
+                self.assertEqual([prefix] + [prefix + "/" + leaf for leaf in realtime["required_leaf_suffixes"]], check["args"][3:])
+                self.assertEqual("./" + realtime["package"], invocation["args"][4])
+                self.assertEqual(f"^{realtime['top']}$/{dialect}$", invocation["args"][6])
+                if dialect != "sqlite":
+                    creation = [row for row in rows if row["tool"] == "docker" and any("repair_finalization_realtime" in arg for arg in row["args"])]
+                    self.assertEqual(1, len(creation))
+                    self.assertNotIn("IF NOT EXISTS", " ".join(creation[0]["args"]))
+                    self.assertNotIn("DROP", " ".join(creation[0]["args"]))
+                    self.assertLess(rows.index(creation[0]), rows.index(next(iter(contracts.values()))[0]))
+                for suite in inventory["sqlite_only_suites"]:
+                    if dialect != "sqlite":
+                        self.assertNotIn(suite["label"], contracts)
+                        continue
+                    invocation, check = contracts[suite["label"]]
+                    self.assertEqual(suite["required_tests"], check["args"][3:])
+                    self.assertEqual("./" + suite["package"], invocation["args"][4])
+                    for leaf in suite["required_tests"]:
+                        self.assertIsNotNone(re.fullmatch(invocation["args"][6], leaf.split("/")[0]))
 
     def test_normal_settlement_deadline_inventory_remains_required(self):
         inventory = json.loads((SCRIPT.parent / "billing_settlement_cache_required_cases.json").read_text())

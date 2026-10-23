@@ -268,7 +268,9 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) 
 		if usedFinal < 0 {
 			usedFinal = 0
 		}
-		if relayInfo.SubscriptionAmountTotal > 0 {
+		if relayInfo.SubscriptionSnapshotUnknown {
+			other.SetPublic("subscription_snapshot_unknown", true)
+		} else if relayInfo.SubscriptionAmountTotal > 0 {
 			remain := max(relayInfo.SubscriptionAmountTotal-usedFinal, 0)
 			other.SetPublic("subscription_total", relayInfo.SubscriptionAmountTotal)
 			other.SetPublic("subscription_used", usedFinal)
