@@ -20,13 +20,27 @@ type AccountShare struct {
 // implementation when it participates in a caller-owned database transaction.
 // It contains only facts BillingSession needs after commit.
 type SettlementResult struct {
-	Replayed    bool
-	TotalAfter  int
-	DebitShares []AccountShare
+	Replayed          bool
+	TotalAfter        int
+	DebitShares       []AccountShare
+	CreditShares      []AccountShare
+	OutstandingShares []AccountShare
+	ReceiptKnown      bool
+	SourceID          int
+	SourcePeriod      int64
+	SourceHeld        int
+	OriginalAmount    int
+	AmountTotal       int64
+	AmountUsedAfter   int64
+	SourcePlanID      int
+	SourcePlanTitle   string
+	SnapshotUnknown   bool // Current allowance no longer belongs to the reserved period.
 }
 
 func (r SettlementResult) Clone() SettlementResult {
 	r.DebitShares = append([]AccountShare(nil), r.DebitShares...)
+	r.CreditShares = append([]AccountShare(nil), r.CreditShares...)
+	r.OutstandingShares = append([]AccountShare(nil), r.OutstandingShares...)
 	return r
 }
 

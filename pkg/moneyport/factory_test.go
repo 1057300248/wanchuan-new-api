@@ -126,7 +126,12 @@ func TestFundingDTOCopiesPreserveOriginalReceiptFacts(t *testing.T) {
 	t.Run("settlement shares", func(t *testing.T) {
 		original := SettlementResult{
 			Replayed: true, TotalAfter: 107,
-			DebitShares: []AccountShare{{Account: "paid", Amount: 11}, {Account: "bonus", Amount: 3}, {Account: "reward", Amount: 5}},
+			DebitShares:       []AccountShare{{Account: "paid", Amount: 11}, {Account: "bonus", Amount: 3}, {Account: "reward", Amount: 5}},
+			CreditShares:      []AccountShare{{Account: "bonus", Amount: 2}, {Account: "reward", Amount: 1}},
+			OutstandingShares: []AccountShare{{Account: "paid", Amount: 11}, {Account: "bonus", Amount: 1}, {Account: "reward", Amount: 4}},
+			ReceiptKnown:      true, SourceID: 23, SourcePeriod: 1_700_000_000, SourceHeld: 19,
+			OriginalAmount: 19, AmountTotal: 200, AmountUsedAfter: 93,
+			SourcePlanID: 31, SourcePlanTitle: "period-bound plan", SnapshotUnknown: true,
 		}
 		copy := original.Clone()
 		assert.Equal(t, original, copy)
@@ -136,9 +141,20 @@ func TestFundingDTOCopiesPreserveOriginalReceiptFacts(t *testing.T) {
 		assert.Equal(t, AccountShare{Account: "paid", Amount: 11}, original.DebitShares[0])
 		assert.Equal(t, AccountShare{Account: "bonus", Amount: 3}, copy.DebitShares[1])
 		assert.Equal(t, AccountShare{Account: "reward", Amount: 5}, copy.DebitShares[2])
+		copy.CreditShares[0] = AccountShare{Account: "changed-copy", Amount: 999}
+		original.CreditShares[1].Amount = 8
+		assert.Equal(t, AccountShare{Account: "bonus", Amount: 2}, original.CreditShares[0])
+		assert.Equal(t, AccountShare{Account: "reward", Amount: 1}, copy.CreditShares[1])
+		copy.OutstandingShares[0] = AccountShare{Account: "changed-copy", Amount: 999}
+		original.OutstandingShares[1].Amount = 8
+		assert.Equal(t, AccountShare{Account: "paid", Amount: 11}, original.OutstandingShares[0])
+		assert.Equal(t, AccountShare{Account: "bonus", Amount: 1}, copy.OutstandingShares[1])
+		assert.Equal(t, AccountShare{Account: "reward", Amount: 4}, copy.OutstandingShares[2])
 	})
 	t.Run("absent slices", func(t *testing.T) {
 		assert.Nil(t, (FactoryRequest{}).Clone().AccountOrder)
 		assert.Nil(t, (SettlementResult{}).Clone().DebitShares)
+		assert.Nil(t, (SettlementResult{}).Clone().CreditShares)
+		assert.Nil(t, (SettlementResult{}).Clone().OutstandingShares)
 	})
 }
