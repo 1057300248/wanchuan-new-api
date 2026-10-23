@@ -47,13 +47,17 @@ func subscriptionPeriodDatabase(t *testing.T, kind common.DatabaseType, dsn stri
 		t.Cleanup(func() {
 			require.NoError(t, admin.Exec("DROP SCHEMA ? CASCADE", clause.Table{Name: fixtureName}).Error)
 		})
-		driver = postgres.New(postgres.Config{
-			DSN: dsn, PreferSimpleProtocol: true,
-			OptionOpenDB: []stdlib.OptionOpenDB{stdlib.OptionBeforeConnect(func(_ context.Context, config *pgx.ConnConfig) error {
-				config.RuntimeParams["search_path"] = fixtureName
-				return nil
-			})},
-		})
+		// Configure the connector once so every physical connection uses the
+		// isolated schema, including connections opened after gorm.Open.
+		config, err := pgx.ParseConfig(dsn)
+		require.NoError(t, err)
+		config.RuntimeParams["search_path"] = fixtureName
+		config.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+		pool := stdlib.OpenDB(*config)
+		// Own the pool before gorm.Open, including its failure paths. The
+		// official PostgreSQL driver supports Conn, not OptionOpenDB.
+		t.Cleanup(func() { require.NoError(t, pool.Close()) })
+		driver = postgres.New(postgres.Config{Conn: pool})
 	}
 	naming := schema.NamingStrategy{TablePrefix: fixtureName + "_"}
 	db, err := gorm.Open(driver, &gorm.Config{NamingStrategy: naming})
@@ -64,7 +68,9 @@ func subscriptionPeriodDatabase(t *testing.T, kind common.DatabaseType, dsn stri
 	if kind == common.DatabaseTypeSQLite {
 		sqlDB.SetMaxOpenConns(1)
 	}
-	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	if kind != common.DatabaseTypePostgreSQL {
+		t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	}
 	if kind == common.DatabaseTypePostgreSQL {
 		// Hold two physical connections simultaneously: SET on just the first
 		// connection would silently send concurrent work back into public.
