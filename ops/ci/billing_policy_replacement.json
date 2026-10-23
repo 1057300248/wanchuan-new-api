@@ -265,7 +265,7 @@
         "official_upward_shortage_before_insert"
       ],
       "replacement_inventory": "billing_finalization_required_cases.json",
-      "note": "Selector, actual dialect environment and report position remain unchanged; old accepted-pending contract is replaced by official Insert then Settle failure/shortage behavior and every remaining outcome."
+      "note": "Actual dialect environment and report position remain unchanged; all original current settlement outcomes remain mandatory. The same owned task-submission report additionally requires both background-metadata top-level tests and all 16 leaves from immediate_settlement_suite.standalone_required_tests on every dialect."
     },
     {
       "label": "subscription-period",

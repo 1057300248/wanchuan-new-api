@@ -335,6 +335,15 @@ elif name == "python3":
 
     def test_task_wallet_and_immediate_settlement_require_all_current_outcomes(self):
         inventory = json.loads((SCRIPT.parent / "billing_finalization_required_cases.json").read_text())
+        background = "TestServeTaskPluginProtocolBackgroundPreservesConcurrentFinancialState"
+        invalid = "TestTaskResponsesBackgroundMetadataRejectsInvalidWrites"
+        background_required = [background] + [background + "/" + case for case in (
+            "pending", "terminal_intent", "settled", "refunded", "review")]
+        background_required += [invalid] + [invalid + "/" + case for case in (
+            "id", "user", "zero_id", "zero_user", "public_id", "platform", "empty_public_id",
+            "empty_platform", "nil_context", "cancelled_context", "write_failure")]
+        self.assertEqual(18, len(background_required))
+        self.assertEqual(background_required, inventory["immediate_settlement_suite"]["standalone_required_tests"])
         for dialect in ("sqlite", "mysql", "postgres"):
             with self.subTest(dialect=dialect):
                 result, rows = self.run_script(dialect)
@@ -344,9 +353,17 @@ elif name == "python3":
                     suite = inventory[key]
                     test, check = contracts[suite["label"]]
                     prefix = suite["top"] + ("/" + dialect if key == "task_wallet_suite" else "")
-                    self.assertEqual([prefix] + [prefix + "/" + leaf for leaf in suite["required_leaf_suffixes"]], check["args"][3:])
+                    required = [prefix] + [prefix + "/" + leaf for leaf in suite["required_leaf_suffixes"]]
+                    required += suite.get("standalone_required_tests", [])
+                    self.assertEqual(required, check["args"][3:])
                     self.assertEqual("./" + suite["package"], test["args"][4])
-                    self.assertEqual(f"^{suite['top']}$" + (f"/{dialect}$" if key == "task_wallet_suite" else ""), test["args"][6])
+                    selector = suite.get("selector", f"^{suite['top']}$/{dialect}$")
+                    self.assertEqual(selector, test["args"][6])
+                    if key == "immediate_settlement_suite":
+                        self.assertEqual(29, len(required))
+                        for top in (suite["top"], background, invalid):
+                            self.assertIsNotNone(re.fullmatch(selector, top))
+                        self.assertIsNone(re.fullmatch(selector, background + "Unexpected"))
                 for table in ("tokens", "tasks"):
                     self.assertIn(f"TestTaskWalletReceiptsDatabaseMatrix/{dialect}/settlement_rolls_back_on_{table}_failure", contracts["wallet"][1]["args"][3:])
                 prefix = f"TestSubscriptionPeriodMigrationDatabaseMatrix/{dialect}"

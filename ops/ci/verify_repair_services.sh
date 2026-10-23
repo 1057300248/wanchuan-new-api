@@ -207,11 +207,32 @@ database)
   for contract in partial zero larger invalid_usage expression_failure negative_result missing_usage failed official_settlement_failure_after_insert official_upward_shortage_before_insert; do
     required+=("$prefix/$contract")
   done
+  # Keep the background writer race and identity guards mandatory on all dialects.
+  required+=(
+    'TestServeTaskPluginProtocolBackgroundPreservesConcurrentFinancialState'
+    'TestServeTaskPluginProtocolBackgroundPreservesConcurrentFinancialState/pending'
+    'TestServeTaskPluginProtocolBackgroundPreservesConcurrentFinancialState/terminal_intent'
+    'TestServeTaskPluginProtocolBackgroundPreservesConcurrentFinancialState/settled'
+    'TestServeTaskPluginProtocolBackgroundPreservesConcurrentFinancialState/refunded'
+    'TestServeTaskPluginProtocolBackgroundPreservesConcurrentFinancialState/review'
+    'TestTaskResponsesBackgroundMetadataRejectsInvalidWrites'
+    'TestTaskResponsesBackgroundMetadataRejectsInvalidWrites/id'
+    'TestTaskResponsesBackgroundMetadataRejectsInvalidWrites/user'
+    'TestTaskResponsesBackgroundMetadataRejectsInvalidWrites/zero_id'
+    'TestTaskResponsesBackgroundMetadataRejectsInvalidWrites/zero_user'
+    'TestTaskResponsesBackgroundMetadataRejectsInvalidWrites/public_id'
+    'TestTaskResponsesBackgroundMetadataRejectsInvalidWrites/platform'
+    'TestTaskResponsesBackgroundMetadataRejectsInvalidWrites/empty_public_id'
+    'TestTaskResponsesBackgroundMetadataRejectsInvalidWrites/empty_platform'
+    'TestTaskResponsesBackgroundMetadataRejectsInvalidWrites/nil_context'
+    'TestTaskResponsesBackgroundMetadataRejectsInvalidWrites/cancelled_context'
+    'TestTaskResponsesBackgroundMetadataRejectsInvalidWrites/write_failure'
+  )
   # Fixed-name wallet/owner tables bypass this fixture's normal table prefix.
   # Keep its existing-table refusal: only use a newly created disposable DB,
   # never delete or reuse tables left by the startup and earlier suites.
   TEST_MYSQL_DSN="$task_submission_mysql_dsn" TEST_POSTGRES_DSN="$task_submission_postgres_dsn" \
-    report immediate-settlement ./controller '^TestImmediateTaskSettlementDatabase$' "${required[@]}"
+    report immediate-settlement ./controller '^(TestImmediateTaskSettlementDatabase|TestServeTaskPluginProtocolBackgroundPreservesConcurrentFinancialState|TestTaskResponsesBackgroundMetadataRejectsInvalidWrites)$' "${required[@]}"
 
 
   # Required current-policy leaves are mirrored by offline orchestration tests.
