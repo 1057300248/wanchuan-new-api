@@ -1,9 +1,12 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -449,6 +452,101 @@ func decreaseTokenQuota(id int, quota int) (err error) {
 		},
 	).Error
 	return err
+}
+
+// The transaction helpers below are capabilities only at this stage. Existing
+// quota writers and Redis/batch reservations retain their current behavior.
+
+// ApplyTokenQuotaDeltaTx updates token quota inside a caller-owned database
+// transaction. delta follows the balance direction: positive refunds quota,
+// negative consumes quota. The token cache is fenced before the database write
+// so a rolled-back transaction leaves only a cold cache, never a stale value.
+func ApplyTokenQuotaDeltaTx(tx *gorm.DB, id int, key string, delta int) error {
+	if tx == nil {
+		return errors.New("token quota transaction is nil")
+	}
+	if id <= 0 {
+		return errors.New("token id must be positive")
+	}
+	if delta == 0 {
+		return nil
+	}
+	// Unscoped() is a chainable GORM statement. A SELECT on that same
+	// statement would leak FROM/WHERE clauses into UPDATE (including SQLite
+	// UPDATE ... FROM tokens). Keep each query fresh on the SAME transaction.
+	fresh := func() *gorm.DB {
+		query := tx.Session(&gorm.Session{NewDB: true})
+		if tx.Statement.Unscoped {
+			query = query.Unscoped()
+		}
+		return query
+	}
+	var token Token
+	if err := lockForUpdate(fresh()).First(&token, id).Error; err != nil {
+		return err
+	}
+	if token.Key != key {
+		return errors.New("token quota identity mismatch")
+	}
+	// SQLite silently promotes overflowing INTEGER arithmetic to REAL. Check
+	// both signed counters before SQL so all supported engines fail closed.
+	if delta > 0 && (token.RemainQuota > math.MaxInt-delta || token.UsedQuota < math.MinInt+delta) ||
+		delta < 0 && (token.RemainQuota < math.MinInt-delta || token.UsedQuota > math.MaxInt+delta) {
+		return billingRefundReviewError("token_counter_bounds", "token quota counter is out of integer range")
+	}
+	ctx := tx.Statement.Context
+	if err := invalidateTokenCacheForMutationContext(ctx, key); err != nil {
+		code, class := BillingRefundErrorCode(err)
+		common.SysLog(fmt.Sprintf("failed to invalidate token quota cache before transaction: code=%s class=%s", code, class))
+	}
+	// A Redis socket deadline can expire before the context timer publishes
+	// cancellation. Do not turn that elapsed transaction budget into a live
+	// cache error and proceed with SQL. Unexpired Redis failures retain the
+	// existing log-and-proceed policy.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
+	result := fresh().Model(&Token{}).Where("id = ?", id).Updates(
+		map[string]any{
+			"remain_quota":  gorm.Expr("remain_quota + ?", delta),
+			"used_quota":    gorm.Expr("used_quota - ?", delta),
+			"accessed_time": common.GetTimestamp(),
+		},
+	)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("token quota update affected %d rows for token %d", result.RowsAffected, id)
+	}
+	return nil
+}
+
+// SettleTokenQuotaDeltaTx accounts for an already-authorized request after the
+// upstream work has run. Revoking its token must not cancel the owner's wallet
+// settlement. Soft-deleted rows retain their counters without becoming usable;
+// physically removed rows have no counters left to update. A surviving row must
+// still match both the original owner and credential, including on deleted rows.
+// Reservations must keep using the live-token-only path instead.
+func SettleTokenQuotaDeltaTx(tx *gorm.DB, id, userID int, key string, delta int) error {
+	if tx == nil || id <= 0 || userID <= 0 || key == "" {
+		return errors.New("invalid authorized token settlement identity")
+	}
+	var token Token
+	err := lockForUpdate(tx.Unscoped()).First(&token, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if token.UserId != userID || token.Key != key {
+		return errors.New("token settlement identity mismatch")
+	}
+	return ApplyTokenQuotaDeltaTx(tx.Unscoped(), id, key, delta)
 }
 
 // CountUserTokens returns total number of tokens for the given user, used for pagination

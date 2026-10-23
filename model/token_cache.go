@@ -36,10 +36,15 @@ const tokenCacheFenceSeconds = 10
 // writes to the database: it raises the fence and drops the cached hash so no
 // reader can act on (or re-publish) the pre-mutation state.
 func invalidateTokenCacheForMutation(key string) error {
+	return invalidateTokenCacheForMutationContext(context.Background(), key)
+}
+
+// Bounded transactional callers must propagate their deadline through both
+// parts of the pre-mutation fence. This never removes or shortens the fence.
+func invalidateTokenCacheForMutationContext(ctx context.Context, key string) error {
 	if !common.RedisEnabled || key == "" {
 		return nil
 	}
-	ctx := context.Background()
 	err := common.RDB.Set(ctx, getTokenCacheFenceKey(key), 1, time.Duration(tokenCacheFenceSeconds)*time.Second).Err()
 	if err != nil {
 		return err
