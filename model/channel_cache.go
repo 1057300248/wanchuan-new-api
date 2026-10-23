@@ -28,6 +28,11 @@ var channelSyncLock sync.RWMutex
 // Serialize refreshes, but never hold the cache read/write lock during SQL IO.
 var channelRefreshLock sync.Mutex
 var channelCacheRevision uint64 // protected by channelSyncLock
+
+// These classify routing evidence; no staleness runner or TTL policy is activated here.
+var ErrChannelCacheStale = errors.New("channel cache snapshot exceeded staleness budget")
+var ErrChannelCacheMiss = errors.New("channel is absent from cache snapshot")
+
 func InitChannelCache() {
 	if err := RefreshChannelCache(context.Background()); err != nil {
 		common.SysError("channel cache refresh failed; previous snapshot retained: " + common.MaskSensitiveLogInfo(err.Error()))
@@ -290,7 +295,7 @@ func CacheGetChannel(id int) (*Channel, error) {
 
 	c, ok := channelsIDM[id]
 	if !ok {
-		return nil, fmt.Errorf("channel #%d no longer exists", id)
+		return nil, fmt.Errorf("channel #%d is absent from cache: %w", id, ErrChannelCacheMiss)
 	}
 	return c, nil
 }
@@ -308,7 +313,7 @@ func CacheGetChannelInfo(id int) (*ChannelInfo, error) {
 
 	c, ok := channelsIDM[id]
 	if !ok {
-		return nil, fmt.Errorf("channel #%d no longer exists", id)
+		return nil, fmt.Errorf("channel #%d is absent from cache: %w", id, ErrChannelCacheMiss)
 	}
 	return &c.ChannelInfo, nil
 }

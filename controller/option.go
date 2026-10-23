@@ -183,12 +183,29 @@ func writePasskeyDomainSettingsError(c *gin.Context, err error) {
 }
 
 func UpdateOption(c *gin.Context) {
-	var option OptionUpdateRequest
-	err := common.DecodeJson(c.Request.Body, &option)
+	option, affiliatePair, err := decodeOptionUpdatePayload(c.Request.Body)
 	if err != nil {
 		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
 		return
 	}
+	if affiliatePair != nil {
+		err := model.UpdateOptionsBulk(map[string]string{
+			"AffiliateRewardEnabled": strconv.FormatBool(affiliatePair.Enabled),
+			"AffiliateRewardRate":    strconv.FormatFloat(affiliatePair.Rate, 'g', -1, 64),
+		})
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		// Audit the fixed purpose only, never option values or arbitrary input.
+		recordManageAudit(c, "option.update", map[string]any{
+			"key":  "AffiliateRewardEnabled, AffiliateRewardRate",
+			"keys": []string{"AffiliateRewardEnabled", "AffiliateRewardRate"},
+		})
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+		return
+	}
+
 	switch option.Value.(type) {
 	case bool:
 		option.Value = common.Interface2String(option.Value.(bool))

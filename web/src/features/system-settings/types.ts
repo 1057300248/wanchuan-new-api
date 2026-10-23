@@ -520,3 +520,8 @@ export type UpstreamRatiosResponse = {
     test_results: TestResult[]
   }
 }
+
+// Purpose-limited atomic request; this does not expose a generic bulk options API.
+export interface UpdateAffiliateRewardRequest {
+  affiliate_reward: { enabled: boolean; rate: number }
+}

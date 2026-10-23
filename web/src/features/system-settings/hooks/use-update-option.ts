@@ -23,8 +23,8 @@ import { toast } from 'sonner'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import { updatePasskeyDomains, updateSystemOption } from '../api'
-import type { UpdateOptionRequest, UpdatePasskeyDomainsRequest } from '../types'
+import { updateAffiliateRewardOptions, updatePasskeyDomains, updateSystemOption } from '../api'
+import type { UpdateAffiliateRewardRequest, UpdateOptionRequest, UpdatePasskeyDomainsRequest } from '../types'
 
 // Configuration keys that require status refresh
 const STATUS_RELATED_KEYS = new Set([
@@ -105,6 +105,21 @@ export function useUpdatePasskeyDomains() {
       } catch {
         /* Storage may be disabled. */
       }
+      toast.success(i18next.t('Setting updated successfully'))
+    },
+    onError: (error: Error) =>
+      handleServerError(error, i18next.t('Failed to update setting')),
+  })
+}
+
+// Only the referral enabled/rate pair shares this dedicated atomic mutation.
+export function useUpdateAffiliateReward() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (request: UpdateAffiliateRewardRequest) =>
+      requireServerSuccess(await updateAffiliateRewardOptions(request)),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['system-options'] })
       toast.success(i18next.t('Setting updated successfully'))
     },
     onError: (error: Error) =>

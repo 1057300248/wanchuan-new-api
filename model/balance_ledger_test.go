@@ -5,17 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
-// This fixture exercises only the unconnected capabilities, not registration,
+// This fixture exercises the ledger primitives independently, not registration,
 // payment callbacks, service funding owners, or subscription receipt activation.
 func setupLedgerCapabilityState(t *testing.T) {
 	t.Helper()
@@ -62,6 +64,15 @@ func assertLedgerCapabilityCounts(t *testing.T, operations, rows int64) {
 }
 
 func TestLedgerCapabilityDoesNotActivateMigrationOrHooks(t *testing.T) {
+	// Isolate the schema-only boundary from the now-active production host registration.
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "schema-only.db")), &gorm.Config{})
+	require.NoError(t, err)
+	pool, err := db.DB()
+	require.NoError(t, err)
+	previous := DB
+	DB = db
+	t.Cleanup(func() { DB = previous; require.NoError(t, pool.Close()) })
+	require.NoError(t, db.AutoMigrate(&User{}, &Token{}))
 	setupLedgerCapabilityState(t)
 	// The existing schema guard can run repeatedly without registering the new
 	// receipt type or inferring paid credit from an old quota-only row.

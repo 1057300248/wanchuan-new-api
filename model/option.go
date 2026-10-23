@@ -33,6 +33,9 @@ func AllOption() ([]*Option, error) {
 func InitOptionMap() {
 	common.OptionMapRWMutex.Lock()
 	common.OptionMap = make(map[string]string)
+	// Cold initialization never enables rewards from a partial persisted pair.
+	common.AffiliateRewardEnabled = false
+	common.AffiliateRewardRate = 0.05
 
 	// 添加原有的系统配置
 	common.OptionMap["FileUploadPermission"] = strconv.Itoa(common.FileUploadPermission)
@@ -121,6 +124,7 @@ func InitOptionMap() {
 	common.OptionMap["WaffoUnitPrice"] = strconv.FormatFloat(setting.WaffoUnitPrice, 'f', -1, 64)
 	common.OptionMap["WaffoMinTopUp"] = strconv.Itoa(setting.WaffoMinTopUp)
 	common.OptionMap["WaffoPayMethods"] = setting.WaffoPayMethods2JsonString()
+	common.OptionMap["WaffoPancakeEnvironment"] = setting.WaffoPancakeEnvironment
 	common.OptionMap["WaffoPancakeMerchantID"] = setting.WaffoPancakeMerchantID
 	common.OptionMap["WaffoPancakePrivateKey"] = setting.WaffoPancakePrivateKey
 	common.OptionMap["WaffoPancakeReturnURL"] = setting.WaffoPancakeReturnURL
@@ -146,6 +150,10 @@ func InitOptionMap() {
 	common.OptionMap["QuotaForNewUser"] = strconv.Itoa(common.QuotaForNewUser)
 	common.OptionMap["QuotaForInviter"] = strconv.Itoa(common.QuotaForInviter)
 	common.OptionMap["QuotaForInvitee"] = strconv.Itoa(common.QuotaForInvitee)
+	common.OptionMap["SignupBonusEnabled"] = strconv.FormatBool(common.SignupBonusEnabled)
+	common.OptionMap["QuotaForSignupBonus"] = strconv.Itoa(common.QuotaForSignupBonus)
+	common.OptionMap[affiliateEnabledOption] = strconv.FormatBool(common.AffiliateRewardEnabled)
+	common.OptionMap[affiliateRateOption] = strconv.FormatFloat(common.AffiliateRewardRate, 'f', -1, 64)
 	common.OptionMap["QuotaRemindEnabled"] = strconv.FormatBool(common.QuotaRemindEnabled)
 	common.OptionMap["QuotaRemindThreshold"] = strconv.Itoa(common.QuotaRemindThreshold)
 	common.OptionMap["PreConsumedQuota"] = strconv.Itoa(common.PreConsumedQuota)
@@ -213,6 +221,9 @@ func loadOptionsFromDatabase() {
 	options, _ := AllOption()
 	passkeyOptions := make(map[string]string)
 	for _, option := range options {
+		if isAffiliateRewardOption(option.Key) {
+			continue
+		}
 		if IsPasskeyDomainOption(option.Key) {
 			passkeyOptions[option.Key] = option.Value
 			continue
@@ -221,6 +232,9 @@ func loadOptionsFromDatabase() {
 		if err != nil {
 			common.SysLog(common.LogText("failed to update option map: %s", err.Error()))
 		}
+	}
+	if err := reloadAffiliateOptions(); err != nil {
+		common.SysError("affiliate reward option pair invalid or unavailable; retained last valid settings (explicit false remains disabled)")
 	}
 	applyPasskeyDomainOptions(passkeyOptions)
 	syncGroupConfigVersionAfterOptionLoad(options)
@@ -235,6 +249,13 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if err := validateAffiliateRewardOption(key, value); err != nil {
+		return err
+	}
+	if key == "WaffoPancakeEnvironment" {
+		_, err := setting.NormalizeWaffoPancakeEnvironment(value)
+		return err
+	}
 	if key == legacyAccessTokenRetireAtKey {
 		return errLegacyRetireAtReadOnly
 	}
@@ -278,6 +299,9 @@ func validateOptionValue(key string, value string) error {
 }
 
 func UpdateOption(key string, value string) error {
+	if isAffiliateRewardOption(key) {
+		return UpdateOptionsBulk(map[string]string{key: value})
+	}
 	if key == setting.PublicModelOwnedByOptionKey {
 		return UpdateOptionsBulk(map[string]string{key: value})
 	}
@@ -367,7 +391,20 @@ func UpdateOptionsBulk(values map[string]string) error {
 		}
 	}
 
+	writesAffiliate := hasAffiliateRewardOptions(values)
+	var affiliatePair affiliateOptionPair
+	if writesAffiliate {
+		affiliateOptionMutex.Lock()
+		defer affiliateOptionMutex.Unlock()
+	}
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if writesAffiliate {
+			var err error
+			affiliatePair, err = prepareAffiliateOptionsTx(tx, values)
+			if err != nil {
+				return err
+			}
+		}
 		if _, writesGroups := values[setting.SensitiveCheckExemptGroupsOptionKey]; writesGroups {
 			if err := lockGroupNamespace(tx); err != nil {
 				return err
@@ -391,7 +428,13 @@ func UpdateOptionsBulk(values map[string]string) error {
 	if err != nil {
 		return err
 	}
+	if writesAffiliate {
+		publishAffiliateOptionPair(affiliatePair)
+	}
 	for k, v := range values {
+		if isAffiliateRewardOption(k) {
+			continue
+		}
 		if err := updateOptionMap(k, v); err != nil {
 			return err
 		}
@@ -403,6 +446,16 @@ func UpdateOptionsBulk(values map[string]string) error {
 }
 
 func updateOptionMap(key string, value string) (err error) {
+	// The pair must not be published one key at a time, including by direct internal callers.
+	if isAffiliateRewardOption(key) {
+		return errAffiliateOptionInvalid
+	}
+	if key == "WaffoPancakeEnvironment" {
+		value, err = setting.NormalizeWaffoPancakeEnvironment(value)
+		if err != nil {
+			return err
+		}
+	}
 	switch key {
 	case setting.PublicModelOwnedByOptionKey:
 		setting.LoadPublicModelOwnedBy(value)
@@ -632,6 +685,8 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.WaffoUnitPrice, _ = strconv.ParseFloat(value, 64)
 	case "WaffoMinTopUp":
 		setting.WaffoMinTopUp, _ = strconv.Atoi(value)
+	case "WaffoPancakeEnvironment":
+		setting.WaffoPancakeEnvironment = value
 	case "WaffoPancakeMerchantID":
 		setting.WaffoPancakeMerchantID = value
 	case "WaffoPancakePrivateKey":
@@ -678,6 +733,10 @@ func updateOptionMap(key string, value string) (err error) {
 		common.TurnstileSiteKey = value
 	case "TurnstileSecretKey":
 		common.TurnstileSecretKey = value
+	case "SignupBonusEnabled":
+		common.SignupBonusEnabled, _ = strconv.ParseBool(value)
+	case "QuotaForSignupBonus":
+		common.QuotaForSignupBonus, _ = strconv.Atoi(value)
 	case "QuotaForNewUser":
 		common.QuotaForNewUser, _ = strconv.Atoi(value)
 	case "QuotaForInviter":

@@ -162,3 +162,86 @@ test('shows the LinuxDO-only three-dollar policy without obsolete global signup 
     screen.queryByRole('spinbutton', { name: 'Signup Bonus Quota' })
   ).not.toBeInTheDocument()
 })
+
+
+test('referral toggle and repaired rate are submitted as one purpose-limited pair', async () => {
+  await renderSettings()
+  expect(api.put).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('switch', { name: 'Referral Rewards' }))
+  fireEvent.change(screen.getByRole('spinbutton', { name: 'Referral Reward Rate' }), {
+    target: { value: '0.2' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
+  expect(api.put).toHaveBeenCalledWith('/api/option/', {
+    affiliate_reward: { enabled: true, rate: 0.2 },
+  })
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  expect(api.put).toHaveBeenCalledTimes(1)
+})
+
+test('editing only the referral rate still submits the complete false pair', async () => {
+  await renderSettings()
+  fireEvent.change(screen.getByRole('spinbutton', { name: 'Referral Reward Rate' }), {
+    target: { value: '0.3' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
+  expect(api.put).toHaveBeenCalledWith('/api/option/', {
+    affiliate_reward: { enabled: false, rate: 0.3 },
+  })
+})
+
+test('a pending referral pair blocks a second submit until the request finishes', async () => {
+  let resolve: ((value: { data: { success: boolean } }) => void) | undefined
+  vi.mocked(api.put).mockImplementationOnce(
+    () => new Promise((done) => { resolve = done })
+  )
+  await renderSettings()
+  fireEvent.click(screen.getByRole('switch', { name: 'Referral Rewards' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Saving...' }))
+  expect(api.put).toHaveBeenCalledTimes(1)
+  resolve?.({ data: { success: true } })
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled())
+})
+
+test('a rejected referral pair keeps both fields dirty and stops unrelated writes until retry', async () => {
+  vi.mocked(api.put).mockResolvedValueOnce({ data: { success: false, message: 'Pair rejected' } })
+  const multiplier = await renderSettings()
+  fireEvent.change(multiplier, { target: { value: '1.5' } })
+  fireEvent.click(screen.getByRole('switch', { name: 'Referral Rewards' }))
+  const rate = screen.getByRole('spinbutton', { name: 'Referral Reward Rate' })
+  fireEvent.change(rate, { target: { value: '0.2' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled())
+  expect(rate).toHaveValue(0.2)
+  expect(screen.getByRole('switch', { name: 'Referral Rewards' })).toBeChecked()
+  expect(multiplier).toHaveValue(1.5)
+  expect(api.put).toHaveBeenNthCalledWith(1, '/api/option/', {
+    affiliate_reward: { enabled: true, rate: 0.2 },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(api.put).toHaveBeenCalledTimes(3))
+  expect(api.put).toHaveBeenNthCalledWith(2, '/api/option/', {
+    affiliate_reward: { enabled: true, rate: 0.2 },
+  })
+  expect(api.put).toHaveBeenNthCalledWith(3, '/api/option/', {
+    key: 'quota_setting.pre_consume_multiplier', value: 1.5,
+  })
+})
+
+test('an explicit invalid referral rate prevents the entire UI submission', async () => {
+  await renderSettings()
+  const rate = screen.getByRole('spinbutton', { name: 'Referral Reward Rate' })
+  fireEvent.click(screen.getByRole('switch', { name: 'Referral Rewards' }))
+  fireEvent.change(rate, { target: { value: '1.1' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(rate).toHaveAttribute('aria-invalid', 'true'))
+  expect(api.put).not.toHaveBeenCalled()
+})

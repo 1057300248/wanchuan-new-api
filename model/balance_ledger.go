@@ -20,12 +20,12 @@ import (
 // ---------------------------------------------------------------------------
 // 用户资金账本（TokenMix P0-4）
 //
-// 这里提供 paid / bonus / reward 三账户的事务能力（quota units，整数）。
-// 当前阶段尚未接入既有运行时 writer，不能与旧 Redis/batch 余额写路径混用。
+// 这里提供 paid / bonus / reward 三账户的事务入口（quota units，整数）。
+// 内建运行时资金 writer 统一走此账本，不能与旧 Redis/batch 余额写路径混用。
 // 调用这些入口会在同一事务内维护账户、users.quota 镜像及账本；失败整体回滚，
 // 幂等键由数据库唯一约束保护。现有账本 schema 仍由 wallet_schema.go 持有。
-// legacy normalization / backfill / reconcile 未接入现有启动或运行时；新 ledger
-// 入口内部仍可执行 legacy normalization，不能据此推断历史请求的退款身份。
+// 启动仅在 required schema 完成后进行受控 legacy balance normalization；
+// ReconcileQuotaAccounts 不自动运行，也不据余额推断历史请求的退款身份。
 // ---------------------------------------------------------------------------
 
 // maxWalletPage 是钱包类分页查询的页码上限。按最大 pageSize=200 计算偏移量

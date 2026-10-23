@@ -3,6 +3,7 @@ package controller
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // midjourneyPollSummary is the result recorded on a midjourney_poll system task
@@ -45,23 +47,49 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 
 	logger.LogInfo(ctx, common.LogText("unfinished tasks found: %v", len(tasks)))
 	taskChannelM := make(map[int][]string)
-	taskM := make(map[string]*model.Midjourney)
+	taskChannelLocalIDs := make(map[int][]int)
+	tasksByChannel := make(map[int]map[string]*model.Midjourney)
 	nullTaskIds := make([]int, 0)
 	for _, task := range tasks {
+		if ctx != nil && ctx.Err() != nil {
+			return summary
+		}
+
+		if task.RequiresFinancialReview() {
+			continue
+		}
 		if task.MjId == "" {
 			// 统计失败的未完成任务
 			nullTaskIds = append(nullTaskIds, task.Id)
 			continue
 		}
-		taskM[task.MjId] = task
-		taskChannelM[task.ChannelId] = append(taskChannelM[task.ChannelId], task.MjId)
+		if tasksByChannel[task.ChannelId] == nil {
+			tasksByChannel[task.ChannelId] = make(map[string]*model.Midjourney)
+		}
+		if previous, exists := tasksByChannel[task.ChannelId][task.MjId]; exists {
+			ids := []int{task.Id}
+			if previous != nil {
+				ids = append(ids, previous.Id)
+			}
+			if err := model.MarkMidjourneyPollingReview(ctx, ids, "Ambiguous upstream task identity; delivery requires operator review"); err != nil {
+				logger.LogError(ctx, "failed to record ambiguous Midjourney delivery identity")
+			}
+			tasksByChannel[task.ChannelId][task.MjId] = nil
+			continue
+		}
+		tasksByChannel[task.ChannelId][task.MjId] = task
+	}
+	for channelID, scoped := range tasksByChannel {
+		for upstreamID, task := range scoped {
+			if task != nil {
+				taskChannelM[channelID] = append(taskChannelM[channelID], upstreamID)
+				taskChannelLocalIDs[channelID] = append(taskChannelLocalIDs[channelID], task.Id)
+			}
+		}
 	}
 	if len(nullTaskIds) > 0 {
 		summary.NullTasksFailed = len(nullTaskIds)
-		err := model.MjBulkUpdateByTaskIds(nullTaskIds, map[string]any{
-			"status":   "FAILURE",
-			"progress": "100%",
-		})
+		err := model.MarkMidjourneyPollingReview(ctx, nullTaskIds, "Missing upstream task identity; delivery requires operator review")
 		if err != nil {
 			logger.LogError(ctx, common.LogText("Fix null mj_id task error: %v", err))
 		} else {
@@ -89,12 +117,23 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 		}
 		midjourneyChannel, err := model.CacheGetChannel(channelId)
 		if err != nil {
+			if errors.Is(err, model.ErrChannelCacheStale) {
+				logger.LogWarn(ctx, "Midjourney polling deferred: channel cache is stale")
+				continue
+			}
 			logger.LogError(ctx, common.LogText("CacheGetChannel: %v", err))
-			err := model.MjBulkUpdate(taskIds, map[string]any{
-				"fail_reason": "Failed to get the channel information. Please contact the administrator",
-				"status":      "FAILURE",
-				"progress":    "100%",
-			})
+			if errors.Is(err, model.ErrChannelCacheMiss) {
+				// Another node may have added this channel after our snapshot.
+				// Only this destructive failure decision bypasses the cache.
+				_, err = model.GetChannelById(channelId, false)
+				if err == nil {
+					continue
+				}
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				continue // A transient lookup failure cannot authorize a refund.
+			}
+			err := model.MarkMidjourneyPollingReview(ctx, taskChannelLocalIDs[channelId], "Missing channel metadata; upstream delivery requires operator review")
 			if err != nil {
 				logger.LogInfo(ctx, common.LogText("UpdateMidjourneyTask error: %v", err))
 			}
@@ -151,7 +190,7 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 		cancel()
 
 		for _, responseItem := range responseItems {
-			task := taskM[responseItem.MjId]
+			task := tasksByChannel[channelId][responseItem.MjId]
 			if task == nil {
 				logger.LogWarn(ctx, common.LogText("Midjourney task response ignored: unknown mj_id=%s", responseItem.MjId))
 				continue
@@ -159,7 +198,7 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 
 			useTime := (time.Now().UnixNano() / int64(time.Millisecond)) - task.SubmitTime
 			// 如果时间超过一小时，且进度不是100%，则认为任务失败
-			if useTime > 3600000 && task.Progress != "100%" {
+			if useTime > 3600000 && task.Progress != "100%" && responseItem.Status != "SUCCESS" {
 				responseItem.FailReason = "Upstream task timed out (over 1 hour)"
 				responseItem.Status = "FAILURE"
 			}
@@ -205,6 +244,7 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 			if (task.Progress != "100%" && responseItem.FailReason != "") || (task.Progress == "100%" && task.Status == "FAILURE") {
 				logger.LogInfo(ctx, common.LogText("%s failed: %s", task.MjId, task.FailReason))
 				task.Progress = "100%"
+				task.Status = "FAILURE"
 				if task.Quota != 0 {
 					shouldReturnQuota = true
 				}

@@ -29,6 +29,7 @@ import type {
   SystemTaskFilters,
   SystemTaskResponse,
   UpdateOptionRequest,
+  UpdateAffiliateRewardRequest,
   UpdateOptionResponse,
   UpdatePasskeyDomainsRequest,
   UpdatePasskeyDomainsResponse,
@@ -133,5 +134,12 @@ export async function fetchUpstreamRatios(request: FetchUpstreamRatiosRequest) {
     '/api/ratio_sync/fetch',
     request
   )
+  return res.data
+}
+
+export async function updateAffiliateRewardOptions(
+  request: UpdateAffiliateRewardRequest
+) {
+  const res = await api.put<UpdateOptionResponse>('/api/option/', request)
   return res.data
 }

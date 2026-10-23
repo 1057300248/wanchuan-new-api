@@ -398,6 +398,18 @@ func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota cannot be negative")
 	}
+	if quota == 0 {
+		return nil
+	}
+	return applyTokenQuotaDelta(tokenId, key, quota)
+}
+
+// IncreaseTokenQuotaForRefund preserves the official rc.46 cache/batch/SQL
+// refund path. Non-refund settlement and compensation retain their existing API.
+func IncreaseTokenQuotaForRefund(tokenId int, key string, quota int) (err error) {
+	if quota < 0 {
+		return errors.New("quota cannot be negative")
+	}
 	if common.RedisEnabled {
 		gopool.Go(func() {
 			// 守卫式增量：哈希不存在时跳过，由下次读取从数据库水合，
@@ -429,33 +441,11 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota cannot be negative")
 	}
-	if common.RedisEnabled {
-		gopool.Go(func() {
-			if _, err := cacheApplyTokenQuotaDelta(id, key, int64(-quota)); err != nil {
-				common.SysLog(common.LogText("failed to decrease token quota: %s", err.Error()))
-			}
-		})
-	}
-	if common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeTokenQuota, id, -quota)
+	if quota == 0 {
 		return nil
 	}
-	return decreaseTokenQuota(id, quota)
+	return applyTokenQuotaDelta(id, key, -quota)
 }
-
-func decreaseTokenQuota(id int, quota int) (err error) {
-	err = DB.Model(&Token{}).Where("id = ?", id).Updates(
-		map[string]any{
-			"remain_quota":  gorm.Expr("remain_quota - ?", quota),
-			"used_quota":    gorm.Expr("used_quota + ?", quota),
-			"accessed_time": common.GetTimestamp(),
-		},
-	).Error
-	return err
-}
-
-// The transaction helpers below are capabilities only at this stage. Existing
-// quota writers and Redis/batch reservations retain their current behavior.
 
 // ApplyTokenQuotaDeltaTx updates token quota inside a caller-owned database
 // transaction. delta follows the balance direction: positive refunds quota,

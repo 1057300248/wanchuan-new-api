@@ -327,6 +327,10 @@ func ApplyMetadataSync(updates []MetadataSyncUpdate, upstreamVendors map[string]
 		}
 		return nil
 	})
+	// Sync can revoke a direct grant or change which model names it matches.
+	// Unknown COMMIT outcomes must not keep the old positive caches warm.
+	InvalidatePricingCache()
+	InvalidateModelBonusEligibleCache()
 	if err != nil {
 		return nil, err
 	}

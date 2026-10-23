@@ -48,7 +48,7 @@ import {
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useSettingsForm } from '../hooks/use-settings-form'
-import { useUpdateOption } from '../hooks/use-update-option'
+import { useUpdateAffiliateReward, useUpdateOption } from '../hooks/use-update-option'
 
 const quotaSchema = z.object({
   AffiliateRewardEnabled: z.boolean(),
@@ -82,6 +82,7 @@ export function QuotaSettingsSection({
 }: QuotaSettingsSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const updateAffiliateReward = useUpdateAffiliateReward()
   const handleNumberChange =
     (onChange: (value: QuotaInputValue) => void) =>
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -97,8 +98,22 @@ export function QuotaSettingsSection({
         QuotaFormValues
       >,
       defaultValues,
-      onSubmit: async (_data, changedFields) => {
+      onSubmit: async (data, changedFields) => {
+        if (
+          'AffiliateRewardEnabled' in changedFields ||
+          'AffiliateRewardRate' in changedFields
+        ) {
+          await updateAffiliateReward.mutateAsync({
+            affiliate_reward: {
+              enabled: data.AffiliateRewardEnabled,
+              rate: data.AffiliateRewardRate,
+            },
+          })
+        }
         for (const [key, value] of Object.entries(changedFields)) {
+          if (key === 'AffiliateRewardEnabled' || key === 'AffiliateRewardRate') {
+            continue
+          }
           await updateOption.mutateAsync({
             key,
             value: value as string | number | boolean,
@@ -107,24 +122,46 @@ export function QuotaSettingsSection({
       },
     })
 
+  // A rejected mutation already reports its error. Keep useSettingsForm's dirty
+  // baseline unchanged while preventing an unhandled DOM-event rejection.
+  const submit: typeof handleSubmit = async (event) => {
+    try {
+      await handleSubmit(event)
+    } catch {
+      // The mutation's onError owns the user-facing error.
+    }
+  }
+
   return (
     <SettingsSection title={t('Quota Settings')}>
       <FormNavigationGuard when={isDirty} />
 
       <Form {...form}>
-        <SettingsForm onSubmit={handleSubmit}>
+        <SettingsForm onSubmit={submit}>
           <SettingsPageFormActions
-            onSave={handleSubmit}
-            isSaving={updateOption.isPending || isSubmitting}
+            onSave={submit}
+            isSaving={updateOption.isPending || updateAffiliateReward.isPending || isSubmitting}
           />
           <FormDirtyIndicator isDirty={isDirty} />
           <SettingsFormGrid>
             <SettingsFormGridItem span='full'>
               <Alert>
                 <AlertDescription>
-                  {t(
-                    'Only new accounts created through LinuxDO receive a one-time $3 signup bonus. Repeat logins and linking existing accounts do not qualify.'
-                  )}
+                  <p>
+                    {t(
+                      'Only new accounts created through LinuxDO receive a one-time $3 signup bonus. Repeat logins and linking existing accounts do not qualify.'
+                    )}
+                  </p>
+                  <p>
+                    {t(
+                      'Legacy signup and immediate invitation bonus keys are retained for compatibility only. They do not control the fixed LinuxDO bonus or referral top-up rewards.'
+                    )}
+                  </p>
+                  <p>
+                    {t(
+                      'Referral enabled and rate are saved together. Invalid stored settings keep the last valid configuration, or stay disabled on a cold start; submit a valid pair to repair them. Turning rewards off remains available.'
+                    )}
+                  </p>
                 </AlertDescription>
               </Alert>
             </SettingsFormGridItem>

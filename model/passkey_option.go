@@ -102,8 +102,21 @@ func UpdatePasskeyDomainOptions(values map[string]string, preview bool, confirma
 			return nil, err
 		}
 	}
+	writesAffiliate := hasAffiliateRewardOptions(values)
+	var affiliatePair affiliateOptionPair
+	if writesAffiliate {
+		affiliateOptionMutex.Lock()
+		defer affiliateOptionMutex.Unlock()
+	}
 	var change *PasskeyDomainChange
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if writesAffiliate {
+			var err error
+			affiliatePair, err = prepareAffiliateOptionsTx(tx, values)
+			if err != nil {
+				return err
+			}
+		}
 		settings, serverAddress, err := lockPasskeyDomainSettings(tx)
 		if err != nil {
 			return err
@@ -240,9 +253,12 @@ func UpdatePasskeyDomainOptions(values map[string]string, preview bool, confirma
 	if err != nil {
 		return change, err
 	}
+	if writesAffiliate {
+		publishAffiliateOptionPair(affiliatePair)
+	}
 	applyPasskeyDomainOptions(values)
 	for key, value := range values {
-		if !IsPasskeyDomainOption(key) {
+		if !IsPasskeyDomainOption(key) && !isAffiliateRewardOption(key) {
 			if err := updateOptionMap(key, value); err != nil {
 				return change, err
 			}

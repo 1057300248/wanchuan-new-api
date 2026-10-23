@@ -412,6 +412,9 @@ func DeleteModelMetadata(ids []int, removeFromChannels, removePricing bool) (Mod
 	} else {
 		err = metadataTransaction(deleteRecords)
 	}
+	// Commit acknowledgement loss must also invalidate a possibly revoked grant.
+	InvalidatePricingCache()
+	InvalidateModelBonusEligibleCache()
 	if err != nil {
 		return ModelDeleteResult{}, err
 	}

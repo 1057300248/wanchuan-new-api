@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/QuantumNous/new-api/chuanapi"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/controller"
@@ -27,6 +28,7 @@ import (
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/pkg/lifecycle"
+	"github.com/QuantumNous/new-api/pkg/moneyport"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/pkg/wsmanager"
 	"github.com/QuantumNous/new-api/relay"
@@ -349,6 +351,22 @@ func InitResources(workers *lifecycle.Group) error {
 	ratio_setting.InitRatioSettings()
 
 	service.InitHttpClient()
+
+	// Freeze the built-in funding owners before migrations and before the first
+	// request can create a BillingSession. Worker ownership stays unchanged.
+	if err := chuanapi.RegisterRuntimeServices(); err != nil {
+		return fmt.Errorf("failed to register wallet runtime policy: %w", err)
+	}
+	fundingFactories := moneyport.NewFactoryRegistry()
+	if err := service.RegisterHostFundingFactories(fundingFactories); err != nil {
+		return fmt.Errorf("failed to register host funding factories: %w", err)
+	}
+	if err := chuanapi.RegisterFundingFactories(fundingFactories); err != nil {
+		return fmt.Errorf("failed to register wallet funding factory: %w", err)
+	}
+	if err := service.ConfigureFundingFactoryRegistry(fundingFactories); err != nil {
+		return fmt.Errorf("failed to configure funding factory registry: %w", err)
+	}
 
 	registry, err := newRuntimeRegistry(workers)
 	if err != nil {

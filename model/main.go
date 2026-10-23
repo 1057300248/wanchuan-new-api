@@ -77,16 +77,30 @@ func createRootAccountIfNeed() error {
 		if err != nil {
 			return err
 		}
-		rootUser := User{
-			Username:    "root",
-			Password:    hashedPassword,
-			Role:        common.RoleRootUser,
-			Status:      common.UserStatusEnabled,
-			DisplayName: "Root User",
-			AccessToken: nil,
-			Quota:       100000000,
-		}
-		DB.Create(&rootUser)
+		return DB.Transaction(func(tx *gorm.DB) error {
+			rootUser := User{
+				Username:    "root",
+				Password:    hashedPassword,
+				Role:        common.RoleRootUser,
+				Status:      common.UserStatusEnabled,
+				DisplayName: "Root User",
+				AccessToken: nil,
+				Quota:       0,
+				QuotaPaid:   0,
+			}
+			if err := tx.Create(&rootUser).Error; err != nil {
+				return err
+			}
+			_, err := CreditQuotaTx(tx, LedgerEntry{
+				UserId:        rootUser.Id,
+				Account:       AccountPaid,
+				Delta:         100000000,
+				Reason:        LedgerReasonSystem,
+				ReferenceType: "root_init",
+				ReferenceId:   fmt.Sprintf("%d", rootUser.Id),
+			})
+			return err
+		})
 	}
 	return nil
 }
@@ -380,6 +394,7 @@ func migrateDB() error {
 		&CasbinRule{},
 		&AuthzRole{},
 		&UserAccessToken{},
+		&BillingFinalization{},
 	)
 	if err != nil {
 		return err

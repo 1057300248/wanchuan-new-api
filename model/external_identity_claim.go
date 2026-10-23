@@ -11,6 +11,7 @@ import (
 )
 
 const ExternalIdentityProviderTelegram = "telegram"
+const ExternalIdentityProviderLinuxDO = "linuxdo"
 
 var ErrExternalIdentityAlreadyClaimed = errors.New("external identity is already claimed")
 
@@ -132,4 +133,32 @@ func InitializeExternalIdentityClaims() error {
 		}
 		return nil
 	})
+}
+
+// UpdateLinuxDOBindingWithTx serializes registration and binding through the existing unique provider-subject claim.
+func UpdateLinuxDOBindingWithTx(tx *gorm.DB, userID int, subject string) error {
+	var user User
+	if err := lockForUpdate(tx).Select("id", "linux_do_id").First(&user, userID).Error; err != nil {
+		return err
+	}
+	if subject != "" {
+		var count int64
+		if err := tx.Unscoped().Model(&User{}).Where("linux_do_id = ? AND id <> ?", subject, userID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count != 0 {
+			return ErrExternalIdentityAlreadyClaimed
+		}
+	}
+	if user.LinuxDOId != subject {
+		if err := ReleaseExternalIdentityWithTx(tx, ExternalIdentityProviderLinuxDO, userID); err != nil {
+			return err
+		}
+	}
+	if subject != "" {
+		if err := ClaimExternalIdentityWithTx(tx, ExternalIdentityProviderLinuxDO, subject, userID); err != nil {
+			return err
+		}
+	}
+	return tx.Model(&User{}).Where("id = ?", userID).Update("linux_do_id", subject).Error
 }

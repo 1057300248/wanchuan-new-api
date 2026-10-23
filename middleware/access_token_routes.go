@@ -106,6 +106,11 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"DELETE /api/user/oauth/bindings/:provider_id": accessTokenScopeRule("account_security:write"),
 
 	// Required ChuanAPI routes retain the host role/ownership checks.
+	"GET /api/user/wallet":                        accessTokenScopeRule("wallet:read"),
+	"GET /api/user/wallet/ledger":                 accessTokenScopeRule("wallet:read"),
+	"GET /api/user/referral/rewards":              accessTokenScopeRule("wallet:read"),
+	"GET /api/models/bonus_eligible/audits":       accessTokenScopeRule("model:read"),
+	"POST /api/models/bonus_eligible/batch":       accessTokenScopeRule("model:write"),
 	"GET /api/user/tokens/:id/models":             accessTokenScopeRule("api_key:read"),
 	"POST /api/token/models":                      accessTokenScopeRule("api_key:read"),
 	"GET /api/option/model-monitor":               accessTokenScopeRule("option:read"),

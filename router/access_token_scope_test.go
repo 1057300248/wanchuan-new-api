@@ -9,11 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/chuanapi"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/extension"
 	"github.com/QuantumNous/new-api/middleware"
-	consolemodule "github.com/QuantumNous/new-api/modules/chuanapi/console"
-	supportmodule "github.com/QuantumNous/new-api/modules/chuanapi/support"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
@@ -101,10 +100,10 @@ func newAccessTokenScopeTestEngine(t *testing.T) *gin.Engine {
 		SetTaskPluginProtocolRouter(engine)
 		SetVideoRouter(engine)
 		SetTaskRouter(engine)
-		// Match the currently active production modules, not hypothetical future routes.
+		// Match the active production composition, including the financial modules.
 		reg := extension.NewRegistry()
-		require.NoError(t, consolemodule.Register(reg))
-		require.NoError(t, supportmodule.Register(reg))
+		require.NoError(t, chuanapi.Register(reg))
+		require.NoError(t, reg.Freeze())
 		require.NoError(t, reg.ApplyRoutesWithScopes(scopes, extension.PriorityBeforePlugin))
 		require.NoError(t, reg.ApplyRoutesWithScopes(scopes, extension.PriorityAfterPlugin))
 	})

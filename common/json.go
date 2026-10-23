@@ -3,6 +3,7 @@ package common
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
@@ -82,4 +83,18 @@ func GetJsonType(data RawMessage) string {
 // JsonRawMessageToString returns JSON strings as their decoded value and other JSON values as raw text.
 func JsonRawMessageToString(data RawMessage) string {
 	return kitutil.JsonRawMessageToString(data)
+}
+
+// DecodeJsonStrict rejects unknown fields and trailing JSON at strict financial request boundaries.
+func DecodeJsonStrict(reader io.Reader, v any) error {
+	decoder := json.NewDecoder(reader)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(v); err != nil {
+		return err
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return errors.New("unexpected trailing JSON content")
+	}
+	return nil
 }

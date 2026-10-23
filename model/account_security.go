@@ -121,6 +121,9 @@ func UpdateUserBindColumnForSessionWithTx(tx *gorm.DB, identity AuthSessionIdent
 	}
 	// Preserve the existing ownership check within the transaction and update
 	// only the chosen binding column, never a complete user snapshot.
+	if column == "linux_do_id" {
+		return UpdateLinuxDOBindingWithTx(tx, identity.UserID, value)
+	}
 	var count int64
 	if err := tx.Model(&User{}).Where(column+" = ? AND id <> ?", value, identity.UserID).Count(&count).Error; err != nil {
 		return err

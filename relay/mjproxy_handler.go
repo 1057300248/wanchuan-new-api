@@ -109,8 +109,8 @@ func RelayMidjourneyNotify(c *gin.Context) *dto.MidjourneyResponse {
 			Result:      "",
 		}
 	}
-	midjourneyTask := model.GetByOnlyMJId(midjRequest.MjId)
-	if midjourneyTask == nil {
+	midjourneyTask, lookupErr := model.GetUniqueMidjourneyNotificationTarget(c.Request.Context(), midjRequest.MjId)
+	if lookupErr != nil || midjourneyTask == nil {
 		return &dto.MidjourneyResponse{
 			Code:        4,
 			Description: "midjourney_task_not_found",
@@ -118,6 +118,10 @@ func RelayMidjourneyNotify(c *gin.Context) *dto.MidjourneyResponse {
 			Result:      "",
 		}
 	}
+	if midjourneyTask.Status == "SUCCESS" || midjourneyTask.Status == "FAILURE" || midjourneyTask.RequiresFinancialReview() {
+		return nil
+	}
+	fromStatus := midjourneyTask.Status
 	midjourneyTask.Progress = midjRequest.Progress
 	midjourneyTask.PromptEn = midjRequest.PromptEn
 	midjourneyTask.State = midjRequest.State
@@ -130,7 +134,7 @@ func RelayMidjourneyNotify(c *gin.Context) *dto.MidjourneyResponse {
 	midjourneyTask.VideoUrls = string(videoUrlsStr)
 	midjourneyTask.Status = midjRequest.Status
 	midjourneyTask.FailReason = midjRequest.FailReason
-	err = midjourneyTask.Update()
+	won, err := midjourneyTask.UpdateWithStatus(fromStatus)
 	if err != nil {
 		return &dto.MidjourneyResponse{
 			Code:        4,
@@ -138,6 +142,9 @@ func RelayMidjourneyNotify(c *gin.Context) *dto.MidjourneyResponse {
 		}
 	}
 
+	if won && midjourneyTask.Status == "FAILURE" {
+		service.RefundMidjourneyQuota(c.Request.Context(), midjourneyTask, "Composition failed")
+	}
 	return nil
 }
 
@@ -294,8 +301,6 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 			Group:     info.UsingGroup,
 			Other:     other,
 		})
-		model.UpdateUserUsedQuotaAndRequestCount(info.UserId, midjourneyTask.Quota)
-		model.UpdateChannelUsedQuota(billingChannelId, midjourneyTask.Quota)
 	}
 	c.Writer.WriteHeader(mjResp.StatusCode)
 	respBody, err := common.Marshal(midjResponse)
@@ -673,8 +678,6 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			Group:     relayInfo.UsingGroup,
 			Other:     other,
 		})
-		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, midjourneyTask.Quota)
-		model.UpdateChannelUsedQuota(billingChannelId, midjourneyTask.Quota)
 	}
 
 	if midjResponse.Code == 22 { //22-排队中，说明任务已存在
