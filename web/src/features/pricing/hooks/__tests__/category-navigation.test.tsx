@@ -216,3 +216,36 @@ describe('pricing category navigation', () => {
     expect(screen.getByLabelText('Results')).toBeEmptyDOMElement()
   })
 })
+
+it('shows and counts decision as a manual category without double-counting all', async () => {
+  const onChange = vi.fn()
+  render(
+    <ModelCategories
+      models={[
+        {
+          ...base,
+          id: 11,
+          model_name: 'decision-name-only',
+          output_modalities: ['text'],
+        },
+        {
+          ...base,
+          id: 12,
+          model_name: 'manual',
+          display_categories: ['text', 'decision', 'decision'],
+        },
+      ]}
+      value='decision'
+      onChange={onChange}
+    />
+  )
+  expect(
+    screen.getByRole('button', { name: 'Decision Models 1' })
+  ).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('button', { name: 'All 2' })).toBeVisible()
+  expect(pricingSearchSchema.parse({ category: 'decision' }).category).toBe(
+    'decision'
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Text 2' }))
+  expect(onChange).toHaveBeenCalledWith('text')
+})

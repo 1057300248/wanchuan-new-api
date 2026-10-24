@@ -85,7 +85,7 @@ func (a *ResponsesUsageAccumulator) FinishBuffered(failed bool, bufferedText str
 	}
 	if failed {
 		a.failed = true
-		if a.usage.CompletionTokens == 0 && bufferedText != "" {
+		if a.usage.CompletionTokens == 0 && bufferedText != "" && !responsesUsageUnpriced(a.usage) {
 			// A completed output item may arrive without text deltas. Preserve
 			// the larger observed estimate without double-billing its done item
 			// or discarding reasoning/tool deltas already collected here.
@@ -120,6 +120,12 @@ func (a *ResponsesUsageAccumulator) Finish() *dto.Usage {
 		a.usage = nil
 		return nil
 	}
+	// A total/detail-only snapshot proves consumption but lacks the input /
+	// output aggregates required for pricing. Preserve it for the common
+	// unknown-delivery guard instead of clearing it or inventing a prompt.
+	if responsesUsageUnpriced(a.usage) {
+		return a.usage
+	}
 	if a.usage.CompletionTokens == 0 {
 		if output := a.outputText.String(); output != "" {
 			a.usage.CompletionTokens = tokenkit.Count(a.info.GetUpstreamModelName(), output)
@@ -143,6 +149,10 @@ func (a *ResponsesUsageAccumulator) Finish() *dto.Usage {
 		}
 	}
 	return a.usage
+}
+
+func responsesUsageUnpriced(usage *dto.Usage) bool {
+	return usage != nil && usage.PromptTokens == 0 && usage.CompletionTokens == 0 && dto.HasOpenAIUsageTokens(usage)
 }
 
 // ObserveResponsesOutcome records the protocol outcome of one Responses event

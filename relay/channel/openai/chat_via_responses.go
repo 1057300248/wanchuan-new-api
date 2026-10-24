@@ -2,6 +2,7 @@ package openai
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,9 +41,22 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 
-	if oaiError := responsesResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
+	event := dto.ResponsesStreamResponse{Type: "response.completed", Response: &responsesResp}
+	outcome := service.ObserveResponsesOutcome(info, &event)
+	if outcome == relaycommon.ResponseOutcomeFailed || outcome == relaycommon.ResponseOutcomeCancelled || responsesResp.GetOpenAIError() != nil {
 		common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, true)
-		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+		if info.StreamStatus == nil {
+			info.StreamStatus = relaycommon.NewStreamStatus()
+		}
+		event.Type = "response.failed"
+		if outcome == relaycommon.ResponseOutcomeCancelled {
+			event.Type = "response.cancelled"
+		}
+		accumulator := service.NewResponsesUsageAccumulator(info)
+		accumulator.Observe(&event, body)
+		usage := accumulator.Finish()
+		common.SetContextKey(c, constant.ContextKeyResponsesPartialUsage, usage != nil)
+		return usage, newResponsesFailureError(&event)
 	}
 	tools := relaycommon.NewResponsesToolUsageObserver(info)
 	tools.ObserveResponse(&responsesResp, body)
@@ -78,7 +92,9 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 	var streamErr *types.NewAPIError
 	terminalSeen := false
 
-	scanner := helper.NewStreamScanner(resp.Body)
+	reader := newBufferedStreamReader(c.Request.Context(), resp.Body, time.Duration(constant.StreamingTimeout)*time.Second)
+	defer reader.stop()
+	scanner := helper.NewStreamScanner(reader)
 	scanner.Split(bufio.ScanLines)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -136,7 +152,11 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 		streamErr = service.RelayRequestCancellation(c)
 	}
 	if err := scanner.Err(); streamErr == nil && err != nil {
-		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, err)
+		reason := relaycommon.StreamEndReasonScannerErr
+		if errors.Is(err, errBufferedStreamIdle) {
+			reason = relaycommon.StreamEndReasonTimeout
+		}
+		info.StreamStatus.SetEndReason(reason, err)
 		streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
 	}
 	if streamErr == nil && !terminalSeen {

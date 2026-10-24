@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -386,5 +387,38 @@ func TestResponsesUsageAccumulatorPreservesCancellationEstimates(t *testing.T) {
 				assert.Equal(t, 1, info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolWebSearchPreview].CallCount)
 			}
 		})
+	}
+}
+
+func TestResponsesUsageAccumulatorPreservesUnpricedEvidence(t *testing.T) {
+	for _, status := range []string{"failed", "cancelled"} {
+		for _, details := range []bool{false, true} {
+			for _, buffered := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/details_%t/buffered_%t", status, details, buffered), func(t *testing.T) {
+					info := &relaycommon.RelayInfo{StreamStatus: relaycommon.NewStreamStatus(), ChannelMeta: &relaycommon.ChannelMeta{}}
+					info.SetEstimatePromptTokens(20)
+					usage := &dto.Usage{TotalTokens: 15}
+					if details {
+						usage = &dto.Usage{InputTokensDetails: &dto.InputTokenDetails{CachedTokens: 4}}
+					}
+					event := &dto.ResponsesStreamResponse{Type: "response." + status, Response: &dto.OpenAIResponsesResponse{Usage: usage}}
+					accumulator := NewResponsesUsageAccumulator(info)
+					accumulator.Observe(event, nil)
+					var result *dto.Usage
+					if buffered {
+						result = accumulator.FinishBuffered(true, "generated output")
+					} else {
+						result = accumulator.Finish()
+					}
+					require.NotNil(t, result)
+					assert.True(t, dto.HasOpenAIUsageTokens(result), "reported work must not disappear at finalization")
+					assert.Zero(t, result.PromptTokens, "total/detail-only evidence cannot justify invented aggregate usage")
+					assert.Zero(t, result.CompletionTokens)
+					if !details {
+						assert.Equal(t, 15, result.TotalTokens)
+					}
+				})
+			}
+		}
 	}
 }

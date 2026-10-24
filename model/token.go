@@ -15,6 +15,7 @@ import (
 )
 
 type Token struct {
+	CacheRevision      int64          `json:"-" gorm:"type:bigint;not null;default:1"`
 	Id                 int            `json:"id"`
 	UserId             int            `json:"user_id" gorm:"index"`
 	Key                string         `json:"key" gorm:"type:varchar(128);uniqueIndex"`
@@ -292,15 +293,38 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 		// Don't return error - fall through to DB
 	}
 	token = &Token{}
-	if err = DB.Where(commonKeyCol+" = ?", key).First(token).Error; err != nil {
-		return nil, err
+	if !common.RedisEnabled {
+		err = DB.Where(commonKeyCol+" = ?", key).First(token).Error
+		return token, err
 	}
-	if common.RedisEnabled {
-		// 冷缓存时用数据库快照初始化；已存在的哈希只刷新 TTL，
-		// 避免快照覆盖 Redis 中已被原子预扣的余额。初始化失败不影响本次读取。
-		if _, cacheErr := cacheInitToken(*token); cacheErr != nil {
-			common.SysLog(common.LogText("failed to init token cache: %s", cacheErr.Error()))
+	// Quota invalidation frequently makes only the hash cold. An established
+	// permission floor needs no row-lock transaction: use the ordinary SQL read
+	// and recheck its revision before returning/publishing. Permission uncertainty
+	// alone takes the locked recovery path below.
+	pending, revision := tokenPermissionKeys(key)
+	if _, fenceErr := getPermissionCacheRevision(pending, revision); fenceErr == nil {
+		if err = DB.Where(commonKeyCol+" = ?", key).First(token).Error; err != nil {
+			return nil, err
 		}
+		if checkPermissionCacheRevision(pending, revision, token.CacheRevision) == nil {
+			_, _ = cacheInitToken(*token)
+			return token, nil
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), permissionCacheReadTimeout)
+	defer cancel()
+	err = DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockForUpdate(tx).Where(commonKeyCol+" = ?", key).First(token).Error; err != nil {
+			return err
+		}
+		_, cacheErr := cacheInitTokenAtAuthority(ctx, *token, true)
+		if errors.Is(cacheErr, ErrPermissionCacheStale) {
+			return cacheErr
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return token, nil
 }
@@ -319,15 +343,14 @@ func (token *Token) Insert() error {
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
 func (token *Token) Update() (err error) {
-	// 写库前失效缓存并设置 fence，防止并发读者把过期快照重新写回缓存。
-	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
-		common.SysLog(common.LogText("failed to invalidate token cache before update: %s", cacheErr.Error()))
-	}
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockGroupNamespace(tx); err != nil {
 			return err
 		}
 		if err := validateTokenGroupsForWriteTx(tx, token); err != nil {
+			return err
+		}
+		if err := advanceTokenPermissionRevisionTx(tx, token.Id); err != nil {
 			return err
 		}
 		return tx.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
@@ -336,19 +359,22 @@ func (token *Token) Update() (err error) {
 	})
 }
 
-func (token *Token) SelectUpdate() (err error) {
-	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
-		common.SysLog(common.LogText("failed to invalidate token cache before status update: %s", cacheErr.Error()))
-	}
-	// This can update zero values
-	return DB.Model(token).Select("accessed_time", "status").Updates(token).Error
+func (token *Token) SelectUpdate() error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := advanceTokenPermissionRevisionTx(tx, token.Id); err != nil {
+			return err
+		}
+		return tx.Model(token).Select("accessed_time", "status").Updates(token).Error
+	})
 }
 
-func (token *Token) Delete() (err error) {
-	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
-		common.SysLog(common.LogText("failed to invalidate token cache before delete: %s", cacheErr.Error()))
-	}
-	return DB.Delete(token).Error
+func (token *Token) Delete() error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := advanceTokenPermissionRevisionTx(tx, token.Id); err != nil {
+			return err
+		}
+		return tx.Delete(token).Error
+	})
 }
 
 func (token *Token) IsModelLimitsEnabled() bool {
@@ -555,12 +581,15 @@ func BatchDeleteTokens(ids []int, userId int) (int, error) {
 	tx := DB.Begin()
 
 	var tokens []Token
-	if err := tx.Where("user_id = ? AND id IN (?)", userId, ids).Find(&tokens).Error; err != nil {
+	if err := lockForUpdate(tx).Where("user_id = ? AND id IN (?)", userId, ids).Order("id").Find(&tokens).Error; err != nil {
 		tx.Rollback()
 		return 0, err
 	}
-	if err := invalidateTokensCache(tokens); err != nil {
-		common.SysLog(common.LogText("failed to invalidate token cache before batch delete: %s", err.Error()))
+	for _, token := range tokens {
+		if err := advanceTokenPermissionRevisionTx(tx, token.Id); err != nil {
+			tx.Rollback()
+			return 0, err
+		}
 	}
 
 	if err := tx.Where("user_id = ? AND id IN (?)", userId, ids).Delete(&Token{}).Error; err != nil {

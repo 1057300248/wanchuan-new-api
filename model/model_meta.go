@@ -284,6 +284,13 @@ func IsModelNameDuplicated(id int, name string) (bool, error) {
 }
 
 func (mi *Model) Update() error {
+	return mi.UpdateWithMetadataPresence(nil)
+}
+
+// UpdateWithMetadataPresence preserves catalog facts omitted by management
+// clients. Explicit null/empty/false values retain the existing clear/set
+// contract; nil presence retains the full-record Update behavior for callers.
+func (mi *Model) UpdateWithMetadataPresence(present map[string]common.RawMessage) error {
 	normalized, err := mi.DisplayCategories.Normalize()
 	if err != nil {
 		return err
@@ -294,16 +301,53 @@ func (mi *Model) Update() error {
 			return err
 		}
 		fields := []string{"model_name", "description", "icon", "tags", "vendor_id", "endpoints", "status", "sync_official", "name_rule", "updated_time", "context_length", "max_output_tokens", "knowledge_cutoff", "release_date", "parameter_count", "input_modalities", "output_modalities", "capabilities", "bonus_eligible"}
-		if mi.DisplayCategories != nil {
-			fields = append(fields, "display_categories")
-		} else {
-			// Legacy clients omit this new field. Preserve it, including in the
-			// save response; only an explicit [] clears a manual override.
+		if present != nil || mi.DisplayCategories == nil {
+			// The metadata mutation lock covers this read and update, including
+			// concurrent official syncs; never write a stale pre-lock snapshot.
 			var saved Model
-			if err := tx.Select("display_categories").First(&saved, mi.Id).Error; err != nil {
+			if err := tx.First(&saved, mi.Id).Error; err != nil {
 				return err
 			}
-			mi.DisplayCategories = saved.DisplayCategories
+			if mi.DisplayCategories == nil {
+				mi.DisplayCategories = saved.DisplayCategories
+			} else {
+				fields = append(fields, "display_categories")
+			}
+			if present != nil {
+				keys := make(map[string]bool, len(present))
+				for key := range present {
+					keys[strings.ToLower(key)] = true
+				}
+				if !keys["context_length"] {
+					mi.ContextLength = saved.ContextLength
+				}
+				if !keys["max_output_tokens"] {
+					mi.MaxOutputTokens = saved.MaxOutputTokens
+				}
+				if !keys["knowledge_cutoff"] {
+					mi.KnowledgeCutoff = saved.KnowledgeCutoff
+				}
+				if !keys["release_date"] {
+					mi.ReleaseDate = saved.ReleaseDate
+				}
+				if !keys["parameter_count"] {
+					mi.ParameterCount = saved.ParameterCount
+				}
+				if !keys["input_modalities"] {
+					mi.InputModalities = saved.InputModalities
+				}
+				if !keys["output_modalities"] {
+					mi.OutputModalities = saved.OutputModalities
+				}
+				if !keys["capabilities"] {
+					mi.Capabilities = saved.Capabilities
+				}
+				if !keys["bonus_eligible"] {
+					mi.BonusEligible = saved.BonusEligible
+				}
+			}
+		} else {
+			fields = append(fields, "display_categories")
 		}
 		mi.UpdatedTime = common.GetTimestamp()
 		return tx.Model(&Model{}).Where("id = ?", mi.Id).

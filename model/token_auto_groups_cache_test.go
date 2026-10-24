@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -32,9 +33,7 @@ func TestTokenAllowUserQuotaQueryRoundTripsThroughRedisHashCache(t *testing.T) {
 	server := useUserCacheMiniRedis(t)
 	token := Token{Id: 43, UserId: 7, Key: "token-user-quota-cache-key", Name: "user-quota-cache", AllowUserQuotaQuery: true}
 
-	initialized, err := cacheInitToken(token)
-	require.NoError(t, err)
-	require.Equal(t, 1, initialized)
+	require.NoError(t, cacheSetTokenForTest(token))
 	cached, err := cacheGetTokenByKey(token.Key)
 	require.NoError(t, err)
 	assert.True(t, cached.AllowUserQuotaQuery)
@@ -96,6 +95,7 @@ func TestTokenUpdateSynchronouslyNarrowsPreheatedAutoGroupsCache(t *testing.T) {
 // cacheSetTokenForTest 以测试身份写入完整 token 缓存（含额度字段），
 // 模拟“已水合”的缓存状态。
 func cacheSetTokenForTest(token Token) error {
-	_, err := cacheInitToken(token)
+	token.CacheRevision = max(token.CacheRevision, 1)
+	_, err := cacheInitTokenAtAuthority(context.Background(), token, true)
 	return err
 }

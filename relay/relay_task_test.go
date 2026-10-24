@@ -1,7 +1,9 @@
 package relay
 
 import (
+	"context"
 	"encoding/base64"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -830,6 +832,60 @@ export function extractUsage() { return {seconds:2}; }
 			}
 			require.NotNil(t, info.TieredBillingSnapshot)
 			assert.Equal(t, tc.expressions["retry-b::declared-model"], info.TieredBillingSnapshot.ExprString)
+		})
+	}
+}
+
+func TestTaskSubmitDeliveryEvidenceDistinguishesUnsent(t *testing.T) {
+	service.InitHttpClient()
+	for _, scenario := range []string{"cancel_before_send", "dial_refused", "accepted_then_disconnect"} {
+		t.Run(scenario, func(t *testing.T) {
+			saveBillingConfig(t)
+			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+				"billing_setting.billing_mode": `{"declared-model":"tiered_expr"}`,
+				"billing_setting.billing_expr": `{"declared-model":"tier(\"flat\", 3)"}`,
+			}))
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				calls.Add(1)
+				conn, _, err := w.(http.Hijacker).Hijack()
+				if err == nil {
+					_ = conn.Close()
+				}
+			}))
+			t.Cleanup(server.Close)
+			if scenario == "dial_refused" {
+				server.Close()
+			}
+			c, info := newTaskSubmitContext(t, "declared-model", "")
+			if scenario == "cancel_before_send" {
+				ctx, cancel := context.WithCancel(c.Request.Context())
+				cancel()
+				c.Request = c.Request.WithContext(ctx)
+			}
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, server.URL)
+			// Prior attempts may leave these facts behind; current evidence wins.
+			common.SetContextKey(c, constant.ContextKeyUpstreamRequestAttempted, true)
+			common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, true)
+			c.Set("group", "default")
+			info.UserGroup, info.UsingGroup = "default", "default"
+			info.OriginModelName = "declared-model"
+			info.Billing = &imageReservation{limit: 1 << 30}
+			pinMappingOrderPlugin(t, c, mappingOrderSubmitPlugin)
+			_, taskErr := RelayTaskSubmit(c, info)
+			require.NotNil(t, taskErr)
+			if scenario != "cancel_before_send" {
+				assert.Equal(t, "do_request_failed", taskErr.Code)
+			}
+			unknown := scenario == "accepted_then_disconnect"
+			assert.Equal(t, unknown, taskErr.DeliveryUnknown)
+			if unknown {
+				assert.True(t, taskErr.NoRetry)
+				assert.Equal(t, int32(1), calls.Load())
+			} else {
+				assert.Zero(t, calls.Load())
+			}
 		})
 	}
 }

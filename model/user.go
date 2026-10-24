@@ -112,22 +112,24 @@ type User struct {
 	StripeCustomer       string                     `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
 	CreatedAt            int64                      `json:"created_at" gorm:"autoCreateTime;column:created_at"`
 	LastLoginAt          int64                      `json:"last_login_at" gorm:"default:0;column:last_login_at"`
+	CacheRevision        int64                      `json:"-" gorm:"type:bigint;not null;default:1"`
 	AuthVersion          int64                      `json:"-" gorm:"type:bigint;not null;default:1;column:auth_version"`
 	AdminPermissions     map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
-		Id:          user.Id,
-		Group:       user.Group,
-		Quota:       user.Quota,
-		Status:      user.Status,
-		Role:        user.Role,
-		Username:    user.Username,
-		Setting:     user.Setting,
-		Email:       user.Email,
-		AuthVersion: user.AuthVersion,
-		CacheSchema: userCacheSchemaVersion,
+		Id:            user.Id,
+		Group:         user.Group,
+		Quota:         user.Quota,
+		Status:        user.Status,
+		Role:          user.Role,
+		Username:      user.Username,
+		Setting:       user.Setting,
+		Email:         user.Email,
+		AuthVersion:   user.AuthVersion,
+		CacheRevision: user.CacheRevision,
+		CacheSchema:   userCacheSchemaVersion,
 	}
 	return cache
 }
@@ -182,6 +184,28 @@ func (user *User) SetSetting(setting dto.UserSetting) {
 		return
 	}
 	user.Setting = string(settingBytes)
+}
+
+// EnsureUserAffCode writes only the referral field. A read-only/profile
+// endpoint must never persist an old full User snapshot over a concurrent ban,
+// role change or subscription downgrade. The row lock also makes repeated
+// requests return the same newly generated code.
+func EnsureUserAffCode(userID int) (string, error) {
+	if userID <= 0 {
+		return "", common.NewMessage("ID is empty!")
+	}
+	var user User
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockForUpdate(tx).Select("id", "aff_code").First(&user, userID).Error; err != nil {
+			return err
+		}
+		if user.AffCode != "" {
+			return nil
+		}
+		user.AffCode = common.GetRandomString(4)
+		return tx.Model(&User{}).Where("id = ?", userID).Update("aff_code", user.AffCode).Error
+	})
+	return user.AffCode, err
 }
 
 func UpdateUserSetting(userId int, setting dto.UserSetting) error {
@@ -703,9 +727,9 @@ func (user *User) finishInsert(inviterId int) {
 		if defaultSidebarConfig != "" {
 			currentSetting := createdUser.GetSetting()
 			currentSetting.SidebarModules = defaultSidebarConfig
-			createdUser.SetSetting(currentSetting)
-			createdUser.Update(false)
-			common.SysLog(common.LogText("initialized the sidebar config for new user %s (role: %d)", createdUser.Username, createdUser.Role))
+			if err := UpdateUserSetting(createdUser.Id, currentSetting); err == nil {
+				common.SysLog(common.LogText("initialized the sidebar config for new user %s (role: %d)", createdUser.Username, createdUser.Role))
+			}
 		}
 	}
 
@@ -822,9 +846,9 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 		if defaultSidebarConfig != "" {
 			currentSetting := createdUser.GetSetting()
 			currentSetting.SidebarModules = defaultSidebarConfig
-			createdUser.SetSetting(currentSetting)
-			createdUser.Update(false)
-			common.SysLog(common.LogText("initialized the sidebar config for new user %s (role: %d)", createdUser.Username, createdUser.Role))
+			if err := UpdateUserSetting(createdUser.Id, currentSetting); err == nil {
+				common.SysLog(common.LogText("initialized the sidebar config for new user %s (role: %d)", createdUser.Username, createdUser.Role))
+			}
 		}
 	}
 
@@ -896,7 +920,7 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 			return err
 		}
 	}
-	if err = tx.Model(&current).Omit("quota", "quota_paid", "quota_bonus", "quota_reward", "used_quota", "request_count", "access_token", "aff_count", "aff_quota", "aff_history", "auth_version").Updates(newUser).Error; err != nil {
+	if err = tx.Model(&current).Omit("quota", "quota_paid", "quota_bonus", "quota_reward", "used_quota", "request_count", "access_token", "aff_count", "aff_quota", "aff_history", "auth_version", "cache_revision").Updates(newUser).Error; err != nil {
 		return err
 	}
 	return tx.First(user, user.Id).Error

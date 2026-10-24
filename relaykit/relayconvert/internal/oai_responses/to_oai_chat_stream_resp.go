@@ -370,6 +370,13 @@ func (s *ResponsesToChatStreamState) flushPendingTool(event *dto.ResponsesStream
 	if tool == nil {
 		return nil
 	}
+	arguments := event.Arguments
+	if event.Type == responsesEventCustomToolInputDone {
+		arguments = event.Input
+	}
+	if arguments != nil {
+		tool.Arguments = *arguments
+	}
 	return s.toolDelta(tool, "")
 }
 
@@ -771,6 +778,22 @@ func (a *ResponsesBufferedAccumulator) ProcessEvent(event *dto.ResponsesStreamRe
 				tool.Arguments.WriteString(args)
 			}
 		}
+	case responsesEventFunctionArgsDone, responsesEventCustomToolInputDone:
+		arguments := event.Arguments
+		if event.Type == responsesEventCustomToolInputDone {
+			arguments = event.Input
+		}
+		if arguments == nil {
+			return
+		}
+		if idx, ok := a.findToolIndex(event); ok {
+			a.tools[idx].Arguments.Reset()
+			a.tools[idx].Arguments.WriteString(*arguments)
+		} else if event.OutputIndex != nil {
+			a.pendingByOutputIndex[*event.OutputIndex] = *arguments
+		} else if itemID := strings.TrimSpace(event.ItemID); itemID != "" {
+			a.pendingByItemID[itemID] = *arguments
+		}
 	case responsesEventFunctionArgsDelta, responsesEventCustomToolInputDelta:
 		if idx, ok := a.findToolIndex(event); ok {
 			a.tools[idx].Arguments.WriteString(event.Delta)
@@ -830,13 +853,15 @@ func (a *ResponsesBufferedAccumulator) BuildOutput() []dto.ResponsesOutput {
 			}
 			tool := a.tools[item.ToolIndex]
 			argsRaw, _ := kitutil.Marshal(tool.Arguments.String())
-			out = append(out, dto.ResponsesOutput{
-				Type:      item.Type,
-				ID:        tool.ItemID,
-				CallId:    tool.CallID,
-				Name:      tool.Name,
-				Arguments: argsRaw,
-			})
+			output := dto.ResponsesOutput{
+				Type: item.Type, ID: tool.ItemID, CallId: tool.CallID, Name: tool.Name,
+			}
+			if item.Type == responsesOutputTypeCustomToolCall {
+				output.Input = argsRaw
+			} else {
+				output.Arguments = argsRaw
+			}
+			out = append(out, output)
 		}
 	}
 	return out

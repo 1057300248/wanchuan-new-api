@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -71,7 +72,9 @@ func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.
 	return true, nil
 }
 
-// SettleMidjourneyTaskBilling returns true only for a newly acknowledged commit.
+// SettleMidjourneyTaskBilling supports explicitly identified legacy unreserved rows.
+// New submissions must use ReserveMidjourneyBilling and PersistMidjourneyBilling.
+// It returns true only for a newly acknowledged commit.
 // A replay must not repeat the caller's display log. The row is locked before
 // the source, so settlement and failure observers use the same lock order.
 func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.Midjourney, prepared bool) (bool, error) {
@@ -181,7 +184,7 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		if err != nil {
 			return err
 		}
-		if persisted.MjId != task.MjId {
+		if persisted.MjId != task.MjId || persisted.RequiresFinancialReview() {
 			return model.ErrTaskFinancialReview
 		}
 		quota := persisted.Quota
@@ -445,6 +448,9 @@ func RecordMidjourneyPolicyResponse(c *gin.Context, response *dto.MidjourneyResp
 }
 
 func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestURL string) (*dto.MidjourneyResponseWithStatusCode, []byte, error) {
+	// Until dispatch starts, all local parsing/build failures are known-unsent.
+	common.SetContextKey(c, constant.ContextKeyUpstreamRequestAttempted, false)
+	common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, true)
 	var nullBytes []byte
 	//var requestBody io.Reader
 	//requestBody = c.Request.Body
@@ -493,8 +499,19 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 		req.Header.Set("mj-api-secret", auth)
 	}
 	defer cancel()
-	resp, err := DoRequestWithoutRedirects(GetHttpClient(), req)
+	client := GetHttpClient()
+	if client == nil || (req.URL.Scheme != "http" && req.URL.Scheme != "https") || req.URL.Host == "" {
+		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "create_request_failed", http.StatusInternalServerError), nullBytes, errors.New("invalid Midjourney HTTP client or URL")
+	}
+	common.SetContextKey(c, constant.ContextKeyUpstreamRequestAttempted, true)
+	common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, false)
+	resp, err := DoRequestWithoutRedirects(client, req)
 	if err != nil {
+		var dialErr *net.OpError
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) || errors.As(err, &dialErr) && dialErr.Op == "dial" {
+			common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, true)
+		}
 		common.SysLog(common.LogText("do request failed: %s", err.Error()))
 		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "do_request_failed", http.StatusInternalServerError), nullBytes, err
 	}

@@ -24,8 +24,9 @@ export const MODEL_DISPLAY_CATEGORIES = [
   'video',
   'audio',
   'vectors',
+  'decision',
 ] as const
 export type ModelDisplayCategory = (typeof MODEL_DISPLAY_CATEGORIES)[number]
 export const modelDisplayCategoriesSchema = z
   .array(z.enum(MODEL_DISPLAY_CATEGORIES))
-  .max(5)
+  .max(MODEL_DISPLAY_CATEGORIES.length)

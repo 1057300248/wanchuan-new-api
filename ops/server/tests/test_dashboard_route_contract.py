@@ -73,6 +73,12 @@ class DashboardRouteContractTest(unittest.TestCase):
         ):
             self.assertIn(path, matcher_tokens)
 
+    def test_task_plugin_and_error_deep_links_belong_to_new_api(self) -> None:
+        matcher_tokens = set(self.ui_matcher.split())
+        for path in ("/task-plugins", "/task-plugins/*", "/401", "/403", "/404", "/500", "/503"):
+            with self.subTest(path=path):
+                self.assertIn(path, matcher_tokens)
+
     def test_ui_handler_proxies_new_api_and_sets_private_html_headers(self) -> None:
         self.assertIn("reverse_proxy http://127.0.0.1:3000", self.ui_handler)
         for header in (

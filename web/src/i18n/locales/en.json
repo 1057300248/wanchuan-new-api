@@ -7547,6 +7547,11 @@
     "Display categories": "Display categories",
     "Invalid display categories": "Invalid display categories",
     "Leave empty for automatic classification. Affects model square filters only, not API endpoints, routing, permissions or billing.": "Leave empty for automatic classification. Affects model square filters only, not API endpoints, routing, permissions or billing.",
-    "Restore automatic classification": "Restore automatic classification"
+    "Restore automatic classification": "Restore automatic classification",
+    "Decision Models": "Decision Models",
+    "Failed to query the upstream task status; delivery requires operator review": "Failed to query the upstream task status; delivery requires operator review",
+    "Task timed out; upstream delivery requires operator review": "Task timed out; upstream delivery requires operator review",
+    "Upstream task not found; delivery requires operator review": "Upstream task not found; delivery requires operator review",
+    "Upstream task timed out; delivery requires operator review": "Upstream task timed out; delivery requires operator review"
   }
 }

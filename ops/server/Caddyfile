@@ -118,6 +118,8 @@ http://:8081 {
 			path /pricing /pricing/*
 			path /playground /playground/*
 			path /image /image/*
+			path /task-plugins /task-plugins/*
+			path /401 /403 /404 /500 /503
 			path /help /help/*
 			path /model-monitor /model-monitor/*
 			path /support /support/*

@@ -7547,6 +7547,11 @@
     "Display categories": "Danh mục hiển thị",
     "Invalid display categories": "Danh mục hiển thị không hợp lệ",
     "Leave empty for automatic classification. Affects model square filters only, not API endpoints, routing, permissions or billing.": "Để trống để phân loại tự động. Chỉ ảnh hưởng bộ lọc danh mục mô hình, không thay đổi điểm cuối API, định tuyến, quyền truy cập hay tính phí.",
-    "Restore automatic classification": "Khôi phục phân loại tự động"
+    "Restore automatic classification": "Khôi phục phân loại tự động",
+    "Decision Models": "Mô hình ra quyết định",
+    "Failed to query the upstream task status; delivery requires operator review": "Không thể truy vấn trạng thái tác vụ phía nhà cung cấp; quản trị viên cần kiểm tra trạng thái bàn giao",
+    "Task timed out; upstream delivery requires operator review": "Tác vụ đã hết thời gian chờ; quản trị viên cần kiểm tra trạng thái bàn giao từ nhà cung cấp",
+    "Upstream task not found; delivery requires operator review": "Không tìm thấy tác vụ phía nhà cung cấp; quản trị viên cần kiểm tra trạng thái bàn giao",
+    "Upstream task timed out; delivery requires operator review": "Tác vụ phía nhà cung cấp đã hết thời gian chờ; quản trị viên cần kiểm tra trạng thái bàn giao"
   }
 }

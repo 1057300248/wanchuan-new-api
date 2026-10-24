@@ -122,6 +122,7 @@ func excludeMidjourneyPollingReview(db *gorm.DB) *gorm.DB {
 		"Missing upstream task identity; delivery requires operator review",
 		"Missing channel metadata; upstream delivery requires operator review",
 		"Ambiguous upstream task identity; delivery requires operator review",
+		MidjourneyTimeoutReviewReason,
 	})
 }
 

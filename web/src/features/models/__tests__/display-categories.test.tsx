@@ -106,13 +106,16 @@ describe('model display category editing', () => {
       await screen.findByRole('option', { name: 'Image Generation' })
     )
     await user.click(await screen.findByRole('option', { name: 'Video' }))
+    await user.click(
+      await screen.findByRole('option', { name: 'Decision Models' })
+    )
     await user.keyboard('{Escape}')
     await user.click(screen.getByRole('button', { name: 'Save metadata' }))
     await waitFor(() =>
       expect(put).toHaveBeenCalledWith(
         '/api/models/',
         expect.objectContaining({
-          display_categories: ['images', 'video'],
+          display_categories: ['images', 'video', 'decision'],
           input_modalities: original.input_modalities,
           output_modalities: original.output_modalities,
           capabilities: original.capabilities,
@@ -134,6 +137,7 @@ describe('model display category editing', () => {
     await screen.findByRole('combobox', { name: 'Display categories' })
     expect(screen.getByText('Image Generation')).toBeVisible()
     expect(screen.getByText('Video')).toBeVisible()
+    expect(screen.getByText('Decision Models')).toBeVisible()
     client.clear()
   })
 
@@ -237,10 +241,20 @@ describe('model display category editing', () => {
 
   it('allows clearing but rejects aggregate, unknown and oversized category values', () => {
     expect(modelDisplayCategoriesSchema.safeParse([]).success).toBe(true)
+    expect(
+      modelDisplayCategoriesSchema.safeParse([
+        'text',
+        'images',
+        'video',
+        'audio',
+        'vectors',
+        'decision',
+      ]).success
+    ).toBe(true)
     for (const value of [
       ['all'],
       ['unknown'],
-      ['text', 'images', 'video', 'audio', 'vectors', 'text'],
+      ['text', 'images', 'video', 'audio', 'vectors', 'decision', 'text'],
     ]) {
       expect(modelDisplayCategoriesSchema.safeParse(value).success).toBe(false)
     }

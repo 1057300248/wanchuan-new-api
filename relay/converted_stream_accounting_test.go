@@ -112,13 +112,19 @@ func TestConvertedResponsesFailureAccountingDatabaseMatrix(t *testing.T) {
 	} {
 		t.Run(string(dialect.kind), func(t *testing.T) {
 			db, logDB := convertedStreamAccountingDB(t, dialect.kind, dialect.mainEnv, dialect.logEnv)
+			for _, outcome := range []string{"empty_failure", "failed", "partial_unknown", "empty_eof", "fixed_empty", "fixed_partial"} {
+				t.Run("images/"+outcome, func(t *testing.T) {
+					runBufferedResponsesAccountingCase(t, db, logDB, types.RelayFormatOpenAIImage, "image_"+outcome)
+				})
+			}
+
 			for _, format := range []types.RelayFormat{types.RelayFormatOpenAI, types.RelayFormatClaude, types.RelayFormatGemini} {
 				for _, outcome := range []string{"provider_usage", "estimated_usage", "role_only", "delivery_failure", "hosted_tools", "empty_tools"} {
 					t.Run(fmt.Sprintf("%s/%s", format, outcome), func(t *testing.T) {
 						runConvertedStreamAccountingCase(t, db, logDB, format, outcome)
 					})
 				}
-				for _, outcome := range []string{"failed", "bare_error", "cancelled", "failed_status", "eof", "done_without_terminal", "incomplete", "success", "empty_failure", "empty_eof", "fixed_partial", "fixed_empty", "fixed_empty_eof", "fixed_success_missing_usage"} {
+				for _, outcome := range []string{"failed", "bare_error", "cancelled", "failed_status", "eof", "done_without_terminal", "incomplete", "success", "empty_failure", "empty_eof", "fixed_partial", "fixed_empty", "fixed_empty_eof", "fixed_success_missing_usage", "json_failed", "json_failed_status", "json_cancelled", "json_empty_failure", "json_fixed_partial", "json_fixed_empty", "json_total_only", "json_cancelled_total_only"} {
 					t.Run(fmt.Sprintf("buffered/%s/%s", format, outcome), func(t *testing.T) {
 						runBufferedResponsesAccountingCase(t, db, logDB, format, outcome)
 					})

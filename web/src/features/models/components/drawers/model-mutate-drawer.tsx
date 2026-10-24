@@ -425,6 +425,10 @@ export function ModelMutateDrawer(props: {
                                   { value: 'video', label: t('Video') },
                                   { value: 'audio', label: t('Audio') },
                                   { value: 'vectors', label: t('Vectors') },
+                                  {
+                                    value: 'decision',
+                                    label: t('Decision Models'),
+                                  },
                                 ]}
                                 selected={field.value ?? []}
                                 onChange={field.onChange}

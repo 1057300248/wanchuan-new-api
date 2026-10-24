@@ -7547,6 +7547,11 @@
     "Display categories": "Catégories d’affichage",
     "Invalid display categories": "Catégories d’affichage non valides",
     "Leave empty for automatic classification. Affects model square filters only, not API endpoints, routing, permissions or billing.": "Laissez vide pour une classification automatique. Affecte uniquement les filtres du catalogue, pas les points d’accès API, le routage, les permissions ni la facturation.",
-    "Restore automatic classification": "Rétablir la classification automatique"
+    "Restore automatic classification": "Rétablir la classification automatique",
+    "Decision Models": "Modèles de décision",
+    "Failed to query the upstream task status; delivery requires operator review": "Échec de la requête du statut de la tâche amont ; la livraison doit être vérifiée par un administrateur",
+    "Task timed out; upstream delivery requires operator review": "Délai de la tâche dépassé ; la livraison amont doit être vérifiée par un administrateur",
+    "Upstream task not found; delivery requires operator review": "Tâche amont introuvable ; la livraison doit être vérifiée par un administrateur",
+    "Upstream task timed out; delivery requires operator review": "Délai de la tâche amont dépassé ; la livraison doit être vérifiée par un administrateur"
   }
 }

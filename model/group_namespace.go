@@ -264,6 +264,9 @@ func updateUserGroupTx(tx *gorm.DB, userID int, group string) error {
 	if err := validateGroupNamesForWriteTx(tx, group); err != nil {
 		return err
 	}
+	if err := advanceUserPermissionRevisionTx(tx, userID); err != nil {
+		return err
+	}
 	return tx.Model(&User{}).Where("id = ?", userID).Update("group", group).Error
 }
 

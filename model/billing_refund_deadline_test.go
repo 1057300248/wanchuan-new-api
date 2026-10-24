@@ -44,7 +44,7 @@ func TestBillingTokenContextPreservesFence(t *testing.T) {
 	server := useUserCacheMiniRedis(t)
 	var oldToken Token
 	require.NoError(t, DB.First(&oldToken, r.TokenID).Error)
-	_, err := cacheInitToken(oldToken)
+	_, err := GetTokenByKey(oldToken.Key, true)
 	require.NoError(t, err)
 	require.True(t, server.Exists(getTokenCacheKey(oldToken.Key)))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

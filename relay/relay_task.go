@@ -357,11 +357,16 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError, common.UpstreamAddresses(c)...)
 	}
 
+	// Only the transport can prove an attempt was never sent. Unknown custom
+	// adaptors keep the conservative hold rather than inferring from an error.
+	common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, false)
 	// 9. 发送请求
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
 		taskErr := service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError, common.UpstreamAddresses(c)...)
-		taskErr.NoRetry, taskErr.DeliveryUnknown = true, true
+		if !common.GetContextKeyBool(c, constant.ContextKeyUpstreamRequestUnsent) {
+			taskErr.NoRetry, taskErr.DeliveryUnknown = true, true
+		}
 		return nil, taskErr
 	}
 	if resp == nil {

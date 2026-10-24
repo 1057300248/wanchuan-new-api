@@ -7547,6 +7547,11 @@
     "Display categories": "表示カテゴリ",
     "Invalid display categories": "表示カテゴリが無効です",
     "Leave empty for automatic classification. Affects model square filters only, not API endpoints, routing, permissions or billing.": "空欄の場合は自動分類されます。モデル広場の絞り込みのみに適用され、API エンドポイント、ルーティング、権限、課金には影響しません。",
-    "Restore automatic classification": "自動分類に戻す"
+    "Restore automatic classification": "自動分類に戻す",
+    "Decision Models": "意思決定モデル",
+    "Failed to query the upstream task status; delivery requires operator review": "上流タスクの状態を取得できませんでした。配信状況を管理者が確認する必要があります",
+    "Task timed out; upstream delivery requires operator review": "タスクがタイムアウトしました。上流の配信状況を管理者が確認する必要があります",
+    "Upstream task not found; delivery requires operator review": "上流タスクが見つかりません。配信状況を管理者が確認する必要があります",
+    "Upstream task timed out; delivery requires operator review": "上流タスクがタイムアウトしました。配信状況を管理者が確認する必要があります"
   }
 }

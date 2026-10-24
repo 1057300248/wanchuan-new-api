@@ -17,10 +17,12 @@ func TestModelDisplayCategoriesValidation(t *testing.T) {
 		{"omitted", nil, nil, false},
 		{"automatic", ModelDisplayCategories{}, ModelDisplayCategories{}, false},
 		{"canonical multimodal", ModelDisplayCategories{"video", "images", "images"}, ModelDisplayCategories{"images", "video"}, false},
+		{"decision with text", ModelDisplayCategories{"decision", "text"}, ModelDisplayCategories{"text", "decision"}, false},
+		{"six categories", ModelDisplayCategories{"text", "images", "video", "audio", "vectors", "decision"}, ModelDisplayCategories{"text", "images", "video", "audio", "vectors", "decision"}, false},
 		{"all is not a category", ModelDisplayCategories{"all"}, nil, true},
 		{"unknown", ModelDisplayCategories{"image"}, nil, true},
 		{"empty value", ModelDisplayCategories{""}, nil, true},
-		{"too many", ModelDisplayCategories{"text", "images", "video", "audio", "vectors", "text"}, nil, true},
+		{"too many", ModelDisplayCategories{"text", "images", "video", "audio", "vectors", "decision", "text"}, nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			normalized, err := tc.input.Normalize()

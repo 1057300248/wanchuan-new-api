@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"sync"
 	"testing"
@@ -29,11 +31,22 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 func TestMain(m *testing.M) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	var driver gorm.Dialector = sqlite.Open(":memory:")
+	databaseType := common.DatabaseTypeSQLite
+	if dsn := os.Getenv("TEST_SERVICE_POSTGRES_DSN"); dsn != "" {
+		parsed, err := url.Parse(dsn)
+		if err != nil || parsed.Scheme != "postgres" || net.ParseIP(parsed.Hostname()) == nil || !net.ParseIP(parsed.Hostname()).IsLoopback() {
+			panic("TEST_SERVICE_POSTGRES_DSN must name a disposable loopback PostgreSQL database")
+		}
+		driver = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+		databaseType = common.DatabaseTypePostgreSQL
+	}
+	db, err := gorm.Open(driver, &gorm.Config{})
 	if err != nil {
 		panic("failed to open test db: " + err.Error())
 	}
@@ -46,7 +59,7 @@ func TestMain(m *testing.M) {
 	model.DB = db
 	model.LOG_DB = db
 
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	common.SetDatabaseTypes(databaseType, databaseType)
 	common.RedisEnabled = false
 	common.BatchUpdateEnabled = false
 	common.LogConsumeEnabled = true

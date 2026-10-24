@@ -5,6 +5,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const MidjourneyTimeoutReviewReason = "Upstream task timed out; delivery requires operator review"
+
 // MarkMidjourneyPollingReview cannot turn missing local metadata into proof of
 // upstream failure, and cannot overwrite a concurrent terminal success.
 func MarkMidjourneyPollingReview(ctx context.Context, ids []int, reason string) error {
@@ -29,7 +31,7 @@ func MarkMidjourneyPollingReview(ctx context.Context, ids []int, reason string) 
 // RequiresFinancialReview excludes ambiguous local-metadata failures from
 // every automatic financial path, including a later ordinary poll timeout.
 func (task *Midjourney) RequiresFinancialReview() bool {
-	return task != nil && task.Status == "UNKNOWN" && (task.FailReason == "Missing upstream task identity; delivery requires operator review" || task.FailReason == "Missing channel metadata; upstream delivery requires operator review" || task.FailReason == "Ambiguous upstream task identity; delivery requires operator review")
+	return task != nil && task.Status == "UNKNOWN" && (task.FailReason == "Missing upstream task identity; delivery requires operator review" || task.FailReason == "Missing channel metadata; upstream delivery requires operator review" || task.FailReason == "Ambiguous upstream task identity; delivery requires operator review" || task.FailReason == MidjourneyTimeoutReviewReason)
 }
 
 // GetUniqueMidjourneyNotificationTarget refuses ambiguous historical provider

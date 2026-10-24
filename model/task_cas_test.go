@@ -3,6 +3,8 @@ package model
 import (
 	"context"
 	"encoding/json"
+	"net"
+	"net/url"
 	"os"
 	"sync"
 	"testing"
@@ -13,18 +15,38 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 func TestMain(m *testing.M) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	var dialector gorm.Dialector
+	nativeDSN := os.Getenv("TEST_MODEL_POSTGRES_DSN")
+	if nativeDSN != "" {
+		parsed, err := url.Parse(nativeDSN)
+		if err != nil || !net.ParseIP(parsed.Hostname()).IsLoopback() {
+			panic("TEST_MODEL_POSTGRES_DSN must name a disposable loopback PostgreSQL fixture")
+		}
+		dialector = postgres.Open(nativeDSN)
+	} else {
+		dialector = sqlite.Open(":memory:")
+	}
+	db, err := gorm.Open(dialector, &gorm.Config{})
 	if err != nil {
 		panic("failed to open test db: " + err.Error())
 	}
 	DB = db
 	LOG_DB = db
 
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	if nativeDSN != "" {
+		common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
+		var version string
+		if err := db.Raw("SHOW server_version_num").Scan(&version).Error; err != nil || version != "180006" {
+			panic("native model tests require PostgreSQL 18.6")
+		}
+	} else {
+		common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	}
 	common.RedisEnabled = false
 	common.BatchUpdateEnabled = false
 	common.LogConsumeEnabled = true
@@ -34,10 +56,15 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic("failed to get sql.DB: " + err.Error())
 	}
-	sqlDB.SetMaxOpenConns(1)
+	if nativeDSN != "" {
+		sqlDB.SetMaxOpenConns(8)
+	} else {
+		sqlDB.SetMaxOpenConns(1)
+	}
 
 	if err := db.AutoMigrate(
 		&Task{},
+		&Option{},
 		&User{},
 		&UserSession{},
 		&AuthFlow{},

@@ -94,6 +94,38 @@ describe('model capability categories', () => {
 })
 
 describe('manual display categories', () => {
+  it('accepts decision only as a manual display category, without guessing names or changing chat capability', () => {
+    const automatic = model({
+      model_name: 'decision-reasoning-model',
+      output_modalities: ['text'],
+      capabilities: ['reasoning'],
+      supported_endpoint_types: ['openai'],
+    })
+    expect(getModelCategories(automatic)).toEqual(['text'])
+    expect(filterByCategory([automatic], 'decision')).toEqual([])
+    const manual = {
+      ...automatic,
+      display_categories: [
+        'decision',
+        'text',
+        'decision',
+      ] as PricingModel['display_categories'],
+    }
+    expect(getModelCategories(manual)).toEqual(['text', 'decision'])
+    expect(filterByCategory([manual], 'decision')).toEqual([manual])
+    expect(
+      getModelEndpoints(manual, { openai: { path: '/v1/chat/completions' } })
+    ).toEqual(
+      getModelEndpoints(automatic, {
+        openai: { path: '/v1/chat/completions' },
+      })
+    )
+    expect(getModelPlayground(manual)).toBe('/playground')
+    expect(getModelCategories({ ...manual, display_categories: [] })).toEqual([
+      'text',
+    ])
+  })
+
   it('replaces automatic categories, supports multiple values and counts each once', () => {
     const item = model({
       output_modalities: ['text'],

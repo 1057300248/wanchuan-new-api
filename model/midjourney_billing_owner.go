@@ -24,11 +24,28 @@ func ClaimMidjourneyBillingOwnerTx(tx *gorm.DB, task *Midjourney, allowNew bool,
 		RequestID: task.BillingRequestID, UserID: task.UserId, Source: "wallet",
 		TokenID: task.TokenId, TokenFingerprint: fingerprint,
 	}
-	owner, err := claimBillingFinalizationTx(tx, identity)
-	if err != nil {
+	// Current MJ submissions already hold source and original-token funds. Their
+	// terminal owner retains that receipt; legacy MJ owners have zero holds.
+	var existing BillingFinalization
+	err := lockForUpdate(tx).Where("request_id = ?", identity.RequestID).First(&existing).Error
+	var owner *BillingFinalization
+	if err == nil {
+		if err := existing.validate(); err != nil {
+			return false, err
+		}
+		if !sameBillingAuthorization(existing, identity) {
+			return false, ErrTaskFinancialReview
+		}
+		owner = &existing
+	} else if errors.Is(err, gorm.ErrRecordNotFound) {
+		owner, err = claimBillingFinalizationTx(tx, identity)
+		if err != nil {
+			return false, err
+		}
+	} else {
 		return false, err
 	}
-	publicID := fmt.Sprintf("midjourney:%d:%d:%s", task.Id, task.BillingOriginalQuota, BillingTokenFingerprint(task.MjId))
+	publicID := midjourneyBillingPublicID(task)
 	if owner.State != "building" {
 		if owner.State != BillingTaskOwned || owner.TaskID != int64(task.Id) || owner.TaskPublicID != publicID || owner.ActualQuota != actualQuota {
 			return false, ErrBillingFinalized

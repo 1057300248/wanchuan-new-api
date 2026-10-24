@@ -25,6 +25,7 @@ func MarkTaskPollingReview(ctx context.Context, task *Task, reason string) error
 		stored.Status = TaskStatusUnknown
 		stored.FailReason = reason
 		stored.PrivateData.FinancialReviewReason = reason
+		stored.PrivateData.PollFailures = max(stored.PrivateData.PollFailures, task.PrivateData.PollFailures)
 		if stored.Progress == "100%" {
 			stored.Progress = "0%"
 		}

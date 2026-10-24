@@ -539,12 +539,16 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 
 		// 计算应充值额度：
 		// - Stripe 订单：Money 代表经分组倍率换算后的美元数量，直接 * QuotaPerUnit
+		// - Creem：Amount 已为额度单位，直接入账
 		// - 其他订单（如易支付）：Amount 为美元数量，* QuotaPerUnit
 		var quotaErr error
 		if topUp.PaymentProvider == PaymentProviderStripe {
 			quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(
 				decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
 			)
+		} else if topUp.PaymentProvider == PaymentProviderCreem {
+			// Creem persists quota units, unlike the currency-unit providers.
+			quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(decimal.NewFromInt(topUp.Amount))
 		} else {
 			quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(
 				decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),

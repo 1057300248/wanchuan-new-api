@@ -532,6 +532,17 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 }
 
 func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	// URL/header construction and cancellation before client.Do cannot submit
+	// work. Reset per-attempt facts so a previous channel cannot taint them.
+	if c != nil {
+		common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestAttempted, false)
+		common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, true)
+		defer func() {
+			if !common2.GetContextKeyBool(c, appconstant.ContextKeyUpstreamRequestAttempted) {
+				common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, true)
+			}
+		}()
+	}
 	fullRequestURL, err := a.BuildRequestURL(info)
 	if err != nil {
 		return nil, err

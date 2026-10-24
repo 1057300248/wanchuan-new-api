@@ -1029,77 +1029,49 @@ func TestUpdateVideoTasksKeepsPrechargeWhenChannelMissing(t *testing.T) {
 	assertPollingFailureAccountingUnchanged(t, userID, tokenID, channelID, initialQuota, tokenRemain, preConsumedQuota, false)
 }
 
-func TestSweepTimedOutTasksHonorsRefundRolloutBoundary(t *testing.T) {
+func TestSweepTimedOutTasksPreservesAllHeldEvidence(t *testing.T) {
 	truncate(t)
-
-	const (
-		userID          = 403
-		channelID       = 403
-		initialQuota    = 10_000
-		legacyTaskQuota = 1_800
-		modernTaskQuota = 1_200
-	)
+	const userID, channelID = 403, 403
+	const initialQuota, legacyQuota, modernQuota = 10_000, 1_800, 1_200
 	seedUser(t, userID, initialQuota)
 	seedTaskPollingChannel(t, channelID, true)
-	// These are known historical charges, not new free tasks. Seed their
-	// already-accounted usage so the modern refund leaves only the old usage.
-	seedChargedAccounting(t, userID, channelID, 0, legacyTaskQuota+modernTaskQuota, 2)
-
-	legacyTask := makeTask(userID, channelID, legacyTaskQuota, 0, BillingSourceWallet, 0)
-	legacyTask.TaskID = "legacy_timeout_without_refund"
-	legacyTask.PrivateData.UpstreamTaskID = "upstream_legacy_timeout"
-	legacyTask.Progress = "50%"
-	legacyTask.SubmitTime = 1771718399 // 2026-02-21 23:59:59 UTC
-	legacyPrivate := expectedPollingReviewPrivateData(t, legacyTask, "")
-	require.NoError(t, model.DB.Create(legacyTask).Error)
-
-	modernTask := makeTask(userID, channelID, modernTaskQuota, 0, BillingSourceWallet, 0)
-	modernTask.TaskID = "modern_timeout_with_refund"
-	modernTask.PrivateData.UpstreamTaskID = "upstream_modern_timeout"
-	modernTask.Progress = "50%"
-	modernTask.SubmitTime = 1771718400 // 2026-02-22 00:00:00 UTC
-	require.NoError(t, model.DB.Create(modernTask).Error)
-
+	seedChargedAccounting(t, userID, channelID, 0, legacyQuota+modernQuota, 2)
+	var tasks []*model.Task
+	for i, quota := range []int{legacyQuota, modernQuota} {
+		task := makeTask(userID, channelID, quota, 0, BillingSourceWallet, 0)
+		task.TaskID = []string{"legacy_timeout", "modern_timeout"}[i]
+		task.PrivateData.UpstreamTaskID = "upstream_" + task.TaskID
+		task.Progress = "50%"
+		task.SubmitTime = []int64{1771718399, 1771718400}[i]
+		require.NoError(t, model.DB.Create(task).Error)
+		tasks = append(tasks, task)
+	}
 	previousTimeout := constant.TaskTimeoutMinutes
 	constant.TaskTimeoutMinutes = 1
 	t.Cleanup(func() { constant.TaskTimeoutMinutes = previousTimeout })
-
 	for range 2 {
 		sweepTimedOutTasks(context.Background())
-
-		var reloadedLegacy model.Task
-		var reloadedModern model.Task
-		require.NoError(t, model.DB.First(&reloadedLegacy, legacyTask.ID).Error)
-		require.NoError(t, model.DB.First(&reloadedModern, modernTask.ID).Error)
-		assert.EqualValues(t, model.TaskStatusFailure, reloadedLegacy.Status)
-		assert.EqualValues(t, model.TaskStatusFailure, reloadedModern.Status)
-		assert.Equal(t, legacyTaskQuota, reloadedLegacy.Quota, "timeout cannot erase historical financial evidence")
-		assert.Equal(t, legacyPrivate, reloadedLegacy.PrivateData)
-		assert.Zero(t, reloadedModern.Quota)
-		assert.Contains(t, reloadedLegacy.FailReason, "old system")
-		assert.Equal(t, "Task timed out", reloadedModern.FailReason)
-		assert.False(t, reloadedLegacy.SettlementPending)
-		assert.False(t, reloadedModern.SettlementPending)
-		assert.NotEmpty(t, reloadedModern.PrivateData.FinancialOperationID)
-		assert.Equal(t, initialQuota+modernTaskQuota, getUserQuota(t, userID))
+		for _, task := range tasks {
+			var stored model.Task
+			require.NoError(t, model.DB.First(&stored, task.ID).Error)
+			assert.EqualValues(t, model.TaskStatusUnknown, stored.Status)
+			assert.Equal(t, task.Quota, stored.Quota)
+			assert.Equal(t, task.PrivateData.WalletDebit, stored.PrivateData.WalletDebit)
+			assert.Equal(t, "Task timed out; upstream delivery requires operator review", stored.FailReason)
+			assert.Equal(t, stored.FailReason, stored.PrivateData.FinancialReviewReason)
+			assert.Nil(t, stored.PrivateData.FinancialIntent)
+			assert.False(t, stored.SettlementPending)
+		}
 		user := getUserBalances(t, userID)
-		assert.Equal(t, initialQuota+modernTaskQuota, user.QuotaPaid)
+		assert.Equal(t, initialQuota, user.QuotaPaid)
 		assertQuotaInvariant(t, user)
-		assert.Equal(t, legacyTaskQuota, user.UsedQuota)
+		assert.Equal(t, legacyQuota+modernQuota, user.UsedQuota)
 		assert.Equal(t, 2, user.RequestCount)
 		var channel model.Channel
 		require.NoError(t, model.DB.First(&channel, channelID).Error)
-		assert.EqualValues(t, legacyTaskQuota, channel.UsedQuota)
-		rows := ledgerRowsFor(t, userID)
-		require.Len(t, rows, 1, "only the modern hold can be refunded, even on a repeated sweep")
-		assert.Equal(t, string(model.AccountPaid), rows[0].Account)
-		assert.Equal(t, modernTaskQuota, rows[0].Delta)
-		assert.Equal(t, model.LedgerReasonTaskRefund, rows[0].Reason)
-		assert.Equal(t, int64(1), countLogs(t))
-		log := getLastLog(t)
-		require.NotNil(t, log)
-		assert.Equal(t, model.LogTypeRefund, log.Type)
-		assert.Equal(t, modernTaskQuota, log.Quota)
+		assert.EqualValues(t, legacyQuota+modernQuota, channel.UsedQuota)
+		assert.Empty(t, ledgerRowsFor(t, userID))
+		assert.Zero(t, countLogs(t))
 	}
 }
 
@@ -1173,11 +1145,10 @@ func TestUpdateVideoSingleTaskPollClassification(t *testing.T) {
 		wantUnchanged bool
 	}{
 		{
-			name:          "404 fails immediately and refunds",
+			name:          "404 preserves hold for review",
 			statusCode:    http.StatusNotFound,
-			wantStatus:    model.TaskStatusFailure,
-			wantRefund:    true,
-			wantReason:    "Upstream task not found",
+			wantStatus:    model.TaskStatusUnknown,
+			wantReason:    "Upstream task not found; delivery requires operator review",
 			wantUnchanged: false,
 		},
 		{
@@ -1188,14 +1159,13 @@ func TestUpdateVideoSingleTaskPollClassification(t *testing.T) {
 			wantUnchanged: true,
 		},
 		{
-			name:          "429 reaches threshold and refunds",
+			name:          "429 reaches threshold and preserves hold",
 			statusCode:    http.StatusTooManyRequests,
 			priorFailures: 2,
 			maxFailures:   3,
-			wantStatus:    model.TaskStatusFailure,
+			wantStatus:    model.TaskStatusUnknown,
 			wantFailures:  3,
-			wantRefund:    true,
-			wantReason:    "Failed to query the upstream task status",
+			wantReason:    "Failed to query the upstream task status; delivery requires operator review",
 		},
 		{
 			name:          "UNKNOWN increments",
@@ -1310,11 +1280,10 @@ func TestUpdateBatchTasksPollClassification(t *testing.T) {
 		wantReason   string
 	}{
 		{
-			name:       "404 fails the batch and refunds",
+			name:       "404 preserves batch holds for review",
 			statusCode: http.StatusNotFound,
-			wantStatus: model.TaskStatusFailure,
-			wantRefund: true,
-			wantReason: "Upstream task not found",
+			wantStatus: model.TaskStatusUnknown,
+			wantReason: "Upstream task not found; delivery requires operator review",
 		},
 		{
 			name:         "401 increments every task",

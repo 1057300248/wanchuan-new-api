@@ -61,7 +61,7 @@ func TestOfficialTokenRefundUsesAsyncCacheWithoutPrivateFence(t *testing.T) {
 	})
 	var token Token
 	require.NoError(t, DB.First(&token, r.TokenID).Error)
-	_, err := cacheInitToken(token)
+	_, err := GetTokenByKey(token.Key, true)
 	require.NoError(t, err)
 	require.NoError(t, IncreaseTokenQuotaForRefund(r.TokenID, token.Key, 100))
 	require.Eventually(t, func() bool { return gopool.WorkerCount() == 0 }, 5*time.Second, time.Millisecond)

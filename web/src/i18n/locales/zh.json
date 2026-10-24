@@ -7547,6 +7547,11 @@
     "Display categories": "展示分类",
     "Invalid display categories": "展示分类无效",
     "Leave empty for automatic classification. Affects model square filters only, not API endpoints, routing, permissions or billing.": "留空时自动识别。仅影响模型广场筛选，不改变 API 端点、路由、权限或计费。",
-    "Restore automatic classification": "恢复自动识别"
+    "Restore automatic classification": "恢复自动识别",
+    "Decision Models": "决策模型",
+    "Failed to query the upstream task status; delivery requires operator review": "查询上游任务状态失败；交付状态需要管理员核查",
+    "Task timed out; upstream delivery requires operator review": "任务已超时；上游交付状态需要管理员核查",
+    "Upstream task not found; delivery requires operator review": "未找到上游任务；交付状态需要管理员核查",
+    "Upstream task timed out; delivery requires operator review": "上游任务已超时；交付状态需要管理员核查"
   }
 }

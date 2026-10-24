@@ -1145,6 +1145,9 @@ func renameGroupUserReferences(tx *gorm.DB, plan *groupRenamePlan, state *groupR
 		if !ok {
 			continue
 		}
+		if err := advanceUserPermissionRevisionTx(tx, users[i].Id); err != nil {
+			return err
+		}
 		if err := tx.Model(&User{}).Where("id = ?", users[i].Id).Update("group", target).Error; err != nil {
 			return err
 		}
@@ -1228,6 +1231,9 @@ func renameGroupTokenReferences(tx *gorm.DB, plan *groupRenamePlan, autoTokens [
 		}
 		if !groupChanged && !autoGroupsChanged {
 			continue
+		}
+		if err := advanceTokenPermissionRevisionTx(tx, token.Id); err != nil {
+			return err
 		}
 		if err := tx.Model(&Token{}).Where("id = ?", token.Id).Updates(map[string]any{
 			"group":       token.Group,

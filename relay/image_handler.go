@@ -181,7 +181,11 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	if newAPIError != nil {
 		// reset status code 重置状态码
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
-		return newAPIError
+		partialUsage, _ := usage.(*dto.Usage)
+		if preserveUnmeasuredStreamBilling(c, info, partialUsage) || !service.ValidUsage(partialUsage) {
+			return newAPIError
+		}
+		c.Set(requestBillingUsageObservedKey, true)
 	}
 
 	// The log content shows the settled count: the count the handler derived
@@ -193,10 +197,10 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		imageN = common.QuotaRound(count)
 	}
 
-	if usage.(*dto.Usage).TotalTokens == 0 {
+	if newAPIError == nil && usage.(*dto.Usage).TotalTokens == 0 {
 		usage.(*dto.Usage).TotalTokens = 1
 	}
-	if usage.(*dto.Usage).PromptTokens == 0 {
+	if newAPIError == nil && usage.(*dto.Usage).PromptTokens == 0 {
 		usage.(*dto.Usage).PromptTokens = 1
 	}
 
@@ -218,7 +222,7 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	}
 
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), logContent)
-	return nil
+	return newAPIError
 }
 
 // Only rewrite the top-level model. Preserve vendor fields and the original

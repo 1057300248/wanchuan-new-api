@@ -101,7 +101,7 @@ func TestModelDisplayCategoriesPostgres(t *testing.T) {
 			assert.Equal(t, want.DisplayCategories, loaded.DisplayCategories)
 			assert.Equal(t, "synced description", loaded.Description)
 
-			for _, invalid := range []any{[]string{"all"}, []string{"unknown"}, []string{"text", "images", "video", "audio", "vectors", "text"}, "text", []int{1}} {
+			for _, invalid := range []any{[]string{"all"}, []string{"unknown"}, []string{"text", "images", "video", "audio", "vectors", "decision", "text"}, "text", []int{1}} {
 				payload["display_categories"] = invalid
 				modelManagementRequest(t, UpdateModelMeta, http.MethodPut, "/api/models/", payload, &response)
 				assert.False(t, response.Success)
@@ -122,12 +122,12 @@ func TestModelDisplayCategoriesPostgres(t *testing.T) {
 			model.RefreshPricing()
 			assert.Empty(t, model.GetPricing()[0].DisplayCategories)
 
-			create := map[string]any{"model_name": "synthetic-new-display", "status": 1, "display_categories": []string{"audio", "vectors"}}
+			create := map[string]any{"model_name": "synthetic-new-display", "status": 1, "display_categories": []string{"audio", "vectors", "decision"}}
 			modelManagementRequest(t, CreateModelMeta, http.MethodPost, "/api/models/", create, &response)
 			require.True(t, response.Success, response.Message)
 			var created model.Model
 			require.NoError(t, db.First(&created, response.Data.Id).Error)
-			assert.Equal(t, model.ModelDisplayCategories{"audio", "vectors"}, created.DisplayCategories)
+			assert.Equal(t, model.ModelDisplayCategories{"audio", "vectors", "decision"}, created.DisplayCategories)
 			create["model_name"], create["display_categories"] = "synthetic-invalid-create", []string{"all"}
 			modelManagementRequest(t, CreateModelMeta, http.MethodPost, "/api/models/", create, &response)
 			assert.False(t, response.Success)

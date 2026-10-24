@@ -17,7 +17,7 @@ func (categories ModelDisplayCategories) Normalize() (ModelDisplayCategories, er
 	if categories == nil {
 		return nil, nil
 	}
-	allowed := []string{"text", "images", "video", "audio", "vectors"}
+	allowed := []string{"text", "images", "video", "audio", "vectors", "decision"}
 	if len(categories) > len(allowed) {
 		return nil, errors.New("Invalid display categories")
 	}

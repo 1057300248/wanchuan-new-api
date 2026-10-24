@@ -197,10 +197,13 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 			}
 
 			useTime := (time.Now().UnixNano() / int64(time.Millisecond)) - task.SubmitTime
-			// 如果时间超过一小时，且进度不是100%，则认为任务失败
-			if useTime > 3600000 && task.Progress != "100%" && responseItem.Status != "SUCCESS" {
-				responseItem.FailReason = "Upstream task timed out (over 1 hour)"
-				responseItem.Status = "FAILURE"
+			// Local age does not establish upstream failure or zero consumption.
+			// An authoritative terminal response still wins over the local cutoff.
+			if useTime > 3600000 && task.Progress != "100%" && responseItem.Status != "SUCCESS" && responseItem.Status != "FAILURE" {
+				if err := model.MarkMidjourneyPollingReview(ctx, []int{task.Id}, model.MidjourneyTimeoutReviewReason); err != nil {
+					logger.LogError(ctx, common.LogText("UpdateMidjourneyTask task error: %s", err.Error()))
+				}
+				continue
 			}
 			if !checkMjTaskNeedUpdate(task, responseItem) {
 				continue
@@ -241,7 +244,7 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 			}
 
 			shouldReturnQuota := false
-			if (task.Progress != "100%" && responseItem.FailReason != "") || (task.Progress == "100%" && task.Status == "FAILURE") {
+			if responseItem.Status == "FAILURE" {
 				logger.LogInfo(ctx, common.LogText("%s failed: %s", task.MjId, task.FailReason))
 				task.Progress = "100%"
 				task.Status = "FAILURE"

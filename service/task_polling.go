@@ -68,7 +68,7 @@ var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
 
 // sweepTimedOutTasks 在主轮询之前独立清理超时任务。
 // 每次最多处理 100 条，剩余的下个周期继续处理。
-// 使用 per-task CAS (UpdateWithStatus) 防止覆盖被正常轮询已推进的任务。
+// 使用锁定的 review 转移，防止覆盖被正常轮询已推进的终态。
 func sweepTimedOutTasks(ctx context.Context) {
 	if constant.TaskTimeoutMinutes <= 0 {
 		return
@@ -79,64 +79,16 @@ func sweepTimedOutTasks(ctx context.Context) {
 		return
 	}
 
-	reason := "Task timed out"
-	legacyReason := "Task timed out (a task left by the old system is not refunded; contact the administrator)"
-	now := time.Now().Unix()
-	timedOutCount := 0
-
 	for _, task := range tasks {
 		if task == nil || task.HasLegacyBillingIntent() || task.PrivateData.FinancialReviewReason != "" {
 			continue
 		}
-		if task.GetUpstreamTaskID() == "" {
-			_ = model.MarkTaskPollingReview(ctx, task, "Missing upstream task identity; delivery requires operator review")
-			continue
-		}
-		if _, err := model.GetChannelById(task.ChannelId, false); err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				_ = model.MarkTaskPollingReview(ctx, task, "Missing channel metadata; upstream delivery requires operator review")
-			}
-			continue
-		}
-		isLegacy := task.SubmitTime > 0 && task.SubmitTime < model.TaskRefundLegacyCutoff
-
-		oldStatus := task.Status
-		task.Status = model.TaskStatusFailure
-		task.Progress = "100%"
-		task.FinishTime = now
-		if isLegacy {
-			task.FailReason = legacyReason
-			// Historical holds are retained for read-only reconciliation; a timeout
-			// is not authority to erase their financial evidence.
-		} else {
-			task.FailReason = reason
-		}
-
-		var won bool
-		var err error
-		if isLegacy {
-			// A timeout is not authority to erase a historical financial hold.
-			won, err = task.UpdateWithStatus(oldStatus)
-		} else {
-			intent := &model.TaskFinancialIntent{Kind: "refund", PreviousQuota: task.Quota, ActualQuota: 0, OperationID: fmt.Sprintf("task:financial:%d:refund:0", task.ID), Reason: common.NewMessage(reason)}
-			won, err = model.CommitTaskTerminalFinancial(ctx, task, oldStatus, intent)
-		}
-		if err != nil {
+		// Local age is not evidence that an accepted upstream request consumed
+		// nothing. Preserve the original hold for reconciliation, including old
+		// rows; never manufacture a refundable upstream FAILURE.
+		if err := model.MarkTaskPollingReview(ctx, task, "Task timed out; upstream delivery requires operator review"); err != nil {
 			logger.LogError(ctx, common.LogText("sweepTimedOutTasks CAS update error for task %s: %v", task.TaskID, err))
-			continue
 		}
-		if !won {
-			logger.LogInfo(ctx, common.LogText("sweepTimedOutTasks: task %s already transitioned, skip", task.TaskID))
-			continue
-		}
-		timedOutCount++
-		if !isLegacy && task.Quota != 0 && task.PrivateData.FinancialReviewReason == "" {
-			RefundTaskQuota(ctx, task, reason)
-		}
-	}
-
-	if timedOutCount > 0 {
-		logger.LogInfo(ctx, common.LogText("sweepTimedOutTasks: timed out %d tasks", timedOutCount))
 	}
 }
 
@@ -859,7 +811,7 @@ func recordPollFailure(ctx context.Context, adaptor TaskPollingAdaptor, task *mo
 	}
 	task.PrivateData.PollFailures++
 	// TASK_POLL_MAX_FAILURES <= 0 disables the consecutive-failure cutoff, matching
-	// TASK_TIMEOUT_MINUTES semantics; the 24h sweep remains the only backstop.
+	// TASK_TIMEOUT_MINUTES semantics; a cutoff only requests operator review.
 	giveUp := constant.TaskPollMaxFailures > 0 && task.PrivateData.PollFailures >= constant.TaskPollMaxFailures
 	if giveUp || class == pollClassUnrecognized || class == pollClassHookError {
 		// The redacted body is intentionally not persisted to Task.Data on these
@@ -897,14 +849,9 @@ func failTaskFromPoll(ctx context.Context, adaptor TaskPollingAdaptor, task *mod
 	if task.HasLegacyBillingIntent() || task.PrivateData.FinancialReviewReason != "" {
 		return nil
 	}
-	now := time.Now().Unix()
-	task.Status = model.TaskStatusFailure
-	task.Progress = taskcommon.ProgressComplete
-	if task.FinishTime == 0 {
-		task.FinishTime = now
-	}
-	task.FailReason = reason
-	return CommitTaskTerminalResult(ctx, adaptor, task, relaycommon.FailTaskInfo(reason), fromStatus)
+	// A missing/query-inaccessible task may already have been delivered and
+	// charged upstream. Only a parsed terminal failure may authorize a refund.
+	return model.MarkTaskPollingReview(ctx, task, reason+"; delivery requires operator review")
 }
 
 func failTasksFromPoll(ctx context.Context, adaptor TaskPollingAdaptor, tasks []*model.Task, reason string) error {

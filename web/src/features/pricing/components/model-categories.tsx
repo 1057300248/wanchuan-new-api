@@ -40,6 +40,7 @@ export function ModelCategories(props: {
     video: t('Video'),
     audio: t('Audio'),
     vectors: t('Vectors'),
+    decision: t('Decision Models'),
     all: t('All'),
   }
   const counts = useMemo(() => {
@@ -49,6 +50,7 @@ export function ModelCategories(props: {
       video: 0,
       audio: 0,
       vectors: 0,
+      decision: 0,
       all: props.models.length,
     }
     for (const model of props.models) {

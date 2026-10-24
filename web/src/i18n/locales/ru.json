@@ -7547,6 +7547,11 @@
     "Display categories": "Категории отображения",
     "Invalid display categories": "Недопустимые категории отображения",
     "Leave empty for automatic classification. Affects model square filters only, not API endpoints, routing, permissions or billing.": "Оставьте пустым для автоматической классификации. Влияет только на фильтры каталога моделей, а не на конечные точки API, маршрутизацию, права доступа или тарификацию.",
-    "Restore automatic classification": "Восстановить автоклассификацию"
+    "Restore automatic classification": "Восстановить автоклассификацию",
+    "Decision Models": "Модели принятия решений",
+    "Failed to query the upstream task status; delivery requires operator review": "Не удалось запросить статус задачи провайдера; требуется проверка результата администратором",
+    "Task timed out; upstream delivery requires operator review": "Время ожидания задачи истекло; требуется проверка результата у провайдера администратором",
+    "Upstream task not found; delivery requires operator review": "Задача провайдера не найдена; требуется проверка результата администратором",
+    "Upstream task timed out; delivery requires operator review": "Время ожидания задачи провайдера истекло; требуется проверка результата администратором"
   }
 }

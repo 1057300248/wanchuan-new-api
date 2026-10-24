@@ -38,9 +38,13 @@ func runBufferedResponsesAccountingCase(t *testing.T, db, logDB *gorm.DB, format
 	t.Helper()
 	const requestedModel = "converted-stream-accounting"
 	const paid, bonus, reward = 50000, 100, 70
+	imageResponse := strings.HasPrefix(outcome, "image_")
+	outcome = strings.TrimPrefix(outcome, "image_")
+	jsonResponse := strings.HasPrefix(outcome, "json_")
+	outcome = strings.TrimPrefix(outcome, "json_")
 	success := outcome == "success" || outcome == "incomplete" || outcome == "fixed_success_missing_usage"
-	unknown := outcome == "empty_eof" || outcome == "fixed_empty_eof"
-	noUsage := strings.HasPrefix(outcome, "empty_") || strings.HasPrefix(outcome, "fixed_empty") || outcome == "fixed_success_missing_usage"
+	unknown := outcome == "empty_eof" || outcome == "fixed_empty_eof" || outcome == "partial_unknown" || strings.Contains(outcome, "total_only")
+	noUsage := strings.Contains(outcome, "total_only") || outcome == "partial_unknown" || strings.HasPrefix(outcome, "empty_") || strings.HasPrefix(outcome, "fixed_empty") || outcome == "fixed_success_missing_usage"
 	fixed := strings.HasPrefix(outcome, "fixed_")
 	wantCharge := 15
 	if noUsage {
@@ -86,6 +90,45 @@ func runBufferedResponsesAccountingCase(t *testing.T, db, logDB *gorm.DB, format
 			held, err := captureBufferedResponsesAccounting(db, identity, user.Id, token.Id)
 			heldSnapshots <- heldSnapshot{held, err}
 		}
+		if imageResponse {
+			w.Header().Set("Content-Type", "text/event-stream")
+			if outcome == "empty_eof" {
+				return
+			}
+			if outcome == "partial_unknown" {
+				_, _ = fmt.Fprint(w, `data: {"type":"image_generation.partial_image","b64_json":"partial"}`+"\n\n")
+			}
+			usage := ""
+			if !noUsage {
+				usage = `,"usage":{"input_tokens":11,"output_tokens":4,"total_tokens":15}`
+			}
+			_, _ = fmt.Fprint(w, `data: {"type":"error","error":{"type":"server_error","message":"provider-private failed"}`+usage+"}\n\n")
+			return
+		}
+		if jsonResponse {
+			w.Header().Set("Content-Type", "application/json")
+			response := map[string]any{"id": "resp_partial", "model": "provider-private", "status": "failed", "error": map[string]any{"type": "server_error", "code": "overloaded", "message": "provider-private failed"}}
+			if !noUsage {
+				response["usage"] = map[string]int{"input_tokens": 11, "output_tokens": 4, "total_tokens": 15}
+			}
+			if strings.Contains(outcome, "total_only") {
+				response["usage"] = map[string]int{"total_tokens": 15}
+			}
+			if outcome == "failed_status" {
+				response["error"] = map[string]any{"code": "overloaded", "message": "provider-private failed"}
+			}
+			if outcome == "cancelled" || outcome == "cancelled_total_only" {
+				response["status"] = "cancelled"
+				delete(response, "error")
+			}
+			encoded, err := common.Marshal(response)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write(encoded)
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "data: "+`{"type":"response.created","response":{"id":"resp_partial","model":"provider-private","status":"in_progress"}}`+"\n\n")
 		if !noUsage {
@@ -116,7 +159,10 @@ func runBufferedResponsesAccountingCase(t *testing.T, db, logDB *gorm.DB, format
 		Key: "test-only", BaseURL: common.GetPointer(upstream.URL), Models: requestedModel, Group: "default", AutoBan: common.GetPointer(0)}
 	path := "/v1/chat/completions"
 	body := `{"model":"` + requestedModel + `","messages":[{"role":"user","content":"Please return a helpful answer to this short test request"}],"stream":false}`
-	if format == types.RelayFormatClaude {
+	if imageResponse {
+		path = "/v1/images/generations"
+		body = `{"model":"` + requestedModel + `","prompt":"draw a tree","n":1,"stream":true}`
+	} else if format == types.RelayFormatClaude {
 		path = "/v1/messages"
 		body = `{"model":"` + requestedModel + `","messages":[{"role":"user","content":"Please return a helpful answer to this short test request"}],"max_tokens":32,"stream":false}`
 	} else if format == types.RelayFormatGemini {
@@ -165,13 +211,20 @@ func runBufferedResponsesAccountingCase(t *testing.T, db, logDB *gorm.DB, format
 	assert.Equal(t, 1, service.RequestPolicy(c).Attempts)
 	assert.Equal(t, success && outcome != "incomplete", service.RequestPolicy(c).Successful, "partial billing must never publish a success outcome for failed or truncated upstream work")
 	request := <-requests
-	assert.True(t, strings.HasPrefix(request, "/v1/responses\n"), request)
-	assert.Contains(t, request, `"input":`)
-	assert.NotContains(t, request, `"stream":true`)
-	assert.False(t, common.GetContextKeyBool(c, constant.ContextKeyStreamErrorHandled), "the outer controller must write the JSON error")
+	if imageResponse {
+		assert.True(t, strings.HasPrefix(request, "/v1/images/generations\n"), request)
+		assert.Contains(t, request, `"stream":true`)
+	} else {
+		assert.True(t, strings.HasPrefix(request, "/v1/responses\n"), request)
+		assert.Contains(t, request, `"input":`)
+		assert.NotContains(t, request, `"stream":true`)
+		assert.False(t, common.GetContextKeyBool(c, constant.ContextKeyStreamErrorHandled), "the outer controller must write the JSON error")
+	}
 	wire := recorder.Body.String()
-	assert.NotContains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
-	assert.NotContains(t, wire, "data:")
+	if !imageResponse {
+		assert.NotContains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
+		assert.NotContains(t, wire, "data:")
+	}
 	assert.NotContains(t, wire, "provider-private")
 	if success {
 		assert.Equal(t, http.StatusOK, recorder.Code, wire)
@@ -182,7 +235,11 @@ func runBufferedResponsesAccountingCase(t *testing.T, db, logDB *gorm.DB, format
 			assert.NotContains(t, wire, `"finishReason":"STOP"`)
 		}
 	} else {
-		assert.Equal(t, http.StatusBadGateway, recorder.Code, wire)
+		if imageResponse && outcome != "empty_eof" {
+			assert.Equal(t, http.StatusOK, recorder.Code, wire)
+		} else {
+			assert.Equal(t, http.StatusBadGateway, recorder.Code, wire)
+		}
 		assert.Equal(t, 1, strings.Count(wire, `"error":`))
 		assert.NotContains(t, wire, `"finish_reason":`)
 		assert.NotContains(t, wire, `"finishReason":`)
@@ -195,7 +252,7 @@ func runBufferedResponsesAccountingCase(t *testing.T, db, logDB *gorm.DB, format
 	} else {
 		require.Len(t, logs, 1, wire)
 		assert.Equal(t, wantCharge, logs[0].Quota)
-		assert.False(t, logs[0].IsStream)
+		assert.Equal(t, imageResponse, logs[0].IsStream)
 		if !noUsage {
 			assert.Equal(t, 11, logs[0].PromptTokens)
 			assert.Equal(t, 4, logs[0].CompletionTokens)

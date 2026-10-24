@@ -946,4 +946,8 @@ export const STATIC_I18N_KEYS = [
   'Missing channel metadata; upstream delivery requires operator review',
   'Ambiguous upstream task identity; delivery requires operator review',
   'Legacy task billing identity is unavailable; financial review required',
+  'Task timed out; upstream delivery requires operator review',
+  'Failed to query the upstream task status; delivery requires operator review',
+  'Upstream task not found; delivery requires operator review',
+  'Upstream task timed out; delivery requires operator review',
 ] as const
