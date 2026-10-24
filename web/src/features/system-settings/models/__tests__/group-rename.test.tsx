@@ -151,6 +151,42 @@ test('collectGroupRenamePlan reports reserved group removals separately', () => 
   expect(plan.unresolved).toEqual([])
 })
 
+test.each([
+  [
+    'UserUsableGroups',
+    '{"default":"Default","vip":"VIP"}',
+    '{"enterprise":"Enterprise"}',
+  ],
+  ['AutoGroups', '["default","vip"]', '["enterprise"]'],
+  [
+    'GroupSpecialUsableGroup',
+    '{"default":{"+:vip":"VIP"},"vip":{}}',
+    '{"enterprise":{"+:default":"Authorized access"}}',
+  ],
+  ['TopupGroupRatio', '{"default":1,"vip":1.2}', '{"enterprise":1.1}'],
+  [
+    'GroupGroupRatio',
+    '{"default":{"vip":0.8}}',
+    '{"enterprise":{"default":0.9}}',
+  ],
+] as const)(
+  'changing %s references does not request a definition rename or forbid removing default',
+  (field, before, after) => {
+    const baseline = {
+      ...BASELINE_VALUES,
+      GroupRatio: '{"default":1,"vip":1,"enterprise":1}',
+      [field]: before,
+    }
+
+    expect(
+      collectGroupRenamePlan(baseline, { ...baseline, [field]: after }, [], {})
+    ).toEqual({
+      unresolved: [],
+      reservedViolations: [],
+    })
+  }
+)
+
 function PricingFixture(props: {
   onRenamesChange: (renames: GroupRenameMapping[]) => void
 }) {
@@ -306,7 +342,7 @@ test('saving group changes disables repeated submissions until the result arrive
     finishSave = resolve
   })
   const onSave = vi.fn(() => pendingSave)
-  render(<GroupFormFixture onSave={onSave} />)
+  render(<GroupFormFixture onSave={onSave} baseline={GROUP_FORM_VALUES} />)
 
   fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
   await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
@@ -413,3 +449,113 @@ test('JSON mode reserved group rename blocks save', async () => {
   ).toBeInTheDocument()
   expect(calls).toHaveLength(0)
 })
+
+test('revoking user selectable default saves without renaming or removing its definition', async () => {
+  const { calls, onSave } = createSaveSpy()
+  render(<GroupFormFixture onSave={onSave} />)
+  const row = screen.getByDisplayValue('default').closest('tr')
+  assert(row)
+  fireEvent.click(within(row).getByRole('checkbox'))
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+
+  await waitFor(() => expect(calls).toHaveLength(1))
+  expect(calls[0].renames).toEqual([])
+  expect(JSON.parse(calls[0].values.GroupRatio)).toEqual({ default: 1, vip: 1 })
+  expect(JSON.parse(calls[0].values.UserUsableGroups)).toEqual({ vip: 'VIP' })
+})
+
+test('replacing permission references in JSON saves without fabricated enterprise rename mappings', async () => {
+  const { calls, onSave } = createSaveSpy()
+  const values = {
+    ...GROUP_FORM_VALUES,
+    GroupRatio: '{"default":1,"vip":1,"enterprise":1}',
+    GroupSpecialUsableGroup: '{"vip":{"+:default":"Default"}}',
+  }
+  render(<GroupFormFixture onSave={onSave} values={values} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Switch to JSON' }))
+  fireEvent.input(screen.getByLabelText('Selectable groups'), {
+    target: { value: '{"enterprise":"Enterprise"}' },
+  })
+  fireEvent.input(screen.getByLabelText('Auto group order'), {
+    target: { value: '["enterprise"]' },
+  })
+  fireEvent.input(screen.getByLabelText('Special usable group rules'), {
+    target: { value: '{"enterprise":{"+:default":"Authorized access"}}' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+
+  await waitFor(() => expect(calls).toHaveLength(1))
+  expect(calls[0].renames).toEqual([])
+  expect(JSON.parse(calls[0].values.GroupRatio)).toEqual({
+    default: 1,
+    vip: 1,
+    enterprise: 1,
+  })
+  expect(JSON.parse(calls[0].values.GroupSpecialUsableGroup)).toEqual({
+    enterprise: { '+:default': 'Authorized access' },
+  })
+})
+
+test('pending renames do not crash the conflict preview while unrelated JSON is temporarily invalid', async () => {
+  const { calls, onSave } = createSaveSpy()
+  render(<GroupFormFixture onSave={onSave} />)
+  fireEvent.change(screen.getByDisplayValue('vip'), {
+    target: { value: 'enterprise' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Switch to JSON' }))
+  fireEvent.input(screen.getByLabelText('Auto group order'), {
+    target: { value: '{}' },
+  })
+  expect(screen.getByLabelText('Auto group order')).toHaveValue('{}')
+  fireEvent.input(screen.getByLabelText('Auto group order'), {
+    target: { value: '["default"]' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+  await waitFor(() => expect(calls).toHaveLength(1))
+  expect(calls[0].renames).toEqual([{ from: 'vip', to: 'enterprise' }])
+})
+
+test.each([
+  [
+    'target groups',
+    '{"vip":{"+:vip":"VIP","-:enterprise":"remove"}}',
+    'enterprise',
+  ],
+  [
+    'user groups',
+    '{"vip":{"+:default":"Standard"},"enterprise":{"-:default":"remove"}}',
+    'default',
+  ],
+])(
+  'pending renames reject visibility conflicts between renamed %s',
+  async (_label, rules, target) => {
+    const { calls, onSave } = createSaveSpy()
+    render(
+      <GroupFormFixture
+        onSave={onSave}
+        values={{
+          ...GROUP_FORM_VALUES,
+          GroupSpecialUsableGroup: rules,
+        }}
+      />
+    )
+    fireEvent.change(
+      within(
+        screen.getByRole('table', { name: 'Pricing groups' })
+      ).getByDisplayValue('vip'),
+      {
+        target: { value: 'enterprise' },
+      }
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      `Group ${target} cannot be both extra visible and hidden for enterprise. Remove one rule before saving.`
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Save group settings' })
+      ).toBeEnabled()
+    )
+    expect(calls).toHaveLength(0)
+  }
+)

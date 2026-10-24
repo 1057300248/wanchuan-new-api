@@ -254,6 +254,11 @@ func UpdateOption(c *gin.Context) {
 			common.ApiErrorT(c, "The Classic frontend has been removed. The theme can only be set to default")
 			return
 		}
+	case "group_ratio_setting.group_special_usable_group":
+		if err := ratio_setting.ValidateGroupSpecialUsableGroupJSON(option.Value.(string)); err != nil {
+			common.ApiErrorStatus(c, http.StatusBadRequest, err)
+			return
+		}
 	case "GroupRatio":
 		err = ratio_setting.CheckGroupRatio(option.Value.(string))
 		if err != nil {

@@ -241,11 +241,10 @@ export function mergeGroupRenameMappings(
 }
 
 /**
- * Compares the baseline settings with the submitted values and reports raw key
- * removals that are not explained by an explicit mapping. A removal is only
- * ambiguous when the same option gained a new group key: the caller must state
- * the mapping instead of relying on position or ordering. Pure removals are
- * reported to the server, which rejects them when references still exist.
+ * Only GroupRatio defines groups. Other settings hold pricing, visibility, or
+ * routing references, so removing those references must not rename a group.
+ * Definition replacements need an explicit mapping; plain definition removals
+ * remain subject to the server's reference check.
  */
 export function collectGroupRenamePlan(
   baseline: GroupRenameEditableValues,
@@ -256,34 +255,29 @@ export function collectGroupRenamePlan(
   const mappingLookup = new Map(
     renames.map((rename) => [rename.from, rename.to])
   )
-  const reservedViolations = new Set<string>()
-  const unresolvedByKey = new Map<string, GroupRenameIssue>()
+  const reservedViolations: string[] = []
+  const unresolved: GroupRenameIssue[] = []
+  const before = new Set(
+    parseGroupOptionKeys('GroupRatio', baseline.GroupRatio)
+  )
+  const after = new Set(
+    parseGroupOptionKeys('GroupRatio', submitted.GroupRatio)
+  )
+  const added = [...after]
+    .filter((key) => !before.has(key) && !isReservedGroupName(key))
+    .sort()
 
-  for (const field of GROUP_RENAME_FIELDS) {
-    const before = new Set(parseGroupOptionKeys(field, baseline[field]))
-    const after = new Set(parseGroupOptionKeys(field, submitted[field]))
-    const added = [...after]
-      .filter((key) => !before.has(key) && !isReservedGroupName(key))
-      .sort()
-    for (const key of before) {
-      if (after.has(key)) continue
-      if (isReservedGroupName(key)) {
-        reservedViolations.add(key)
-        continue
-      }
-      if (mappingLookup.has(key)) continue
-      // A plain removal is handled by the server's reference check; only a
-      // simultaneous addition inside the same option is ambiguous.
-      if (added.length === 0) continue
-      const resolution = resolutions[groupRenameResolutionKey(key)]
-      if (resolution && added.includes(resolution)) continue
-      if (unresolvedByKey.has(key)) continue
-      unresolvedByKey.set(key, { field, key, targets: added })
+  for (const key of before) {
+    if (after.has(key)) continue
+    if (isReservedGroupName(key)) {
+      reservedViolations.push(key)
+      continue
     }
+    if (mappingLookup.has(key) || added.length === 0) continue
+    const resolution = resolutions[groupRenameResolutionKey(key)]
+    if (resolution && added.includes(resolution)) continue
+    unresolved.push({ field: 'GroupRatio', key, targets: added })
   }
 
-  return {
-    unresolved: [...unresolvedByKey.values()],
-    reservedViolations: [...reservedViolations].sort(),
-  }
+  return { unresolved, reservedViolations: reservedViolations.sort() }
 }

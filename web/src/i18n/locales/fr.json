@@ -3,6 +3,7 @@
     "360": "360",
     "1000": "1000",
     "10000": "10000",
+    "Group {{target}} cannot be both extra visible and hidden for {{group}}. Remove one rule before saving.": "Le groupe {{target}} ne peut pas être à la fois visible en plus et masqué pour {{group}}. Supprimez une des règles avant d’enregistrer.",
     "Only new accounts created through LinuxDO receive a one-time $3 signup bonus. Repeat logins and linking existing accounts do not qualify.": "Seuls les nouveaux comptes créés via LinuxDO reçoivent un bonus unique de 3 $ US. Les connexions suivantes et la liaison de comptes existants ne sont pas éligibles.",
     "\"default\": \"us-central1\", \"claude-3-5-sonnet-20240620\": \"europe-west1\"": "\"default\": \"us-central1\", \"claude-3-5-sonnet-20240620\": \"europe-west1\"",
     "#1 App": "#1 App",

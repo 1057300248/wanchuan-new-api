@@ -241,6 +241,23 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 		if err != nil {
 			return err
 		}
+		// Validate final writes too: automatic renames can rewrite special rules
+		// not supplied by the caller. Historical conflicting values are neither
+		// normalized nor changed by an unrelated settings edit.
+		for key, value := range renamedOptions {
+			if err := validateOptionValue(key, value); err != nil {
+				return fmt.Errorf("%w: %s: %w", ErrGroupRenameInvalidOption, key, err)
+			}
+			groups, err := groupRenameOptionGroupKeys(key, value)
+			if err != nil {
+				return fmt.Errorf("%w: %s: %v", ErrGroupRenameInvalidOption, key, err)
+			}
+			for _, group := range groups {
+				if target, mapped := plan.sources[group]; mapped {
+					return fmt.Errorf("%w: %s -> %s in %s", ErrGroupRenameUnmappedChange, group, target, key)
+				}
+			}
+		}
 		// The token cache fence must be raised before any database mutation so a
 		// concurrent reader cannot repopulate pre-rename token metadata.
 		tokenKeys, err := collectGroupRenameTokenKeys(tx, plan, autoTokens)
@@ -602,11 +619,9 @@ func collectGroupRenameTokenKeys(tx *gorm.DB, plan *groupRenamePlan, autoTokens 
 func collectGroupRenameUnmappedRemovals(request GroupRenameApplyRequest, current map[string]string, plan *groupRenamePlan) (map[string]struct{}, error) {
 	removed := make(map[string]struct{})
 	for key, value := range request.Options {
-		if key == setting.SensitiveCheckExemptGroupsOptionKey {
-			// Revoking a policy exemption does not remove the group itself.
-			continue
-		}
-		if _, reference := groupRenameReferenceOptionKeys[key]; !reference {
+		// GroupRatio defines groups; the other fields only reference them.
+		// Revoking a permission or removing an override is not group deletion.
+		if key != "GroupRatio" {
 			continue
 		}
 		removedKeys, _, err := groupRenameOptionKeyDelta(key, current[key], value)
@@ -630,7 +645,7 @@ func validateGroupRenameOptionUpdates(tx *gorm.DB, request GroupRenameApplyReque
 	}
 	for key, value := range request.Options {
 		if err := validateOptionValue(key, value); err != nil {
-			return fmt.Errorf("%w: %s: %v", ErrGroupRenameInvalidOption, key, err)
+			return fmt.Errorf("%w: %s: %w", ErrGroupRenameInvalidOption, key, err)
 		}
 		if key == setting.SensitiveCheckExemptGroupsOptionKey {
 			// Explicit options are post-rename values. Revocations are allowed,
@@ -656,7 +671,7 @@ func validateGroupRenameOptionUpdates(tx *gorm.DB, request GroupRenameApplyReque
 			}
 			continue
 		}
-		if _, reference := groupRenameReferenceOptionKeys[key]; !reference {
+		if key != "GroupRatio" {
 			continue
 		}
 		removed, added, err := groupRenameOptionKeyDelta(key, current[key], value)

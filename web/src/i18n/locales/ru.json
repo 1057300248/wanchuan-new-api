@@ -3,6 +3,7 @@
     "360": "360",
     "1000": "1000",
     "10000": "10000",
+    "Group {{target}} cannot be both extra visible and hidden for {{group}}. Remove one rule before saving.": "Группа {{target}} не может быть одновременно дополнительно видимой и скрытой для {{group}}. Удалите одно из правил перед сохранением.",
     "Only new accounts created through LinuxDO receive a one-time $3 signup bonus. Repeat logins and linking existing accounts do not qualify.": "Только новые аккаунты, созданные через LinuxDO, получают разовый бонус 3 доллара США. Повторный вход и привязка существующих аккаунтов не дают бонуса.",
     "\"default\": \"us-central1\", \"claude-3-5-sonnet-20240620\": \"europe-west1\"": "\"default\": \"us-central1\", \"claude-3-5-sonnet-20240620\": \"europe-west1\"",
     "#1 App": "#1 Приложение",

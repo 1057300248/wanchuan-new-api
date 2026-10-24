@@ -82,6 +82,15 @@ func (legacyToken) TableName() string {
 func openTokenControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
+	if os.Getenv("TEST_TASK_DB_DIALECT") == "postgres" {
+		gin.SetMode(gin.TestMode)
+		db := openGroupPermissionPostgresTestDB(t)
+		model.DB, model.LOG_DB = db, db
+		common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
+		common.RedisEnabled = false
+		return db
+	}
+
 	gin.SetMode(gin.TestMode)
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	common.RedisEnabled = false
@@ -521,6 +530,8 @@ func TestGetTokenMasksKeyInResponse(t *testing.T) {
 
 func TestUpdateTokenMasksKeyInResponse(t *testing.T) {
 	db := setupTokenControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.User{}))
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "mask-owner", Group: "default", Status: common.UserStatusEnabled}).Error)
 	token := seedToken(t, db, 1, "editable-token", "yzab1234cdef5678")
 
 	body := map[string]any{
@@ -607,6 +618,8 @@ func TestTokenAllowUserQuotaQueryOnCreateAndUpdate(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := setupTokenControllerTestDB(t)
+			require.NoError(t, db.AutoMigrate(&model.User{}))
+			require.NoError(t, db.Create(&model.User{Id: 1, Username: "quota-query-owner", Group: "default", Status: common.UserStatusEnabled}).Error)
 			body := map[string]any{"name": "quota-query", "expired_time": -1, "unlimited_quota": true, "status": common.TokenStatusEnabled}
 			if tc.field != nil {
 				body["allow_user_quota_query"] = tc.field

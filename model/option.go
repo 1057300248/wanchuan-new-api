@@ -240,6 +240,9 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if key == "group_ratio_setting.group_special_usable_group" {
+		return ratio_setting.ValidateGroupSpecialUsableGroupJSON(value)
+	}
 	if key == "QuotaRemindThreshold" {
 		_, err := operation_setting.ParseQuotaReminderThreshold(value)
 		return err

@@ -27,7 +27,7 @@ func setupTokenModelsControllerTest(t *testing.T) (*gorm.DB, *model.User) {
 	previousRatios := ratio_setting.GroupRatio2JSONString()
 	previousModelRatios := ratio_setting.ModelRatio2JSONString()
 	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["a","b","default"]`))
-	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","a":"A","b":"B"}`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","a":"A","b":"B","auto":"Auto"}`))
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"a":1,"b":1}`))
 	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-4o":1,"gpt-4.1":1}`))
 	t.Cleanup(func() {
@@ -156,7 +156,7 @@ func TestGetTokenRoutableModelsUsesOwnedTokenScopeWithoutCLIApp(t *testing.T) {
 	assert.Equal(t, []string{"image-b"}, models)
 
 	// Losing the account's group entitlement cannot fall back to other groups.
-	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","a":"A"}`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","a":"A","auto":"Auto"}`))
 	models, response = requestTokenRoutableModels(t, tokenA.Id, user.Id)
 	require.True(t, response.Success, response.Message)
 	assert.Empty(t, models)
@@ -245,7 +245,7 @@ func TestPreviewTokenModelsFiltersDisabledChannelsAndUnpricedModels(t *testing.T
 
 func TestPreviewTokenModelsRespectsUserGroupPermissions(t *testing.T) {
 	db, user := setupTokenModelsControllerTest(t)
-	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","a":"A"}`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","a":"A","auto":"Auto"}`))
 	seedTokenModelsAbility(t, db, "a", "gpt-4o", constant.ChannelTypeOpenAI, true)
 	seedTokenModelsAbility(t, db, "b", "gpt-4.1", constant.ChannelTypeOpenAI, true)
 

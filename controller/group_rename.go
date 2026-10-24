@@ -44,11 +44,7 @@ func RenameGroups(c *gin.Context) {
 		case errors.Is(err, model.ErrGroupRenameInvalidAutoGroups):
 			code = "GROUP_RENAME_INVALID_AUTO_GROUPS"
 		}
-		c.JSON(status, gin.H{
-			"success": false,
-			"code":    code,
-			"message": err.Error(),
-		})
+		common.ApiErrorStatus(c, status, err, gin.H{"code": code})
 		return
 	}
 	recordManageAudit(c, "option.group_rename", map[string]any{

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -91,6 +92,26 @@ func getTokenRequestUserGroup(c *gin.Context) (string, error) {
 		return userGroup, nil
 	}
 	return model.GetUserGroup(c.GetInt("id"), false)
+}
+
+func validateTokenRequestGroup(c *gin.Context, tokenGroup string) bool {
+	if tokenGroup == "" {
+		return true
+	}
+	userGroup, err := getTokenRequestUserGroup(c)
+	if err != nil {
+		common.ApiError(c, err)
+		return false
+	}
+	if err := service.ValidateTokenGroup(userGroup, tokenGroup); err != nil {
+		message := i18n.MsgAuthTokenGroupForbidden
+		if errors.Is(err, service.ErrTokenGroupDeprecated) {
+			message = i18n.MsgAuthTokenGroupDeprecated
+		}
+		common.ApiErrorI18n(c, message, map[string]any{"Group": tokenGroup})
+		return false
+	}
+	return true
 }
 
 func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) bool {
@@ -256,9 +277,10 @@ func getRoutableModelsForGroups(user *model.UserBase, groups []string, allow fun
 
 // PreviewTokenModels returns models routable by the API key routing scope being
 // edited. It intentionally ignores model_limits so the selector can add any
-// model that is valid for the selected group(s); the frontend removes selected
-// limits that become invalid when the routing scope changes.
+// model that is valid for the selected group(s). Existing whitelist selections
+// remain unchanged; the frontend marks unavailable selections for explicit review.
 func PreviewTokenModels(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	request := tokenModelScopeRequest{}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		common.ApiError(c, err)
@@ -272,7 +294,11 @@ func PreviewTokenModels(c *gin.Context) {
 		return
 	}
 
-	token := &model.Token{Group: strings.TrimSpace(request.Group)}
+	token := &model.Token{Group: request.Group}
+	if err := service.ValidateTokenGroup(user.Group, token.Group); err != nil {
+		common.ApiSuccess(c, []string{})
+		return
+	}
 	var groups []string
 	if token.Group == "auto" && request.AutoGroupsMode == "custom" {
 		groups = service.FilterUserTokenAutoGroups(user.Group, request.AutoGroups)
@@ -498,6 +524,9 @@ func AddToken(c *gin.Context) {
 		common.ApiErrorT(c, "Maximum number of tokens reached ({{max}})", map[string]any{"max": maxTokens})
 		return
 	}
+	if !validateTokenRequestGroup(c, token.Group) {
+		return
+	}
 	if token.Group == "auto" {
 		if !setTokenAutoGroups(c, &token, request.AutoGroups.Groups) {
 			return
@@ -611,8 +640,14 @@ func UpdateToken(c *gin.Context) {
 		}
 	}
 	if statusOnly != "" {
+		if token.Status == common.TokenStatusEnabled && !validateTokenRequestGroup(c, cleanToken.Group) {
+			return
+		}
 		cleanToken.Status = token.Status
 	} else {
+		if !validateTokenRequestGroup(c, token.Group) {
+			return
+		}
 		// If you add more fields, please also update token.Update()
 		cleanToken.Name = token.Name
 		cleanToken.ExpiredTime = token.ExpiredTime

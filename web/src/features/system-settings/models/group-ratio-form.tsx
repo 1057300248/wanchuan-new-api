@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Code2, Eye, HelpCircle } from 'lucide-react'
 import { memo, useCallback, useMemo, useState, type ReactNode } from 'react'
-import { useWatch, type UseFormReturn } from 'react-hook-form'
+import { useFormState, useWatch, type UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -33,6 +33,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -75,6 +76,7 @@ import {
   type GroupRenameResolutions,
 } from './group-rename'
 import { GroupRenamePanel } from './group-rename-panel'
+import { collectGroupVisibilityConflicts } from './group-special-usable-validation'
 
 export type GroupFormValues = {
   GroupRatio: string
@@ -105,13 +107,14 @@ export const GroupRatioForm = memo(function GroupRatioForm({
 }: GroupRatioFormProps) {
   const { t } = useTranslation()
   const values = useWatch({ control: form.control })
+  const { isSubmitting } = useFormState({ control: form.control })
   const [editMode, setEditMode] = useState<'visual' | 'json'>('visual')
   const [guideOpen, setGuideOpen] = useState(false)
   const [groupRenames, setGroupRenames] = useState<GroupRenameMapping[]>([])
   const [resolutions, setResolutions] = useState<GroupRenameResolutions>({})
   const [saveError, setSaveError] = useState<string | null>(null)
   const [renameSaveVersion, setRenameSaveVersion] = useState(0)
-  const submitting = isSaving || form.formState.isSubmitting
+  const submitting = isSaving || isSubmitting
   const [section, setSection] = useState<GroupSettingsSection>('pricing')
 
   const handleFieldChange = useCallback(
@@ -165,6 +168,17 @@ export const GroupRatioForm = memo(function GroupRatioForm({
     [baseline, submittedValues, groupRenames, resolutions]
   )
 
+  const visibilityConflicts = useMemo(() => {
+    const renames = mergeGroupRenameMappings(
+      groupRenames,
+      collectResolutionMappings(resolutions)
+    )
+    return collectGroupVisibilityConflicts(
+      submittedValues.GroupSpecialUsableGroup,
+      renames
+    )
+  }, [submittedValues, groupRenames, resolutions])
+
   const handleSave = useCallback(
     async (values: GroupFormValues) => {
       setSaveError(null)
@@ -180,6 +194,12 @@ export const GroupRatioForm = memo(function GroupRatioForm({
       )
       if (plan.reservedViolations.length > 0 || plan.unresolved.length > 0) {
         setSaveError(t('Resolve the group changes before saving.'))
+        return
+      }
+      if (
+        collectGroupVisibilityConflicts(values.GroupSpecialUsableGroup, renames)
+          .length > 0
+      ) {
         return
       }
       const outcome = await onSave(
@@ -259,6 +279,28 @@ export const GroupRatioForm = memo(function GroupRatioForm({
           <p className='text-destructive text-sm' role='alert'>
             {saveError}
           </p>
+        )}
+        {visibilityConflicts.length > 0 && (
+          <Alert variant='destructive'>
+            <AlertDescription>
+              {visibilityConflicts.map((conflict) => (
+                <p
+                  key={JSON.stringify([
+                    conflict.userGroup,
+                    conflict.targetGroup,
+                  ])}
+                >
+                  {t(
+                    'Group {{target}} cannot be both extra visible and hidden for {{group}}. Remove one rule before saving.',
+                    {
+                      target: conflict.targetGroup,
+                      group: conflict.userGroup,
+                    }
+                  )}
+                </p>
+              ))}
+            </AlertDescription>
+          </Alert>
         )}
         <GroupRenamePanel
           issues={renamePlan.unresolved}

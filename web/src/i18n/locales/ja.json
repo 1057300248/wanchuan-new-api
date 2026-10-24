@@ -3,6 +3,7 @@
     "360": "360",
     "1000": "1000",
     "10000": "10000",
+    "Group {{target}} cannot be both extra visible and hidden for {{group}}. Remove one rule before saving.": "{{group}} に対してグループ {{target}} を追加表示と非表示に同時に設定することはできません。保存する前にどちらかのルールを削除してください。",
     "Only new accounts created through LinuxDO receive a one-time $3 signup bonus. Repeat logins and linking existing accounts do not qualify.": "LinuxDO 経由で新規登録したアカウントに限り、3 米ドルの登録ボーナスを一度だけ付与します。再ログインや既存アカウントとの連携は対象外です。",
     "\"default\": \"us-central1\", \"claude-3-5-sonnet-20240620\": \"europe-west1\"": "\"default \":\" us - central 1 \", \"claude -3 -5 - sonnet -20240620 \":\" europe - west 1 \"",
     "#1 App": "#1 アプリ",

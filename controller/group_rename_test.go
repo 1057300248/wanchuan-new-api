@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,6 +29,12 @@ func setupGroupRenameControllerTest(t *testing.T) *gorm.DB {
 		&model.Log{}, &model.AuditLog{},
 	))
 	originalGroupRatio := ratio_setting.GroupRatio2JSONString()
+	originalGroupGroupRatio := ratio_setting.GroupGroupRatio2JSONString()
+	originalUsable := setting.UserUsableGroups2JSONString()
+	originalAuto := setting.AutoGroups2JsonString()
+	originalSpecial := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.MarshalJSONString()
+	originalMax := setting.GetMaxTokenAutoGroups()
+
 	originalOptionMap := make(map[string]string)
 	common.OptionMapRWMutex.RLock()
 	hadOptionMap := common.OptionMap != nil
@@ -44,6 +51,11 @@ func setupGroupRenameControllerTest(t *testing.T) *gorm.DB {
 		}
 		common.OptionMapRWMutex.Unlock()
 		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatio))
+		require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(originalGroupGroupRatio))
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUsable))
+		require.NoError(t, setting.UpdateAutoGroupsByJsonString(originalAuto))
+		require.NoError(t, ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.UnmarshalJSON([]byte(originalSpecial)))
+		require.NoError(t, setting.UpdateMaxTokenAutoGroups(stringInt(originalMax)))
 	})
 	return db
 }

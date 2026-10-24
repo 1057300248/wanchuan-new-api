@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -45,6 +46,27 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 func GroupInUserUsableGroups(userGroup, groupName string) bool {
 	_, ok := GetUserUsableGroups(userGroup)[groupName]
 	return ok
+}
+
+var (
+	ErrTokenGroupForbidden  = errors.New("token group is unauthorized")
+	ErrTokenGroupDeprecated = errors.New("token group is unavailable")
+)
+
+// ValidateTokenGroup is the shared relay, token-editing and discovery policy.
+// Empty selections inherit the user's group. Named selections use exact keys;
+// administrators do not bypass this routing permission boundary.
+func ValidateTokenGroup(userGroup, tokenGroup string) error {
+	if tokenGroup == "" {
+		return nil
+	}
+	if !GroupInUserUsableGroups(userGroup, tokenGroup) {
+		return ErrTokenGroupForbidden
+	}
+	if tokenGroup != "auto" && !ratio_setting.ContainsGroupRatio(tokenGroup) {
+		return ErrTokenGroupDeprecated
+	}
+	return nil
 }
 
 func IsUserSelectableGroup(userGroup, groupName string) bool {
@@ -101,26 +123,27 @@ func GetTokenEffectiveGroups(userGroup string, token *model.Token) ([]string, er
 	if token == nil {
 		return nil, fmt.Errorf("token is nil")
 	}
-	tokenGroup := strings.TrimSpace(token.Group)
+	tokenGroup := token.Group
+	if err := ValidateTokenGroup(userGroup, tokenGroup); err != nil {
+		return []string{}, nil
+	}
 	switch tokenGroup {
 	case "":
-		if !IsUserSelectableGroup(userGroup, userGroup) {
-			return []string{}, nil
-		}
 		return []string{userGroup}, nil
 	case "auto":
-		if strings.TrimSpace(token.AutoGroups) == "" {
+		if token.AutoGroups == "" {
 			return GetUserAutoGroup(userGroup), nil
 		}
 		groups, err := token.GetAutoGroups()
 		if err != nil {
 			return nil, err
 		}
+		// Legacy empty JSON snapshots inherit too, as SetupContextForToken does.
+		if len(groups) == 0 {
+			return GetUserAutoGroup(userGroup), nil
+		}
 		return FilterUserTokenAutoGroups(userGroup, groups), nil
 	default:
-		if !IsUserSelectableGroup(userGroup, tokenGroup) {
-			return []string{}, nil
-		}
 		return []string{tokenGroup}, nil
 	}
 }
