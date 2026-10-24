@@ -118,7 +118,7 @@ func TestConvertedResponsesFailureAccountingDatabaseMatrix(t *testing.T) {
 						runConvertedStreamAccountingCase(t, db, logDB, format, outcome)
 					})
 				}
-				for _, outcome := range []string{"failed", "bare_error", "cancelled", "failed_status", "eof", "done_without_terminal", "incomplete", "success", "empty_failure", "empty_eof", "fixed_partial", "fixed_empty", "fixed_success_missing_usage"} {
+				for _, outcome := range []string{"failed", "bare_error", "cancelled", "failed_status", "eof", "done_without_terminal", "incomplete", "success", "empty_failure", "empty_eof", "fixed_partial", "fixed_empty", "fixed_empty_eof", "fixed_success_missing_usage"} {
 					t.Run(fmt.Sprintf("buffered/%s/%s", format, outcome), func(t *testing.T) {
 						runBufferedResponsesAccountingCase(t, db, logDB, format, outcome)
 					})

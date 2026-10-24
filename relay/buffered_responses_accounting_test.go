@@ -1,6 +1,8 @@
 package relay_test
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -37,7 +39,8 @@ func runBufferedResponsesAccountingCase(t *testing.T, db, logDB *gorm.DB, format
 	const requestedModel = "converted-stream-accounting"
 	const paid, bonus, reward = 50000, 100, 70
 	success := outcome == "success" || outcome == "incomplete" || outcome == "fixed_success_missing_usage"
-	noUsage := strings.HasPrefix(outcome, "empty_") || outcome == "fixed_empty" || outcome == "fixed_success_missing_usage"
+	unknown := outcome == "empty_eof" || outcome == "fixed_empty_eof"
+	noUsage := strings.HasPrefix(outcome, "empty_") || strings.HasPrefix(outcome, "fixed_empty") || outcome == "fixed_success_missing_usage"
 	fixed := strings.HasPrefix(outcome, "fixed_")
 	wantCharge := 15
 	if noUsage {
@@ -64,6 +67,11 @@ func runBufferedResponsesAccountingCase(t *testing.T, db, logDB *gorm.DB, format
 	require.NoError(t, db.Create(&token).Error)
 	var calls atomic.Int32
 	requests := make(chan string, 4)
+	type heldSnapshot struct {
+		accounting bufferedResponsesAccountingSnapshot
+		err        error
+	}
+	heldSnapshots := make(chan heldSnapshot, 4)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		raw, err := io.ReadAll(r.Body)
@@ -72,6 +80,12 @@ func runBufferedResponsesAccountingCase(t *testing.T, db, logDB *gorm.DB, format
 			return
 		}
 		requests <- r.URL.Path + "\n" + string(raw)
+		if unknown {
+			// Read the committed hold before upstream emits any response. The
+			// final owner is not itself proof that the original debit survived.
+			held, err := captureBufferedResponsesAccounting(db, identity, user.Id, token.Id)
+			heldSnapshots <- heldSnapshot{held, err}
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "data: "+`{"type":"response.created","response":{"id":"resp_partial","model":"provider-private","status":"in_progress"}}`+"\n\n")
 		if !noUsage {
@@ -86,7 +100,7 @@ func runBufferedResponsesAccountingCase(t *testing.T, db, logDB *gorm.DB, format
 			ending = `{"type":"response.cancelled","response":{"status":"cancelled"}}`
 		case "failed_status":
 			ending = `{"type":"response.done","response":{"status":"failed","error":{"code":"overloaded","message":"provider-private failed"}}}`
-		case "eof", "empty_eof":
+		case "eof", "empty_eof", "fixed_empty_eof":
 			return
 		case "done_without_terminal":
 			ending = "[DONE]"
@@ -115,25 +129,29 @@ func runBufferedResponsesAccountingCase(t *testing.T, db, logDB *gorm.DB, format
 	}
 	require.NoError(t, db.Create(&channel).Error)
 	require.NoError(t, channel.AddAbilities(db))
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
-	c.Request.Header.Set("Content-Type", "application/json")
-	for key, value := range map[constant.ContextKey]any{
-		constant.ContextKeyUserId: user.Id, constant.ContextKeyUserQuota: paid + bonus + reward,
-		constant.ContextKeyUserGroup: "default", constant.ContextKeyTokenGroup: "default", constant.ContextKeyUsingGroup: "default",
-		constant.ContextKeyTokenId: token.Id, constant.ContextKeyTokenKey: token.Key,
-		constant.ContextKeyUserSetting: dto.UserSetting{BillingPreference: "wallet_only"},
-	} {
-		common.SetContextKey(c, key, value)
+	newContext := func() (*gin.Context, *httptest.ResponseRecorder) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		for key, value := range map[constant.ContextKey]any{
+			constant.ContextKeyUserId: user.Id, constant.ContextKeyUserQuota: paid + bonus + reward,
+			constant.ContextKeyUserGroup: "default", constant.ContextKeyTokenGroup: "default", constant.ContextKeyUsingGroup: "default",
+			constant.ContextKeyTokenId: token.Id, constant.ContextKeyTokenKey: token.Key,
+			constant.ContextKeyUserSetting: dto.UserSetting{BillingPreference: "wallet_only"},
+		} {
+			common.SetContextKey(c, key, value)
+		}
+		c.Set(common.RequestIdKey, identity)
+		c.Set("username", user.Username)
+		c.Set("token_quota", paid)
+		require.Nil(t, middleware.SetupContextForSelectedChannel(c, &channel, requestedModel))
+		return c, recorder
 	}
-	c.Set(common.RequestIdKey, identity)
-	c.Set("username", user.Username)
-	c.Set("token_quota", paid)
-	require.Nil(t, middleware.SetupContextForSelectedChannel(c, &channel, requestedModel))
-	completion := observeNativeResponsesRefundWithin(t, db, identity, wantCharge == 0, 5*time.Second, &token)
+	c, recorder := newContext()
+	completion := observeNativeResponsesRefundWithin(t, db, identity, wantCharge == 0 && !unknown, 5*time.Second, &token)
 	var verifyBarrier func()
-	if format == types.RelayFormatGemini && outcome == "empty_eof" {
+	if format == types.RelayFormatGemini && outcome == "empty_failure" {
 		verifyBarrier = observeBufferedRefundCommitBarrier(t, db, completion, token.Id)
 	}
 
@@ -183,6 +201,111 @@ func runBufferedResponsesAccountingCase(t *testing.T, db, logDB *gorm.DB, format
 			assert.Equal(t, 4, logs[0].CompletionTokens)
 		}
 	}
+	var owner model.BillingFinalization
+	require.NoError(t, db.Where("request_id = ?", identity).First(&owner).Error)
+	if unknown {
+		held := <-heldSnapshots
+		require.NoError(t, held.err)
+		require.Equal(t, model.BillingHeld, held.accounting.Owner.State)
+		require.Positive(t, held.accounting.Owner.SourceHeld)
+		assert.Equal(t, held.accounting.Owner.SourceHeld, held.accounting.Owner.TokenHeld)
+		assert.Equal(t, held.accounting.Owner.SourceHeld, held.accounting.Owner.PreConsumed)
+		if fixed {
+			assert.Equal(t, 5000, held.accounting.Owner.SourceHeld)
+		}
+		assert.Equal(t, model.BillingDeliveryUnknown, owner.State)
+		assert.Zero(t, owner.ActualQuota, "unknown is not a zero-usage settlement")
+		assert.Equal(t, held.accounting.Owner.SourceHeld, owner.SourceHeld)
+		assert.Equal(t, held.accounting.Owner.TokenHeld, owner.TokenHeld)
+		assert.Equal(t, held.accounting.Owner.PreConsumed, owner.PreConsumed)
+		assert.Equal(t, held.accounting.Owner.Shares(), owner.Shares())
+		assert.Equal(t, user.Id, owner.UserID)
+		assert.Equal(t, token.Id, owner.TokenID)
+		assert.Equal(t, model.BillingTokenFingerprint(token.Key), owner.TokenFingerprint)
+		after, err := captureBufferedResponsesAccounting(db, identity, user.Id, token.Id)
+		require.NoError(t, err)
+		assert.Equal(t, held.accounting.User, after.User)
+		assert.Equal(t, held.accounting.Token, after.Token)
+		assert.Equal(t, held.accounting.Ledger, after.Ledger, "unknown delivery must neither credit nor add a guessed charge")
+		require.NotEmpty(t, after.Ledger)
+		net := 0
+		accountNet := make(map[string]int)
+		for _, row := range after.Ledger {
+			assert.Negative(t, row.Delta)
+			net += row.Delta
+			accountNet[row.Account] += row.Delta
+		}
+		rewardHeld := min(reward, owner.SourceHeld)
+		paidHeld := owner.SourceHeld - rewardHeld
+		assert.Equal(t, -owner.SourceHeld, net)
+		assert.Equal(t, paid+bonus+reward-owner.SourceHeld, after.User.Quota)
+		assert.Equal(t, paid-paidHeld, after.User.QuotaPaid)
+		assert.Equal(t, bonus, after.User.QuotaBonus)
+		assert.Equal(t, reward-rewardHeld, after.User.QuotaReward)
+		assert.Equal(t, -paidHeld, accountNet[string(model.AccountPaid)])
+		assert.Zero(t, accountNet[string(model.AccountBonus)])
+		assert.Equal(t, -rewardHeld, accountNet[string(model.AccountReward)])
+		assert.Equal(t, paid-owner.TokenHeld, after.Token.RemainQuota)
+		assert.Equal(t, owner.TokenHeld, after.Token.UsedQuota)
+
+		// A fresh HTTP context with the same financial identity must not send
+		// another generation, debit again, or reopen this hold for refund.
+		replay, replayRecorder := newContext()
+		controller.Relay(replay, format)
+		assert.GreaterOrEqual(t, replayRecorder.Code, http.StatusBadRequest)
+		assert.Equal(t, int32(1), calls.Load())
+		_, err = model.RequestBillingRefund(t.Context(), held.accounting.Owner)
+		require.ErrorIs(t, err, model.ErrBillingFinalized)
+		ready, err := model.GetReadyBillingRefunds(t.Context(), 100)
+		require.NoError(t, err)
+		for _, candidate := range ready {
+			assert.NotEqual(t, identity, candidate.RequestID)
+		}
+
+		// The public read-only report scans all rows, so follow its pagination
+		// instead of relying on a Where clause that the reader discards.
+		found := false
+		err = db.Transaction(func(tx *gorm.DB) error {
+			for offset := 0; ; {
+				page, err := model.ReadFinancialReviewReport(t.Context(), tx, model.FinancialReviewReportOptions{
+					Entity: model.FinancialReviewBilling, Offset: offset, Limit: model.FinancialReviewMaxPageSize,
+				})
+				if err != nil {
+					return err
+				}
+				assert.Equal(t, "available", page.Schema.Status)
+				for _, item := range page.Items {
+					if item.RequestID == identity {
+						found = true
+						assert.Equal(t, model.BillingDeliveryUnknown, item.State)
+						assert.Contains(t, item.Issues, "delivery_evidence_unknown")
+						assert.Equal(t, int64(owner.SourceHeld), item.Amounts["source_held"])
+						assert.Equal(t, int64(owner.TokenHeld), item.Amounts["token_held"])
+					}
+				}
+				if !page.HasMore {
+					return nil
+				}
+				offset = page.NextOffset
+			}
+		}, &sql.TxOptions{ReadOnly: true})
+		require.NoError(t, err)
+		assert.True(t, found, "unknown delivery must remain visible for manual reconciliation")
+		replayed, err := captureBufferedResponsesAccounting(db, identity, user.Id, token.Id)
+		require.NoError(t, err)
+		assert.Equal(t, after, replayed, "replay, rejected refund and read-only reporting must leave all financial evidence unchanged")
+		var logCount int64
+		require.NoError(t, logDB.Model(&model.Log{}).Where("user_id = ? AND type = ?", user.Id, model.LogTypeConsume).Count(&logCount).Error)
+		assert.Zero(t, logCount)
+		t.Logf("accounting: state=%s source_hold=%d token_hold=%d ledger_net=%d same_id_replay_and_readonly_report_unchanged", owner.State, owner.SourceHeld, owner.TokenHeld, net)
+		return
+	}
+	wantState := model.BillingSettled
+	if wantCharge == 0 {
+		wantState = model.BillingRefunded
+	}
+	assert.Equal(t, wantState, owner.State)
+	assert.Equal(t, wantCharge, owner.ActualQuota)
 	require.NoError(t, db.First(&user, user.Id).Error)
 	require.NoError(t, db.First(&token, token.Id).Error)
 	rewardCharge := min(reward, wantCharge)
@@ -207,9 +330,28 @@ func runBufferedResponsesAccountingCase(t *testing.T, db, logDB *gorm.DB, format
 	assert.Equal(t, -rewardCharge, accountNet[string(model.AccountReward)])
 	assert.Equal(t, -paidCharge, accountNet[string(model.AccountPaid)])
 	assert.Zero(t, accountNet[string(model.AccountBonus)])
+	t.Logf("accounting: state=%s actual=%d ledger_net=%d token_used=%d", owner.State, owner.ActualQuota, net, token.UsedQuota)
 }
 
-// Keep the mandatory Gemini empty-EOF case at the original 5 s budget while
+type bufferedResponsesAccountingSnapshot struct {
+	User   model.User
+	Token  model.Token
+	Owner  model.BillingFinalization
+	Ledger []model.BalanceLedger
+}
+
+func captureBufferedResponsesAccounting(db *gorm.DB, requestID string, userID, tokenID int) (bufferedResponsesAccountingSnapshot, error) {
+	var snapshot bufferedResponsesAccountingSnapshot
+	err := errors.Join(
+		db.First(&snapshot.User, userID).Error,
+		db.First(&snapshot.Token, tokenID).Error,
+		db.Where("request_id = ?", requestID).First(&snapshot.Owner).Error,
+		db.Where("user_id = ?", userID).Order("id").Find(&snapshot.Ledger).Error,
+	)
+	return snapshot, err
+}
+
+// Keep the Gemini explicit empty-failure refund at the original 5 s budget while
 // deterministically exposing the old pre-debit signal and uncommitted refund.
 func observeBufferedRefundCommitBarrier(t *testing.T, db *gorm.DB, completion *nativeResponsesRefundCompletion, tokenID int) func() {
 	t.Helper()
