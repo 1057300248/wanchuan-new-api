@@ -108,6 +108,8 @@ func TestPolicyPreservingSettlementFinalMoreLessAndReplay(t *testing.T) {
 	}
 }
 
+// Retain the fixture entry name, but reject the former reserve-then-refund
+// behavior: once actual usage is observed, only same-actual settlement can retry.
 func TestPolicyPreservingFailedSettlementCanReserveThenRefund(t *testing.T) {
 	if runRefundFixtureChild(t) {
 		return
@@ -122,14 +124,22 @@ func TestPolicyPreservingFailedSettlementCanReserveThenRefund(t *testing.T) {
 	require.Error(t, s.Settle(200))
 	assertUserBalances(t, 31201, 0, 900, 0)
 	require.NoError(t, model.DB.Callback().Update().Remove(name))
-	require.NoError(t, s.Reserve(150))
+	require.ErrorIs(t, s.Reserve(150), model.ErrBillingFinalized)
 	s.Refund(testGinContext(t))
 	waitRefundCallback(t, s)
 	require.False(t, s.NeedsRefund())
-	assertUserBalances(t, 31201, 0, 1000, 0)
+	assertUserBalances(t, 31201, 0, 900, 0)
+	var owner model.BillingFinalization
+	require.NoError(t, model.DB.First(&owner, "request_id = ?", s.relayInfo.RequestId).Error)
+	require.Equal(t, model.BillingSettlementReview, owner.State)
+	require.Equal(t, 200, owner.ActualQuota)
+	require.Error(t, s.Settle(201))
+	require.NoError(t, s.Settle(200), "only an explicit same-actual retry may finish the charge")
+	require.NoError(t, s.Settle(200))
+	assertUserBalances(t, 31201, 0, 800, 0)
 	var token model.Token
 	require.NoError(t, model.DB.First(&token, 31202).Error)
-	require.Equal(t, 1000, token.RemainQuota)
+	require.Equal(t, 800, token.RemainQuota)
 }
 
 // Deliberately no HostBillingFinalizationSource marker: extension ownership is
@@ -227,8 +237,10 @@ func TestPolicyPreservingRollbackProbeFailureDoesNotReserve(t *testing.T) {
 		}
 	}))
 	t.Cleanup(func() { require.NoError(t, model.DB.Callback().Query().Remove(name)) })
-	require.ErrorContains(t, s.Reserve(150), "probe unavailable")
-	require.Equal(t, 1, probeHits, "authority read was actually reached before any reservation")
+	require.ErrorIs(t, s.Reserve(150), model.ErrBillingFinalized)
+	require.Zero(t, probeHits, "a frozen actual rejects reserve without reopening its authority")
+	require.ErrorContains(t, s.Settle(200), "probe unavailable")
+	require.GreaterOrEqual(t, probeHits, 1, "explicit settlement retry and its failure evidence require durable authority")
 	require.NoError(t, model.DB.Callback().Query().Remove(name))
 	assertUserBalances(t, 31201, 0, 900, 0)
 	var token model.Token
@@ -237,10 +249,13 @@ func TestPolicyPreservingRollbackProbeFailureDoesNotReserve(t *testing.T) {
 	var count int64
 	require.NoError(t, model.DB.Model(&model.BillingFinalization{}).Count(&count).Error)
 	require.EqualValues(t, 1, count, "original held owner survives the rejected reservation")
-	require.NoError(t, s.Reserve(150))
+	require.ErrorIs(t, s.Reserve(150), model.ErrBillingFinalized)
 	s.Refund(testGinContext(t))
 	waitRefundCallback(t, s)
-	assertUserBalances(t, 31201, 0, 1000, 0)
+	assertUserBalances(t, 31201, 0, 900, 0)
+	require.NoError(t, s.Settle(200))
+	require.NoError(t, s.Settle(200))
+	assertUserBalances(t, 31201, 0, 800, 0)
 }
 
 func TestPolicyPreservingRefundIndependentViolationFee(t *testing.T) {
@@ -345,6 +360,15 @@ func TestPolicyPreservingRealtimeIncrementAndTerminal(t *testing.T) {
 			} else {
 				s.Refund(c)
 				waitRefundCallback(t, s)
+				if terminal == "failed_final_then_refund" {
+					assertUserBalances(t, 31201, 0, 880, 0)
+					require.ErrorIs(t, s.Reserve(150), model.ErrBillingFinalized)
+					var review model.BillingFinalization
+					require.NoError(t, model.DB.First(&review, "request_id = ?", info.RequestId).Error)
+					require.Equal(t, model.BillingSettlementReview, review.State)
+					require.Equal(t, 20, review.ActualQuota)
+					require.NoError(t, s.Settle(20), "Refund must not retry already frozen realtime usage")
+				}
 			}
 			require.False(t, s.NeedsRefund())
 

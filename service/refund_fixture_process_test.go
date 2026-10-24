@@ -105,6 +105,26 @@ var refundFixtureTopology = map[string][]string{
 	},
 	"TestBillingFinalizationSessionDatabaseMatrix": {
 		"",
+		"production_finalization",
+		"production_finalization/responses_prelude",
+		"production_finalization/responses_prelude/client_gone",
+		"production_finalization/responses_prelude/timeout",
+		"production_finalization/responses_prelude/scanner_error",
+		"production_finalization/responses_prelude/eof",
+		"production_finalization/responses_prelude/done",
+		"production_finalization/responses_prelude/completed_retains_normal_policy",
+		"production_finalization/zero_hold_cancel",
+		"production_finalization/insufficient_retains_actual_and_hold",
+		"production_finalization/unmeasured_cancel_review",
+		"production_finalization/trusted_partial_redis",
+		"production_finalization/freeze_write_failure",
+		"production_finalization/intent_commit_1",
+		"production_finalization/intent_commit_2",
+		"production_finalization/money_commit_1",
+		"production_finalization/money_commit_2",
+		"production_finalization/transient_2",
+		"production_finalization/transient_5",
+		"production_finalization/concurrent_replay_and_refund",
 		"recovery_mixed_legacy_progress",
 		"recovery_cursor_write_resume",
 		"recovery_cursor_write_resume/history_page=true",
@@ -387,6 +407,9 @@ func refundFixtureExpected(scope, run, skip string) ([]string, error) {
 		expected = append(expected, strings.Join(parts[:i], "/"))
 	}
 	for _, suffix := range suffixes {
+		if strings.HasPrefix(suffix, "production_finalization") && (len(parts) != 2 || parts[1] != "postgres" || os.Getenv("TEST_FINALIZATION_SERVICE_POSTGRES_DSN") == "" || os.Getenv("TEST_REDIS_DSN") == "") {
+			continue // Explicitly opt-in PG/Redis production fixture, not the legacy dialect matrix.
+		}
 		name := scope
 		if suffix != "" {
 			name += "/" + suffix

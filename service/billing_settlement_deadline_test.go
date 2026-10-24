@@ -97,13 +97,28 @@ type settlementDeadlinePool struct {
 	gorm.ConnPool
 	mode     string
 	first    atomic.Bool
+	skip     atomic.Int32
 	entered  chan context.Context
 	released chan struct{}
+	sqlDB    *sql.DB
+	held     chan *sql.Conn
 }
 
 func (p *settlementDeadlinePool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
+	if p.skip.Load() > 0 && p.skip.Add(-1) >= 0 {
+		return p.ConnPool.(gorm.TxBeginner).BeginTx(ctx, opts)
+	}
 	if !p.first.CompareAndSwap(false, true) {
 		return p.ConnPool.(gorm.TxBeginner).BeginTx(ctx, opts)
+	}
+	if p.mode == "connection" {
+		// Occupy the real pool only after the read-only intent recheck has
+		// committed, so the timed wait still belongs to the money transaction.
+		conn, err := p.sqlDB.Conn(ctx)
+		if err != nil {
+			return nil, err
+		}
+		p.held <- conn
 	}
 	p.entered <- ctx
 	if p.mode == "driver" {
@@ -146,13 +161,18 @@ func (tx *settlementDeadlineTx) Commit() error {
 	}
 }
 
-func installSettlementDeadlinePool(t *testing.T, mode string) *settlementDeadlinePool {
+func installSettlementDeadlinePool(t *testing.T, mode string, skipTransactions ...int32) *settlementDeadlinePool {
 	t.Helper()
 	original := model.DB
 	wrapped := original.Session(&gorm.Session{NewDB: true, Context: context.Background()})
 	config := *wrapped.Config
 	wrapped.Config = &config
-	pool := &settlementDeadlinePool{ConnPool: original.ConnPool, mode: mode, entered: make(chan context.Context, 1), released: make(chan struct{})}
+	sqlDB, err := original.DB()
+	require.NoError(t, err)
+	pool := &settlementDeadlinePool{ConnPool: original.ConnPool, mode: mode, entered: make(chan context.Context, 1), released: make(chan struct{}), sqlDB: sqlDB, held: make(chan *sql.Conn, 1)}
+	if len(skipTransactions) > 0 {
+		pool.skip.Store(skipTransactions[0])
+	}
 	wrapped.Config.ConnPool, wrapped.Statement.ConnPool = pool, pool
 	model.DB = wrapped
 	t.Cleanup(func() { model.DB = original })
@@ -161,12 +181,14 @@ func installSettlementDeadlinePool(t *testing.T, mode string) *settlementDeadlin
 
 // Watchdogs only fail a broken implementation; normal progress is driven by
 // the operation context or an explicit release, never a scheduling sleep.
+// Allow the five-second operation, one-second failure-evidence tail and bounded
+// cache cleanup to finish; the asserted money-operation deadline stays five seconds.
 func awaitSettlementResult(t *testing.T, result <-chan error) error {
 	t.Helper()
 	select {
 	case err := <-result:
 		return err
-	case <-time.After(8 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("settlement retained the session beyond its cooperative operation/cache budgets")
 		return nil
 	}
@@ -193,32 +215,66 @@ func settlementDeadlineHeldReceipt(t *testing.T, request string) model.BillingFi
 	return receipts[0]
 }
 
+func freezeSettlementDeadlineReceipt(t *testing.T, s *BillingSession, actual int) model.BillingFinalization {
+	t.Helper()
+	receipt := settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId)
+	require.NoError(t, model.RequestBillingSettlement(context.Background(), receipt, actual))
+	var frozen model.BillingFinalization
+	require.NoError(t, model.DB.First(&frozen, "request_id = ?", receipt.RequestID).Error)
+	require.Equal(t, model.BillingSettlementReview, frozen.State)
+	require.Equal(t, actual, frozen.ActualQuota)
+	return frozen
+}
+
+func assertSettlementDeadlineReviewReceipt(t *testing.T, frozen model.BillingFinalization) {
+	t.Helper()
+	var stored model.BillingFinalization
+	require.NoError(t, model.DB.First(&stored, "request_id = ?", frozen.RequestID).Error)
+	require.Equal(t, model.BillingSettlementReview, stored.State)
+	require.Zero(t, stored.NextRetryAt, "review does not schedule an automatic debit")
+	// Failure diagnostics may evolve; identity, wallet shares, original Token,
+	// subscription period, held amounts and frozen actual must not change.
+	frozen.Attempts = stored.Attempts
+	frozen.FirstErrorCode, frozen.FirstErrorClass = stored.FirstErrorCode, stored.FirstErrorClass
+	frozen.LastErrorCode, frozen.LastErrorClass = stored.LastErrorCode, stored.LastErrorClass
+	frozen.FirstFailedAt, frozen.LastAttemptAt = stored.FirstFailedAt, stored.LastAttemptAt
+	frozen.EscalatedAt, frozen.UpdatedAt = stored.EscalatedAt, stored.UpdatedAt
+	require.Equal(t, frozen, stored)
+}
+
 func TestBillingSettlementDeadlineDriverAndConnectionWait(t *testing.T) {
 	for _, mode := range []string{"driver", "connection"} {
 		t.Run(mode, func(t *testing.T) {
 			s, cancelClient := settlementDeadlineSession(t, "settlement-wait-"+mode, true, BillingSourceWallet)
-			initialReceipt := settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId)
+			initialReceipt := freezeSettlementDeadlineReceipt(t, s, 200)
 			cancelClient()
-			sqlDB, err := model.DB.DB()
-			require.NoError(t, err)
-			pool := installSettlementDeadlinePool(t, mode)
+			pool := installSettlementDeadlinePool(t, mode, 1)
 			var release sync.Once
 			releaseWait := func() { release.Do(func() { close(pool.released) }) }
 			var held *sql.Conn
-			if mode == "connection" {
-				held, err = sqlDB.Conn(context.Background())
-				require.NoError(t, err)
-			}
 			result := make(chan error, 1)
 			joined := false
 			go func() { result <- s.Settle(200) }()
 			defer func() {
 				releaseWait()
+				if held == nil {
+					select {
+					case held = <-pool.held:
+					default:
+					}
+				}
 				if held != nil {
 					_ = held.Close()
 				}
 				if !joined {
 					<-result
+				}
+				// A watchdog may fire before the worker acquires its connection.
+				// After joining, also close any late acquisition queued by it.
+				select {
+				case lateHeld := <-pool.held:
+					_ = lateHeld.Close()
+				default:
 				}
 			}()
 			var attempt context.Context
@@ -227,25 +283,27 @@ func TestBillingSettlementDeadlineDriverAndConnectionWait(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("settlement never reached the transaction boundary")
 			}
+			if mode == "connection" {
+				held = <-pool.held
+			}
 			deadline, bounded := attempt.Deadline()
 			require.True(t, bounded)
 			require.WithinDuration(t, time.Now().Add(5*time.Second), deadline, time.Second)
 			require.NoError(t, attempt.Err(), "cancelled client must not cancel settlement")
-			err = awaitSettlementResult(t, result)
+			err := awaitSettlementResult(t, result)
 			joined = true
 			require.ErrorIs(t, err, context.DeadlineExceeded)
 			if held != nil {
 				require.NoError(t, held.Close())
 				held = nil
 			}
-			require.True(t, s.NeedsRefund(), "mutex is reusable; no terminal commit was proved")
+			require.False(t, s.NeedsRefund(), "a timed-out charge remains frozen, not refundable")
 			require.True(t, s.settlementUncertain)
 			assertSettlementBalances(t, 900, 900)
-			require.Equal(t, initialReceipt, settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId), "failed settlement must leave the original hold byte-for-field unchanged and nonterminal")
-			// Only the exact-identity probe of the unchanged held receipt allows
-			// reserve to continue. The timeout itself did not authorize it.
-			require.NoError(t, s.Reserve(150))
-			require.False(t, s.settlementUncertain)
+			assertSettlementDeadlineReviewReceipt(t, initialReceipt)
+			require.ErrorIs(t, s.Reserve(150), model.ErrBillingFinalized)
+			s.Refund(testGinContext(t))
+			assertSettlementBalances(t, 900, 900)
 			require.NoError(t, s.Settle(200))
 			require.NoError(t, s.Settle(200))
 			require.False(t, s.NeedsRefund())
@@ -259,7 +317,7 @@ func TestBillingSettlementDeadlineNativeRowLock(t *testing.T) {
 		t.Skip("SQLite has no SELECT FOR UPDATE; real connection-wait coverage is separate")
 	}
 	s, cancelClient := settlementDeadlineSession(t, "settlement-held-native-row", true, BillingSourceWallet)
-	initialReceipt := settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId)
+	initialReceipt := freezeSettlementDeadlineReceipt(t, s, 200)
 	cancelClient()
 	sqlDB, err := model.DB.DB()
 	require.NoError(t, err)
@@ -285,10 +343,12 @@ func TestBillingSettlementDeadlineNativeRowLock(t *testing.T) {
 	joined = true
 	require.ErrorIs(t, err, context.DeadlineExceeded, "the operation budget must cancel the held native row wait")
 	require.NoError(t, held.Rollback().Error)
-	require.True(t, s.NeedsRefund())
+	require.False(t, s.NeedsRefund())
 	assertSettlementBalances(t, 900, 900)
-	require.Equal(t, initialReceipt, settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId), "failed settlement must leave the original hold byte-for-field unchanged and nonterminal")
-	require.NoError(t, s.Reserve(150))
+	assertSettlementDeadlineReviewReceipt(t, initialReceipt)
+	require.ErrorIs(t, s.Reserve(150), model.ErrBillingFinalized)
+	s.Refund(testGinContext(t))
+	assertSettlementBalances(t, 900, 900)
 	require.NoError(t, s.Settle(200))
 	require.NoError(t, s.Settle(200))
 	assertSettlementBalances(t, 800, 800)
@@ -303,8 +363,9 @@ func TestBillingSettlementDeadlineCommitEvidence(t *testing.T) {
 			for _, mode := range []string{"rolled_back", "committed_lost_ack"} {
 				t.Run(mode, func(t *testing.T) {
 					s, cancelClient := settlementDeadlineSession(t, "settlement-ack-"+source+"-"+mode, true, source)
+					initialReceipt := freezeSettlementDeadlineReceipt(t, s, 200)
 					cancelClient()
-					pool := installSettlementDeadlinePool(t, mode)
+					pool := installSettlementDeadlinePool(t, mode, 1)
 					result := make(chan error, 1)
 					joined := false
 					go func() { result <- s.Settle(200) }()
@@ -318,7 +379,7 @@ func TestBillingSettlementDeadlineCommitEvidence(t *testing.T) {
 					joined = true
 					require.ErrorIs(t, err, context.DeadlineExceeded)
 					require.True(t, s.settlementUncertain)
-					require.True(t, s.NeedsRefund(), "unknown ACK must not be labeled successful locally")
+					require.False(t, s.NeedsRefund(), "unknown ACK is not success, but observed usage is never refundable")
 					expectedWallet := 800
 					if mode == "rolled_back" {
 						expectedWallet = 900
@@ -326,23 +387,19 @@ func TestBillingSettlementDeadlineCommitEvidence(t *testing.T) {
 
 					if mode == "rolled_back" {
 						assertSettlementBalances(t, expectedWallet, 900)
-
-						require.NoError(t, s.Reserve(150), "the probe, not the timeout, proves no terminal owner")
-						require.NoError(t, s.Settle(200))
+						assertSettlementDeadlineReviewReceipt(t, initialReceipt)
 					} else {
 						assertSettlementBalances(t, expectedWallet, 800)
-						require.ErrorIs(t, s.Reserve(250), model.ErrBillingFinalized, "normal settlement readback, not Refund, proves the committed owner")
-						require.Equal(t, 200, s.actualSettled)
-						s.Refund(testGinContext(t))
-						waitRefundCallback(t, s)
-						require.False(t, s.NeedsRefund(), "successful normal settlement has now been proved locally")
 					}
+					require.ErrorIs(t, s.Reserve(250), model.ErrBillingFinalized)
+					s.Refund(testGinContext(t))
+					waitRefundCallback(t, s)
+					require.False(t, s.settled, "neither Reserve nor Refund may invent a successful ACK")
 					require.NoError(t, s.Settle(200))
+					require.NoError(t, s.Settle(200))
+					require.Equal(t, 200, s.actualSettled)
 					require.Error(t, s.Settle(201))
 					expectedHeld := 100
-					if mode == "rolled_back" {
-						expectedHeld = 150
-					}
 					expectedWallet = 800
 
 					assertSettlementBalances(t, expectedWallet, 800)
@@ -390,15 +447,16 @@ func TestBillingSettlementDeadlineRedisBoundaries(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			withToken := mode != "postcommit_cache"
 			s, cancelClient := settlementDeadlineSession(t, "settlement-redis-"+mode, withToken, BillingSourceWallet)
-			initialReceipt := settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId)
 			cancelClient()
 			actual := 200
 			if mode == "zero_delta_cache" {
 				actual = 100
 			}
+			initialReceipt := freezeSettlementDeadlineReceipt(t, s, actual)
 			if mode == "terminal_replay_cache" {
-				terminalCommitFault(t, 2)
+				flag := terminalCommitFault(t, 2, 1)
 				require.Error(t, s.Settle(actual), "seed a real committed owner with an unknown acknowledgement")
+				require.Zero(t, flag.Load(), "money COMMIT fault must be consumed")
 			}
 			oldRedis, oldEnabled := common.RDB, common.RedisEnabled
 			var sockets sync.WaitGroup
@@ -450,10 +508,12 @@ func TestBillingSettlementDeadlineRedisBoundaries(t *testing.T) {
 			common.RedisEnabled = false
 			if mode == "precommit_fence" {
 				require.ErrorIs(t, err, context.DeadlineExceeded)
-				require.True(t, s.NeedsRefund())
+				require.False(t, s.NeedsRefund())
 				assertSettlementBalances(t, 900, 900)
-				require.Equal(t, initialReceipt, settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId), "failed settlement must leave the original hold byte-for-field unchanged and nonterminal")
-				require.NoError(t, s.Reserve(150))
+				assertSettlementDeadlineReviewReceipt(t, initialReceipt)
+				require.ErrorIs(t, s.Reserve(150), model.ErrBillingFinalized)
+				s.Refund(testGinContext(t))
+				assertSettlementBalances(t, 900, 900)
 			} else {
 				require.NoError(t, err, "cache failure, while work context is live or after commit, preserves the financial policy")
 				require.False(t, s.NeedsRefund())
@@ -486,7 +546,7 @@ func TestBillingSettlementDeadlineNativeRedisFence(t *testing.T) {
 		t.Skip("dedicated TEST_SETTLEMENT_DEADLINE_REDIS_ADDR and TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE=1 required")
 	}
 	s, cancelClient := settlementDeadlineSession(t, "settlement-native-redis-fence", true, BillingSourceWallet)
-	initialReceipt := settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId)
+	initialReceipt := freezeSettlementDeadlineReceipt(t, s, 200)
 	cancelClient()
 	client := redis.NewClient(&redis.Options{Addr: address, ReadTimeout: -1, WriteTimeout: -1, MaxRetries: -1, ContextTimeoutEnabled: true, DisableIdentity: true, Protocol: 2})
 	admin := redis.NewClient(&redis.Options{Addr: address, MaxRetries: -1, ContextTimeoutEnabled: true, DisableIdentity: true, Protocol: 2})
@@ -532,24 +592,27 @@ func TestBillingSettlementDeadlineNativeRedisFence(t *testing.T) {
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.NoError(t, unpause())
 	common.RedisEnabled = false
-	require.True(t, s.NeedsRefund())
+	require.False(t, s.NeedsRefund())
 	assertSettlementBalances(t, 900, 900)
-	require.Equal(t, initialReceipt, settlementDeadlineHeldReceipt(t, s.relayInfo.RequestId), "failed settlement must leave the original hold byte-for-field unchanged and nonterminal")
-	require.NoError(t, s.Reserve(150))
+	assertSettlementDeadlineReviewReceipt(t, initialReceipt)
+	require.ErrorIs(t, s.Reserve(150), model.ErrBillingFinalized)
+	s.Refund(testGinContext(t))
+	assertSettlementBalances(t, 900, 900)
 	require.NoError(t, s.Settle(200))
 	require.NoError(t, s.Settle(200))
 	assertSettlementBalances(t, 800, 800)
 }
 
-// Official Refund deliberately does not consult a durable terminal owner.
-// Preserve this inherited partial-credit window, without changing normal Settle.
+// A lost money COMMIT ACK cannot turn observed usage into a refund. Only an
+// explicit same-actual settlement retry may confirm the durable terminal owner.
 func TestOfficialRefundBeforeLostACKReadbackKeepsOfficialSequence(t *testing.T) {
 	if runRefundFixtureChild(t) {
 		return
 	}
 	s, cancelClient := settlementDeadlineSession(t, "official-refund-before-readback", true, BillingSourceWallet)
+	freezeSettlementDeadlineReceipt(t, s, 200)
 	cancelClient()
-	pool := installSettlementDeadlinePool(t, "committed_lost_ack")
+	pool := installSettlementDeadlinePool(t, "committed_lost_ack", 1)
 	result := make(chan error, 1)
 	joined := false
 	go func() { result <- s.Settle(200) }()
@@ -564,7 +627,7 @@ func TestOfficialRefundBeforeLostACKReadbackKeepsOfficialSequence(t *testing.T) 
 	joined = true
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.True(t, s.settlementUncertain)
-	require.True(t, s.NeedsRefund())
+	require.False(t, s.NeedsRefund())
 	assertSettlementBalances(t, 800, 800)
 	var before model.BillingFinalization
 	require.NoError(t, model.DB.Where("request_id = ?", s.relayInfo.RequestId).First(&before).Error)
@@ -572,11 +635,12 @@ func TestOfficialRefundBeforeLostACKReadbackKeepsOfficialSequence(t *testing.T) 
 	require.Equal(t, 200, before.ActualQuota)
 	s.Refund(testGinContext(t))
 	waitRefundCallback(t, s)
-	require.False(t, s.NeedsRefund(), "the authoritative settled owner wins over refund")
+	require.False(t, s.NeedsRefund(), "frozen actual blocks refund even before ACK reconciliation")
+	require.False(t, s.settled, "Refund cannot manufacture a successful settlement readback")
 	assertSettlementBalances(t, 800, 800)
 	var after model.BillingFinalization
 	require.NoError(t, model.DB.Where("request_id = ?", before.RequestID).First(&after).Error)
-	require.Equal(t, before, after, "official Refund does not rewrite the normal settlement evidence")
+	require.Equal(t, before, after, "Refund does not rewrite the normal settlement evidence")
 	require.NoError(t, s.Settle(200))
 	assertSettlementBalances(t, 800, 800)
 }

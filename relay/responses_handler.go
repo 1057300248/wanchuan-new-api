@@ -78,6 +78,11 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	common.SetContextKey(c, constant.ContextKeyResponsesPartialUsage, false)
 	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)
 	if newAPIError != nil {
+		partialUsage, _ := usage.(*dto.Usage)
+		if preserveUnmeasuredStreamBilling(c, info, partialUsage) {
+			service.ResetStatusCode(newAPIError, statusCodeMappingStr)
+			return newAPIError
+		}
 		// Native failures can still carry generated output or completed tools.
 		// Settle those facts once before the outer error handler refunds; empty
 		// explicit failures return nil usage and remain fully refundable.
@@ -144,6 +149,10 @@ func prepareResponsesPassThroughBody(c *gin.Context, info *relaycommon.RelayInfo
 // ConsumeResponsesQuota applies the same settlement dispatch to HTTP and
 // WebSocket Responses usage. Compact requests keep their separate repricing.
 func ConsumeResponsesQuota(c *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage) {
+	if preserveUnmeasuredStreamBilling(c, info, usage) {
+		return
+	}
+	c.Set(requestBillingUsageObservedKey, true)
 	if usage == nil && info.StreamStatus != nil {
 		outcome := info.StreamStatus.ResponseOutcome()
 		if outcome == string(relaycommon.ResponseOutcomeFailed) || outcome == string(relaycommon.ResponseOutcomeCancelled) {

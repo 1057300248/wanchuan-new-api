@@ -190,6 +190,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.LastError = nil
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+		// Prior attempts eligible for retry are already known not to need a
+		// delivery hold. Their address is diagnostic, not a current send fact.
+		common.SetContextKey(c, constant.ContextKeyUpstreamRequestAttempted, false)
+		common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, false)
+		common.SetContextKey(c, constant.ContextKeyUpstreamResponseDecodeFailed, false)
+		common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, false)
+		common.SetContextKey(c, constant.ContextKeyUpstreamResponseUsageIncomplete, false)
 		// Cancellation may arrive after the previous retry decision. Check again
 		// before selecting an account or clearing the previous stream outcome.
 		if stopped := service.RelayRequestCancellation(c); stopped != nil {
@@ -251,6 +258,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
+		newAPIError = relay.PreserveFailedRequestBilling(c, relayInfo, newAPIError)
 		relayInfo.LastError = newAPIError
 
 		decision := service.DecideRelayRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())

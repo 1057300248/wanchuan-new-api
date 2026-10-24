@@ -121,7 +121,7 @@ func TestRealtimeBillingLifecycle(t *testing.T) {
 						s.Refund(c)
 					} else {
 						if scenario == "final_lost_ack" {
-							terminalCommitFault(t, 2)
+							terminalCommitFault(t, 2, 1) // Skip the frozen-intent COMMIT; lose the money ACK.
 						}
 						PostWssConsumeQuota(c, s.relayInfo, s.relayInfo.OriginModelName, usage, nil)
 					}

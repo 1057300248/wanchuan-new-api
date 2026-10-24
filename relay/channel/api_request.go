@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -455,6 +456,11 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
 }
 
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestAttempted, false)
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, false)
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamResponseDecodeFailed, false)
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamExplicitRejection, false)
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamResponseUsageIncomplete, false)
 	if stopped := service.RelayRequestCancellation(c); stopped != nil {
 		return nil, stopped
 	}
@@ -489,8 +495,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	}
 
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestOrigin, req.URL.Scheme+"://"+req.URL.Host)
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestAttempted, true)
 	resp, err := relayClient.Do(req)
 	if err != nil {
+		var dialErr *net.OpError
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) || errors.As(err, &dialErr) && dialErr.Op == "dial" {
+			common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, true)
+		}
 		if stopped := service.RelayRequestCancellation(c); stopped != nil {
 			return nil, stopped
 		}

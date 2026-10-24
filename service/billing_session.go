@@ -44,6 +44,7 @@ type BillingSession struct {
 	billingIdentity         *model.BillingFinalization
 	terminalReceipt         *model.BillingFinalization
 	settlementUncertain     bool
+	settlementIntent        *int // Frozen observed charge, even if persisting it fails.
 	reservationUncertain    bool
 	subscriptionSupplements map[string]bool
 	realtime                *realtimeBillingState
@@ -181,7 +182,7 @@ func (s *BillingSession) Refund(c *gin.Context) {
 			return
 		}
 	}
-	if !s.settled && !s.refunded && !s.taskOwned && s.realtime != nil && s.realtime.observed {
+	if !s.settled && !s.refunded && !s.taskOwned && s.settlementIntent == nil && s.realtime != nil && s.realtime.observed {
 		// Partial delivery is not a failed unused hold. Settle measured aggregate
 		// exactly once; failure/unknown ACK preserves the held evidence for review.
 		s.realtime.final = true
@@ -191,12 +192,18 @@ func (s *BillingSession) Refund(c *gin.Context) {
 		s.mu.Unlock()
 		return
 	}
-	if s.settled || s.refunded || s.taskOwned || !s.needsRefundLocked() {
+	if s.settled || s.refunded || s.taskOwned || s.settlementIntent != nil {
 		s.mu.Unlock()
 		return
 	}
 	if s.durableTerminalSource() {
+		// A trusted zero hold still has an owner to close. Transport must mark
+		// ambiguous delivery before calling Refund; zero held is not zero usage.
 		s.refundDurableLocked()
+		s.mu.Unlock()
+		return
+	}
+	if !s.needsRefundLocked() {
 		s.mu.Unlock()
 		return
 	}
@@ -245,9 +252,12 @@ func (s *BillingSession) NeedsRefund() bool {
 }
 
 func (s *BillingSession) needsRefundLocked() bool {
-	if s.settled || s.refunded || s.fundingSettled || s.taskOwned {
+	if s.settled || s.refunded || s.fundingSettled || s.taskOwned || s.settlementIntent != nil {
 		// fundingSettled 时资金来源已提交结算，不能再退预扣费
 		return false
+	}
+	if s.durableTerminalSource() && s.terminalReceipt != nil && s.terminalReceipt.State == model.BillingHeld {
+		return true // Includes zero-held requests whose terminal owner is unclosed.
 	}
 	if s.tokenConsumed > 0 {
 		return true
@@ -322,6 +332,9 @@ func (s *BillingSession) ReserveBeforeSubmit(targetQuota int) error {
 func (s *BillingSession) reserve(targetQuota int, requireAvailableQuota bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.settlementIntent != nil {
+		return model.ErrBillingFinalized
+	}
 	if s.reservationUncertain {
 		if err := s.resolveReservationLocked(); err != nil {
 			return err

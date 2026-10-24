@@ -36,10 +36,12 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	if err := common.Unmarshal(body, &responsesResp); err != nil {
+		common.SetContextKey(c, constant.ContextKeyUpstreamResponseDecodeFailed, true)
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 
 	if oaiError := responsesResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
+		common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, true)
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 	tools := relaycommon.NewResponsesToolUsageObserver(info)

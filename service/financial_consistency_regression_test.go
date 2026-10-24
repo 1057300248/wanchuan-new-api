@@ -203,7 +203,7 @@ func TestFinancialConsistencyLostACKRefund(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			s, cancelClient := settlementDeadlineSession(t, "financial-lost-ack-"+scenario, true, BillingSourceWallet)
 			cancelClient()
-			pool := installSettlementDeadlinePool(t, "committed_lost_ack")
+			pool := installSettlementDeadlinePool(t, "committed_lost_ack", 1) // Intent commits first; fault money.
 			result := make(chan error, 1)
 			joined := false
 			go func() { result <- s.Settle(200) }()
@@ -240,7 +240,7 @@ func TestFinancialConsistencyLostACKRefund(t *testing.T) {
 			waitRefundCallback(t, s)
 			assertSettlementBalances(t, 800, 800)
 			if scenario == "read_failure" {
-				assert.Positive(t, readFailures.Load(), "uncertain settlement must consult authoritative evidence before any credit")
+				assert.Zero(t, readFailures.Load(), "a frozen actual blocks refund without needing a potentially unavailable read")
 				blocked.Store(false)
 				s.Refund(testGinContext(t))
 				waitRefundCallback(t, s)

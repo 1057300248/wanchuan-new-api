@@ -122,6 +122,9 @@ func Distribute() func(c *gin.Context) {
 				}
 				message := selectErr.Message
 				if selectErr.NoAvailableChannel {
+					if abortIfModelUnavailableInGroup(c, usingGroup, modelRequest.Model, model.HasConfiguredModelForGroups) {
+						return
+					}
 					message = noAvailableChannelMessage(c, usingGroup, modelRequest.Model)
 				} else if selectErr.MessageID != "" {
 					message = i18n.T(c, selectErr.MessageID, selectErr.Params)
