@@ -7542,6 +7542,11 @@
     "Set selected prices": "Ajuster les prix sélectionnés",
     "Show models with matching prices": "Afficher les modèles aux prix identiques",
     "The adjusted price is outside the supported range.": "Le prix ajusté dépasse la plage autorisée.",
-    "This expression cannot be adjusted automatically. Keep the source price or edit it manually.": "Cette expression ne peut pas être ajustée automatiquement. Conservez le prix source ou modifiez-la manuellement."
+    "This expression cannot be adjusted automatically. Keep the source price or edit it manually.": "Cette expression ne peut pas être ajustée automatiquement. Conservez le prix source ou modifiez-la manuellement.",
+    "Automatic classification": "Classification automatique",
+    "Display categories": "Catégories d’affichage",
+    "Invalid display categories": "Catégories d’affichage non valides",
+    "Leave empty for automatic classification. Affects model square filters only, not API endpoints, routing, permissions or billing.": "Laissez vide pour une classification automatique. Affecte uniquement les filtres du catalogue, pas les points d’accès API, le routage, les permissions ni la facturation.",
+    "Restore automatic classification": "Rétablir la classification automatique"
   }
 }

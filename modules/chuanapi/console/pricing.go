@@ -22,32 +22,33 @@ const pricingVersion = "public-catalog-v2"
 // Operator notes, routing identities, plugin identities and future host fields
 // must be explicitly reviewed before they can become public.
 type publicCatalogModel struct {
-	ModelName              string                  `json:"model_name"`
-	VendorID               int                     `json:"vendor_id"`
-	QuotaType              int                     `json:"quota_type"`
-	ModelRatio             float64                 `json:"model_ratio"`
-	ModelPrice             float64                 `json:"model_price"`
-	CompletionRatio        float64                 `json:"completion_ratio"`
-	CacheRatio             *float64                `json:"cache_ratio"`
-	CreateCacheRatio       *float64                `json:"create_cache_ratio"`
-	ImageRatio             *float64                `json:"image_ratio"`
-	AudioRatio             *float64                `json:"audio_ratio"`
-	AudioCompletionRatio   *float64                `json:"audio_completion_ratio"`
-	EnableGroup            []string                `json:"enable_groups"`
-	SupportedEndpointTypes []constant.EndpointType `json:"supported_endpoint_types"`
-	BillingMode            string                  `json:"billing_mode"`
-	BillingExpr            string                  `json:"billing_expr"`
-	BillingVariantsPresent bool                    `json:"billing_variants_present"`
-	PricingVersion         string                  `json:"pricing_version"`
-	ContextLength          *int                    `json:"context_length"`
-	MaxOutputTokens        *int                    `json:"max_output_tokens"`
-	KnowledgeCutoff        string                  `json:"knowledge_cutoff"`
-	ReleaseDate            string                  `json:"release_date"`
-	ParameterCount         string                  `json:"parameter_count"`
-	InputModalities        []string                `json:"input_modalities"`
-	OutputModalities       []string                `json:"output_modalities"`
-	Capabilities           []string                `json:"capabilities"`
-	BonusEligible          *bool                   `json:"bonus_eligible"`
+	ModelName              string                       `json:"model_name"`
+	VendorID               int                          `json:"vendor_id"`
+	QuotaType              int                          `json:"quota_type"`
+	ModelRatio             float64                      `json:"model_ratio"`
+	ModelPrice             float64                      `json:"model_price"`
+	CompletionRatio        float64                      `json:"completion_ratio"`
+	CacheRatio             *float64                     `json:"cache_ratio"`
+	CreateCacheRatio       *float64                     `json:"create_cache_ratio"`
+	ImageRatio             *float64                     `json:"image_ratio"`
+	AudioRatio             *float64                     `json:"audio_ratio"`
+	AudioCompletionRatio   *float64                     `json:"audio_completion_ratio"`
+	EnableGroup            []string                     `json:"enable_groups"`
+	SupportedEndpointTypes []constant.EndpointType      `json:"supported_endpoint_types"`
+	BillingMode            string                       `json:"billing_mode"`
+	BillingExpr            string                       `json:"billing_expr"`
+	BillingVariantsPresent bool                         `json:"billing_variants_present"`
+	PricingVersion         string                       `json:"pricing_version"`
+	ContextLength          *int                         `json:"context_length"`
+	MaxOutputTokens        *int                         `json:"max_output_tokens"`
+	KnowledgeCutoff        string                       `json:"knowledge_cutoff"`
+	ReleaseDate            string                       `json:"release_date"`
+	ParameterCount         string                       `json:"parameter_count"`
+	InputModalities        []string                     `json:"input_modalities"`
+	OutputModalities       []string                     `json:"output_modalities"`
+	Capabilities           []string                     `json:"capabilities"`
+	DisplayCategories      model.ModelDisplayCategories `json:"display_categories,omitempty"`
+	BonusEligible          *bool                        `json:"bonus_eligible"`
 }
 
 type publicCatalog struct {
@@ -151,7 +152,8 @@ func publicPricingRows(rows []model.Pricing, aliases map[string]string) []public
 			KnowledgeCutoff: row.KnowledgeCutoff, ReleaseDate: row.ReleaseDate,
 			ParameterCount: row.ParameterCount, InputModalities: row.InputModalities,
 			OutputModalities: row.OutputModalities, Capabilities: row.Capabilities,
-			BonusEligible: row.BonusEligible,
+			BonusEligible:     row.BonusEligible,
+			DisplayCategories: row.DisplayCategories,
 		})
 	}
 	return result

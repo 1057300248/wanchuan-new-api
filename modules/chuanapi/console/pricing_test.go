@@ -136,3 +136,26 @@ func TestPublicPricingRowsHideRoutingAndNotesWithoutMutatingSource(t *testing.T)
 	assert.Equal(t, []string{"supplier-a", "supplier-b"}, rows[0].EnableGroup)
 	assert.Empty(t, publicPricingRows(rows, map[string]string{}))
 }
+
+func TestPublicPricingRowsPreserveDisplayCategoriesWithoutChangingCapabilities(t *testing.T) {
+	rows := []model.Pricing{{ModelName: "synthetic-display-model", EnableGroup: []string{"private-route"},
+		Description: "private-note", OutputModalities: []string{"text"}, Capabilities: []string{"reasoning"},
+		SupportedEndpointTypes: []constant.EndpointType{constant.EndpointTypeOpenAI},
+		DisplayCategories:      model.ModelDisplayCategories{"images", "video"}}}
+	public := publicPricingRows(rows, map[string]string{"private-route": "rate-1"})
+	require.Len(t, public, 1)
+	assert.Equal(t, rows[0].DisplayCategories, public[0].DisplayCategories)
+	assert.Equal(t, rows[0].OutputModalities, public[0].OutputModalities)
+	assert.Equal(t, rows[0].Capabilities, public[0].Capabilities)
+	assert.Equal(t, rows[0].SupportedEndpointTypes, public[0].SupportedEndpointTypes)
+	encoded, err := common.Marshal(public)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"display_categories":["images","video"]`)
+	assert.NotContains(t, string(encoded), "private-route")
+	assert.NotContains(t, string(encoded), "private-note")
+	rows[0].DisplayCategories = nil
+	public = publicPricingRows(rows, map[string]string{"private-route": "rate-1"})
+	encoded, err = common.Marshal(public)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "display_categories", "legacy automatic records retain their original response shape")
+}

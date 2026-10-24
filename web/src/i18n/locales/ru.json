@@ -7542,6 +7542,11 @@
     "Set selected prices": "Настроить выбранные цены",
     "Show models with matching prices": "Показать модели с совпадающими ценами",
     "The adjusted price is outside the supported range.": "Цена после пересчёта выходит за допустимые пределы.",
-    "This expression cannot be adjusted automatically. Keep the source price or edit it manually.": "Это выражение нельзя пересчитать автоматически. Сохраните исходную цену или отредактируйте его вручную."
+    "This expression cannot be adjusted automatically. Keep the source price or edit it manually.": "Это выражение нельзя пересчитать автоматически. Сохраните исходную цену или отредактируйте его вручную.",
+    "Automatic classification": "Автоматическая классификация",
+    "Display categories": "Категории отображения",
+    "Invalid display categories": "Недопустимые категории отображения",
+    "Leave empty for automatic classification. Affects model square filters only, not API endpoints, routing, permissions or billing.": "Оставьте пустым для автоматической классификации. Влияет только на фильтры каталога моделей, а не на конечные точки API, маршрутизацию, права доступа или тарификацию.",
+    "Restore automatic classification": "Восстановить автоклассификацию"
   }
 }

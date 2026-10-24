@@ -7542,6 +7542,11 @@
     "Set selected prices": "選択した価格を一括設定",
     "Show models with matching prices": "価格が同じモデルを表示",
     "The adjusted price is outside the supported range.": "換算後の価格が対応範囲を超えています。",
-    "This expression cannot be adjusted automatically. Keep the source price or edit it manually.": "この式は自動換算できません。取得元の価格を維持するか、手動で編集してください。"
+    "This expression cannot be adjusted automatically. Keep the source price or edit it manually.": "この式は自動換算できません。取得元の価格を維持するか、手動で編集してください。",
+    "Automatic classification": "自動分類",
+    "Display categories": "表示カテゴリ",
+    "Invalid display categories": "表示カテゴリが無効です",
+    "Leave empty for automatic classification. Affects model square filters only, not API endpoints, routing, permissions or billing.": "空欄の場合は自動分類されます。モデル広場の絞り込みのみに適用され、API エンドポイント、ルーティング、権限、課金には影響しません。",
+    "Restore automatic classification": "自動分類に戻す"
   }
 }

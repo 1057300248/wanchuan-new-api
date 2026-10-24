@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { PricingModel } from '../types'
-import { getModelCategories } from './model-categories'
+import { getAutomaticModelCategories } from './model-categories'
 import { replaceModelInPath } from './model-helpers'
 
 export type ModelEndpointMap = Record<
@@ -36,7 +36,7 @@ export function getModelEndpoints(
   model: PricingModel,
   endpointMap: ModelEndpointMap
 ): ModelEndpoint[] {
-  const supportsText = getModelCategories(model).includes('text')
+  const supportsText = getAutomaticModelCategories(model).includes('text')
   const endpoints: ModelEndpoint[] = []
   for (const type of model.supported_endpoint_types ?? []) {
     // Channel defaults can add OpenAI to media and unknown models. The wire
@@ -82,7 +82,7 @@ export function getModelPlayground(
   model: PricingModel
 ): '/image' | '/playground' | undefined {
   const endpoints = model.supported_endpoint_types ?? []
-  const categories = getModelCategories(model)
+  const categories = getAutomaticModelCategories(model)
   if (endpoints.includes('image-generation') && categories.includes('images')) {
     return '/image'
   }

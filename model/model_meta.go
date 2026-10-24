@@ -50,14 +50,15 @@ type Model struct {
 
 	// 模型元数据（目录字段，未知值保持 NULL/空，不由模型名推断）。
 	// 数组字段以 JSON 数组字符串形式存储（与 endpoints 一致），读取侧负责解析与降级。
-	ContextLength    *int   `json:"context_length,omitempty" gorm:"bigint"`
-	MaxOutputTokens  *int   `json:"max_output_tokens,omitempty" gorm:"bigint"`
-	KnowledgeCutoff  string `json:"knowledge_cutoff,omitempty" gorm:"type:varchar(64)"`
-	ReleaseDate      string `json:"release_date,omitempty" gorm:"type:varchar(64)"`
-	ParameterCount   string `json:"parameter_count,omitempty" gorm:"type:varchar(64)"`
-	InputModalities  string `json:"input_modalities,omitempty" gorm:"type:text"`
-	OutputModalities string `json:"output_modalities,omitempty" gorm:"type:text"`
-	Capabilities     string `json:"capabilities,omitempty" gorm:"type:text"`
+	ContextLength     *int                   `json:"context_length,omitempty" gorm:"bigint"`
+	MaxOutputTokens   *int                   `json:"max_output_tokens,omitempty" gorm:"bigint"`
+	KnowledgeCutoff   string                 `json:"knowledge_cutoff,omitempty" gorm:"type:varchar(64)"`
+	ReleaseDate       string                 `json:"release_date,omitempty" gorm:"type:varchar(64)"`
+	ParameterCount    string                 `json:"parameter_count,omitempty" gorm:"type:varchar(64)"`
+	InputModalities   string                 `json:"input_modalities,omitempty" gorm:"type:text"`
+	OutputModalities  string                 `json:"output_modalities,omitempty" gorm:"type:text"`
+	Capabilities      string                 `json:"capabilities,omitempty" gorm:"type:text"`
+	DisplayCategories ModelDisplayCategories `json:"display_categories,omitempty" gorm:"type:text"`
 	// BonusEligible 三态：nil=尚未配置，false=不可用，true=可用。不使用 GORM default 标签。
 	BonusEligible *bool `json:"bonus_eligible,omitempty"`
 
@@ -248,7 +249,12 @@ func SearchModelsWithChannels(keyword, vendor, status, syncOfficial string, offs
 }
 
 func (mi *Model) Insert() error {
-	err := metadataTransaction(func(tx *gorm.DB) error {
+	normalized, err := mi.DisplayCategories.Normalize()
+	if err != nil {
+		return err
+	}
+	mi.DisplayCategories = normalized
+	err = metadataTransaction(func(tx *gorm.DB) error {
 		if err := validateModelVendor(tx, mi.VendorID); err != nil {
 			return err
 		}
@@ -278,13 +284,30 @@ func IsModelNameDuplicated(id int, name string) (bool, error) {
 }
 
 func (mi *Model) Update() error {
-	err := metadataTransaction(func(tx *gorm.DB) error {
+	normalized, err := mi.DisplayCategories.Normalize()
+	if err != nil {
+		return err
+	}
+	mi.DisplayCategories = normalized
+	err = metadataTransaction(func(tx *gorm.DB) error {
 		if err := validateModelVendor(tx, mi.VendorID); err != nil {
 			return err
 		}
+		fields := []string{"model_name", "description", "icon", "tags", "vendor_id", "endpoints", "status", "sync_official", "name_rule", "updated_time", "context_length", "max_output_tokens", "knowledge_cutoff", "release_date", "parameter_count", "input_modalities", "output_modalities", "capabilities", "bonus_eligible"}
+		if mi.DisplayCategories != nil {
+			fields = append(fields, "display_categories")
+		} else {
+			// Legacy clients omit this new field. Preserve it, including in the
+			// save response; only an explicit [] clears a manual override.
+			var saved Model
+			if err := tx.Select("display_categories").First(&saved, mi.Id).Error; err != nil {
+				return err
+			}
+			mi.DisplayCategories = saved.DisplayCategories
+		}
 		mi.UpdatedTime = common.GetTimestamp()
 		return tx.Model(&Model{}).Where("id = ?", mi.Id).
-			Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "status", "sync_official", "name_rule", "updated_time", "context_length", "max_output_tokens", "knowledge_cutoff", "release_date", "parameter_count", "input_modalities", "output_modalities", "capabilities", "bonus_eligible").Updates(mi).Error
+			Select(fields).Updates(mi).Error
 	})
 	// A transaction error can be a lost COMMIT acknowledgement. Cache eviction
 	// is safe even after rollback; retaining a possibly revoked grant is not.

@@ -7542,6 +7542,11 @@
     "Set selected prices": "批量设置已选价格",
     "Show models with matching prices": "显示价格相同的模型",
     "The adjusted price is outside the supported range.": "换算后的价格超出支持范围。",
-    "This expression cannot be adjusted automatically. Keep the source price or edit it manually.": "此表达式无法自动换算，请保持来源价格或手动编辑。"
+    "This expression cannot be adjusted automatically. Keep the source price or edit it manually.": "此表达式无法自动换算，请保持来源价格或手动编辑。",
+    "Automatic classification": "自动识别",
+    "Display categories": "展示分类",
+    "Invalid display categories": "展示分类无效",
+    "Leave empty for automatic classification. Affects model square filters only, not API endpoints, routing, permissions or billing.": "留空时自动识别。仅影响模型广场筛选，不改变 API 端点、路由、权限或计费。",
+    "Restore automatic classification": "恢复自动识别"
   }
 }

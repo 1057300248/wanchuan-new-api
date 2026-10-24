@@ -51,15 +51,16 @@ type Pricing struct {
 	// 模型元数据（目录字段，从命中的 Model 记录复制；未知值保持 nil/空）。
 	// 数组字段始终输出 JSON 数组，空/无效存量值安全降级为空数组。
 	// BonusEligible 三态：nil=尚未配置，false=不可用，true=可用。
-	ContextLength    *int     `json:"context_length,omitempty"`
-	MaxOutputTokens  *int     `json:"max_output_tokens,omitempty"`
-	KnowledgeCutoff  string   `json:"knowledge_cutoff,omitempty"`
-	ReleaseDate      string   `json:"release_date,omitempty"`
-	ParameterCount   string   `json:"parameter_count,omitempty"`
-	InputModalities  []string `json:"input_modalities"`
-	OutputModalities []string `json:"output_modalities"`
-	Capabilities     []string `json:"capabilities"`
-	BonusEligible    *bool    `json:"bonus_eligible,omitempty"`
+	ContextLength     *int                   `json:"context_length,omitempty"`
+	MaxOutputTokens   *int                   `json:"max_output_tokens,omitempty"`
+	KnowledgeCutoff   string                 `json:"knowledge_cutoff,omitempty"`
+	ReleaseDate       string                 `json:"release_date,omitempty"`
+	ParameterCount    string                 `json:"parameter_count,omitempty"`
+	InputModalities   []string               `json:"input_modalities"`
+	OutputModalities  []string               `json:"output_modalities"`
+	Capabilities      []string               `json:"capabilities"`
+	DisplayCategories ModelDisplayCategories `json:"display_categories,omitempty"`
+	BonusEligible     *bool                  `json:"bonus_eligible,omitempty"`
 }
 
 type PricingVendor struct {
@@ -392,6 +393,7 @@ func updatePricing() {
 			pricing.InputModalities = ParseModelMetadataArray(meta.InputModalities)
 			pricing.OutputModalities = ParseModelMetadataArray(meta.OutputModalities)
 			pricing.Capabilities = ParseModelMetadataArray(meta.Capabilities)
+			pricing.DisplayCategories = meta.DisplayCategories
 			pricing.BonusEligible = meta.BonusEligible
 		}
 		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)

@@ -7542,6 +7542,11 @@
     "Set selected prices": "Set selected prices",
     "Show models with matching prices": "Show models with matching prices",
     "The adjusted price is outside the supported range.": "The adjusted price is outside the supported range.",
-    "This expression cannot be adjusted automatically. Keep the source price or edit it manually.": "This expression cannot be adjusted automatically. Keep the source price or edit it manually."
+    "This expression cannot be adjusted automatically. Keep the source price or edit it manually.": "This expression cannot be adjusted automatically. Keep the source price or edit it manually.",
+    "Automatic classification": "Automatic classification",
+    "Display categories": "Display categories",
+    "Invalid display categories": "Invalid display categories",
+    "Leave empty for automatic classification. Affects model square filters only, not API endpoints, routing, permissions or billing.": "Leave empty for automatic classification. Affects model square filters only, not API endpoints, routing, permissions or billing.",
+    "Restore automatic classification": "Restore automatic classification"
   }
 }

@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
+import type { ModelDisplayCategory } from '@/lib/model-display-categories'
+
 // ============================================================================
 // Model Types
 // ============================================================================
@@ -44,6 +46,16 @@ export interface Model {
   description?: string
   icon?: string
   tags?: string
+  display_categories?: ModelDisplayCategory[] | null
+  input_modalities?: string
+  output_modalities?: string
+  capabilities?: string
+  context_length?: number | null
+  max_output_tokens?: number | null
+  knowledge_cutoff?: string
+  release_date?: string
+  parameter_count?: string
+  bonus_eligible?: boolean | null
   vendor_id?: number
   endpoints?: string
   supported_endpoints?: string[]
