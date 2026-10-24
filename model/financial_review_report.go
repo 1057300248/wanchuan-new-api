@@ -59,6 +59,7 @@ type FinancialReviewItem struct {
 	SubscriptionPeriod *int64           `json:"subscription_period,omitempty"`
 	Amounts            map[string]int64 `json:"amounts,omitempty"`
 	Issues             []string         `json:"issues"`
+	FailureCode        string           `json:"failure_code,omitempty"`
 }
 
 type FinancialReviewReportPage struct {
@@ -254,6 +255,20 @@ func (row *financialReviewRow) review(entity FinancialReviewEntity, columns map[
 			item.Issues = append(item.Issues, "delivery_evidence_unknown")
 		case BillingRefundReview:
 			item.Issues = append(item.Issues, "refund_requires_review")
+		case BillingSettlementReview:
+			item.Issues = append(item.Issues, "settlement_requires_review")
+			if columns["actual_quota"] && columns["pre_consumed"] && row.ActualQuota >= 0 && row.ActualQuota <= common.MaxQuota && row.PreConsumed >= 0 && row.PreConsumed <= common.MaxQuota {
+				item.Amounts["settlement_delta"] = row.ActualQuota - row.PreConsumed
+			} else {
+				item.Issues = append(item.Issues, "settlement_amount_evidence_invalid")
+			}
+			// Never export arbitrary historical free text as an error code.
+			switch row.LastErrorCode {
+			case "insufficient_balance", "transient_database", "settlement_unconfirmed", "deadline_exceeded", "canceled", "missing_record", "terminal_owner_conflict", "ledger_evidence", "receipt_invalid", "identity_mismatch", "source_evidence", "owner_missing", "actual_mismatch", "recovery_error":
+				item.FailureCode = row.LastErrorCode
+			default:
+				item.FailureCode = "unclassified"
+			}
 		case BillingRefundReady:
 			item.Issues = append(item.Issues, "versioned_refund_pending")
 		}

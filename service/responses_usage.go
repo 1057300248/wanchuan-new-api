@@ -26,6 +26,7 @@ type ResponsesUsageAccumulator struct {
 	failed     bool
 	cancelled  bool
 	hasOutput  bool
+	terminal   bool // Observed provider terminal, never inferred from client status.
 }
 
 func NewResponsesUsageAccumulator(info *relaycommon.RelayInfo) *ResponsesUsageAccumulator {
@@ -47,6 +48,7 @@ func (a *ResponsesUsageAccumulator) Observe(event *dto.ResponsesStreamResponse, 
 	}
 	a.started = true
 	outcome := ObserveResponsesOutcome(a.info, event)
+	a.terminal = a.terminal || outcome != relaycommon.ResponseOutcomeUnknown
 	a.failed = a.failed || outcome == relaycommon.ResponseOutcomeFailed
 	a.cancelled = a.cancelled || outcome == relaycommon.ResponseOutcomeCancelled
 	a.hasOutput = a.hasOutput || responsesEventHasOutput(event, raw, outcome)
@@ -105,10 +107,16 @@ func (a *ResponsesUsageAccumulator) Finish() *dto.Usage {
 	// A final image item can already have reached the client before the stream
 	// disconnects, so completed tool usage is retained even without a terminal.
 	a.tools.Finish()
-	// nil is reserved for an explicit provider failure with no billable work.
-	// A zero-valued Usage still enters fixed-per-request billing; successful
-	// missing usage and transport-only interruptions retain their old estimates.
-	if (a.failed || a.cancelled) && !dto.HasOpenAIUsageTokens(a.usage) && !a.hasOutput && !a.tools.HasCalls() {
+	// A created/in_progress prelude is not billable generation evidence. On an
+	// uncompleted transport, do not manufacture prompt usage (or a fixed-price
+	// charge) from that prelude. The transport must distinguish this unknown
+	// result from an explicit provider rejection before refunding any hold.
+	interrupted := false
+	if !a.terminal && a.info != nil && a.info.StreamStatus != nil {
+		end := a.info.StreamStatus.OutcomeSnapshot().EndReason
+		interrupted = end != relaycommon.StreamEndReasonNone // A bare [DONE] is not a Responses terminal event.
+	}
+	if (a.failed || a.cancelled || interrupted) && !dto.HasOpenAIUsageTokens(a.usage) && !a.hasOutput && !a.tools.HasCalls() {
 		a.usage = nil
 		return nil
 	}

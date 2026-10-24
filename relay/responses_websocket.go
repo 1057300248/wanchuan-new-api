@@ -244,6 +244,9 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 }
 
 func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState, create responsesWSCreateRequest) (apiErr *types.NewAPIError) {
+	// Opening the socket does not submit a generation. Only response.create
+	// writes below can turn a failed send into unknown upstream delivery.
+	c.Set(requestBillingNotSubmittedKey, true)
 	policy := service.RequestPolicy(c)
 	modelName := create.Request.Model
 	started := time.Now()
@@ -295,7 +298,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		if apiErr != nil {
 			return apiErr
 		}
+		c.Set(requestBillingNotSubmittedKey, false)
 		if err := s.writeTarget(websocket.TextMessage, payload); err != nil {
+			preserveUnknownRequestBilling(c, info)
 			state.closeCode = websocket.CloseInternalServerErr
 			return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 		}
@@ -352,7 +357,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			if !s.setTarget(target) {
 				return types.NewError(context.Canceled, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 			}
+			c.Set(requestBillingNotSubmittedKey, false)
 			if err := s.writeTarget(websocket.TextMessage, payload); err != nil {
+				preserveUnknownRequestBilling(c, info)
 				state.closeCode = websocket.CloseInternalServerErr
 				return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 			}
@@ -404,6 +411,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, incoming.err)
 				state.closeCode, state.closeReason = websocket.CloseInternalServerErr, "upstream connection closed"
 				ConsumeResponsesQuota(c, info, accumulator.Finish())
+				if c.GetBool(requestBillingDeliveryUnknownKey) {
+					return types.NewError(incoming.err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
+				}
 				return nil
 			}
 			info.SetFirstResponseTime()
@@ -460,16 +470,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						ConsumeResponsesQuota(c, info, accumulator.Finish())
 						return nil
 					}
-					if rejection.Error == nil {
-						// An error frame without an error object still describes the
-						// rejected request; keep the client-facing type stable.
-						rejection.Error = &types.OpenAIError{Type: "invalid_request_error", Message: event.Message, Code: event.Code}
-					}
-					rejected := types.WithOpenAIError(*rejection.Error, rejection.Status, types.ErrOptionWithSkipRetry())
-					if rejected.StatusCode < 400 || rejected.StatusCode > 599 {
-						rejected.StatusCode = http.StatusBadRequest
-					}
-					return rejected
+					return newResponsesWSRequestRejection(c, info, rejection, &event.ResponsesStreamResponse)
 				}
 				if strings.HasPrefix(event.Type, "response.") {
 					if !accepted {
@@ -520,13 +521,35 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, context.DeadlineExceeded)
 			state.closeCode, state.closeReason = websocket.CloseInternalServerErr, "upstream response timed out"
 			ConsumeResponsesQuota(c, info, accumulator.Finish())
+			if c.GetBool(requestBillingDeliveryUnknownKey) {
+				return types.NewErrorWithStatusCode(context.DeadlineExceeded, types.ErrorCodeBadResponse, http.StatusGatewayTimeout, types.ErrOptionWithSkipRetry())
+			}
 			return nil
 		case <-s.ctx.Done():
 			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, s.ctx.Err())
 			ConsumeResponsesQuota(c, info, accumulator.Finish())
+			if c.GetBool(requestBillingDeliveryUnknownKey) {
+				return service.NewRelayClientGoneError(s.ctx.Err())
+			}
 			return nil
 		}
 	}
+}
+
+// A pre-accept provider error is an explicit rejection of response.create, not
+// missing delivery evidence. Its terminal fact must survive the failure defer.
+func newResponsesWSRequestRejection(c *gin.Context, info *relaycommon.RelayInfo, rejection responsesWSErrorEvent, event *dto.ResponsesStreamResponse) *types.NewAPIError {
+	if rejection.Error == nil {
+		rejection.Error = &types.OpenAIError{Type: "invalid_request_error", Message: event.Message, Code: event.Code}
+	}
+	rejected := types.WithOpenAIError(*rejection.Error, rejection.Status, types.ErrOptionWithSkipRetry())
+	if rejected.StatusCode < 400 || rejected.StatusCode > 599 {
+		rejected.StatusCode = http.StatusBadRequest
+	}
+	info.StreamStatus.MarkFailed(string(rejected.GetErrorCode()), rejection.Error.Type, rejected.StatusCode)
+	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+	common.SetContextKey(c, appconstant.ContextKeyUpstreamExplicitRejection, true)
+	return rejected
 }
 
 // A single generation is active, but a cancel can fail independently. Correlate

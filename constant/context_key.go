@@ -56,6 +56,18 @@ const (
 	// and for adaptors that build official endpoints themselves.
 	ContextKeyUpstreamRequestOrigin ContextKey = "upstream_request_origin"
 
+	// Attempted records entry into the current HTTP transport call, not provider
+	// acceptance. Delivery may still be unknown; DNS/dial errors can prove unsent.
+	ContextKeyUpstreamRequestAttempted ContextKey = "upstream_request_attempted"
+	// Unsent retains typed DNS/dial evidence before public errors are sanitized.
+	ContextKeyUpstreamRequestUnsent ContextKey = "upstream_request_unsent"
+	// Decode failure is a local fact, distinct from a provider error with the
+	// same code. A malformed HTTP 200 body does not prove generation was unused.
+	ContextKeyUpstreamResponseDecodeFailed ContextKey = "upstream_response_decode_failed"
+	ContextKeyUpstreamExplicitRejection    ContextKey = "upstream_explicit_rejection"
+	// UsageIncomplete records observed work whose retained snapshot cannot price all of it.
+	ContextKeyUpstreamResponseUsageIncomplete ContextKey = "upstream_response_usage_incomplete"
+
 	ContextKeyAutoGroup           ContextKey = "auto_group"
 	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"
 	ContextKeyAutoGroupRetryIndex ContextKey = "auto_group_retry_index"

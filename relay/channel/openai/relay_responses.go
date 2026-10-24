@@ -33,11 +33,13 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	}
 	err = common.Unmarshal(responseBody, &responsesResponse)
 	if err != nil {
+		common.SetContextKey(c, constant.ContextKeyUpstreamResponseDecodeFailed, true)
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	event := dto.ResponsesStreamResponse{Type: "response.completed", Response: &responsesResponse}
 	outcome := service.ObserveResponsesOutcome(info, &event)
 	if outcome == relaycommon.ResponseOutcomeFailed || outcome == relaycommon.ResponseOutcomeCancelled || responsesResponse.GetOpenAIError() != nil {
+		common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, true)
 		if info.StreamStatus == nil {
 			info.StreamStatus = relaycommon.NewStreamStatus()
 		}
@@ -137,6 +139,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		// delivery fails, so retain its output and native usage before writing.
 		outcome := accumulator.Observe(&streamResponse, []byte(data))
 		failed := outcome == relaycommon.ResponseOutcomeFailed || outcome == relaycommon.ResponseOutcomeCancelled
+		if failed {
+			common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, true)
+		}
 		if failed && (streamResponse.Type == "response.completed" || streamResponse.Type == "response.done") {
 			// Compatible providers sometimes use a successful event name for a
 			// failed response. Emit its real terminal outcome exactly once.

@@ -82,6 +82,16 @@ func (s *BillingSession) settleDurableLocked(actual int) error {
 	if s.refunded || s.taskOwned {
 		return model.ErrBillingFinalized
 	}
+	if actual < 0 || actual > common.MaxQuota {
+		return errors.New("invalid billing actual quota")
+	}
+	if s.settlementIntent != nil && *s.settlementIntent != actual {
+		return errors.New("billing settlement replay amount mismatch")
+	}
+	// Freeze locally before any SQL. Even if the durable intent write fails or
+	// its COMMIT acknowledgement is lost, a later failure defer cannot refund
+	// already observed work. This flag alone is NOT durable recovery evidence.
+	s.settlementIntent = &actual
 	receipt, err := s.terminalReceiptLocked()
 	if err != nil {
 		return err
@@ -96,7 +106,7 @@ func (s *BillingSession) settleDurableLocked(actual int) error {
 	// Redis fence share one finite cooperative budget while the session is locked.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	applied, err := model.SettleBillingFinalization(ctx, receipt, actual, func(tx *gorm.DB) error {
+	apply := func(tx *gorm.DB) error {
 		// Wallet delta zero has no money operation.
 		if delta != 0 || receipt.Source == BillingSourceSubscription {
 			var err error
@@ -119,7 +129,36 @@ func (s *BillingSession) settleDurableLocked(actual int) error {
 			return model.ApplyTaskUsageDeltaTx(tx, receipt.UserID, s.realtime.channelID, actual, count)
 		}
 		return nil
-	})
+	}
+	var applied bool
+	for attempt := 0; attempt < 3; attempt++ {
+		result = moneyport.SettlementResult{}
+		applied, err = model.SettleBillingFinalization(ctx, receipt, actual, apply)
+		if err == nil {
+			break
+		}
+		// Record each failed attempt independently of its expired/rolled-back
+		// transaction. A successful but unacknowledged COMMIT remains settled.
+		recordParent := ctx
+		if ctx.Err() != nil {
+			// At most one final one-second evidence tail after the main budget.
+			recordParent = context.Background()
+		}
+		recordCtx, stop := context.WithTimeout(recordParent, time.Second)
+		recordErr := model.RecordBillingSettlementFailure(recordCtx, receipt, actual, err)
+		stop()
+		if recordErr != nil {
+			code, class := model.BillingSettlementFailureCode(err)
+			common.SysError(fmt.Sprintf("event=billing_settlement_evidence_unconfirmed request_id=%q actual_quota=%d source_held=%d code=%s class=%s action=manual_reconciliation", receipt.RequestID, actual, receipt.SourceHeld, code, class))
+		}
+		if attempt == 2 || ctx.Err() != nil || !model.IsTransientBillingSettlementError(err) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Duration(attempt+1) * 25 * time.Millisecond):
+		}
+	}
 	if receipt.Source == BillingSourceWallet && (err != nil || !applied || delta == 0) {
 		// Cache cleanup has its own bounded budget, including after a lost COMMIT
 		// acknowledgement; it cannot classify the financial result as a rollback.
@@ -174,7 +213,7 @@ func (s *BillingSession) resolveSettlementBeforeReserveLocked() error {
 		s.taskOwned = true
 	case model.BillingRefunded:
 		s.refunded = true
-	case model.BillingRefundPending, model.BillingRefundReady, model.BillingRefundReview, model.BillingDeliveryUnknown:
+	case model.BillingRefundPending, model.BillingRefundReady, model.BillingRefundReview, model.BillingDeliveryUnknown, model.BillingSettlementReview:
 	default:
 		return errors.New("unknown billing terminal owner")
 	}

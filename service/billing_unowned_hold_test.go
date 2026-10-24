@@ -42,6 +42,23 @@ func TestBillingUnownedHoldRequiresReview(t *testing.T) {
 				code, _ := model.BillingRefundErrorCode(err)
 				assert.Equal(t, "owner_missing", code, "unrelated fixture errors cannot establish the missing-owner guard")
 			}
+			observedSettlement := action == "settle_zero" || action == "settle_more"
+			if observedSettlement {
+				actual := 0
+				if action == "settle_more" {
+					actual = 150
+				}
+				assert.ErrorIs(t, s.Reserve(200), model.ErrBillingFinalized)
+				assert.ErrorContains(t, s.Settle(actual+1), "replay amount mismatch")
+				err := s.Settle(actual)
+				require.Error(t, err, "same-amount replay cannot manufacture the missing original owner")
+				code, _ := model.BillingRefundErrorCode(err)
+				assert.Equal(t, "owner_missing", code)
+				// Failed persistence of observed usage is not refund authority.
+				// All accounting and absent-owner assertions below run after this
+				// late failure-defer path as well as the explicit settlement replay.
+				s.Refund(testGinContext(t))
+			}
 			waitRefundCallback(t, s)
 			assertUserBalances(t, 31201, 0, 900, 0)
 			var token model.Token
@@ -58,7 +75,11 @@ func TestBillingUnownedHoldRequiresReview(t *testing.T) {
 			require.NoError(t, model.DB.Model(&model.Task{}).Where("user_id = ?", 31201).Count(&tasks).Error)
 			assert.Zero(t, owners, "provisional private claim must roll back")
 			assert.Zero(t, tasks)
-			assert.True(t, s.NeedsRefund(), "retain unresolved legacy accounting for review")
+			if observedSettlement {
+				assert.False(t, s.NeedsRefund(), "unresolved observed settlement requires review, not refund")
+			} else {
+				assert.True(t, s.NeedsRefund(), "retain unresolved legacy accounting for review")
+			}
 		})
 	}
 	t.Run("free_task_zero", func(t *testing.T) {

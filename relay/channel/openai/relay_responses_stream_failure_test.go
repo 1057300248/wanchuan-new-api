@@ -135,13 +135,18 @@ func TestOaiResponsesStreamHandlerPreservesNativeMissingUsagePolicy(t *testing.T
 	}{
 		{"successful terminal without usage", `data: {"type":"response.completed","response":{"status":"completed"}}`, false},
 		{"created only then disconnect", `data: {"type":"response.created","response":{"status":"in_progress"}}`, true},
+		{"created then bare Chat DONE", `data: {"type":"response.created","response":{"status":"in_progress"}}` + "\n\ndata: [DONE]", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _, info, resp := responsesStreamFixture(t, strings.NewReader(tc.body+"\n\n"))
 			info.SetEstimatePromptTokens(8)
 			usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
 			assert.Equal(t, tc.wantError, apiErr != nil)
-			require.NotNil(t, usage, "success and accepted streams cut off without an explicit provider failure retain prompt estimation")
+			if tc.wantError {
+				assert.Nil(t, usage, "a prelude without a native terminal must retain unknown usage, not an estimated prompt charge")
+				return
+			}
+			require.NotNil(t, usage, "a genuine successful terminal retains the existing missing-usage estimation policy")
 			assert.Equal(t, 8, usage.PromptTokens)
 			assert.Zero(t, usage.CompletionTokens)
 		})

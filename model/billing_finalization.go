@@ -21,6 +21,9 @@ const (
 	BillingRefunded      = "refunded"
 	BillingSettled       = "settled"
 	BillingTaskOwned     = "task_owned"
+	// Frozen actual consumption awaiting atomic settlement or operator review.
+	// This is not a refund intent or an automatic background debit queue.
+	BillingSettlementReview = "settlement_review_v2"
 	// Only these versioned intents are eligible for the new refund executor.
 	// Historical refund_pending rows always require operator review.
 	BillingRefundReady  = "refund_ready_v2"
@@ -148,7 +151,7 @@ func claimBillingFinalizationTx(tx *gorm.DB, receipt BillingFinalization) (*Bill
 		stored.State = "building"
 	} else {
 		switch stored.State {
-		case BillingRefundPending, BillingRefunded, BillingSettled, BillingTaskOwned, BillingRefundReady, BillingRefundReview, BillingHeld, BillingDeliveryUnknown:
+		case BillingRefundPending, BillingRefunded, BillingSettled, BillingTaskOwned, BillingRefundReady, BillingRefundReview, BillingHeld, BillingDeliveryUnknown, BillingSettlementReview:
 		default:
 			return nil, billingRefundReviewError("receipt_invalid", "invalid persisted billing finalization state")
 		}
@@ -278,6 +281,12 @@ func SettleBillingFinalization(ctx context.Context, receipt BillingFinalization,
 	if actual < 0 || actual > common.MaxQuota {
 		return false, errors.New("invalid billing actual quota")
 	}
+	// Commit the observed charge before attempting money movement. A rollback,
+	// insufficient balance or a process exit must not erase the charge and make
+	// the original hold refundable. Replays retain the exact original amount.
+	if err := RequestBillingSettlement(ctx, receipt, actual); err != nil {
+		return false, err
+	}
 	applied := false
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		r, err := claimBillingFinalizationTx(tx, receipt)
@@ -295,8 +304,11 @@ func SettleBillingFinalization(ctx context.Context, receipt BillingFinalization,
 			// reconstructing an unrecorded token hold from a legacy caller.
 			return billingRefundReviewError("owner_missing", "settlement requires an atomically reserved request owner")
 		}
-		if r.State != BillingHeld {
+		if r.State != BillingSettlementReview {
 			return ErrBillingFinalized
+		}
+		if r.ActualQuota != actual {
+			return errors.New("billing settlement replay amount mismatch")
 		}
 		if err = validateBillingSourceTx(tx, r); err != nil {
 			return err
@@ -305,7 +317,10 @@ func SettleBillingFinalization(ctx context.Context, receipt BillingFinalization,
 			return err
 		}
 		applied = true
-		return tx.Model(r).Updates(map[string]any{"state": BillingSettled, "actual_quota": actual}).Error
+		return tx.Model(r).Updates(map[string]any{
+			"state": BillingSettled, "actual_quota": actual, "next_retry_at": 0,
+			"last_error_code": "", "last_error_class": "", "escalated_at": 0,
+		}).Error
 	})
 	return applied && err == nil, err
 }

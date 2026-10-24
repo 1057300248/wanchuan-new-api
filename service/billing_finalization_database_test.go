@@ -66,6 +66,9 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 			}
 			require.NoError(t, db.Raw(q).Scan(&version).Error)
 			t.Logf("terminal session matrix: %s %s", dialect.name, version)
+			if dialect.name == common.DatabaseTypePostgreSQL && os.Getenv("TEST_REDIS_DSN") != "" {
+				t.Run("production_finalization", TestProductionBillingFinalization)
+			}
 			t.Run("financial_lost_ack", TestFinancialConsistencyLostACKRefund)
 			t.Run("financial_task_refund", TestFinancialConsistencyTaskRefundAtomic)
 			t.Run("financial_mj_refund", TestFinancialConsistencyMidjourneyRefundAtomic)
