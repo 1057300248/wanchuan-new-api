@@ -47,7 +47,7 @@ export function ModelApiActions(props: {
     <div className='flex min-w-0 flex-col gap-2'>
       {path && (
         <code
-          className='text-muted-foreground truncate text-xs'
+          className='text-muted-foreground text-sm [overflow-wrap:anywhere]'
           title={`${endpoint?.method ?? 'POST'} ${path}`}
         >
           {endpoint?.method ?? 'POST'} {path}
@@ -60,6 +60,7 @@ export function ModelApiActions(props: {
             tooltip={t('Copy URL')}
             size='sm'
             variant='outline'
+            className='h-9 text-sm'
           >
             {t('Copy URL')}
           </CopyButton>
@@ -67,6 +68,7 @@ export function ModelApiActions(props: {
         <Button
           role='link'
           variant='outline'
+          className='h-9 text-sm'
           size='sm'
           render={
             documentation ? (
@@ -82,6 +84,7 @@ export function ModelApiActions(props: {
           <Button
             role='link'
             variant='outline'
+            className='h-9 text-sm'
             size='sm'
             render={<Link to={playground} />}
           >

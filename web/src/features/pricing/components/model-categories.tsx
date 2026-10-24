@@ -72,16 +72,20 @@ export function ModelCategories(props: {
         aria-label={t('Category')}
       >
         {MODEL_CATEGORIES.map((category) => (
-          <ToggleGroupItem key={category} value={category} className='gap-2'>
+          <ToggleGroupItem
+            key={category}
+            value={category}
+            className='h-10 gap-2 px-4 text-base'
+          >
             {labels[category]}{' '}
-            <span className='text-muted-foreground text-xs tabular-nums'>
+            <span className='text-muted-foreground text-sm tabular-nums'>
               {counts[category]}
             </span>
           </ToggleGroupItem>
         ))}
       </ToggleGroup>
       {props.value === 'vectors' && (
-        <p className='text-muted-foreground text-xs'>
+        <p className='text-muted-foreground text-sm'>
           {t('Embeddings and reranking')}
         </p>
       )}
