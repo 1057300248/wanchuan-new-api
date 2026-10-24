@@ -18,11 +18,45 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { PricingModel } from '../types'
 import { getModelCategories } from './model-categories'
+import { replaceModelInPath } from './model-helpers'
 
 export type ModelEndpointMap = Record<
   string,
   { path?: string; method?: string }
 >
+
+type ModelEndpoint = {
+  type: string
+  path: string
+  method: string
+}
+
+/** Resolve the same verified endpoints for card links, details and samples. */
+export function getModelEndpoints(
+  model: PricingModel,
+  endpointMap: ModelEndpointMap
+): ModelEndpoint[] {
+  const supportsText = getModelCategories(model).includes('text')
+  const endpoints: ModelEndpoint[] = []
+  for (const type of model.supported_endpoint_types ?? []) {
+    // Channel defaults can add OpenAI to media and unknown models. The wire
+    // protocol alone does not establish that chat completions are supported.
+    if (type === 'openai' && !supportsText) continue
+    const info = endpointMap[type]
+    const path = info?.path
+    if (!path?.startsWith('/') || path.startsWith('//')) continue
+    endpoints.push({
+      type,
+      path: replaceModelInPath(path, model.model_name),
+      method: info.method || 'POST',
+    })
+  }
+  // Keep declared protocols in catalog order, ahead of the generic default.
+  // A multi-capability model still retains its independently verified chat tab.
+  return endpoints.sort(
+    (a, b) => Number(a.type === 'openai') - Number(b.type === 'openai')
+  )
+}
 
 /** Explicit protocol links, never a guessed chat fallback for an unknown protocol. */
 export function getEndpointDocId(type: string): string | undefined {

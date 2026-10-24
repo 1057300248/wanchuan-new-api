@@ -63,9 +63,16 @@ describe('model API actions', () => {
     const user = userEvent.setup()
     const writeText = vi.spyOn(navigator.clipboard, 'writeText')
     await renderActions(
-      { supported_endpoint_types: ['openai-video'] },
-      { 'openai-video': { method: 'POST', path: '/v1/videos' } }
+      {
+        output_modalities: ['video'],
+        supported_endpoint_types: ['openai', 'openai-video'],
+      },
+      {
+        openai: { method: 'POST', path: '/v1/chat/completions' },
+        'openai-video': { method: 'POST', path: '/v1/videos' },
+      }
     )
+    expect(screen.getByText('POST /v1/videos')).toBeVisible()
     expect(screen.getByRole('link', { name: 'API Reference' })).toHaveAttribute(
       'href',
       '/help/api?endpoint=videos-create'
@@ -76,6 +83,94 @@ describe('model API actions', () => {
       expect(writeText).toHaveBeenCalledWith(
         `${window.location.origin}/v1/videos`
       )
+    )
+  })
+  it.each<{
+    label: string
+    model: Partial<PricingModel>
+    endpoint: string
+    path: string
+    documentation: string
+  }>([
+    {
+      label: 'speech synthesis',
+      model: { output_modalities: ['audio'] },
+      endpoint: 'audio-speech',
+      path: '/v1/audio/speech',
+      documentation: 'audio-speech',
+    },
+    {
+      label: 'speech recognition with text output',
+      model: { input_modalities: ['audio'], output_modalities: ['text'] },
+      endpoint: 'audio-transcription',
+      path: '/v1/audio/transcriptions',
+      documentation: 'audio-transcriptions',
+    },
+    {
+      label: 'embeddings',
+      model: { capabilities: ['embeddings'] },
+      endpoint: 'embeddings',
+      path: '/v1/embeddings',
+      documentation: 'embeddings',
+    },
+    {
+      label: 'reranking',
+      model: { capabilities: ['rerank'] },
+      endpoint: 'jina-rerank',
+      path: '/v1/rerank',
+      documentation: 'rerank',
+    },
+  ])(
+    'prefers the declared $label endpoint over a default OpenAI protocol for URL and docs',
+    async (fixture) => {
+      const user = userEvent.setup()
+      const writeText = vi.spyOn(navigator.clipboard, 'writeText')
+      await renderActions(
+        {
+          ...fixture.model,
+          supported_endpoint_types: ['openai', fixture.endpoint],
+        },
+        {
+          openai: { path: '/v1/chat/completions' },
+          [fixture.endpoint]: { path: fixture.path },
+        }
+      )
+      expect(screen.getByText(`POST ${fixture.path}`)).toBeVisible()
+      expect(
+        screen.getByRole('link', { name: 'API Reference' })
+      ).toHaveAttribute('href', `/help/api?endpoint=${fixture.documentation}`)
+      expect(screen.queryByRole('link', { name: 'Playground' })).toBeNull()
+      await user.click(screen.getByRole('button', { name: 'Copy URL' }))
+      await waitFor(() =>
+        expect(writeText).toHaveBeenCalledWith(
+          `${window.location.origin}${fixture.path}`
+        )
+      )
+    }
+  )
+  it('retains a declared chat playground but prioritizes the media endpoint for a multi-capability model', async () => {
+    await renderActions(
+      {
+        output_modalities: ['text', 'video'],
+        supported_endpoint_types: ['openai', 'openai-video'],
+      },
+      {
+        openai: { path: '/v1/chat/completions' },
+        'openai-video': { path: '/v1/videos' },
+      }
+    )
+    expect(screen.getByText('POST /v1/videos')).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Playground' })).toHaveAttribute(
+      'href',
+      '/playground'
+    )
+  })
+  it('does not invent a copyable URL when the declared endpoint is missing from the map', async () => {
+    await renderActions({ supported_endpoint_types: ['openai-video'] }, {})
+    expect(screen.queryByRole('button', { name: 'Copy URL' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'API Reference' })).toHaveAttribute(
+      'href',
+      '/help'
     )
   })
   it('opens the existing image workspace only for a declared image generation endpoint', async () => {
@@ -98,8 +193,11 @@ describe('model API actions', () => {
       '/playground'
     )
   })
-  it('does not pretend an unknown default OpenAI model supports chat and does not invent a missing endpoint URL', async () => {
-    await renderActions({ supported_endpoint_types: ['openai'] }, {})
+  it('does not infer a chat URL or documentation from a default OpenAI protocol without text metadata', async () => {
+    await renderActions(
+      { supported_endpoint_types: ['openai'] },
+      { openai: { path: '/v1/chat/completions' } }
+    )
     expect(screen.queryByRole('link', { name: 'Playground' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Copy URL' })).toBeNull()
     expect(screen.getByRole('link', { name: 'API Reference' })).toHaveAttribute(

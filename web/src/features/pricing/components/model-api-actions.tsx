@@ -25,10 +25,10 @@ import { API_BASE_URL } from '@/lib/api-url'
 
 import {
   getEndpointDocId,
+  getModelEndpoints,
   getModelPlayground,
   type ModelEndpointMap,
 } from '../lib/model-endpoints'
-import { replaceModelInPath } from '../lib/model-helpers'
 import type { PricingModel } from '../types'
 
 export function ModelApiActions(props: {
@@ -36,17 +36,9 @@ export function ModelApiActions(props: {
   endpointMap: ModelEndpointMap
 }) {
   const { t } = useTranslation()
-  const endpointType = props.model.supported_endpoint_types?.find((type) => {
-    const path = props.endpointMap[type]?.path
-    return path?.startsWith('/') && !path.startsWith('//')
-  })
-  const endpoint = endpointType ? props.endpointMap[endpointType] : undefined
+  const endpoint = getModelEndpoints(props.model, props.endpointMap)[0]
   const path = endpoint?.path
-    ? replaceModelInPath(endpoint.path, props.model.model_name)
-    : undefined
-  const documentation = endpointType
-    ? getEndpointDocId(endpointType)
-    : undefined
+  const documentation = endpoint ? getEndpointDocId(endpoint.type) : undefined
   const playground = getModelPlayground(props.model)
   const origin =
     API_BASE_URL ||

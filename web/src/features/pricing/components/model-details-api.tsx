@@ -34,8 +34,11 @@ import {
   buildModelCodeSample,
   type ModelSampleLanguage as Lang,
 } from '../lib/model-code-samples'
-import { getEndpointDocId } from '../lib/model-endpoints'
-import { replaceModelInPath } from '../lib/model-helpers'
+import {
+  getEndpointDocId,
+  getModelEndpoints,
+  type ModelEndpointMap,
+} from '../lib/model-endpoints'
 import type { PricingModel } from '../types'
 
 // ---------------------------------------------------------------------------
@@ -67,7 +70,7 @@ const LANG_HIGHLIGHT: Record<Lang, BundledLanguage> = {
 
 function CodeSamplesSection(props: {
   model: PricingModel
-  endpointMap: Record<string, { path?: string; method?: string }>
+  endpointMap: ModelEndpointMap
 }) {
   const { t } = useTranslation()
   const { status } = useStatus()
@@ -89,19 +92,10 @@ function CodeSamplesSection(props: {
     return 'https://api.example.com'
   }, [status])
 
-  const endpoints = useMemo(() => {
-    const types = props.model.supported_endpoint_types || []
-    return types
-      .map((type) => {
-        const info = props.endpointMap[type] || {}
-        let path = info.path || ''
-        if (path && path.includes('{model}')) {
-          path = replaceModelInPath(path, props.model.model_name || '')
-        }
-        return { type, path, method: info.method || 'POST' }
-      })
-      .filter((e) => Boolean(e.path))
-  }, [props.model, props.endpointMap])
+  const endpoints = useMemo(
+    () => getModelEndpoints(props.model, props.endpointMap),
+    [props.model, props.endpointMap]
+  )
 
   const [endpointType, setEndpointType] = useState<string>(
     endpoints[0]?.type ?? ''
@@ -245,7 +239,7 @@ function AuthSection() {
 
 export function ModelDetailsApi(props: {
   model: PricingModel
-  endpointMap: Record<string, { path?: string; method?: string }>
+  endpointMap: ModelEndpointMap
 }) {
   return (
     <div className='space-y-6'>
