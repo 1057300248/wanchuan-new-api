@@ -876,6 +876,82 @@ func TestCalculateTextQuotaSummaryBillsOpenAICacheWriteTokens(t *testing.T) {
 	})
 }
 
+// OpenAI 12h cache writes bill at twice the write price and keep their own
+// count in the consume log, with ratio and expression pricing alike.
+func TestPostTextConsumeQuotaBillsOpenAI12hCacheWrites(t *testing.T) {
+	const userID, channelID = 63, 63
+	gin.SetMode(gin.TestMode)
+	// The OpenAI prompt caching guide example at gpt-6-astra prices: $10 input,
+	// $1 cached, $12.50 30m write and $25 12h write per 1M tokens.
+	usage := &dto.Usage{PromptTokens: 12000, TotalTokens: 12000, PromptTokensDetails: dto.InputTokenDetails{
+		CachedTokens: 4000, CacheWriteTokens: 7000,
+		CacheWriteTokensDetails: &dto.CacheWriteTokenDetails{TTL30mTokens: 3000, TTL12hTokens: 4000},
+	}}
+	for _, tc := range []struct {
+		name     string
+		price    hosttypes.PriceData
+		expr     string
+		ratio12h float64
+	}{
+		{"ratio", hosttypes.PriceData{ModelRatio: 5, CompletionRatio: 5, CacheRatio: 0.1, CacheCreationRatio: 1.25, CacheCreation12hRatio: 2.5}, "", 2.5},
+		{"expression without cc12h", hosttypes.PriceData{}, `tier("standard", p * 10 + c * 50 + cr * 1 + cc * 12.5)`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Financial assertions use an isolated real PostgreSQL schema, never
+			// the package's legacy in-memory logging fixture.
+			openTaskPollingSQLFixture(t, "postgres")
+			require.NoError(t, model.DB.AutoMigrate(&model.Model{}, &model.Vendor{}, &model.BillingFinalization{}, &model.SubscriptionPlan{}))
+			model.InvalidateModelBonusEligibleCache()
+			t.Cleanup(model.InvalidateModelBonusEligibleCache)
+			seedUser(t, userID, 1_000_000)
+			seedToken(t, userID, userID, "cache-ttl-fixture-token", 1_000_000)
+			seedChannel(t, channelID)
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+			tc.price.GroupRatioInfo = hosttypes.GroupRatioInfo{GroupRatio: 1}
+			info := &relaycommon.RelayInfo{
+				UserId:  userID,
+				TokenId: userID, TokenKey: "cache-ttl-fixture-token",
+				RequestId: "cache-ttl-" + tc.name, ForcePreConsume: true,
+				UserGroup: "default", UserSetting: dto.UserSetting{BillingPreference: "wallet_only", QuotaWarningEnabled: boolPtr(false)},
+				OriginModelName: "gpt-6-astra",
+				UsingGroup:      "default",
+				StartTime:       time.Now(),
+				RelayFormat:     types.RelayFormatOpenAIResponses,
+				ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channelID},
+				PriceData:       tc.price,
+			}
+			if tc.expr != "" {
+				info.TieredBillingSnapshot = makeSnapshot(tc.expr, 1, 0, 0)
+			}
+
+			require.Nil(t, PreConsumeBilling(ctx, 100_000, info))
+			assert.Equal(t, 900_000, getUserQuota(t, userID))
+			PostTextConsumeQuota(ctx, info, usage, nil)
+			assert.Equal(t, 1_000_000-75750, getUserQuota(t, userID))
+			assert.Equal(t, 1_000_000-75750, getTokenRemainQuota(t, userID))
+			var persisted model.User
+			require.NoError(t, model.DB.First(&persisted, userID).Error)
+			assert.Equal(t, 1_000_000-75750, persisted.QuotaPaid)
+			assert.Zero(t, persisted.QuotaBonus)
+			assert.Zero(t, persisted.QuotaReward)
+			assert.Equal(t, 75750, persisted.UsedQuota)
+			assert.Equal(t, 1, persisted.RequestCount)
+
+			log := getLastLog(t)
+			require.NotNil(t, log)
+			// 1000 input + 4000 cached + 3000 30m + 4000 12h writes = $0.1515.
+			assert.Equal(t, 75750, log.Quota)
+			var other map[string]any
+			require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+			assert.Equal(t, float64(7000), other["cache_creation_tokens"])
+			assert.Equal(t, float64(7000), other["cache_write_tokens"])
+			assert.Equal(t, float64(4000), other["cache_creation_tokens_12h"])
+			assert.Equal(t, tc.ratio12h, other["cache_creation_ratio_12h"])
+		})
+	}
+}
+
 func TestCalculateTextQuotaSummarySeparatesOpenRouterCacheReadFromPromptBilling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

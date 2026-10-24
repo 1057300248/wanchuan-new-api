@@ -108,6 +108,19 @@ describe('top navigation docs entry', () => {
     expect(docs?.external).toBe(false)
   })
 
+  test('API access remains a separate internal destination alongside custom documentation', () => {
+    const { result } = renderNavLinks({
+      docs_link: 'https://docs.example.com/guide',
+    })
+    expect(findLink(result.current, 'API Access')?.href).toBe('/help/api')
+    expect(findLink(result.current, 'API Access')?.documentNavigation).not.toBe(
+      true
+    )
+    expect(findLink(result.current, 'Docs')?.href).toBe(
+      'https://docs.example.com/guide'
+    )
+  })
+
   test('the marketing home entry is unchanged', () => {
     const { result } = renderNavLinks({})
 
@@ -122,6 +135,7 @@ describe('top navigation docs entry', () => {
     })
 
     expect(findLink(result.current, 'Docs')).toBeUndefined()
+    expect(findLink(result.current, 'API Access')).toBeUndefined()
     expect(findLink(result.current, 'Home')?.href).toBe('https://chuanapi.com/')
   })
 })

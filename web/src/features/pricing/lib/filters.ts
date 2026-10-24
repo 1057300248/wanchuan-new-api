@@ -32,6 +32,7 @@ import {
   hasTaskUsageSchema,
   isUnconfiguredTaskUsageModel,
 } from './dynamic-price'
+import { filterByCategory, type ModelCategory } from './model-categories'
 import { isTokenBasedModel } from './model-helpers'
 import { calculateTokenPrice } from './price'
 
@@ -226,6 +227,7 @@ export function filterAndSortModels(
     endpointType: string
     tag: string
     sortBy: string
+    category?: ModelCategory
   }
 ): PricingModel[] {
   let result = filterBySearch(models, filters.search)
@@ -234,6 +236,7 @@ export function filterAndSortModels(
   result = filterByQuotaType(result, filters.quotaType)
   result = filterByEndpointType(result, filters.endpointType)
   result = filterByTag(result, filters.tag)
+  result = filterByCategory(result, filters.category ?? 'all')
   result = sortModels(result, filters.sortBy)
 
   return result

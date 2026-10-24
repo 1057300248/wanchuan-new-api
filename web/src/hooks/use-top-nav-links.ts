@@ -88,6 +88,7 @@ export function useTopNavLinks(): TopNavLink[] {
   // Docs (built-in /help by default; explicit external URLs stay same-tab
   // document navigations, while legacy marketing entries resolve to /help)
   if (modules?.docs !== false) {
+    links.push({ title: t('API Access'), href: '/help/api' })
     const docsHref = resolvePublicDocsUrl(status?.docs_link)
     links.push({
       title: t('Docs'),

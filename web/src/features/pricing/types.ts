@@ -100,7 +100,7 @@ export type PricingModel = {
   parameter_count?: string
   input_modalities?: Modality[]
   output_modalities?: Modality[]
-  capabilities?: ModelCapability[]
+  capabilities?: string[]
 }
 
 /** Input/output modalities supported by a model. */
@@ -128,7 +128,7 @@ export type PricingData = {
   vendors: PricingVendor[]
   group_ratio: Record<string, number>
   usable_group: Record<string, { desc: string; ratio: number }>
-  supported_endpoint: Record<string, string>
+  supported_endpoint: Record<string, { path?: string; method?: string }>
   auto_groups: string[]
 }
 

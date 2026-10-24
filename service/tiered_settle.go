@@ -26,14 +26,15 @@ type TieredResultWrapper = billingexpr.TieredResult
 // report them as text-only. This function normalizes to text-only when
 // sub-categories are separately priced.
 //
-// A Claude 1h cache write without its own price costs a fixed multiple of the
+// A Claude 1h or OpenAI 12h write without its own price costs a fixed multiple of the
 // short write price: it is billed in cc, or in p when cc has no price either.
 func BuildTieredTokenParams(usage *dto.Usage, isClaudeUsageSemantic bool, usedVars map[string]bool) billingexpr.TokenParams {
 	p := float64(usage.PromptTokens)
 	c := float64(usage.CompletionTokens)
 	cr := float64(usage.PromptTokensDetails.CachedTokens)
-	cc5m := float64(usage.PromptTokensDetails.CacheCreationTokensTotal())
+	cc := float64(usage.PromptTokensDetails.CacheCreationTokensTotal())
 	cc1h := float64(0)
+	cc12h := float64(0)
 
 	if usage.UsageSemantic == "anthropic" {
 		// Upstreams may report the cache-write total without a full 5m/1h
@@ -43,7 +44,7 @@ func BuildTieredTokenParams(usage *dto.Usage, isClaudeUsageSemantic bool, usedVa
 			usage.ClaudeCacheCreation5mTokens,
 			usage.ClaudeCacheCreation1hTokens,
 		)
-		cc5m = float64(split5m)
+		cc = float64(split5m)
 		cc1h = float64(split1h)
 	}
 
@@ -88,7 +89,7 @@ func BuildTieredTokenParams(usage *dto.Usage, isClaudeUsageSemantic bool, usedVa
 	// Claude: input_tokens is text-only, so add cache read + cache creation.
 	inputLen := p
 	if isClaudeUsageSemantic {
-		inputLen = p + cr + cc5m + cc1h
+		inputLen = p + cr + cc + cc1h
 	}
 
 	if isClaudeUsageSemantic {
@@ -98,19 +99,37 @@ func BuildTieredTokenParams(usage *dto.Usage, isClaudeUsageSemantic bool, usedVa
 			p += cr
 		}
 		if !usedVars["cc1h"] {
-			cc5m += cc1h * hosttypes.ClaudeCacheCreation1hMultiplier
+			cc += cc1h * hosttypes.ClaudeCacheCreation1hMultiplier
 			cc1h = 0
 		}
 		if !usedVars["cc"] {
-			p += cc5m
-			cc5m = 0
+			p += cc
+			cc = 0
 		}
 	} else {
 		if usedVars["cr"] {
 			p -= cr
 		}
+		// The prompt already counts each write once. Omitted 12h pricing folds
+		// twice the long-write count into cc, or adds its extra count to p.
+		cc12h = float64(usage.PromptTokensDetails.CacheWrite12hTokens())
+		has12hWrites := cc12h > 0
+		cc -= cc12h
+		ccTokens := cc
+		if usedVars["cc12h"] {
+			p -= cc12h
+		} else {
+			ccTokens += cc12h
+			cc += cc12h * hosttypes.OpenAICacheCreation12hMultiplier
+			cc12h = 0
+		}
 		if usedVars["cc"] {
-			p -= cc5m
+			p -= ccTokens
+		} else {
+			p += cc - ccTokens
+			if has12hWrites {
+				cc = 0
+			}
 		}
 		if usedVars["cc1h"] {
 			p -= cc1h
@@ -146,8 +165,9 @@ func BuildTieredTokenParams(usage *dto.Usage, isClaudeUsageSemantic bool, usedVa
 		C:     c,
 		Len:   inputLen,
 		CR:    cr,
-		CC:    cc5m,
+		CC:    cc,
 		CC1h:  cc1h,
+		CC12h: cc12h,
 		Img:   img,
 		ImgCR: imgCR,
 		ImgO:  imgO,

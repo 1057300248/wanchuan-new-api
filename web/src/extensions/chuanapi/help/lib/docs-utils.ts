@@ -70,14 +70,19 @@ export function buildEndpointMarkdown(
   sampleCurl: string,
   origin = getDocsOrigin()
 ): string {
-  const okResponse = endpoint.responses.find((item) => item.status === 200)
+  const okResponse = endpoint.responses.find(
+    (item) => item.status === 101 || (item.status >= 200 && item.status < 300)
+  )
   const lines = [
     `# ${endpoint.method} ${endpoint.path} — ${endpoint.name}`,
     '',
     endpoint.description,
     '',
     `- Base URL: ${origin}`,
-    `- 认证：Authorization: Bearer <API_TOKEN>`,
+    `- 认证：${endpoint.authHeader ?? 'Authorization'}: ${!endpoint.authHeader || endpoint.authHeader === 'Authorization' ? 'Bearer ' : ''}<API_TOKEN>`,
+    ...Object.entries(endpoint.extraHeaders ?? {}).map(
+      ([name, value]) => `- ${name}: ${value}`
+    ),
     `- 中继格式：${endpoint.relayFormat}`,
     `- 响应类型：${endpoint.responseType}`,
     '',
@@ -88,7 +93,14 @@ export function buildEndpointMarkdown(
     '```',
   ]
   if (okResponse) {
-    lines.push('', '## 响应示例（200）', '', '```json', okResponse.body, '```')
+    lines.push(
+      '',
+      `## 响应示例（${okResponse.status}）`,
+      '',
+      endpoint.responseKind ? '```text' : '```json',
+      okResponse.body,
+      '```'
+    )
   }
   if (endpoint.notes.length > 0) {
     lines.push('', '## 备注', '')

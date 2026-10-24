@@ -40,7 +40,7 @@ export interface GuideGroup {
   slugs: readonly string[]
 }
 
-export type HttpMethod = 'GET' | 'POST'
+export type HttpMethod = 'GET' | 'POST' | 'HEAD'
 
 export interface EndpointResponseExample {
   status: number
@@ -59,6 +59,9 @@ export interface EndpointDoc {
   /** 中继格式说明，如「原生 OpenAI 格式」 */
   relayFormat: string
   responseType: string
+  /** How the default sample consumes a successful response. */
+  responseKind?: 'binary' | 'none'
+  outputFilename?: string
   /** 请求体形态；默认无请求体 */
   requestKind?: 'json' | 'multipart' | 'websocket'
   /** 鉴权头；默认 Authorization: Bearer */

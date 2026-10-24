@@ -29,7 +29,11 @@ export const sampleLanguages: readonly {
 ]
 
 function samplePath(path: string): string {
-  return path.replaceAll('{model}', 'MODEL_ID')
+  return path
+    .replaceAll('{model}', 'MODEL_ID')
+    .replaceAll('{task_id}', 'TASK_ID')
+    .replaceAll('{response_id}', 'RESPONSE_ID')
+    .replaceAll('{artifact_key}', 'ARTIFACT_KEY')
 }
 
 function authValue(endpoint: EndpointDoc, token: string): string {
@@ -56,17 +60,18 @@ function requestHeaders(
 
 function curlSample(endpoint: EndpointDoc, origin: string): string {
   if (endpoint.requestKind === 'websocket') {
-    const wsOrigin = origin.replace(/^http/, 'ws')
     return [
-      `curl --http1.1 --include --no-buffer "${wsOrigin}${samplePath(endpoint.path)}?model=MODEL_ID" \\`,
+      `curl --http1.1 --include --no-buffer "${origin}${samplePath(endpoint.path)}?model=MODEL_ID" \\`,
       '  -H "Authorization: Bearer $API_TOKEN" \\',
       '  -H "Connection: Upgrade" \\',
-      '  -H "Upgrade: websocket"',
+      '  -H "Upgrade: websocket" \\',
+      '  -H "Sec-WebSocket-Version: 13" \\',
+      '  -H "Sec-WebSocket-Key: $(openssl rand -base64 16)"',
     ].join('\n')
   }
 
   const lines = [
-    `curl -X ${endpoint.method} "${origin}${samplePath(endpoint.path)}"`,
+    `curl ${endpoint.method === 'HEAD' ? '--head' : `-X ${endpoint.method}`} "${origin}${samplePath(endpoint.path)}"`,
   ]
   for (const [name, value] of requestHeaders(endpoint, '$API_TOKEN')) {
     lines[lines.length - 1] += ' \\'
@@ -81,6 +86,10 @@ function curlSample(endpoint: EndpointDoc, origin: string): string {
       lines[lines.length - 1] += ' \\'
       lines.push(`  -F "${field.name}=${field.file ? '@' : ''}${field.value}"`)
     }
+  }
+  if (endpoint.responseKind === 'binary') {
+    lines[lines.length - 1] += ' \\'
+    lines.push(`  --output ${endpoint.outputFilename ?? 'output.bin'}`)
   }
   return lines.join('\n')
 }
@@ -126,12 +135,20 @@ ${(endpoint.multipartFields ?? [])
 `
     options.push('  body: form,')
   }
+  let readResponse = 'console.log(await response.json())'
+  if (endpoint.responseKind === 'binary') {
+    prelude = `import { writeFile } from 'node:fs/promises'\n${prelude}`
+    readResponse = `await writeFile('${endpoint.outputFilename ?? 'output.bin'}', Buffer.from(await response.arrayBuffer()))`
+  } else if (endpoint.method === 'HEAD' || endpoint.responseKind === 'none') {
+    readResponse =
+      'console.log(response.status, Object.fromEntries(response.headers))'
+  }
   return `${prelude}const response = await fetch('${origin}${samplePath(endpoint.path)}', {
 ${options.join('\n')}
 })
 
 if (!response.ok) throw new Error(await response.text())
-console.log(await response.json())`
+${readResponse}`
 }
 
 function pythonSample(endpoint: EndpointDoc, origin: string): string {
@@ -160,7 +177,8 @@ asyncio.run(main())`
   let prelude = 'import requests\n\n'
   let cleanup = ''
   if (endpoint.requestKind === 'json' && endpoint.requestBody) {
-    args.push(`    json=${endpoint.requestBody.replaceAll('\n', '\n    ')},`)
+    prelude = `import json\n${prelude}`
+    args.push(`    json=json.loads(${JSON.stringify(endpoint.requestBody)}),`)
   }
   if (endpoint.requestKind === 'multipart') {
     const files = (endpoint.multipartFields ?? []).filter((field) => field.file)
@@ -177,11 +195,17 @@ asyncio.run(main())`
     cleanup = `\n${files.map((field) => `${field.name}_file.close()`).join('\n')}`
   }
   args.push('    timeout=120,')
+  let readResponse = 'print(response.json())'
+  if (endpoint.responseKind === 'binary') {
+    readResponse = `with open("${endpoint.outputFilename ?? 'output.bin'}", "wb") as output:\n    output.write(response.content)`
+  } else if (endpoint.method === 'HEAD' || endpoint.responseKind === 'none') {
+    readResponse = 'print(response.status_code, dict(response.headers))'
+  }
   return `${prelude}response = requests.request(
 ${args.join('\n')}
 )
 response.raise_for_status()
-print(response.json())${cleanup}`
+${readResponse}${cleanup}`
 }
 
 function goSample(endpoint: EndpointDoc, origin: string): string {
@@ -273,13 +297,19 @@ ${headers
 }`
   }
 
+  let readResponse = 'fmt.Println(string(result))'
+  if (endpoint.responseKind === 'binary') {
+    readResponse = `if err := os.WriteFile("${endpoint.outputFilename ?? 'output.bin'}", result, 0600); err != nil { panic(err) }`
+  } else if (endpoint.method === 'HEAD' || endpoint.responseKind === 'none') {
+    readResponse = 'fmt.Println(response.Status, response.Header)'
+  }
   const hasJSONBody = endpoint.requestKind === 'json' && endpoint.requestBody
   const body = hasJSONBody
     ? `bytes.NewBufferString(\`${endpoint.requestBody}\`)`
     : 'http.NoBody'
   const imports = [
     ...(hasJSONBody ? ['  "bytes"'] : []),
-    '  "fmt"',
+    ...(endpoint.responseKind === 'binary' ? [] : ['  "fmt"']),
     '  "io"',
     '  "net/http"',
     '  "os"',
@@ -306,7 +336,8 @@ ${headers
   defer response.Body.Close()
   result, err := io.ReadAll(response.Body)
   if err != nil { panic(err) }
-  fmt.Println(string(result))
+  if response.StatusCode >= 400 { panic(string(result)) }
+  ${readResponse}
 }`
 }
 

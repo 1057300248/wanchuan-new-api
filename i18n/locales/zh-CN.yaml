@@ -324,3 +324,6 @@ custom_oauth.has_bindings: 无法删除已有用户绑定的提供商
 custom_oauth.binding_not_found: OAuth 绑定不存在
 custom_oauth.provider_id_field_invalid: 无法从提供商响应中提取用户 ID
 task.image_still_processing: 图片仍在处理中，请勿重复提交；请查询已有任务的状态。
+
+relay.task_usage_price_unsupported: "模型 {{.Model}} 使用了任务用量表达式；请为普通转发配置常规定价，并为插件单独配置计费表达式"
+relay.shared_task_price_needs_override: "模型 {{.Model}} 与任务插件 {{.Plugin}} 共用了计费表达式；请先为插件配置独立的计费表达式，再使用普通转发定价"

@@ -37,10 +37,12 @@ import {
   isUnconfiguredTaskUsageModel,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
+import type { ModelEndpointMap } from '../lib/model-endpoints'
 import { isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import { taskPriceLabel, taskUsageUnitLabel } from '../lib/task-price-display'
 import type { PricingModel, PriceType, TokenUnit } from '../types'
+import { ModelApiActions } from './model-api-actions'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
 
@@ -53,6 +55,7 @@ export interface ModelCardProps {
   showRechargePrice?: boolean
   selectedGroup?: string
   perf?: ModelPerfBadgeData
+  endpointMap?: ModelEndpointMap
 }
 
 export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
@@ -392,6 +395,12 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
               </div>
             )}
           </dl>
+        )}
+        {props.endpointMap && (
+          <ModelApiActions
+            model={props.model}
+            endpointMap={props.endpointMap}
+          />
         )}
       </CardContent>
       <CardFooter className='mt-auto border-0 bg-transparent pt-0'>

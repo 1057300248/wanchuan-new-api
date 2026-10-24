@@ -1242,3 +1242,58 @@ func TestSamePriceCacheReadsRemainInInput(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAI12HourCacheWireFallbackChargesLongWrite(t *testing.T) {
+	var usage dto.Usage
+	require.NoError(t, common.Unmarshal([]byte(`{"prompt_tokens":12000,"prompt_tokens_details":{"cached_tokens":4000,"cache_write_tokens":7000,"cache_write_tokens_details":{"ttl_30m_tokens":3000,"ttl_12h_tokens":4000}}}`), &usage))
+	expression := `tier("base", p * 10 + cr * 1 + cc * 12.5)`
+	params := BuildTieredTokenParams(&usage, false, billingexpr.UsedVars(expression))
+	cost, _, err := billingexpr.RunExpr(expression, params)
+	require.NoError(t, err)
+	assert.Equal(t, float64(151500), cost, "12-hour writes cost twice the short-write price without an explicit cc12h term")
+	assert.Equal(t, float64(12000), params.Len, "context thresholds use unweighted upstream tokens")
+}
+
+// A long-lived cache write without its own price costs a fixed multiple of the
+// short write price: 2x for OpenAI 12h, 6/3.75x for Claude 1h. The short price
+// is cc, or p when cc has no price either.
+func TestBuildTieredTokenParams_UnpricedLongTTLCacheWrites(t *testing.T) {
+	// The OpenAI prompt caching guide example: 12000 input tokens with 4000
+	// cache reads and 7000 writes, 3000 of them 30m and 4000 12h.
+	openai := dto.Usage{PromptTokens: 12000, PromptTokensDetails: dto.InputTokenDetails{
+		CachedTokens: 4000, CacheWriteTokens: 7000,
+		CacheWriteTokensDetails: &dto.CacheWriteTokenDetails{TTL30mTokens: 3000, TTL12hTokens: 4000},
+	}}
+	unsplit := openai
+	unsplit.PromptTokensDetails.CacheWriteTokensDetails = nil
+	for _, tc := range []struct {
+		name               string
+		usage              dto.Usage
+		expr               string
+		p, cc, cc1h, cc12h float64
+		cost               float64
+	}{
+		{"openai 30m and 12h priced", openai, `tier("base", p * 10 + cr * 1 + cc * 12.5 + cc12h * 25)`, 1000, 3000, 0, 4000, 151500},
+		{"openai 12h joins cc at twice its count", openai, `tier("base", p * 10 + cr * 1 + cc * 12.5)`, 1000, 11000, 0, 0, 151500},
+		{"openai 30m stays in p", openai, `tier("base", p * 10 + cr * 1 + cc12h * 25)`, 4000, 0, 0, 4000, 144000},
+		{"openai 12h bills twice in p", openai, `tier("base", p * 10 + cr * 1)`, 12000, 0, 0, 0, 124000},
+		{"openai writes without a ttl split", unsplit, `tier("base", p * 10 + cr * 1 + cc * 12.5 + cc12h * 25)`, 1000, 7000, 0, 0, 101500},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isClaude := tc.usage.UsageSemantic == "anthropic"
+			params := BuildTieredTokenParams(&tc.usage, isClaude, billingexpr.UsedVars(tc.expr))
+			assert.Equal(t, tc.p, params.P)
+			assert.Equal(t, tc.cc, params.CC)
+			assert.Equal(t, tc.cc1h, params.CC1h)
+			assert.Equal(t, tc.cc12h, params.CC12h)
+			wantLen := float64(tc.usage.PromptTokens)
+			if isClaude {
+				wantLen += float64(tc.usage.PromptTokensDetails.CacheCreationTokensTotal())
+			}
+			assert.Equal(t, wantLen, params.Len, "len keeps the unweighted counts")
+			cost, _, err := billingexpr.RunExpr(tc.expr, params)
+			require.NoError(t, err)
+			assert.Equal(t, tc.cost, cost)
+		})
+	}
+}
